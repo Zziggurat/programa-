@@ -1,0 +1,12 @@
+Cantidad;Descripción;Fabricante;Referencia;Designaciones
+1;Acometida 220 V;;;-W1
+1;Contacto NA de K1;;;-K2
+1;Relé auxiliar 24 V;Finder;40.52 24VDC;-K1
+1;Controlador programable 24 V;Genérico;CTRL-24DC;-A1
+1;Transformador 220/24 V 3 A;Genérico;TRF-220-24-72VA;-T1
+1;Sensor inductivo 24 V PNP;ifm;IFT200;-B1
+1;Bornero de control;Phoenix Contact;UT 2,5;-X2
+1;Bornero de fuerza;Phoenix Contact;UT 4;-X1
+1;Portafusible 24 V 3 A;Phoenix Contact;UT 4-HESI;-F1
+1;Interruptor automático 2P 6 A;Schneider Electric;iC60N 2P C6;-Q1
+1;Electroválvula 24 V;SMC;SY5120;-Y1

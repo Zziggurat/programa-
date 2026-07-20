@@ -1,0 +1,83 @@
+<meta charset="utf-8">
+<title>Tablero de control — ejemplo — Dossier técnico</title>
+<style>
+	body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
+	table { border-collapse: collapse; width: 100%; margin: .8rem 0 1.6rem; font-size: .9rem; }
+	th, td { border: 1px solid #bbb; padding: .3rem .5rem; text-align: left; }
+	th { background: #eee; }
+	h1 { border-bottom: 2px solid #444; padding-bottom: .3rem; }
+</style>
+<h1>Tablero de control — ejemplo — Dossier técnico</h1>
+<p>Generado por TableroStudio. Hojas: 2. Dispositivos: 11. Conductores: 23.</p>
+<h2>1. Verificación eléctrica (DRC)</h2>
+<p>0 errores, 0 avisos.</p>
+<table><thead><tr><th>Severidad</th><th>Regla</th><th>Detalle</th></tr></thead><tbody></tbody></table>
+<h2>2. Lista de materiales</h2>
+<table><thead><tr><th>Cant.</th><th>Descripción</th><th>Fabricante</th><th>Referencia</th><th>Designaciones</th></tr></thead><tbody><tr><td>1</td><td>Acometida 220 V</td><td></td><td></td><td>-W1</td></tr>
+<tr><td>1</td><td>Contacto NA de K1</td><td></td><td></td><td>-K2</td></tr>
+<tr><td>1</td><td>Relé auxiliar 24 V</td><td>Finder</td><td>40.52 24VDC</td><td>-K1</td></tr>
+<tr><td>1</td><td>Controlador programable 24 V</td><td>Genérico</td><td>CTRL-24DC</td><td>-A1</td></tr>
+<tr><td>1</td><td>Transformador 220/24 V 3 A</td><td>Genérico</td><td>TRF-220-24-72VA</td><td>-T1</td></tr>
+<tr><td>1</td><td>Sensor inductivo 24 V PNP</td><td>ifm</td><td>IFT200</td><td>-B1</td></tr>
+<tr><td>1</td><td>Bornero de control</td><td>Phoenix Contact</td><td>UT 2,5</td><td>-X2</td></tr>
+<tr><td>1</td><td>Bornero de fuerza</td><td>Phoenix Contact</td><td>UT 4</td><td>-X1</td></tr>
+<tr><td>1</td><td>Portafusible 24 V 3 A</td><td>Phoenix Contact</td><td>UT 4-HESI</td><td>-F1</td></tr>
+<tr><td>1</td><td>Interruptor automático 2P 6 A</td><td>Schneider Electric</td><td>iC60N 2P C6</td><td>-Q1</td></tr>
+<tr><td>1</td><td>Electroválvula 24 V</td><td>SMC</td><td>SY5120</td><td>-Y1</td></tr></tbody></table>
+<h2>3. Índice de dispositivos</h2>
+<table><thead><tr><th>Designación</th><th>Descripción</th><th>Posición</th></tr></thead><tbody><tr><td>-A1</td><td>Controlador programable 24 V</td><td>2.A2</td></tr>
+<tr><td>-B1</td><td>Sensor inductivo 24 V PNP</td><td>2.C8</td></tr>
+<tr><td>-F1</td><td>Portafusible 24 V 3 A</td><td>1.A7</td></tr>
+<tr><td>-K1</td><td>Relé auxiliar 24 V</td><td>2.C4</td></tr>
+<tr><td>-K2</td><td>Contacto NA de K1</td><td>2.B6</td></tr>
+<tr><td>-Q1</td><td>Interruptor automático 2P 6 A</td><td>1.A3</td></tr>
+<tr><td>-T1</td><td>Transformador 220/24 V 3 A</td><td>1.A5</td></tr>
+<tr><td>-W1</td><td>Acometida 220 V</td><td>1.A1</td></tr>
+<tr><td>-X1</td><td>Bornero de fuerza</td><td>1.A2</td></tr>
+<tr><td>-X2</td><td>Bornero de control</td><td>2.A8</td></tr>
+<tr><td>-Y1</td><td>Electroválvula 24 V</td><td>2.D8</td></tr></tbody></table>
+<h2>4. Referencias cruzadas</h2>
+<table><thead><tr><th>Maestro</th><th>Posición</th><th>Contacto</th><th>Tipo</th><th>Posición</th></tr></thead><tbody><tr><td>-K1</td><td>2.C4</td><td>-K2</td><td>NA</td><td>2.B6</td></tr></tbody></table>
+<h2>5. Lista de conductores</h2>
+<table><thead><tr><th>Número</th><th>De</th><th>A</th><th>Sección</th><th>Color</th><th>Longitud (mm)</th></tr></thead><tbody><tr><td>1</td><td>-A1:DO1</td><td>-K1:A1</td><td>0.75 mm²</td><td>gris</td><td>471</td></tr>
+<tr><td>2</td><td>-W1:L</td><td>-X1:L</td><td>6 mm²</td><td>negro</td><td></td></tr>
+<tr><td>2</td><td>-X1:L</td><td>-Q1:1</td><td>2.5 mm²</td><td>negro</td><td>382</td></tr>
+<tr><td>3</td><td>-K2:14</td><td>-X2:5</td><td>0.75 mm²</td><td>gris</td><td>1014</td></tr>
+<tr><td>3</td><td>-X2:5</td><td>-Y1:+</td><td>0.75 mm²</td><td>gris</td><td></td></tr>
+<tr><td>4</td><td>-Q1:2</td><td>-T1:P1</td><td>2.5 mm²</td><td>negro</td><td>470</td></tr>
+<tr><td>5</td><td>-F1:2</td><td>-A1:+24</td><td>1 mm²</td><td>rojo</td><td>591</td></tr>
+<tr><td>5</td><td>-F1:2</td><td>-X2:1</td><td>1 mm²</td><td>rojo</td><td>502</td></tr>
+<tr><td>5</td><td>-X2:1</td><td>-K2:13</td><td>0.75 mm²</td><td>rojo</td><td>1014</td></tr>
+<tr><td>5</td><td>-B1:+</td><td>-X2:6</td><td>0.5 mm²</td><td>marrón</td><td></td></tr>
+<tr><td>6</td><td>-T1:S2</td><td>-A1:0V</td><td>1 mm²</td><td>blanco</td><td>939</td></tr>
+<tr><td>6</td><td>-A1:0V</td><td>-X2:2</td><td>1 mm²</td><td>blanco</td><td>824</td></tr>
+<tr><td>6</td><td>-K1:A2</td><td>-X2:2</td><td>0.75 mm²</td><td>blanco</td><td>980</td></tr>
+<tr><td>6</td><td>-Y1:-</td><td>-X2:4</td><td>0.75 mm²</td><td>blanco</td><td></td></tr>
+<tr><td>6</td><td>-B1:-</td><td>-X2:4</td><td>0.5 mm²</td><td>azul</td><td></td></tr>
+<tr><td>7</td><td>-B1:OUT</td><td>-X2:3</td><td>0.5 mm²</td><td>negro</td><td></td></tr>
+<tr><td>7</td><td>-X2:3</td><td>-A1:DI1</td><td>0.5 mm²</td><td>negro</td><td>824</td></tr>
+<tr><td>8</td><td>-T1:S1</td><td>-F1:1</td><td>1 mm²</td><td>rojo</td><td>893</td></tr>
+<tr><td>N</td><td>-W1:N</td><td>-X1:N</td><td>6 mm²</td><td>azul</td><td></td></tr>
+<tr><td>N</td><td>-X1:N</td><td>-Q1:3</td><td>2.5 mm²</td><td>azul</td><td>382</td></tr>
+<tr><td>N</td><td>-Q1:4</td><td>-T1:P2</td><td>2.5 mm²</td><td>azul</td><td>470</td></tr>
+<tr><td>PE</td><td>-W1:PE</td><td>-X1:PE</td><td>6 mm²</td><td>verde/amarillo</td><td></td></tr>
+<tr><td>PE</td><td>-A1:PE</td><td>-X1:PE</td><td>1.5 mm²</td><td>verde/amarillo</td><td>718</td></tr></tbody></table>
+<h3>Plan de bornero -X1</h3>
+<table><thead><tr><th>Borna</th><th>Interna</th><th>Externa</th><th>Nº cond.</th><th>Puentes</th><th>Avisos</th></tr></thead><tbody><tr><td>L</td><td>-Q1:1</td><td>-W1:L</td><td>2</td><td></td><td></td></tr>
+<tr><td>N</td><td>-Q1:3</td><td>-W1:N</td><td>N</td><td></td><td></td></tr>
+<tr><td>PE</td><td>-A1:PE</td><td>-W1:PE</td><td>PE</td><td></td><td></td></tr></tbody></table>
+<h3>Plan de bornero -X2</h3>
+<table><thead><tr><th>Borna</th><th>Interna</th><th>Externa</th><th>Nº cond.</th><th>Puentes</th><th>Avisos</th></tr></thead><tbody><tr><td>1</td><td>-F1:2 / -K2:13</td><td></td><td>5</td><td>6</td><td></td></tr>
+<tr><td>2</td><td>-A1:0V / -K1:A2</td><td></td><td>6</td><td>4</td><td></td></tr>
+<tr><td>3</td><td>-A1:DI1</td><td>-B1:OUT</td><td>7</td><td></td><td></td></tr>
+<tr><td>4</td><td></td><td>-B1:- / -Y1:-</td><td>6</td><td>2</td><td>2 conductores del lado de campo</td></tr>
+<tr><td>5</td><td>-K2:14</td><td>-Y1:+</td><td>3</td><td></td><td></td></tr>
+<tr><td>6</td><td></td><td>-B1:+</td><td>5</td><td>1</td><td></td></tr>
+<tr><td>7</td><td></td><td></td><td></td><td></td><td>borna sin uso</td></tr></tbody></table>
+<h2>7. Ocupación de canaletas</h2>
+<table><thead><tr><th>Canaleta</th><th>Ocupación</th><th>Estado</th></tr></thead><tbody><tr><td>ch1</td><td>4 % del máximo recomendado</td><td>ok</td></tr>
+<tr><td>ch2</td><td>2 % del máximo recomendado</td><td>ok</td></tr>
+<tr><td>ch3</td><td>1 % del máximo recomendado</td><td>ok</td></tr>
+<tr><td>cv1</td><td>3 % del máximo recomendado</td><td>ok</td></tr></tbody></table>
+<h2>8. Sincronización esquema ↔ gabinete</h2>
+<p>Sincronizado ✔</p>
