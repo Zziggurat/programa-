@@ -6,107 +6,214 @@
 <title>TableroStudio — Editor 3D</title>
 <style>
 	:root {
-		--panel: #1d2126;
-		--panel-borde: #30363d;
-		--texto: #e6e8ea;
-		--texto-suave: #9aa4ae;
+		--fondo: #14171a;
+		--panel: #1c2126;
+		--panel-2: #232930;
+		--borde: #313941;
+		--texto: #e8eaec;
+		--texto-suave: #98a2ac;
 		--acento: #4da3ff;
 		--error: #ff6b6b;
 		--aviso: #ffb454;
-		--ok: #7ad48a;
+		--ok: #63d68a;
 	}
 	* { box-sizing: border-box; }
-	body { margin: 0; font-family: system-ui, sans-serif; overflow: hidden; background: #14171a; color: var(--texto); }
-	#escena { position: fixed; inset: 0; }
+	body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; background: var(--fondo); color: var(--texto); font-size: 13px; }
+	#escena { position: fixed; inset: 46px 0 0 0; }
+	button { font: inherit; cursor: pointer; }
+	input, select { font: inherit; }
+
+	/* ---- Barra superior ---- */
+	#barra {
+		position: fixed; top: 0; left: 0; right: 0; height: 46px; z-index: 20;
+		display: flex; align-items: center; gap: 10px; padding: 0 12px;
+		background: var(--panel); border-bottom: 1px solid var(--borde);
+	}
+	#barra .marca { font-weight: 700; font-size: 14px; letter-spacing: .01em; }
+	#barra .marca span { color: var(--acento); }
+	#nombre-proyecto {
+		background: transparent; border: 1px solid transparent; border-radius: 7px;
+		color: var(--texto); padding: 5px 8px; width: 300px;
+	}
+	#nombre-proyecto:hover, #nombre-proyecto:focus { border-color: var(--borde); background: var(--panel-2); outline: none; }
+	#barra .sep { flex: 1; }
+	.boton {
+		background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto);
+		border-radius: 8px; padding: 6px 12px;
+	}
+	.boton:hover { background: #2b333c; }
+	.boton.primario { background: #2b4a6f; border-color: #3f6796; }
+	.boton.primario:hover { background: #33587f; }
+	.boton.peligro:hover { background: #5c2b2b; border-color: #8a4444; }
+	#chip-drc { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 12px; border: 1px solid var(--borde); background: var(--panel-2); }
+	#chip-drc .punto { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+	#chip-drc.con-errores .punto { background: var(--error); }
+	#chip-drc.con-avisos .punto { background: var(--aviso); }
+
+	/* ---- Paneles ---- */
 	.panel {
-		position: fixed; top: 0; bottom: 0; width: 300px; overflow-y: auto;
-		background: color-mix(in srgb, var(--panel) 92%, transparent);
-		border-color: var(--panel-borde); padding: 14px; font-size: 13px;
-		backdrop-filter: blur(4px);
+		position: fixed; top: 46px; bottom: 0; width: 306px; overflow-y: auto; z-index: 10;
+		background: color-mix(in srgb, var(--panel) 94%, transparent);
+		border-color: var(--borde); backdrop-filter: blur(5px);
 	}
-	#panel-izq { left: 0; border-right: 1px solid var(--panel-borde); }
-	#panel-der { right: 0; width: 280px; border-left: 1px solid var(--panel-borde); display: none; }
-	h1 { font-size: 15px; margin: 0 0 2px; }
-	h1 small { color: var(--texto-suave); font-weight: normal; }
-	h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--texto-suave); margin: 18px 0 6px; }
+	.panel::-webkit-scrollbar { width: 8px; }
+	.panel::-webkit-scrollbar-thumb { background: #333c45; border-radius: 4px; }
+	#panel-izq { left: 0; border-right: 1px solid var(--borde); }
+	#panel-der { right: 0; width: 300px; border-left: 1px solid var(--borde); display: none; padding: 14px; }
+
+	details { border-bottom: 1px solid var(--borde); }
+	details summary {
+		list-style: none; cursor: pointer; padding: 10px 14px; font-size: 11px;
+		text-transform: uppercase; letter-spacing: .08em; color: var(--texto-suave);
+		display: flex; justify-content: space-between; align-items: center; user-select: none;
+	}
+	details summary::after { content: '▾'; transition: transform .15s; }
+	details:not([open]) summary::after { transform: rotate(-90deg); }
+	details .contenido { padding: 2px 14px 12px; }
+
+	/* Catálogo */
+	.grupo-catalogo { margin: 6px 0 2px; color: var(--texto-suave); font-size: 11px; }
+	.item-catalogo {
+		display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+		background: transparent; border: 1px solid transparent; border-radius: 8px;
+		color: var(--texto); padding: 5px 7px;
+	}
+	.item-catalogo:hover { background: var(--panel-2); border-color: var(--borde); }
+	.item-catalogo .chip-color { width: 14px; height: 18px; border-radius: 3px; border: 1px solid #0006; flex: none; }
+	.item-catalogo .nombre { flex: 1; }
+	.item-catalogo .mas { color: var(--texto-suave); font-size: 15px; }
+
+	/* Listas */
 	ul { list-style: none; margin: 0; padding: 0; }
-	#lista-dispositivos li {
-		padding: 4px 8px; border-radius: 6px; cursor: pointer; display: flex; gap: 8px;
-	}
-	#lista-dispositivos li:hover { background: #262c33; }
+	#lista-dispositivos li { padding: 4px 8px; border-radius: 7px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+	#lista-dispositivos li:hover { background: var(--panel-2); }
 	#lista-dispositivos li.seleccionado { background: #29405c; }
-	#lista-dispositivos .des { font-weight: 600; min-width: 38px; }
-	#lista-dispositivos .desc { color: var(--texto-suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	#lista-dispositivos .des { font-weight: 600; min-width: 40px; }
+	#lista-dispositivos .desc { color: var(--texto-suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 	.hallazgo { padding: 3px 0 3px 14px; position: relative; color: var(--texto-suave); }
 	.hallazgo::before { content: '●'; position: absolute; left: 0; font-size: 9px; top: 6px; }
 	.hallazgo.error::before { color: var(--error); }
 	.hallazgo.aviso::before { color: var(--aviso); }
 	.hallazgo.ok::before { color: var(--ok); }
-	.barra { height: 6px; border-radius: 3px; background: #30363d; margin: 3px 0 8px; overflow: hidden; }
-	.barra > div { height: 100%; border-radius: 3px; background: var(--acento); }
-	.barra > div.excedida { background: var(--error); }
+	.barra-ocupacion { height: 6px; border-radius: 3px; background: var(--borde); margin: 3px 0 8px; overflow: hidden; }
+	.barra-ocupacion > div { height: 100%; border-radius: 3px; background: var(--acento); }
+	.barra-ocupacion > div.excedida { background: var(--error); }
+
+	/* Formularios */
+	.campo { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 3px 0; color: var(--texto-suave); }
+	.campo input[type=number] { width: 60px; }
+	input[type=number], input[type=text], select {
+		background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto);
+		border-radius: 7px; padding: 4px 7px;
+	}
+	input[type=number] { text-align: right; font-variant-numeric: tabular-nums; }
 	label.toggle { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; color: var(--texto-suave); }
-	#panel-der dl { margin: 0; }
+	.fila-estructura { display: flex; gap: 5px; align-items: center; margin: 3px 0; }
+	.fila-estructura input { width: 52px; }
+	.fila-estructura .id { width: 34px; color: var(--texto-suave); font-size: 12px; }
+	.fila-estructura button { background: none; border: none; color: var(--texto-suave); font-size: 14px; padding: 2px 5px; }
+	.fila-estructura button:hover { color: var(--error); }
+	.botonera { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+	.botonera .boton { padding: 4px 9px; font-size: 12px; }
+
+	/* Panel derecho (propiedades) */
+	#panel-der h1 { font-size: 17px; margin: 0; }
+	#panel-der .sub { color: var(--texto-suave); margin: 2px 0 10px; }
+	#panel-der dl { margin: 0 0 6px; }
 	#panel-der dt { color: var(--texto-suave); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-top: 10px; }
-	#panel-der dd { margin: 2px 0 0; }
-	.chip { display: inline-block; background: #262c33; border-radius: 4px; padding: 1px 6px; margin: 2px 2px 0 0; font-size: 12px; }
-	#ayuda { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); color: var(--texto-suave); font-size: 12px; background: color-mix(in srgb, var(--panel) 85%, transparent); padding: 6px 14px; border-radius: 8px; border: 1px solid var(--panel-borde); }
-	kbd { background: #262c33; border-radius: 4px; padding: 0 5px; }
-	.campo { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; color: var(--texto-suave); }
-	.campo input[type=number] { width: 58px; background: #262c33; border: 1px solid var(--panel-borde); color: var(--texto); border-radius: 6px; padding: 3px 6px; }
-	.campo select { background: #262c33; border: 1px solid var(--panel-borde); color: var(--texto); border-radius: 6px; padding: 3px 6px; }
-	#aplicar-dim { margin-top: 8px; width: 100%; background: #29405c; color: var(--texto); border: 1px solid #3b5c85; border-radius: 8px; padding: 7px 0; cursor: pointer; font-size: 13px; }
-	#aplicar-dim:hover { background: #315078; }
+	#panel-der dd { margin: 3px 0 0; }
+	#panel-der h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--texto-suave); margin: 16px 0 6px; border-top: 1px solid var(--borde); padding-top: 12px; }
+	.chip { display: inline-block; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 5px; padding: 1px 7px; margin: 2px 3px 0 0; font-size: 12px; }
+	.fila-cable { display: flex; align-items: center; gap: 6px; padding: 3px 0; color: var(--texto-suave); font-size: 12px; }
+	.fila-cable .num { font-weight: 700; color: var(--texto); min-width: 24px; }
+	.fila-cable .quitar { margin-left: auto; background: none; border: none; color: var(--texto-suave); font-size: 14px; }
+	.fila-cable .quitar:hover { color: var(--error); }
+	.form-cable { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+	.form-cable select { width: 100%; }
+	.form-cable .ancho-total { grid-column: 1 / -1; }
+
+	#ayuda {
+		position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 10;
+		color: var(--texto-suave); font-size: 12px; text-align: center;
+		background: color-mix(in srgb, var(--panel) 88%, transparent);
+		padding: 6px 14px; border-radius: 9px; border: 1px solid var(--borde);
+	}
 </style>
 </head>
 <body>
+
+<header id="barra">
+	<div class="marca">⚡ Tablero<span>Studio</span></div>
+	<input id="nombre-proyecto" title="Nombre del proyecto">
+	<div class="sep"></div>
+	<div id="chip-drc" title="Verificación eléctrica en vivo"><span class="punto"></span><span id="chip-drc-texto">DRC</span></div>
+	<button class="boton" id="btn-nuevo" title="Vaciar la placa y empezar de cero">Nuevo</button>
+	<button class="boton" id="btn-abrir" title="Abrir un proyecto .tablero.json">Abrir…</button>
+	<input type="file" id="archivo-abrir" accept=".json" hidden>
+	<button class="boton" id="btn-guardar" title="Descargar el proyecto como archivo">Guardar</button>
+	<button class="boton primario" id="btn-dossier" title="Descargar el dossier técnico (BOM, cables, borneros, DRC)">Exportar dossier</button>
+</header>
+
 <div id="escena"></div>
 
 <aside id="panel-izq" class="panel">
-	<h1>TableroStudio <small>· editor 3D</small></h1>
-	<div id="nombre-proyecto" style="color:var(--texto-suave)"></div>
-
-	<h2>Dispositivos</h2>
-	<ul id="lista-dispositivos"></ul>
-
-	<h2>Verificación eléctrica (DRC)</h2>
-	<ul id="lista-drc"></ul>
-
-	<h2>Ocupación de canaletas</h2>
-	<div id="ocupacion"></div>
-
-	<h2>Cableado</h2>
-	<div id="resumen-cables" style="color:var(--texto-suave)"></div>
-
-	<h2>Gabinete</h2>
-	<div class="campo">
-		<label for="dim-ancho">Ancho de placa</label>
-		<span><input type="number" id="dim-ancho" min="20" max="150" step="1"> cm</span>
-	</div>
-	<div class="campo">
-		<label for="dim-alto">Alto de placa</label>
-		<span><input type="number" id="dim-alto" min="30" max="220" step="1"> cm</span>
-	</div>
-	<div class="campo">
-		<label for="dim-canaleta">Canaleta ranurada</label>
-		<select id="dim-canaleta">
-			<option value="25">25 × 60 mm</option>
-			<option value="40" selected>40 × 60 mm</option>
-			<option value="60">60 × 80 mm</option>
-			<option value="80">80 × 80 mm</option>
-		</select>
-	</div>
-	<button id="aplicar-dim">Aplicar cambios</button>
-
-	<h2>Vista</h2>
-	<label class="toggle"><input type="checkbox" id="ver-cables" checked> Cables</label>
-	<label class="toggle"><input type="checkbox" id="ver-tapas" checked> Tapas de canaletas</label>
-	<label class="toggle"><input type="checkbox" id="ver-etiquetas" checked> Designaciones</label>
+	<details open>
+		<summary>Catálogo — clic para añadir</summary>
+		<div class="contenido" id="catalogo"></div>
+	</details>
+	<details open>
+		<summary>Dispositivos <span id="contador-dispositivos"></span></summary>
+		<div class="contenido"><ul id="lista-dispositivos"></ul></div>
+	</details>
+	<details open>
+		<summary>Verificación eléctrica</summary>
+		<div class="contenido"><ul id="lista-drc"></ul></div>
+	</details>
+	<details>
+		<summary>Canaletas y cableado</summary>
+		<div class="contenido">
+			<div id="ocupacion"></div>
+			<div id="resumen-cables" style="color:var(--texto-suave)"></div>
+		</div>
+	</details>
+	<details>
+		<summary>Gabinete y estructura</summary>
+		<div class="contenido">
+			<div class="campo"><label for="dim-ancho">Ancho de placa</label><span><input type="number" id="dim-ancho" min="20" max="150" step="1"> cm</span></div>
+			<div class="campo"><label for="dim-alto">Alto de placa</label><span><input type="number" id="dim-alto" min="30" max="220" step="1"> cm</span></div>
+			<div class="campo"><label for="dim-canaleta">Canaleta ranurada</label>
+				<select id="dim-canaleta">
+					<option value="25">25 × 60 mm</option>
+					<option value="40" selected>40 × 60 mm</option>
+					<option value="60">60 × 80 mm</option>
+					<option value="80">80 × 80 mm</option>
+				</select>
+			</div>
+			<div class="grupo-catalogo">Rieles DIN — x · y · largo (mm)</div>
+			<div id="lista-rieles"></div>
+			<div class="grupo-catalogo">Canaletas — x · y · largo (mm)</div>
+			<div id="lista-canaletas"></div>
+			<div class="botonera">
+				<button class="boton" id="btn-add-riel">+ Riel</button>
+				<button class="boton" id="btn-add-can-h">+ Canaleta ─</button>
+				<button class="boton" id="btn-add-can-v">+ Canaleta │</button>
+				<button class="boton primario" id="aplicar-dim">Aplicar</button>
+			</div>
+		</div>
+	</details>
+	<details>
+		<summary>Vista</summary>
+		<div class="contenido">
+			<label class="toggle"><input type="checkbox" id="ver-cables" checked> Cables</label>
+			<label class="toggle"><input type="checkbox" id="ver-tapas" checked> Tapas de canaletas</label>
+			<label class="toggle"><input type="checkbox" id="ver-etiquetas" checked> Designaciones</label>
+		</div>
+	</details>
 </aside>
 
 <aside id="panel-der" class="panel"></aside>
 
-<div id="ayuda">Arrastra la vista para orbitar · rueda para zoom · clic en un aparato para seleccionarlo · arrástralo por su riel para moverlo</div>
+<div id="ayuda">Orbitar: arrastrar fondo · Zoom: rueda · Seleccionar: clic en aparato · Mover: arrastrarlo (se ancla al riel) · Eliminar: tecla Supr</div>
 
 <script type="module" src="./main.ts"></script>
 </body>

@@ -6,35 +6,9 @@
  * hacia el frente. Todo se centra en el origen para orbitar cómodo.
  */
 import * as THREE from 'three';
-import { Colocacion, Dispositivo, Gabinete, Proyecto, TipoDispositivo } from '../src/modelo/tipos.js';
+import { Colocacion, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { RutaConductor } from '../src/motores/ruteo.js';
-
-export interface AparienciaTipo { color: number; fondo: number; profundidad: number }
-
-export const APARIENCIA: Record<TipoDispositivo, AparienciaTipo> = {
-	plc:           { color: 0x23272b, fondo: 0x16181b, profundidad: 62 },
-	fuente:        { color: 0x9aa0a6, fondo: 0x7d838a, profundidad: 70 },
-	transformador: { color: 0x86673f, fondo: 0x6b5232, profundidad: 82 },
-	contactor:     { color: 0x3c4248, fondo: 0x2c3136, profundidad: 78 },
-	rele:          { color: 0x4a545c, fondo: 0x353d44, profundidad: 66 },
-	disyuntor:     { color: 0xe8e8e4, fondo: 0xcfcfca, profundidad: 74 },
-	guardamotor:   { color: 0xd9d9d4, fondo: 0xbcbcb6, profundidad: 78 },
-	diferencial:   { color: 0xe8e8e4, fondo: 0xcfcfca, profundidad: 74 },
-	fusible:       { color: 0x5d666e, fondo: 0x49525a, profundidad: 58 },
-	seccionador:   { color: 0xcf3b3b, fondo: 0xa72f2f, profundidad: 80 },
-	variador:      { color: 0x2e3338, fondo: 0x1f2428, profundidad: 90 },
-	motor:         { color: 0x2c5aa0, fondo: 0x234a85, profundidad: 90 },
-	pulsador:      { color: 0x505a62, fondo: 0x3d474f, profundidad: 40 },
-	selector:      { color: 0x505a62, fondo: 0x3d474f, profundidad: 40 },
-	piloto:        { color: 0x505a62, fondo: 0x3d474f, profundidad: 40 },
-	sensor:        { color: 0xb0b6bc, fondo: 0x969ca2, profundidad: 35 },
-	valvula:       { color: 0x6b7b8c, fondo: 0x596876, profundidad: 45 },
-	resistencia:   { color: 0x8c6d5a, fondo: 0x745a49, profundidad: 40 },
-	condensador:   { color: 0x707a83, fondo: 0x5c666f, profundidad: 45 },
-	bornero:       { color: 0xd97b29, fondo: 0xb96317, profundidad: 46 },
-	cable:         { color: 0x444444, fondo: 0x333333, profundidad: 10 },
-	otro:          { color: 0x777f87, fondo: 0x626a72, profundidad: 50 },
-};
+import { construirAparato3D } from './dispositivos3d.js';
 
 export const COLOR_CABLE: Record<string, number> = {
 	'negro': 0x20242a,
@@ -109,6 +83,7 @@ function construirCaja(g: Gabinete): THREE.Group {
 		new THREE.BoxGeometry(g.ancho, g.alto, 3),
 		new THREE.MeshStandardMaterial({ color: 0xd8d9d2, metalness: 0.35, roughness: 0.5 }),
 	);
+	placa.receiveShadow = true;
 	placa.position.z = -1.5;
 	grupo.add(placa);
 
@@ -291,45 +266,14 @@ export function construirDispositivo(
 	aEscena: Escenario['aEscena'],
 	etiquetas: THREE.Object3D[],
 ): THREE.Group {
-	const apariencia = APARIENCIA[d.tipo] ?? APARIENCIA.otro;
-	const grupo = new THREE.Group();
+	const { grupo, profundidad } = construirAparato3D(d, col);
 	grupo.userData.dispositivoId = d.id;
-
-	const cuerpo = new THREE.Mesh(
-		new THREE.BoxGeometry(col.ancho, col.alto, apariencia.profundidad),
-		new THREE.MeshStandardMaterial({ color: apariencia.color, roughness: 0.6 }),
-	);
-	cuerpo.position.z = apariencia.profundidad / 2;
-	cuerpo.userData.dispositivoId = d.id;
-	grupo.add(cuerpo);
-
-	// Franja frontal (le da lectura de "aparato" en vez de caja).
-	const frente = new THREE.Mesh(
-		new THREE.BoxGeometry(col.ancho * 0.72, col.alto * 0.5, 2),
-		new THREE.MeshStandardMaterial({ color: apariencia.fondo, roughness: 0.5 }),
-	);
-	frente.position.z = apariencia.profundidad + 1;
-	frente.userData.dispositivoId = d.id;
-	grupo.add(frente);
-
-	// Bornes: pequeños conectores arriba y abajo del frente.
-	const nBornes = Math.min(d.bornes.length, Math.max(2, Math.floor(col.ancho / 12)));
-	const born = new THREE.MeshStandardMaterial({ color: 0x2b2f33, metalness: 0.5, roughness: 0.4 });
-	for (let i = 0; i < nBornes; i++) {
-		const bx = (i + 0.5) / nBornes * col.ancho - col.ancho / 2;
-		for (const dy of [col.alto / 2 - 4, -col.alto / 2 + 4]) {
-			const b = new THREE.Mesh(new THREE.BoxGeometry(6, 8, 6), born);
-			b.position.set(bx, dy, apariencia.profundidad - 3);
-			b.userData.dispositivoId = d.id;
-			grupo.add(b);
-		}
-	}
 
 	// Etiqueta con la designación sobre el aparato.
 	if (d.designacion) {
 		const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: textura(d.designacion), depthTest: false }));
-		sprite.scale.set(56, 21, 1);
-		sprite.position.set(0, col.alto / 2 + 16, apariencia.profundidad);
+		sprite.scale.set(44, 16.5, 1);
+		sprite.position.set(0, col.alto / 2 + 13, profundidad);
 		etiquetas.push(sprite);
 		grupo.add(sprite);
 	}

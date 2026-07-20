@@ -53,21 +53,29 @@ npm run ejemplo # genera la documentación de un tablero real en ejemplo/salida/
 
 ### Editor 3D (`app/`)
 
-Visor/editor 3D del gabinete al estilo de los configuradores de Schneider eDesign o
-WAGO Smart Designer, conectado en vivo con los motores del núcleo:
+Configurador 3D completo del gabinete, al estilo de Schneider eDesign o WAGO Smart
+Designer, conectado en vivo con los motores del núcleo:
 
-- Gabinete con placa de montaje, rieles DIN y **canaletas ranuradas de PVC** (ductos
-  ranurados con sus dientes, por donde cada cable sale justo en su punto de conexión),
-  con tapa translúcida, y todos los aparatos colocados con su designación IEC.
-- **Dimensiones personalizables**: ancho y alto de la placa en cm y perfil de canaleta
-  (25×60 a 80×80 mm); rieles y canaletas se estiran y todo se recalcula al aplicar.
-- Los **cables se dibujan siguiendo la ruta real** calculada por el motor de ruteo
-  (bajada del aparato → canaleta → subida al destino).
-- Clic en un aparato → ficha técnica (referencia, bornes, conductores, metros de cable).
-- **Arrastra un aparato por su riel** y al soltarlo se recalculan rutas, longitudes,
-  ocupación de canaletas y DRC al instante.
-- Panel izquierdo: lista de dispositivos, hallazgos DRC en vivo, ocupación de canaletas
-  y total de cable.
+- **Catálogo de aparatos** (15 plantillas: disyuntores, diferencial, guardamotor,
+  contactor, relés, variador, PLC, fuente, transformador, borneros, portafusible):
+  un clic y el aparato se coloca en el primer hueco libre de un riel, con su
+  designación IEC correlativa.
+- **Cableado desde la ficha del aparato**: elige borne origen, aparato y borne destino,
+  sección y color → el cable se rutea por las canaletas al instante; también se
+  pueden quitar cables uno a uno.
+- **Modelos 3D detallados por tipo**: palanca y mirilla en disyuntores, tornillos de
+  borne, peines y LEDs en el PLC, aletas de disipación, núcleo y bobina del
+  transformador, bloques individuales con borna de tierra en los borneros…
+- **Canaletas ranuradas de PVC** con dientes y tapa translúcida; los cables entran por
+  las ranuras justo donde conectan.
+- **Estructura editable**: placa en cm, perfil de canaleta, y rieles/canaletas con
+  posición y largo en mm — añadir, mover, quitar.
+- **Arrastre con anclaje a riel** (también entre rieles), tecla Supr para eliminar,
+  Esc para deseleccionar; todo se re-rutea y verifica al soltar.
+- **Guardar / Abrir** proyecto como `.tablero.json`, autoguardado en el navegador,
+  botón **Exportar dossier** (BOM, cables, borneros, referencias cruzadas y DRC en un
+  HTML), y verificación eléctrica en vivo en la barra superior.
+- Iluminación PBR con sombras suaves y entorno de estudio.
 
 El proyecto de ejemplo (`ejemplo/tablero-ejemplo.ts`) modela un tablero de control típico:
 acometida 220 V → interruptor automático → transformador 220/24 V → fusible → controlador,
