@@ -85,6 +85,19 @@ function reconstruirCables(): void {
 }
 reconstruirCables();
 
+/** Desmonta y vuelve a construir todo el gabinete (tras cambiar sus dimensiones). */
+function montarEscenario(): void {
+	escena.remove(escenario.raiz);
+	escenario = construirEscenario(proyecto);
+	escena.add(escenario.raiz);
+	reconstruirCables();
+	const tapasVisibles = (document.getElementById('ver-tapas') as HTMLInputElement).checked;
+	for (const t of escenario.tapas) t.visible = tapasVisibles;
+	const etiquetasVisibles = (document.getElementById('ver-etiquetas') as HTMLInputElement).checked;
+	for (const t of escenario.etiquetas) t.visible = etiquetasVisibles;
+	suelo.position.y = -(proyecto.gabinete!.alto / 2 + 40);
+}
+
 /* --------------------------- Paneles laterales --------------------------- */
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -251,6 +264,49 @@ renderer.domElement.addEventListener('pointerup', () => {
 	pintarPaneles();
 	pintarSeleccion();
 });
+
+/* --------------------- Dimensiones del gabinete (cm) --------------------- */
+
+const inputAncho = $('dim-ancho') as HTMLInputElement;
+const inputAlto = $('dim-alto') as HTMLInputElement;
+const selectCanaleta = $('dim-canaleta') as HTMLSelectElement;
+inputAncho.value = String(Math.round(proyecto.gabinete!.ancho / 10));
+inputAlto.value = String(Math.round(proyecto.gabinete!.alto / 10));
+
+($('aplicar-dim') as HTMLButtonElement).onclick = () => {
+	const g = proyecto.gabinete!;
+	const anchoMm = Math.min(Math.max(Number(inputAncho.value) || 38, 20), 150) * 10;
+	const altoMm = Math.min(Math.max(Number(inputAlto.value) || 58, 30), 220) * 10;
+	const dAncho = anchoMm - g.ancho;
+	const dAlto = altoMm - g.alto;
+	g.ancho = anchoMm;
+	g.alto = altoMm;
+
+	// Rieles y canaletas horizontales se estiran con el ancho; las verticales con el alto.
+	for (const riel of g.rieles) riel.largo = Math.max(120, riel.largo + dAncho);
+	for (const can of g.canaletas) {
+		can.largo = Math.max(120, can.largo + (can.orientacion === 'h' ? dAncho : dAlto));
+	}
+
+	// Perfil de canaleta ranurada elegido (ancho × alto en mm).
+	const anchoCanaleta = Number(selectCanaleta.value);
+	const altoCanaleta = anchoCanaleta >= 60 ? 80 : 60;
+	for (const can of g.canaletas) {
+		can.ancho = anchoCanaleta;
+		can.alto = altoCanaleta;
+	}
+
+	// Mantener los aparatos dentro de la placa.
+	for (const col of g.colocaciones) {
+		col.x = Math.min(Math.max(col.x, 0), Math.max(0, g.ancho - col.ancho));
+		col.y = Math.min(Math.max(col.y, 0), Math.max(0, g.alto - col.alto));
+	}
+
+	seleccionar(undefined);
+	recalcular();
+	montarEscenario();
+	pintarPaneles();
+};
 
 /* ------------------------------- Vista ------------------------------- */
 

@@ -52,6 +52,11 @@
 	.chip { display: inline-block; background: #262c33; border-radius: 4px; padding: 1px 6px; margin: 2px 2px 0 0; font-size: 12px; }
 	#ayuda { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); color: var(--texto-suave); font-size: 12px; background: color-mix(in srgb, var(--panel) 85%, transparent); padding: 6px 14px; border-radius: 8px; border: 1px solid var(--panel-borde); }
 	kbd { background: #262c33; border-radius: 4px; padding: 0 5px; }
+	.campo { display: flex; justify-content: space-between; align-items: center; padding: 3px 0; color: var(--texto-suave); }
+	.campo input[type=number] { width: 58px; background: #262c33; border: 1px solid var(--panel-borde); color: var(--texto); border-radius: 6px; padding: 3px 6px; }
+	.campo select { background: #262c33; border: 1px solid var(--panel-borde); color: var(--texto); border-radius: 6px; padding: 3px 6px; }
+	#aplicar-dim { margin-top: 8px; width: 100%; background: #29405c; color: var(--texto); border: 1px solid #3b5c85; border-radius: 8px; padding: 7px 0; cursor: pointer; font-size: 13px; }
+	#aplicar-dim:hover { background: #315078; }
 </style>
 </head>
 <body>
@@ -72,6 +77,26 @@
 
 	<h2>Cableado</h2>
 	<div id="resumen-cables" style="color:var(--texto-suave)"></div>
+
+	<h2>Gabinete</h2>
+	<div class="campo">
+		<label for="dim-ancho">Ancho de placa</label>
+		<span><input type="number" id="dim-ancho" min="20" max="150" step="1"> cm</span>
+	</div>
+	<div class="campo">
+		<label for="dim-alto">Alto de placa</label>
+		<span><input type="number" id="dim-alto" min="30" max="220" step="1"> cm</span>
+	</div>
+	<div class="campo">
+		<label for="dim-canaleta">Canaleta ranurada</label>
+		<select id="dim-canaleta">
+			<option value="25">25 × 60 mm</option>
+			<option value="40" selected>40 × 60 mm</option>
+			<option value="60">60 × 80 mm</option>
+			<option value="80">80 × 80 mm</option>
+		</select>
+	</div>
+	<button id="aplicar-dim">Aplicar cambios</button>
 
 	<h2>Vista</h2>
 	<label class="toggle"><input type="checkbox" id="ver-cables" checked> Cables</label>

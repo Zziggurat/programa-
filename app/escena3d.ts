@@ -152,42 +152,76 @@ function construirRiel(
 	return grupo;
 }
 
+/**
+ * Canaleta ranurada de PVC (ducto ranurado): base atornillada a la placa y dos paredes
+ * formadas por "dientes" con ranuras intermedias, por donde cada cable sale hacia el
+ * aparato justo en su punto de conexión. Tapa translúcida desmontable.
+ */
 function construirCanaleta(
 	can: { id: string; x: number; y: number; largo: number; orientacion: 'h' | 'v'; ancho: number; alto: number },
 	aEscena: Escenario['aEscena'],
 	tapas: THREE.Object3D[],
 ): THREE.Group {
 	const grupo = new THREE.Group();
-	const gris = new THREE.MeshStandardMaterial({ color: 0x8f979e, roughness: 0.85 });
-	const grisTapa = new THREE.MeshStandardMaterial({
-		color: 0xa6adb4, roughness: 0.8, transparent: true, opacity: 0.45,
+	const pvc = new THREE.MeshStandardMaterial({ color: 0xb0b6ba, roughness: 0.75 });
+	const pvcTapa = new THREE.MeshStandardMaterial({
+		color: 0xc2c8cc, roughness: 0.7, transparent: true, opacity: 0.4, depthWrite: false,
 	});
 	const esH = can.orientacion === 'h';
 	const largoX = esH ? can.largo : can.ancho;
 	const largoY = esH ? can.ancho : can.largo;
 
-	// Cuerpo: dos paredes ranuradas (simplificadas como paredes llenas) + base.
-	const base = new THREE.Mesh(new THREE.BoxGeometry(largoX, largoY, 2), gris);
-	base.position.z = 1;
+	const DIENTE = 6;   // ancho de cada diente (mm)
+	const RANURA = 6;   // ancho de cada ranura (mm)
+	const ESPESOR = 2;  // espesor de pared
+
+	// Base perforada (simplificada como placa llena).
+	const base = new THREE.Mesh(new THREE.BoxGeometry(largoX, largoY, ESPESOR), pvc);
+	base.position.z = ESPESOR / 2;
 	grupo.add(base);
-	const pared = (dx: number, dy: number) => {
-		const m = new THREE.Mesh(
-			new THREE.BoxGeometry(esH ? can.largo : 3, esH ? 3 : can.largo, can.alto),
-			gris,
+
+	// Paredes ranuradas: una sola geometría fusionada por pared (dientes + zócalo).
+	const paredRanurada = (lado: -1 | 1): THREE.Mesh => {
+		const cajas: THREE.BoxGeometry[] = [];
+		const trasladar = (g: THREE.BoxGeometry, a: number, z: number) => {
+			// `a` corre a lo largo de la canaleta; el lado fija la coordenada transversal.
+			const t = (largoY / 2 - ESPESOR / 2) * lado;
+			if (esH) g.translate(a, t, z);
+			else g.translate((largoX / 2 - ESPESOR / 2) * lado, a, z);
+			cajas.push(g);
+		};
+		const largo = can.largo;
+		// Zócalo continuo abajo (de él nacen los dientes).
+		const zocaloAlto = 8;
+		trasladar(
+			esH
+				? new THREE.BoxGeometry(largo, ESPESOR, zocaloAlto)
+				: new THREE.BoxGeometry(ESPESOR, largo, zocaloAlto),
+			0,
+			ESPESOR + zocaloAlto / 2,
 		);
-		m.position.set(dx, dy, can.alto / 2);
-		grupo.add(m);
+		// Dientes periódicos hasta el borde superior.
+		const alturaDiente = can.alto - ESPESOR - zocaloAlto;
+		const paso = DIENTE + RANURA;
+		const n = Math.floor((largo - RANURA) / paso);
+		const inicio = -((n - 1) * paso) / 2;
+		for (let i = 0; i < n; i++) {
+			trasladar(
+				esH
+					? new THREE.BoxGeometry(DIENTE, ESPESOR, alturaDiente)
+					: new THREE.BoxGeometry(ESPESOR, DIENTE, alturaDiente),
+				inicio + i * paso,
+				ESPESOR + zocaloAlto + alturaDiente / 2,
+			);
+		}
+		const geometria = fusionarCajas(cajas);
+		return new THREE.Mesh(geometria, pvc);
 	};
-	if (esH) {
-		pared(0, largoY / 2 - 1.5);
-		pared(0, -largoY / 2 + 1.5);
-	} else {
-		pared(largoX / 2 - 1.5, 0);
-		pared(-largoX / 2 + 1.5, 0);
-	}
+	grupo.add(paredRanurada(1));
+	grupo.add(paredRanurada(-1));
 
 	// Tapa translúcida para poder ver los cables.
-	const tapa = new THREE.Mesh(new THREE.BoxGeometry(largoX, largoY, 2), grisTapa);
+	const tapa = new THREE.Mesh(new THREE.BoxGeometry(largoX, largoY, 2), pvcTapa);
 	tapa.position.z = can.alto + 1;
 	grupo.add(tapa);
 	tapas.push(tapa);
@@ -197,6 +231,37 @@ function construirCanaleta(
 	const c = aEscena(cx, cy, 0);
 	grupo.position.set(c.x, c.y, 0);
 	return grupo;
+}
+
+/** Fusiona varias BoxGeometry ya trasladadas en una sola geometría (una pared = un draw call). */
+function fusionarCajas(cajas: THREE.BoxGeometry[]): THREE.BufferGeometry {
+	let totalPos = 0;
+	let totalIdx = 0;
+	for (const c of cajas) {
+		totalPos += c.attributes.position.count;
+		totalIdx += c.index!.count;
+	}
+	const pos = new Float32Array(totalPos * 3);
+	const norm = new Float32Array(totalPos * 3);
+	const idx = new Uint32Array(totalIdx);
+	let pOff = 0;
+	let iOff = 0;
+	let base = 0;
+	for (const c of cajas) {
+		pos.set(c.attributes.position.array as Float32Array, pOff * 3);
+		norm.set(c.attributes.normal.array as Float32Array, pOff * 3);
+		const ci = c.index!.array;
+		for (let i = 0; i < ci.length; i++) idx[iOff + i] = ci[i] + base;
+		iOff += ci.length;
+		base += c.attributes.position.count;
+		pOff += c.attributes.position.count;
+		c.dispose();
+	}
+	const g = new THREE.BufferGeometry();
+	g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+	g.setAttribute('normal', new THREE.BufferAttribute(norm, 3));
+	g.setIndex(new THREE.BufferAttribute(idx, 1));
+	return g;
 }
 
 /* ------------------------------ Dispositivos ------------------------------ */
@@ -298,12 +363,16 @@ export function construirCables(
 
 		const puntos: THREE.Vector3[] = [];
 		const camino = ruta.camino;
-		// Origen: frente del aparato; luego el recorrido por canaleta a Z_CABLE; destino igual.
+		const ultimo = camino.length - 1;
+		// Origen: frente del aparato → cae por una ranura de la pared dentada (punto de paso
+		// sobre el borde) → recorre la canaleta a Z_CABLE → sube por otra ranura al destino.
 		puntos.push(aEscena(camino[0].x, camino[0].y, 40));
-		for (let i = 1; i < camino.length - 1; i++) {
+		puntos.push(aEscena(camino[1].x, camino[1].y, 52));
+		for (let i = 1; i < ultimo; i++) {
 			puntos.push(aEscena(camino[i].x + desfase * 0.3, camino[i].y + desfase * 0.3, Z_CABLE + desfase));
 		}
-		puntos.push(aEscena(camino[camino.length - 1].x, camino[camino.length - 1].y, 40));
+		puntos.push(aEscena(camino[ultimo - 1].x, camino[ultimo - 1].y, 52));
+		puntos.push(aEscena(camino[ultimo].x, camino[ultimo].y, 40));
 
 		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.08);
 		const tubo = new THREE.Mesh(

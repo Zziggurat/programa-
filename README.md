@@ -21,13 +21,34 @@ ocho motores independientes y testeados:
 | Sincronización | `src/motores/sincronizacion.ts` | Esquema ↔ placa de montaje: faltantes, sobrantes, solapes, fuera de placa |
 | Documentación | `src/motores/documentacion.ts` | BOM, lista de conductores, planes de borneros, informe HTML completo, exportación CSV |
 
-## Probarlo
+## Cómo ver y probar el programa
+
+**Opción A — sin instalar nada (un clic):** cada vez que avanza el desarrollo se publica
+una versión jugable del editor 3D como página web en Claude:
+<https://claude.ai/code/artifact/69527c7e-71c7-4635-99be-453757e6efb0>
+(se abre en el navegador; también aparece en la galería de *Artifacts* de claude.ai/code).
+
+**Opción B — en tu PC (recomendada para desarrollo):**
+
+1. Instala [Node.js LTS](https://nodejs.org/es) (botón verde, siguiente-siguiente).
+2. Descarga este repositorio: botón verde **Code → Download ZIP** en GitHub (o
+   `git clone https://github.com/Zziggurat/programa-.git`) y descomprímelo.
+3. Abre una terminal **dentro de la carpeta** del proyecto (en Windows: clic derecho →
+   "Abrir en Terminal") y ejecuta:
 
 ```bash
-npm install
+npm install     # una sola vez, descarga las dependencias
+npm run editor  # arranca el editor 3D
+```
+
+4. La terminal te mostrará una dirección tipo `http://localhost:5173/` — ábrela en el
+   navegador. Eso es el programa.
+
+Otros comandos útiles:
+
+```bash
 npm test        # 22 tests de los motores
 npm run ejemplo # genera la documentación de un tablero real en ejemplo/salida/
-npm run editor  # abre el editor 3D del gabinete en el navegador (Vite + Three.js)
 ```
 
 ### Editor 3D (`app/`)
@@ -35,8 +56,11 @@ npm run editor  # abre el editor 3D del gabinete en el navegador (Vite + Three.j
 Visor/editor 3D del gabinete al estilo de los configuradores de Schneider eDesign o
 WAGO Smart Designer, conectado en vivo con los motores del núcleo:
 
-- Gabinete con placa de montaje, rieles DIN, canaletas con tapa translúcida y todos los
-  aparatos colocados, con su designación IEC.
+- Gabinete con placa de montaje, rieles DIN y **canaletas ranuradas de PVC** (ductos
+  ranurados con sus dientes, por donde cada cable sale justo en su punto de conexión),
+  con tapa translúcida, y todos los aparatos colocados con su designación IEC.
+- **Dimensiones personalizables**: ancho y alto de la placa en cm y perfil de canaleta
+  (25×60 a 80×80 mm); rieles y canaletas se estiran y todo se recalcula al aplicar.
 - Los **cables se dibujan siguiendo la ruta real** calculada por el motor de ruteo
   (bajada del aparato → canaleta → subida al destino).
 - Clic en un aparato → ficha técnica (referencia, bornes, conductores, metros de cable).
