@@ -27,7 +27,23 @@ ocho motores independientes y testeados:
 npm install
 npm test        # 22 tests de los motores
 npm run ejemplo # genera la documentación de un tablero real en ejemplo/salida/
+npm run editor  # abre el editor 3D del gabinete en el navegador (Vite + Three.js)
 ```
+
+### Editor 3D (`app/`)
+
+Visor/editor 3D del gabinete al estilo de los configuradores de Schneider eDesign o
+WAGO Smart Designer, conectado en vivo con los motores del núcleo:
+
+- Gabinete con placa de montaje, rieles DIN, canaletas con tapa translúcida y todos los
+  aparatos colocados, con su designación IEC.
+- Los **cables se dibujan siguiendo la ruta real** calculada por el motor de ruteo
+  (bajada del aparato → canaleta → subida al destino).
+- Clic en un aparato → ficha técnica (referencia, bornes, conductores, metros de cable).
+- **Arrastra un aparato por su riel** y al soltarlo se recalculan rutas, longitudes,
+  ocupación de canaletas y DRC al instante.
+- Panel izquierdo: lista de dispositivos, hallazgos DRC en vivo, ocupación de canaletas
+  y total de cable.
 
 El proyecto de ejemplo (`ejemplo/tablero-ejemplo.ts`) modela un tablero de control típico:
 acometida 220 V → interruptor automático → transformador 220/24 V → fusible → controlador,
@@ -48,12 +64,14 @@ y un gabinete de 400×600 mm con rieles DIN y canaletas.
 
 ## Hoja de ruta
 
-1. **v0.2 — Editor gráfico** (web, SVG + canvas): dibujar hojas, colocar símbolos, trazar
-   conductores; vista del gabinete con arrastrar-y-soltar sobre rieles.
-2. **v0.3 — Librería de símbolos**: conversor de los 7.279 símbolos `.elmt` de QElectroTech
+1. ~~v0.2 — Editor 3D del gabinete~~ ✔ primera versión en `app/` (falta: añadir/quitar
+   aparatos desde un catálogo, mover entre rieles, editar canaletas, guardar el proyecto).
+2. **v0.25 — Editor 2D de esquemas** (SVG): dibujar hojas, colocar símbolos, trazar
+   conductores — el complemento eléctrico del editor 3D.
+3. **v0.3 — Librería de símbolos**: conversor de los 7.279 símbolos `.elmt` de QElectroTech
    (XML, licencia libre) a SVG/JSON para no dibujar nada desde cero.
-3. **v0.4 — Cables multiconductor y mangueras**: agrupar conductores de campo en cables
+4. **v0.4 — Cables multiconductor y mangueras**: agrupar conductores de campo en cables
    `W`, calcular longitudes al campo con puntos de paso.
-4. **v0.5 — Exportaciones**: PDF del dossier completo, DXF del gabinete
+5. **v0.5 — Exportaciones**: PDF del dossier completo, DXF del gabinete
    (en `sources/createdxf.cpp` de QET hay una referencia de cómo escribir DXF a mano).
-5. **v1.0 — Empaquetado** como aplicación de escritorio (Tauri/Electron).
+6. **v1.0 — Empaquetado** como aplicación de escritorio (Tauri/Electron).

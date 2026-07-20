@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TableroStudio — Editor 3D</title>
+<style>
+	:root {
+		--panel: #1d2126;
+		--panel-borde: #30363d;
+		--texto: #e6e8ea;
+		--texto-suave: #9aa4ae;
+		--acento: #4da3ff;
+		--error: #ff6b6b;
+		--aviso: #ffb454;
+		--ok: #7ad48a;
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; font-family: system-ui, sans-serif; overflow: hidden; background: #14171a; color: var(--texto); }
+	#escena { position: fixed; inset: 0; }
+	.panel {
+		position: fixed; top: 0; bottom: 0; width: 300px; overflow-y: auto;
+		background: color-mix(in srgb, var(--panel) 92%, transparent);
+		border-color: var(--panel-borde); padding: 14px; font-size: 13px;
+		backdrop-filter: blur(4px);
+	}
+	#panel-izq { left: 0; border-right: 1px solid var(--panel-borde); }
+	#panel-der { right: 0; width: 280px; border-left: 1px solid var(--panel-borde); display: none; }
+	h1 { font-size: 15px; margin: 0 0 2px; }
+	h1 small { color: var(--texto-suave); font-weight: normal; }
+	h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--texto-suave); margin: 18px 0 6px; }
+	ul { list-style: none; margin: 0; padding: 0; }
+	#lista-dispositivos li {
+		padding: 4px 8px; border-radius: 6px; cursor: pointer; display: flex; gap: 8px;
+	}
+	#lista-dispositivos li:hover { background: #262c33; }
+	#lista-dispositivos li.seleccionado { background: #29405c; }
+	#lista-dispositivos .des { font-weight: 600; min-width: 38px; }
+	#lista-dispositivos .desc { color: var(--texto-suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.hallazgo { padding: 3px 0 3px 14px; position: relative; color: var(--texto-suave); }
+	.hallazgo::before { content: '●'; position: absolute; left: 0; font-size: 9px; top: 6px; }
+	.hallazgo.error::before { color: var(--error); }
+	.hallazgo.aviso::before { color: var(--aviso); }
+	.hallazgo.ok::before { color: var(--ok); }
+	.barra { height: 6px; border-radius: 3px; background: #30363d; margin: 3px 0 8px; overflow: hidden; }
+	.barra > div { height: 100%; border-radius: 3px; background: var(--acento); }
+	.barra > div.excedida { background: var(--error); }
+	label.toggle { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; color: var(--texto-suave); }
+	#panel-der dl { margin: 0; }
+	#panel-der dt { color: var(--texto-suave); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-top: 10px; }
+	#panel-der dd { margin: 2px 0 0; }
+	.chip { display: inline-block; background: #262c33; border-radius: 4px; padding: 1px 6px; margin: 2px 2px 0 0; font-size: 12px; }
+	#ayuda { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); color: var(--texto-suave); font-size: 12px; background: color-mix(in srgb, var(--panel) 85%, transparent); padding: 6px 14px; border-radius: 8px; border: 1px solid var(--panel-borde); }
+	kbd { background: #262c33; border-radius: 4px; padding: 0 5px; }
+</style>
+</head>
+<body>
+<div id="escena"></div>
+
+<aside id="panel-izq" class="panel">
+	<h1>TableroStudio <small>· editor 3D</small></h1>
+	<div id="nombre-proyecto" style="color:var(--texto-suave)"></div>
+
+	<h2>Dispositivos</h2>
+	<ul id="lista-dispositivos"></ul>
+
+	<h2>Verificación eléctrica (DRC)</h2>
+	<ul id="lista-drc"></ul>
+
+	<h2>Ocupación de canaletas</h2>
+	<div id="ocupacion"></div>
+
+	<h2>Cableado</h2>
+	<div id="resumen-cables" style="color:var(--texto-suave)"></div>
+
+	<h2>Vista</h2>
+	<label class="toggle"><input type="checkbox" id="ver-cables" checked> Cables</label>
+	<label class="toggle"><input type="checkbox" id="ver-tapas" checked> Tapas de canaletas</label>
+	<label class="toggle"><input type="checkbox" id="ver-etiquetas" checked> Designaciones</label>
+</aside>
+
+<aside id="panel-der" class="panel"></aside>
+
+<div id="ayuda">Arrastra la vista para orbitar · rueda para zoom · clic en un aparato para seleccionarlo · arrástralo por su riel para moverlo</div>
+
+<script type="module" src="./main.ts"></script>
+</body>
+</html>
