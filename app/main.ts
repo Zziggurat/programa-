@@ -394,8 +394,14 @@ function pintarPaneles(): void {
 		);
 	}
 	const total = ruteo.rutas.reduce((s, r) => s + r.longitudMm, 0);
-	$('resumen-cables').textContent =
-		`${proyecto.conductores.length} conductores · ${ruteo.rutas.length} ruteados · ${(total / 1000).toFixed(1)} m de cable`;
+	const nc = proyecto.conductores.length;
+	$('resumen-cables').textContent = nc === 0
+		? 'Todavía no hay cables.'
+		: `${nc} ${nc === 1 ? 'conductor' : 'conductores'} · ${ruteo.rutas.length} ruteados · ${(total / 1000).toFixed(1)} m de cable`;
+
+	// Estado vacío de bienvenida (solo cuando la placa no tiene aparatos reales).
+	const aparatos = proyecto.dispositivos.filter((d) => !d.campo && !d.imagen).length;
+	($('bienvenida') as HTMLElement).hidden = aparatos > 0;
 }
 
 const SECCIONES = [0.5, 0.75, 1, 1.5, 2.5, 4, 6, 10];
@@ -455,6 +461,7 @@ function pintarSeleccion(): void {
 				${otrosAparatos.map((o) => `<option value="${o.id}">${o.designacion ?? o.id} ${o.descripcion ? `· ${o.descripcion.slice(0, 22)}` : ''}</option>`).join('')}
 			</select>
 			<select id="cable-borne-destino" title="Borne del destino" disabled><option>borne…</option></select>
+			<button class="boton ${eligiendoDestino ? 'primario' : ''} ancho-total" id="btn-elegir-destino" title="Elige el aparato de destino haciendo clic sobre él en el tablero 3D">${eligiendoDestino ? '👆 Haz clic en el aparato de destino…' : '🎯 Elegir destino en el tablero'}</button>
 			<select id="cable-seccion" title="Sección">${SECCIONES.map((s) => `<option value="${s}" ${s === 1 ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
 			<select id="cable-color" class="ancho-total" title="Color del conductor">${COLORES.map((c) => `<option ${c === 'negro' ? 'selected' : ''}>${c}</option>`).join('')}</select>
 			<button class="boton primario ancho-total" id="btn-conectar" disabled>Conectar</button>
@@ -513,6 +520,15 @@ function pintarSeleccion(): void {
 		recalcular();
 		reconstruirCables();
 		pintarPaneles();
+		pintarSeleccion();
+	};
+
+	// Elegir el destino haciendo clic en el aparato dentro del tablero 3D.
+	(panel.querySelector('#btn-elegir-destino') as HTMLButtonElement).onclick = () => {
+		eligiendoDestino = !eligiendoDestino;
+		$('ayuda').textContent = eligiendoDestino
+			? '🎯 Haz clic sobre el aparato de destino en el tablero…'
+			: AYUDA[modo];
 		pintarSeleccion();
 	};
 
@@ -724,6 +740,7 @@ const puntero = new THREE.Vector2();
 let sel: Seleccion | undefined;
 let resaltados: THREE.MeshStandardMaterial[] = [];
 let modoPin = false; // añadiendo un punto de conexión sobre una imagen de referencia
+let eligiendoDestino = false; // esperando un clic en 3D para elegir el aparato de destino del cable
 
 function idDispositivoSel(): string | undefined {
 	return sel?.tipo === 'dispositivo' ? sel.id : undefined;
@@ -954,6 +971,24 @@ function editarCota(datos: DatosCota): void {
 }
 
 renderer.domElement.addEventListener('pointerdown', (ev) => {
+	// Cablear por clic: si estamos eligiendo destino, el próximo clic sobre otro aparato
+	// lo fija como destino en el formulario (funciona en cualquier modo). Se actualiza el
+	// DOM en el sitio para no perder la selección de destino al re-renderizar.
+	if (eligiendoDestino) {
+		eligiendoDestino = false;
+		$('ayuda').textContent = AYUDA[modo];
+		const origenId = idDispositivoSel();
+		const clic = elementoBajoElPuntero(ev);
+		const selDestino = document.getElementById('cable-destino') as HTMLSelectElement | null;
+		if (selDestino && clic && clic.tipo === 'dispositivo' && clic.id !== origenId) {
+			selDestino.value = clic.id;
+			selDestino.dispatchEvent(new Event('change'));
+		}
+		const btn = document.getElementById('btn-elegir-destino') as HTMLButtonElement | null;
+		if (btn) { btn.classList.remove('primario'); btn.textContent = '🎯 Elegir destino en el tablero'; }
+		return;
+	}
+
 	if (modo === 'editor') {
 		// 1. Tiradores de redimensionado (máxima prioridad).
 		const handle = handleBajoElPuntero(ev);
@@ -1268,6 +1303,33 @@ $('modo-trabajo').onclick = () => aplicarModo('trabajo');
 	const v = (e.target as HTMLInputElement).checked;
 	for (const t of escenario.etiquetas) t.visible = v;
 };
+
+/* --------------------- Ayuda, centrar vista y ejemplo --------------------- */
+
+($('btn-centrar') as HTMLButtonElement).onclick = () => encuadrar();
+
+($('btn-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = false; };
+($('btn-cerrar-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = true; };
+$('modal-ayuda').addEventListener('click', (e) => {
+	if (e.target === $('modal-ayuda')) ($('modal-ayuda') as HTMLElement).hidden = true;
+});
+
+($('btn-empezar-ejemplo') as HTMLButtonElement).onclick = () => {
+	capturar();
+	proyecto = tableroEjemplo();
+	numerarDispositivos(proyecto);
+	aplicarSeleccion(undefined);
+	trasCambiarProyecto();
+	encuadrar();
+};
+
+// Primera visita: abrir la guía automáticamente una sola vez.
+try {
+	if (!localStorage.getItem('tablerostudio-visto')) {
+		($('modal-ayuda') as HTMLElement).hidden = false;
+		localStorage.setItem('tablerostudio-visto', '1');
+	}
+} catch { /* sin localStorage */ }
 
 function ajustarTamano(): void {
 	const r = contenedor.getBoundingClientRect();

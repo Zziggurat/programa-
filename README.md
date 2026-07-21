@@ -97,6 +97,10 @@ Designer, conectado en vivo con los motores del núcleo:
   botón **Exportar dossier** (BOM, cables, borneros, referencias cruzadas y DRC en un
   HTML), y verificación eléctrica en vivo en la barra superior.
 - Iluminación PBR con sombras suaves y entorno de estudio.
+- **Pensado para cualquiera**: tarjeta de bienvenida que guía el primer paso, guía rápida
+  (botón ❓) que se abre en la primera visita, **cableado por clic** (elige el destino
+  tocando el aparato en el 3D), botón **🏠 Centrar** para no perderse al girar la cámara.
+  Ver el informe de pruebas en [`docs/qa-usabilidad.md`](docs/qa-usabilidad.md).
 
 El proyecto de ejemplo (`ejemplo/tablero-ejemplo.ts`) modela un tablero de control típico:
 acometida 220 V → interruptor automático → transformador 220/24 V → fusible → controlador,

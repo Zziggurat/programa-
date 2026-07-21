@@ -18,6 +18,7 @@
 		--ok: #63d68a;
 	}
 	* { box-sizing: border-box; }
+	[hidden] { display: none !important; }
 	body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; background: var(--fondo); color: var(--texto); font-size: 13px; }
 	#escena { position: fixed; inset: 46px 0 0 0; }
 	button { font: inherit; cursor: pointer; }
@@ -139,6 +140,29 @@
 		padding: 6px 14px; border-radius: 9px; border: 1px solid var(--borde);
 	}
 
+	/* Estado vacío (bienvenida) */
+	#bienvenida { position: fixed; inset: 46px 306px 0 306px; display: flex; align-items: center; justify-content: center; z-index: 5; pointer-events: none; }
+	#bienvenida .tarjeta { pointer-events: auto; background: color-mix(in srgb, var(--panel) 96%, transparent); border: 1px solid var(--borde); border-radius: 16px; padding: 26px 30px; max-width: 420px; text-align: center; box-shadow: 0 12px 40px #0007; }
+	#bienvenida .emoji { font-size: 40px; }
+	#bienvenida h2 { margin: 6px 0 8px; font-size: 20px; }
+	#bienvenida p { color: var(--texto-suave); line-height: 1.5; margin: 0 0 16px; }
+	#bienvenida .pasos { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 18px; }
+	#bienvenida .pasos span { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; padding: 6px 10px; font-size: 12px; color: var(--texto-suave); }
+	#bienvenida .pasos b { color: var(--acento); }
+
+	/* Modal de ayuda */
+	#modal-ayuda { position: fixed; inset: 0; z-index: 40; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-ayuda .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 26px 30px; max-width: 640px; max-height: 88vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
+	#modal-ayuda h2 { margin: 0 0 16px; font-size: 20px; }
+	#modal-ayuda h3 { font-size: 14px; margin: 14px 0 6px; }
+	#modal-ayuda .cerrar { position: absolute; top: 14px; right: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px; height: 30px; border-radius: 8px; }
+	#modal-ayuda .dos-modos { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+	#modal-ayuda .dos-modos > div { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 10px; padding: 12px 14px; }
+	#modal-ayuda .dos-modos p { margin: 4px 0 0; color: var(--texto-suave); font-size: 12.5px; line-height: 1.5; }
+	#modal-ayuda .guia { margin: 4px 0; padding-left: 18px; line-height: 1.7; color: var(--texto); }
+	#modal-ayuda .guia li { margin-bottom: 4px; }
+	#modal-ayuda .pie { color: var(--texto-suave); font-size: 12.5px; margin-top: 14px; border-top: 1px solid var(--borde); padding-top: 12px; }
+
 	/* Conmutador de modos */
 	#modos { display: flex; border: 1px solid var(--borde); border-radius: 9px; overflow: hidden; }
 	#modos button { background: var(--panel-2); border: none; color: var(--texto-suave); padding: 6px 13px; }
@@ -159,8 +183,10 @@
 	</div>
 	<button class="boton" id="btn-deshacer" title="Deshacer (Ctrl+Z)">↶</button>
 	<button class="boton" id="btn-rehacer" title="Rehacer (Ctrl+Y)">↷</button>
+	<button class="boton" id="btn-centrar" title="Centrar la vista (si te pierdes girando la cámara)">🏠 Centrar</button>
 	<div class="sep"></div>
 	<div id="chip-drc" title="Verificación eléctrica en vivo"><span class="punto"></span><span id="chip-drc-texto">DRC</span></div>
+	<button class="boton" id="btn-ayuda" title="Guía rápida de uso">❓ Ayuda</button>
 	<button class="boton" id="btn-imagen" title="Añadir una imagen (foto de gabinete, controlador, motor…) como referencia visual para cablear sobre ella">🖼️ Imagen</button>
 	<input type="file" id="archivo-imagen" accept="image/*" hidden>
 	<button class="boton" id="btn-nuevo" title="Vaciar la placa y empezar de cero">Nuevo</button>
@@ -236,6 +262,45 @@
 <aside id="panel-der" class="panel"></aside>
 
 <div id="ayuda"></div>
+
+<!-- Estado vacío: guía al primer clic -->
+<div id="bienvenida" hidden>
+	<div class="tarjeta">
+		<div class="emoji">👋</div>
+		<h2>Empieza tu tablero</h2>
+		<p>Haz clic en un aparato del <b>catálogo</b> (izquierda) para colocarlo en la placa.
+		Luego cámbiate a <b>🔌 Trabajo</b> para cablearlo.</p>
+		<div class="pasos">
+			<span><b>1.</b> Añade aparatos</span>
+			<span><b>2.</b> Colócalos (arrástralos)</span>
+			<span><b>3.</b> Cablea y revisa</span>
+		</div>
+		<button class="boton primario" id="btn-empezar-ejemplo">Ver un tablero de ejemplo</button>
+	</div>
+</div>
+
+<!-- Modal de ayuda -->
+<div id="modal-ayuda" hidden>
+	<div class="caja-modal">
+		<button class="cerrar" id="btn-cerrar-ayuda" title="Cerrar">✕</button>
+		<h2>Guía rápida de TableroStudio</h2>
+		<div class="dos-modos">
+			<div><h3>🔧 Modo Editor</h3><p>Para <b>armar</b> el tablero: añadir aparatos, moverlos, y ajustar la caja, la placa, los rieles y las canaletas. Aquí nada se cablea por accidente.</p></div>
+			<div><h3>🔌 Modo Trabajo</h3><p>Para <b>cablear y revisar</b>. La estructura queda bloqueada: los aparatos no se mueven sin querer.</p></div>
+		</div>
+		<h3>Cómo se hace cada cosa</h3>
+		<ul class="guia">
+			<li><b>Añadir un aparato:</b> clic en el catálogo de la izquierda.</li>
+			<li><b>Mover un aparato:</b> arrástralo (se pega solo al riel más cercano).</li>
+			<li><b>Cablear:</b> selecciona un aparato → en el panel derecho elige el borne, el aparato de destino y su borne → <i>Conectar</i>. O pulsa <i>Elegir en el tablero</i> y haz clic en el otro aparato.</li>
+			<li><b>Ver medidas:</b> marca <i>Ver tamaños</i>; las cotas de colores muestran los cm y puedes hacer clic para cambiarlas.</li>
+			<li><b>Canaletas y rieles:</b> selecciónalos y arrástralos, o tira de las esferas de los extremos para alargarlos.</li>
+			<li><b>Imagen de referencia:</b> botón <i>🖼️ Imagen</i>, marca sus puntos y cablea sobre la foto.</li>
+			<li><b>Deshacer / Rehacer:</b> <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd>. <b>Eliminar:</b> <kbd>Supr</kbd>. <b>Centrar vista:</b> botón 🏠.</li>
+		</ul>
+		<p class="pie">El semáforo <b>DRC</b> de arriba revisa el tablero en vivo: verde = todo bien, naranja = avisos, rojo = errores. Haz clic en un aviso para ir al aparato.</p>
+	</div>
+</div>
 
 <script type="module" src="./main.ts"></script>
 </body>
