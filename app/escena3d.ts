@@ -234,23 +234,30 @@ function construirCaja(g: Gabinete): THREE.Group {
 }
 
 export function construirRiel(
-	riel: { id?: string; x: number; y: number; largo: number },
+	riel: { id?: string; x: number; y: number; largo: number; orientacion?: 'h' | 'v' },
 	aEscena: Escenario['aEscena'],
 ): THREE.Group {
 	const grupo = new THREE.Group();
 	const material = new THREE.MeshStandardMaterial({ color: 0xc9a86a, metalness: 0.7, roughness: 0.35 });
-	// Perfil sombrero simplificado: base + dos alas.
-	const base = new THREE.Mesh(new THREE.BoxGeometry(riel.largo, ALTO_RIEL - 10, 5), material);
+	const esV = riel.orientacion === 'v';
+	// Perfil sombrero simplificado: base + dos alas. El largo corre en X (h) o en Y (v).
+	const lx = esV ? ALTO_RIEL - 10 : riel.largo;
+	const ly = esV ? riel.largo : ALTO_RIEL - 10;
+	const base = new THREE.Mesh(new THREE.BoxGeometry(lx, ly, 5), material);
 	base.position.z = 5;
-	const ala = (dy: number) => {
-		const a = new THREE.Mesh(new THREE.BoxGeometry(riel.largo, 6, 2), material);
-		a.position.set(0, dy, 7.5);
+	const ala = (desp: number) => {
+		const a = esV
+			? new THREE.Mesh(new THREE.BoxGeometry(6, riel.largo, 2), material)
+			: new THREE.Mesh(new THREE.BoxGeometry(riel.largo, 6, 2), material);
+		a.position.set(esV ? desp : 0, esV ? 0 : desp, 7.5);
 		grupo.add(a);
 	};
 	grupo.add(base);
 	ala((ALTO_RIEL - 10) / 2 + 2);
 	ala(-(ALTO_RIEL - 10) / 2 - 2);
-	const c = aEscena(riel.x + riel.largo / 2, riel.y, 0);
+	const cx = riel.x + (esV ? 0 : riel.largo / 2);
+	const cy = riel.y + (esV ? riel.largo / 2 : 0);
+	const c = aEscena(cx, cy, 0);
 	grupo.position.set(c.x, c.y, 0);
 	grupo.traverse((o) => { o.userData.rielId = (riel as { id?: string }).id; });
 	return grupo;
@@ -415,6 +422,30 @@ export function construirDispositivo(
 
 /* --------------------------------- Cables --------------------------------- */
 
+/** Añade al grupo el tubo visible del cable + un tubo invisible más grueso para poder clicarlo. */
+function anadirTuboCable(
+	grupo: THREE.Group,
+	curva: THREE.Curve<THREE.Vector3>,
+	segmentos: number,
+	radio: number,
+	color: number,
+	conductorId: string,
+): void {
+	const tubo = new THREE.Mesh(
+		new THREE.TubeGeometry(curva, segmentos, radio, 7, false),
+		new THREE.MeshStandardMaterial({ color, roughness: 0.55 }),
+	);
+	tubo.userData.conductorId = conductorId;
+	grupo.add(tubo);
+	// Tubo de agarre invisible (radio mayor) para seleccionar el cable con facilidad.
+	const agarre = new THREE.Mesh(
+		new THREE.TubeGeometry(curva, segmentos, Math.max(radio + 4, 5), 6, false),
+		new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
+	);
+	agarre.userData.conductorId = conductorId;
+	grupo.add(agarre);
+}
+
 export function construirCables(
 	proyecto: Proyecto,
 	rutas: RutaConductor[],
@@ -449,19 +480,15 @@ export function construirCables(
 		puntos.push(aEscena(camino[ultimo].x, camino[ultimo].y, 40));
 
 		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.08);
-		const tubo = new THREE.Mesh(
-			new THREE.TubeGeometry(curva, Math.max(24, puntos.length * 8), radio, 6, false),
-			new THREE.MeshStandardMaterial({ color, roughness: 0.55 }),
-		);
-		tubo.userData.conductorId = conductor.id;
-		grupo.add(tubo);
+		anadirTuboCable(grupo, curva, Math.max(24, puntos.length * 8), radio, color, conductor.id);
 	}
 
-	// Cables no ruteados por canaleta (p. ej. entre puntos de imágenes de referencia):
-	// se dibujan como un tramo directo entre los dos puntos de conexión.
+	// Cables que NO van por canaleta (sin ruta, o con trazado manual): se dibujan como un
+	// cable suelto que cuelga con una catenaria natural (igual que en la vida real), o
+	// siguiendo los puntos de paso que el usuario haya colocado a mano para ordenarlo.
 	const ruteados = new Set(rutas.map((r) => r.conductorId));
 	for (const conductor of proyecto.conductores) {
-		if (ruteados.has(conductor.id)) continue;
+		if (ruteados.has(conductor.id) && !conductor.trazado?.length) continue;
 		const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
 		const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
 		if (!a || !b) continue;
@@ -469,16 +496,29 @@ export function construirCables(
 		const radio = 0.9 + (conductor.seccion ?? 1.5) * 0.35;
 		const pa = aEscena(a.x, a.y, a.z);
 		const pb = aEscena(b.x, b.y, b.z);
-		// Ligera catenaria hacia el frente para que el cable no atraviese las imágenes.
-		const medio = pa.clone().add(pb).multiplyScalar(0.5);
-		medio.z += 18 + pa.distanceTo(pb) * 0.04;
-		const curva = new THREE.CatmullRomCurve3([pa, medio, pb], false, 'catmullrom', 0.1);
-		const tubo = new THREE.Mesh(
-			new THREE.TubeGeometry(curva, 40, radio, 6, false),
-			new THREE.MeshStandardMaterial({ color, roughness: 0.55 }),
-		);
-		tubo.userData.conductorId = conductor.id;
-		grupo.add(tubo);
+
+		let puntos: THREE.Vector3[];
+		if (conductor.trazado?.length) {
+			// Trazado a mano: pasa por los puntos de paso (a una profundidad frontal).
+			puntos = [pa, ...conductor.trazado.map((p) => aEscena(p.x, p.y, 45)), pb];
+		} else {
+			// Cable suelto: cuelga hacia abajo (gravedad) y sale al frente, sin tensarse.
+			const dist = pa.distanceTo(pb);
+			const comba = Math.min(dist * 0.28, 150);
+			const frente = Math.min(24 + dist * 0.06, 90);
+			puntos = [];
+			const N = 12;
+			for (let i = 0; i <= N; i++) {
+				const t = i / N;
+				const p = pa.clone().lerp(pb, t);
+				const caida = 4 * t * (1 - t); // parábola: 0 en extremos, máx en el centro
+				p.y -= comba * caida;           // cuelga hacia abajo
+				p.z += 8 + frente * caida;      // se separa al frente para no atravesar nada
+				puntos.push(p);
+			}
+		}
+		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.4);
+		anadirTuboCable(grupo, curva, Math.max(40, puntos.length * 6), radio, color, conductor.id);
 	}
 	return grupo;
 }

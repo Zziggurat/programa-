@@ -125,6 +125,11 @@ export interface Conductor {
 	/** Número/etiqueta asignada por el motor de numeración (compartida por potencial). */
 	numero?: string;
 	congelado?: boolean;
+	/**
+	 * Puntos de paso manuales (mm sobre la placa) para ordenar el cable a mano cuando no
+	 * va por canaleta. Si está vacío, el cable cuelga con una catenaria natural.
+	 */
+	trazado?: { x: number; y: number }[];
 }
 
 /** Folio del esquema. Rejilla al estilo QET: columnas numeradas y filas con letra. */
@@ -153,12 +158,13 @@ export interface Canaleta {
 	alto: number;
 }
 
-/** Riel DIN horizontal. */
+/** Riel DIN. Horizontal por defecto; puede colocarse vertical. */
 export interface Riel {
 	id: string;
 	x: number;
 	y: number;
 	largo: number;
+	orientacion?: Orientacion; // 'h' (por defecto) | 'v'
 }
 
 /** Un dispositivo colocado sobre la placa de montaje. */

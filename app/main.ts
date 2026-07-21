@@ -12,7 +12,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { tableroEjemplo } from '../ejemplo/tablero-ejemplo.js';
 import { Proyecto } from '../src/modelo/tipos.js';
-import { conductoresEn, crearProyecto, posicionTexto } from '../src/modelo/proyecto.js';
+import { conductoresEn, crearProyecto, extremoTexto, posicionTexto } from '../src/modelo/proyecto.js';
 import { calcularPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
 import { verificarProyecto, Hallazgo } from '../src/motores/drc.js';
@@ -22,7 +22,7 @@ import { generarReferencias } from '../src/motores/referencias.js';
 import { generarPlanBorneros } from '../src/motores/bornes.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
-	cajaDe, construirCables, construirCanaleta, construirCotas, construirDispositivo,
+	anclajeBorne, cajaDe, construirCables, construirCanaleta, construirCotas, construirDispositivo,
 	construirEscenario, construirRiel, DatosCota, Escenario,
 } from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
@@ -33,7 +33,8 @@ let modo: Modo = 'editor';
 type Seleccion =
 	| { tipo: 'dispositivo'; id: string }
 	| { tipo: 'canaleta'; id: string }
-	| { tipo: 'riel'; id: string };
+	| { tipo: 'riel'; id: string }
+	| { tipo: 'cable'; id: string };
 
 /* ------------------------------ Estado ------------------------------ */
 
@@ -244,7 +245,9 @@ function trasCambiarProyecto(): void {
 		? proyecto.dispositivos.some((d) => d.id === sel!.id)
 		: sel.tipo === 'canaleta'
 			? proyecto.gabinete!.canaletas.some((c) => c.id === sel!.id)
-			: proyecto.gabinete!.rieles.some((r) => r.id === sel!.id));
+			: sel.tipo === 'riel'
+				? proyecto.gabinete!.rieles.some((r) => r.id === sel!.id)
+				: proyecto.conductores.some((c) => c.id === sel!.id));
 	if (!existe) { sel = undefined; resaltados = []; }
 	recalcular();
 	montarEscenario();
@@ -346,36 +349,91 @@ function pintarCatalogo(): void {
 }
 
 /** Busca el primer hueco libre sobre un riel para una huella ancho×alto. */
-function buscarHueco(ancho: number, alto: number): { x: number; y: number } {
+/** Primer hueco libre sobre un riel para una huella ancho×alto. undefined si no hay rieles. */
+function buscarHueco(ancho: number, alto: number): { x: number; y: number } | undefined {
 	const g = proyecto.gabinete!;
+	if (g.rieles.length === 0) return undefined;
 	const MARGEN = 8;
 	for (const riel of g.rieles) {
-		const y = riel.y + SNAP_RIEL - alto / 2;
-		if (y < 0 || y + alto > g.alto) continue;
-		const enRiel = g.colocaciones
-			.filter((c) => Math.abs(c.y + c.alto / 2 - (riel.y + SNAP_RIEL)) < UMBRAL_SNAP)
-			.sort((a, b) => a.x - b.x);
-		let x = Math.max(riel.x, 20);
-		const limite = riel.x + riel.largo - ancho;
-		for (const c of enRiel) {
-			if (c.x - x >= ancho + MARGEN) break;
-			x = Math.max(x, c.x + c.ancho + MARGEN);
+		if (riel.orientacion === 'v') {
+			const x = riel.x + SNAP_RIEL - ancho / 2;
+			if (x < 0 || x + ancho > g.ancho) continue;
+			const enRiel = g.colocaciones
+				.filter((c) => Math.abs(c.x + c.ancho / 2 - (riel.x + SNAP_RIEL)) < UMBRAL_SNAP)
+				.sort((a, b) => a.y - b.y);
+			let y = Math.max(riel.y, 10);
+			const limite = riel.y + riel.largo - alto;
+			for (const c of enRiel) {
+				if (c.y - y >= alto + MARGEN) break;
+				y = Math.max(y, c.y + c.alto + MARGEN);
+			}
+			if (y <= limite) return { x, y };
+		} else {
+			const y = riel.y + SNAP_RIEL - alto / 2;
+			if (y < 0 || y + alto > g.alto) continue;
+			const enRiel = g.colocaciones
+				.filter((c) => Math.abs(c.y + c.alto / 2 - (riel.y + SNAP_RIEL)) < UMBRAL_SNAP)
+				.sort((a, b) => a.x - b.x);
+			let x = Math.max(riel.x, 10);
+			const limite = riel.x + riel.largo - ancho;
+			for (const c of enRiel) {
+				if (c.x - x >= ancho + MARGEN) break;
+				x = Math.max(x, c.x + c.ancho + MARGEN);
+			}
+			if (x <= limite) return { x, y };
 		}
-		if (x <= limite) return { x, y };
 	}
-	return { x: g.ancho / 2 - ancho / 2, y: g.alto / 2 - alto / 2 };
+	// Todos los rieles llenos: al inicio del primero (el solape se resuelve después).
+	const r0 = g.rieles[0];
+	return r0.orientacion === 'v'
+		? { x: r0.x + SNAP_RIEL - ancho / 2, y: r0.y }
+		: { x: r0.x, y: r0.y + SNAP_RIEL - alto / 2 };
+}
+
+/**
+ * Pega el centro (cx,cy) al riel más cercano y devuelve el centro corregido y el riel.
+ * Garantiza que un aparato SIEMPRE quede sobre un riel (nunca flotando).
+ */
+function snapAriel(cx: number, cy: number, ancho: number, alto: number):
+	{ cx: number; cy: number; rielId: string } | undefined {
+	const g = proyecto.gabinete!;
+	let mejor: { d: number; cx: number; cy: number; id: string } | undefined;
+	for (const riel of g.rieles) {
+		if (riel.orientacion === 'v') {
+			const eje = riel.x + SNAP_RIEL;
+			const yc = Math.min(Math.max(cy, riel.y + alto / 2), riel.y + riel.largo - alto / 2);
+			const d = Math.abs(cx - eje) + Math.abs(cy - yc) * 0.02;
+			if (!mejor || d < mejor.d) mejor = { d, cx: eje, cy: yc, id: riel.id };
+		} else {
+			const eje = riel.y + SNAP_RIEL;
+			const xc = Math.min(Math.max(cx, riel.x + ancho / 2), riel.x + riel.largo - ancho / 2);
+			const d = Math.abs(cy - eje) + Math.abs(cx - xc) * 0.02;
+			if (!mejor || d < mejor.d) mejor = { d, cx: xc, cy: eje, id: riel.id };
+		}
+	}
+	return mejor ? { cx: mejor.cx, cy: mejor.cy, rielId: mejor.id } : undefined;
 }
 
 function anadirDesdeCatalogo(plantillaId: string): void {
-	capturar();
 	const plantilla = PLANTILLAS.find((p) => p.id === plantillaId)!;
+	const hueco = buscarHueco(plantilla.ancho, plantilla.alto);
+	if (!hueco) {
+		avisar('Añade primero un riel DIN (panel «Gabinete y estructura» → + Riel)', 'error');
+		return;
+	}
+	capturar();
 	const d = crearDesdePlantilla(plantilla, proyecto);
 	d.hojaId = proyecto.hojas[0]?.id;
 	d.posicion = { x: proyecto.dispositivos.length % 10, y: Math.floor(proyecto.dispositivos.length / 10) };
 	proyecto.dispositivos.push(d);
-	const hueco = buscarHueco(plantilla.ancho, plantilla.alto);
+	// Resolver posible solape en el hueco de reserva.
+	let x = hueco.x;
+	if (solapaCon(x, hueco.y, plantilla.ancho, plantilla.alto, d.id)) {
+		x = xLibreCercano(x, hueco.y, plantilla.ancho, plantilla.alto, d.id) ?? x;
+	}
 	proyecto.gabinete!.colocaciones.push({
-		dispositivoId: d.id, x: hueco.x, y: hueco.y, ancho: plantilla.ancho, alto: plantilla.alto,
+		dispositivoId: d.id, x, y: hueco.y, ancho: plantilla.ancho, alto: plantilla.alto,
+		rielId: undefined,
 	});
 	actualizarTodo();
 	seleccionar(d.id);
@@ -469,6 +527,10 @@ function pintarSeleccion(): void {
 		pintarPanelEstructura(sel);
 		return;
 	}
+	if (sel.tipo === 'cable') {
+		pintarPanelCable(sel.id);
+		return;
+	}
 	const d = proyecto.dispositivos.find((x) => x.id === sel!.id);
 	if (!d) {
 		panel.style.display = 'none';
@@ -486,21 +548,18 @@ function pintarSeleccion(): void {
 	const otrosAparatos = proyecto.dispositivos.filter((x) => x.id !== d.id);
 
 	const esImagen = !!d.imagen;
-	panel.style.display = 'block';
-	panel.innerHTML = `
-		<h1>${d.designacion ?? d.id}</h1>
-		<div class="sub">${esImagen ? '🖼️ Imagen de referencia' : (d.descripcion ?? '')}</div>
-		<dl>
-			${esImagen ? '' : `<dt>Referencia</dt><dd>${d.fabricante ?? '—'} ${d.referencia ?? ''}</dd>`}
-			${col ? `<dt>Posición en placa</dt><dd>x ${Math.round(col.x)} mm · y ${Math.round(col.y)} mm · ${col.ancho}×${col.alto} mm</dd>` : ''}
-			${d.tensionNominal ? `<dt>Tensión</dt><dd>${d.tensionNominal} V</dd>` : ''}
-			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${posicionTexto(proyecto, d)}</dd>`}
-		</dl>
-		${esImagen ? `<h2>Puntos de conexión (${d.bornes.length})</h2>
+	const esEditor = modo === 'editor';
+	// División de modos:  Editor = colocar/mover/duplicar/eliminar y (en imágenes) marcar puntos.
+	//                     Trabajo = cablear y revisar.
+	const bloquePines = esImagen && esEditor
+		? `<h2>Puntos de conexión (${d.bornes.length})</h2>
 			<button class="boton ${modoPin ? 'primario' : ''} ancho-total" id="btn-pin" style="width:100%">${modoPin ? '✓ Haz clic en la imagen…' : '➕ Añadir punto de conexión'}</button>
-			<div id="lista-pines" style="margin-top:6px"></div>` : ''}
-		${propios.length ? `<h2>Hallazgos DRC</h2><ul>${propios
-			.map((h) => `<li class="hallazgo ${h.severidad}">${h.mensaje}</li>`).join('')}</ul>` : ''}
+			<div id="lista-pines" style="margin-top:6px"></div>`
+		: '';
+	const bloqueDRC = propios.length
+		? `<h2>Hallazgos DRC</h2><ul>${propios.map((h) => `<li class="hallazgo ${h.severidad}">${h.mensaje}</li>`).join('')}</ul>`
+		: '';
+	const bloqueCableado = esEditor ? '' : `
 		<h2>Cables conectados ${metros ? `· ${(metros / 1000).toFixed(2)} m` : ''}</h2>
 		<div id="cables-aparato">${cablesDelAparato.length === 0 ? '<div class="sub">Sin cables todavía</div>' : ''}</div>
 		<h2>Conectar cable nuevo</h2>
@@ -517,81 +576,101 @@ function pintarSeleccion(): void {
 			<select id="cable-seccion" title="Sección">${SECCIONES.map((s) => `<option value="${s}" ${s === 1 ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
 			<select id="cable-color" class="ancho-total" title="Color del conductor">${COLORES.map((c) => `<option ${c === 'negro' ? 'selected' : ''}>${c}</option>`).join('')}</select>
 			<button class="boton primario ancho-total" id="btn-conectar" disabled>Conectar</button>
-		</div>
+		</div>`;
+	const bloqueAcciones = esEditor ? `
 		<h2>Acciones</h2>
 		<div class="botonera">
 			<button class="boton" id="btn-duplicar">Duplicar</button>
 			<button class="boton peligro" id="btn-eliminar">Eliminar</button>
-		</div>
+		</div>` : '';
+
+	panel.style.display = 'block';
+	panel.innerHTML = `
+		<h1>${d.designacion ?? d.id}</h1>
+		<div class="sub">${esImagen ? '🖼️ Imagen de referencia' : (d.descripcion ?? '')}
+			<span style="opacity:.7">· ${esEditor ? '🔧 editor' : '🔌 trabajo'}</span></div>
+		<dl>
+			${esImagen ? '' : `<dt>Referencia</dt><dd>${d.fabricante ?? '—'} ${d.referencia ?? ''}</dd>`}
+			${col ? `<dt>Posición en placa</dt><dd>x ${Math.round(col.x)} mm · y ${Math.round(col.y)} mm · ${col.ancho}×${col.alto} mm</dd>` : ''}
+			${d.tensionNominal ? `<dt>Tensión</dt><dd>${d.tensionNominal} V</dd>` : ''}
+			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${posicionTexto(proyecto, d)}</dd>`}
+		</dl>
+		${bloquePines}
+		${bloqueDRC}
+		${bloqueCableado}
+		${bloqueAcciones}
 	`;
 
-	// Lista de cables existentes con botón de quitar.
-	const contCables = panel.querySelector('#cables-aparato')!;
-	for (const c of cablesDelAparato) {
-		const otro = c.de.dispositivoId === d.id ? c.a : c.de;
-		const propio = c.de.dispositivoId === d.id ? c.de : c.a;
-		const fila = document.createElement('div');
-		fila.className = 'fila-cable';
-		fila.innerHTML = `<span class="num">${c.numero ?? '—'}</span>
-			<span>${propio.borneId} → ${etiquetaDe(otro.dispositivoId)}:${otro.borneId}${c.seccion ? ` · ${c.seccion} mm²` : ''}</span>
-			<button class="quitar" title="Quitar cable">✕</button>`;
-		(fila.querySelector('.quitar') as HTMLButtonElement).onclick = () => {
+	// Lista de cables existentes con botón de quitar (solo en modo Trabajo).
+	const contCables = panel.querySelector('#cables-aparato');
+	if (contCables) {
+		for (const c of cablesDelAparato) {
+			const otro = c.de.dispositivoId === d.id ? c.a : c.de;
+			const propio = c.de.dispositivoId === d.id ? c.de : c.a;
+			const fila = document.createElement('div');
+			fila.className = 'fila-cable';
+			fila.innerHTML = `<span class="num">${c.numero ?? '—'}</span>
+				<span>${propio.borneId} → ${etiquetaDe(otro.dispositivoId)}:${otro.borneId}${c.seccion ? ` · ${c.seccion} mm²` : ''}</span>
+				<button class="quitar" title="Quitar cable">✕</button>`;
+			(fila.querySelector('.quitar') as HTMLButtonElement).onclick = () => {
+				capturar();
+				proyecto.conductores = proyecto.conductores.filter((x) => x.id !== c.id);
+				recalcular();
+				reconstruirCables();
+				pintarPaneles();
+				pintarSeleccion();
+			};
+			contCables.appendChild(fila);
+		}
+	}
+
+	// Formulario de conexión (solo en modo Trabajo).
+	const selDestino = panel.querySelector('#cable-destino') as HTMLSelectElement | null;
+	const selBorneDestino = panel.querySelector('#cable-borne-destino') as HTMLSelectElement | null;
+	const btnConectar = panel.querySelector('#btn-conectar') as HTMLButtonElement | null;
+	if (selDestino && selBorneDestino && btnConectar) {
+		selDestino.onchange = () => {
+			const destino = proyecto.dispositivos.find((x) => x.id === selDestino.value);
+			selBorneDestino.disabled = !destino;
+			btnConectar.disabled = !destino;
+			selBorneDestino.innerHTML = destino
+				? destino.bornes.map((b) => `<option value="${b.id}">${b.id}${b.tipo && b.tipo !== 'otro' ? ` · ${b.tipo}` : ''}</option>`).join('')
+				: '<option>borne…</option>';
+		};
+		btnConectar.onclick = () => {
+			const destino = selDestino.value;
+			if (!destino) return;
 			capturar();
-			proyecto.conductores = proyecto.conductores.filter((x) => x.id !== c.id);
+			proyecto.conductores.push({
+				id: `c${Date.now().toString(36)}`,
+				de: { dispositivoId: d.id, borneId: (panel.querySelector('#cable-borne-origen') as HTMLSelectElement).value },
+				a: { dispositivoId: destino, borneId: selBorneDestino.value },
+				seccion: Number((panel.querySelector('#cable-seccion') as HTMLSelectElement).value),
+				color: (panel.querySelector('#cable-color') as HTMLSelectElement).value,
+			});
 			recalcular();
 			reconstruirCables();
 			pintarPaneles();
 			pintarSeleccion();
 		};
-		contCables.appendChild(fila);
+		(panel.querySelector('#btn-elegir-destino') as HTMLButtonElement).onclick = () => {
+			eligiendoDestino = !eligiendoDestino;
+			$('ayuda').textContent = eligiendoDestino
+				? '🎯 Haz clic sobre el aparato de destino en el tablero…'
+				: AYUDA[modo];
+			pintarSeleccion();
+		};
 	}
 
-	// Formulario de conexión.
-	const selDestino = panel.querySelector('#cable-destino') as HTMLSelectElement;
-	const selBorneDestino = panel.querySelector('#cable-borne-destino') as HTMLSelectElement;
-	const btnConectar = panel.querySelector('#btn-conectar') as HTMLButtonElement;
-	selDestino.onchange = () => {
-		const destino = proyecto.dispositivos.find((x) => x.id === selDestino.value);
-		selBorneDestino.disabled = !destino;
-		btnConectar.disabled = !destino;
-		selBorneDestino.innerHTML = destino
-			? destino.bornes.map((b) => `<option value="${b.id}">${b.id}${b.tipo && b.tipo !== 'otro' ? ` · ${b.tipo}` : ''}</option>`).join('')
-			: '<option>borne…</option>';
-	};
-	btnConectar.onclick = () => {
-		const destino = selDestino.value;
-		if (!destino) return;
-		capturar();
-		proyecto.conductores.push({
-			id: `c${Date.now().toString(36)}`,
-			de: { dispositivoId: d.id, borneId: (panel.querySelector('#cable-borne-origen') as HTMLSelectElement).value },
-			a: { dispositivoId: destino, borneId: selBorneDestino.value },
-			seccion: Number((panel.querySelector('#cable-seccion') as HTMLSelectElement).value),
-			color: (panel.querySelector('#cable-color') as HTMLSelectElement).value,
-		});
-		recalcular();
-		reconstruirCables();
-		pintarPaneles();
-		pintarSeleccion();
-	};
-
-	// Elegir el destino haciendo clic en el aparato dentro del tablero 3D.
-	(panel.querySelector('#btn-elegir-destino') as HTMLButtonElement).onclick = () => {
-		eligiendoDestino = !eligiendoDestino;
-		$('ayuda').textContent = eligiendoDestino
-			? '🎯 Haz clic sobre el aparato de destino en el tablero…'
-			: AYUDA[modo];
-		pintarSeleccion();
-	};
-
-	(panel.querySelector('#btn-eliminar') as HTMLButtonElement).onclick = () => eliminarDispositivo(d.id);
-	(panel.querySelector('#btn-duplicar') as HTMLButtonElement).onclick = () => {
+	// Acciones de edición (solo en modo Editor).
+	(panel.querySelector('#btn-eliminar') as HTMLButtonElement | null)?.addEventListener('click', () => eliminarDispositivo(d.id));
+	(panel.querySelector('#btn-duplicar') as HTMLButtonElement | null)?.addEventListener('click', () => {
 		const plantilla = PLANTILLAS.find((p) => p.referencia === d.referencia);
 		if (plantilla) anadirDesdeCatalogo(plantilla.id);
-	};
+	});
 
-	// Imagen de referencia: botón de modo pin y lista de puntos con opción de borrar.
-	if (esImagen) {
+	// Imagen de referencia: botón de modo pin y lista de puntos (solo modo Editor).
+	if (esImagen && esEditor && panel.querySelector('#btn-pin')) {
 		(panel.querySelector('#btn-pin') as HTMLButtonElement).onclick = () => {
 			modoPin = !modoPin;
 			pintarSeleccion();
@@ -625,23 +704,38 @@ function pintarPanelEstructura(s: Seleccion): void {
 	if (!obj) { panel.style.display = 'none'; return; }
 	const can = esCanaleta ? (obj as typeof g.canaletas[number]) : undefined;
 
+	const orientActual = esCanaleta ? can!.orientacion : (obj as typeof g.rieles[number]).orientacion ?? 'h';
+	const esV = orientActual === 'v';
+
 	panel.style.display = 'block';
 	panel.innerHTML = `
 		<h1>${esCanaleta ? '📦 Canaleta' : '➖ Riel DIN'} ${obj.id}</h1>
-		<div class="sub">${esCanaleta ? `Ranurada ${can!.orientacion === 'h' ? 'horizontal' : 'vertical'} · ${can!.ancho}×${can!.alto} mm` : 'Perfil sombrero 35 mm'}</div>
-		<div class="sub" style="margin-top:8px">Arrástrala para moverla, o tira de las esferas de los extremos para alargarla. También puedes ajustar los cm aquí:</div>
+		<div class="sub">${esCanaleta ? `Ranurada · ${can!.ancho}×${can!.alto} mm` : 'Perfil sombrero 35 mm'} · ${esV ? 'vertical' : 'horizontal'}</div>
+
+		<button class="boton primario" id="e-girar" style="width:100%;margin:10px 0 4px">🔄 Girar a ${esV ? 'horizontal' : 'vertical'}</button>
+
+		<div class="sub" style="margin-top:8px">Arrástrala para moverla, o tira de las esferas de los extremos para alargarla. También puedes ajustar los cm:</div>
 		<dl>
 			<dt>Posición X</dt><dd><input type="number" id="e-x" value="${(obj.x / 10).toFixed(1)}" step="0.5"> cm</dd>
 			<dt>Posición Y</dt><dd><input type="number" id="e-y" value="${(obj.y / 10).toFixed(1)}" step="0.5"> cm</dd>
 			<dt>Largo</dt><dd><input type="number" id="e-largo" value="${(obj.largo / 10).toFixed(1)}" step="0.5"> cm</dd>
 			${esCanaleta ? `<dt>Ancho del canal</dt><dd><input type="number" id="e-ancho" value="${can!.ancho}" step="5"> mm</dd>` : ''}
-			${esCanaleta ? `<dt>Orientación</dt><dd><select id="e-orient"><option value="h" ${can!.orientacion === 'h' ? 'selected' : ''}>Horizontal</option><option value="v" ${can!.orientacion === 'v' ? 'selected' : ''}>Vertical</option></select></dd>` : ''}
 		</dl>
 		<div class="botonera">
-			<button class="boton primario" id="e-aplicar">Aplicar cm</button>
+			<button class="boton primario" id="e-aplicar">Aplicar medidas</button>
 			<button class="boton peligro" id="e-eliminar">Eliminar</button>
 		</div>
 	`;
+	// Girar (H↔V) al instante.
+	(panel.querySelector('#e-girar') as HTMLButtonElement).onclick = () => {
+		capturar();
+		const nueva: 'h' | 'v' = esV ? 'h' : 'v';
+		if (can) can.orientacion = nueva;
+		else (obj as typeof g.rieles[number]).orientacion = nueva;
+		actualizarTodo();
+		pintarEstructura();
+		pintarPanelEstructura(s); // refrescar el propio panel (texto del botón)
+	};
 	(panel.querySelector('#e-aplicar') as HTMLButtonElement).onclick = () => {
 		capturar();
 		obj.x = Math.round(Number((panel.querySelector('#e-x') as HTMLInputElement).value) * 10);
@@ -650,12 +744,59 @@ function pintarPanelEstructura(s: Seleccion): void {
 		if (can) {
 			can.ancho = Math.max(15, Number((panel.querySelector('#e-ancho') as HTMLInputElement).value));
 			can.alto = can.ancho >= 60 ? 80 : 60;
-			can.orientacion = (panel.querySelector('#e-orient') as HTMLSelectElement).value as 'h' | 'v';
 		}
 		actualizarTodo();
 		pintarEstructura();
 	};
 	(panel.querySelector('#e-eliminar') as HTMLButtonElement).onclick = () => eliminarEstructura(s);
+}
+
+/** Panel de un cable seleccionado (modo Trabajo): editar sección/color, ordenar o quitar. */
+function pintarPanelCable(id: string): void {
+	const panel = $('panel-der');
+	const c = proyecto.conductores.find((x) => x.id === id);
+	if (!c) { panel.style.display = 'none'; return; }
+	const ruteado = ruteo.rutas.some((r) => r.conductorId === id);
+	const manual = !!c.trazado?.length;
+
+	panel.style.display = 'block';
+	panel.innerHTML = `
+		<h1>Cable ${c.numero ?? ''}</h1>
+		<div class="sub">${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}</div>
+		<dl>
+			<dt>Recorrido</dt><dd>${manual ? '✋ ordenado a mano' : ruteado ? '📦 por canaleta' : '〰️ suelto (cuelga)'}</dd>
+		</dl>
+		<div class="sub" style="margin-top:6px">Arrastra la <b>esfera azul</b> del cable en el tablero para ordenarlo y apartarlo de otros.</div>
+		<div class="form-cable" style="margin-top:10px">
+			<select id="cbl-seccion">${SECCIONES.map((s) => `<option value="${s}" ${s === c.seccion ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
+			<select id="cbl-color">${COLORES.map((col) => `<option ${col === c.color ? 'selected' : ''}>${col}</option>`).join('')}</select>
+		</div>
+		<div class="botonera">
+			${manual ? '<button class="boton" id="cbl-auto">Trazado automático</button>' : ''}
+			<button class="boton peligro" id="cbl-quitar">Quitar cable</button>
+		</div>
+	`;
+	(panel.querySelector('#cbl-seccion') as HTMLSelectElement).onchange = (e) => {
+		capturar();
+		c.seccion = Number((e.target as HTMLSelectElement).value);
+		recalcular(); reconstruirCables(); pintarPaneles();
+	};
+	(panel.querySelector('#cbl-color') as HTMLSelectElement).onchange = (e) => {
+		capturar();
+		c.color = (e.target as HTMLSelectElement).value;
+		reconstruirCables();
+	};
+	(panel.querySelector('#cbl-auto') as HTMLButtonElement | null)?.addEventListener('click', () => {
+		capturar();
+		delete c.trazado;
+		recalcular(); reconstruirCables(); construirHandles(); pintarSeleccion();
+	});
+	(panel.querySelector('#cbl-quitar') as HTMLButtonElement).onclick = () => {
+		capturar();
+		proyecto.conductores = proyecto.conductores.filter((x) => x.id !== id);
+		aplicarSeleccion(undefined);
+		recalcular(); reconstruirCables(); pintarPaneles();
+	};
 }
 
 /* ------------------------ Estructura del gabinete ------------------------ */
@@ -837,9 +978,21 @@ function aplicarSeleccion(nueva: Seleccion | undefined): void {
 	if (sel?.tipo === 'dispositivo') resaltarObjeto(grupoDe(sel.id));
 	else if (sel?.tipo === 'canaleta') resaltarPorUserData('canaletaId', sel.id);
 	else if (sel?.tipo === 'riel') resaltarPorUserData('rielId', sel.id);
+	else if (sel?.tipo === 'cable') resaltarCable(sel.id);
 	construirHandles();
 	pintarPaneles();
 	pintarSeleccion();
+}
+
+function resaltarCable(id: string): void {
+	escenario.cables.traverse((o) => {
+		if (o.userData.conductorId === id && o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
+			o.material = o.material.clone();
+			o.material.emissive.setHex(0x2ea3ff);
+			o.material.emissiveIntensity = 0.6;
+			resaltados.push(o.material);
+		}
+	});
 }
 
 /** Selección por id de dispositivo (compatibilidad con el resto del código). */
@@ -847,19 +1000,21 @@ function seleccionar(id: string | undefined): void {
 	aplicarSeleccion(id ? { tipo: 'dispositivo', id } : undefined);
 }
 
-/** Primer elemento (aparato, canaleta o riel) bajo el puntero. */
+/** Primer elemento bajo el puntero. Prioriza aparatos > canaletas/rieles > cables. */
 function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camara);
 	const impactos = raycaster.intersectObjects(escenario.raiz.children, true);
+	let cable: Seleccion | undefined;
 	for (const i of impactos) {
 		const u = i.object.userData;
 		if (u.dispositivoId) return { tipo: 'dispositivo', id: u.dispositivoId };
 		if (u.canaletaId) return { tipo: 'canaleta', id: u.canaletaId };
 		if (u.rielId) return { tipo: 'riel', id: u.rielId };
+		if (u.conductorId && !cable) cable = { tipo: 'cable', id: u.conductorId };
 	}
-	return undefined;
+	return cable; // los cables tienen la prioridad más baja
 }
 
 /* ------------------------ Tiradores (handles) ------------------------ */
@@ -869,10 +1024,10 @@ interface DatosHandle {
 	sel: Seleccion;
 }
 
-/** Construye los tiradores de redimensionado del elemento seleccionado (solo modo editor). */
+/** Construye los tiradores del elemento seleccionado (estructura en Editor, cable en Trabajo). */
 function construirHandles(): void {
 	escenario.handles.clear();
-	if (modo !== 'editor' || !sel) return;
+	if (!sel) return;
 	const g = proyecto.gabinete!;
 	const esfera = (p: THREE.Vector3, datos: DatosHandle, color = 0x4da3ff): void => {
 		const m = new THREE.Mesh(
@@ -884,6 +1039,20 @@ function construirHandles(): void {
 		m.userData.handle = datos;
 		escenario.handles.add(m);
 	};
+
+	// Cable: un tirador en su punto medio para ordenarlo a mano (funciona en modo Trabajo).
+	if (sel.tipo === 'cable') {
+		const c = proyecto.conductores.find((x) => x.id === sel!.id);
+		if (!c) return;
+		const a = anclajeBorne(proyecto, c.de.dispositivoId, c.de.borneId);
+		const b = anclajeBorne(proyecto, c.a.dispositivoId, c.a.borneId);
+		if (!a || !b) return;
+		const punto = c.trazado?.[0] ?? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+		esfera(escenario.aEscena(punto.x, punto.y, 55), { rol: 'esquina', sel }, 0x2ea3ff);
+		return;
+	}
+
+	if (modo !== 'editor') return;
 
 	if (sel.tipo === 'canaleta') {
 		const can = g.canaletas.find((c) => c.id === sel!.id);
@@ -1078,24 +1247,29 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		return;
 	}
 
+	// Tiradores (redimensionar estructura en Editor, ordenar cable en Trabajo): máxima prioridad.
+	const handle = handleBajoElPuntero(ev);
+	if (handle) {
+		handleArrastrado = handle;
+		arrastrando = true;
+		capturadoEsteArrastre = false;
+		controles.enabled = false;
+		return;
+	}
+
 	if (modo === 'editor') {
-		// 1. Tiradores de redimensionado (máxima prioridad).
-		const handle = handleBajoElPuntero(ev);
-		if (handle) {
-			handleArrastrado = handle;
-			arrastrando = true;
-			capturadoEsteArrastre = false;
-			controles.enabled = false;
-			return;
-		}
-		// 2. Modo pin: clic sobre la imagen añade un punto de conexión.
+		// Modo pin: clic sobre la imagen añade un punto de conexión.
 		if (modoPin && anadirPin(ev)) return;
-		// 3. Cota clicable → editar medida.
+		// Cota clicable → editar medida.
 		const cota = cotaBajoElPuntero(ev);
 		if (cota) { editarCota(cota); return; }
 	}
 
-	const elem = elementoBajoElPuntero(ev);
+	let elem = elementoBajoElPuntero(ev);
+	// En modo Trabajo se seleccionan aparatos (para cablear) y cables (para ordenarlos),
+	// pero no la estructura. En modo Editor no se seleccionan cables.
+	if (modo === 'trabajo' && elem && elem.tipo !== 'dispositivo' && elem.tipo !== 'cable') elem = undefined;
+	if (modo === 'editor' && elem && elem.tipo === 'cable') elem = undefined;
 	const mismo = elem && sel && elem.tipo === sel.tipo && elem.id === sel.id;
 	if (!mismo) aplicarSeleccion(elem);
 	if (!elem || modo !== 'editor') return;
@@ -1130,8 +1304,16 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (!capturadoEsteArrastre) { capturar(); capturadoEsteArrastre = true; }
 	const g = proyecto.gabinete!;
 
-	// --- Redimensionar con un tirador ---
+	// --- Redimensionar / ordenar con un tirador ---
 	if (handleArrastrado) {
+		if (sel.tipo === 'cable') {
+			// Ordenar el cable: el punto de paso sigue al ratón; el cable deja de estar tenso.
+			const c = proyecto.conductores.find((x) => x.id === sel!.id)!;
+			c.trazado = [{ x: Math.round(p.x), y: Math.round(p.y) }];
+			reconstruirCables();
+			construirHandles();
+			return;
+		}
 		if (sel.tipo === 'canaleta') {
 			const can = g.canaletas.find((c) => c.id === sel!.id)!;
 			const esH = can.orientacion === 'h';
@@ -1170,15 +1352,11 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	// --- Mover ---
 	if (sel.tipo === 'dispositivo') {
 		const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id)!;
-		const cx = p.x - desfase.x;
-		let cy = p.y - desfase.y;
-		let mejor: { d: number; y: number } | undefined;
-		for (const riel of g.rieles) {
-			const centroRiel = riel.y + SNAP_RIEL;
-			const dist = Math.abs(cy - centroRiel);
-			if (dist < UMBRAL_SNAP && (!mejor || dist < mejor.d)) mejor = { d: dist, y: centroRiel };
-		}
-		if (mejor) cy = mejor.y;
+		// El aparato SIEMPRE se pega al riel más cercano (nunca queda flotando).
+		const snap = snapAriel(p.x - desfase.x, p.y - desfase.y, col.ancho, col.alto);
+		const cx = snap ? snap.cx : p.x - desfase.x;
+		const cy = snap ? snap.cy : p.y - desfase.y;
+		col.rielId = snap?.rielId;
 		col.x = Math.min(Math.max(cx - col.ancho / 2, 0), g.ancho - col.ancho);
 		col.y = Math.min(Math.max(cy - col.alto / 2, 0), g.alto - col.alto);
 		const c = escenario.aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
@@ -1379,8 +1557,8 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 /* ------------------------------- Modos ------------------------------- */
 
 const AYUDA: Record<Modo, string> = {
-	editor: '🔧 EDITOR — Añade aparatos del catálogo · arrástralos (se anclan al riel) · edita la caja, placa, rieles y canaletas · «Ver tamaños» para acotar y editar medidas · Supr elimina · Ctrl+Z deshace',
-	trabajo: '🔌 TRABAJO — Cablea desde la ficha de cada aparato y observa la verificación en vivo. La estructura está bloqueada: nada se mueve por accidente.',
+	editor: '🔧 EDITOR (armar) — Añade aparatos del catálogo (van sobre un riel) · arrástralos · edita caja, placa, rieles y canaletas (botón «Girar H↔V») · Duplicar/Eliminar · Supr borra · Ctrl+Z deshace',
+	trabajo: '🔌 TRABAJO (conexiones) — Cablea seleccionando un aparato · arrastra los cables sueltos para ordenarlos · verificación DRC en vivo. La estructura y los aparatos están bloqueados.',
 };
 
 function aplicarModo(nuevo: Modo): void {
@@ -1389,11 +1567,14 @@ function aplicarModo(nuevo: Modo): void {
 	$('modo-editor').classList.toggle('activo', modo === 'editor');
 	$('modo-trabajo').classList.toggle('activo', modo === 'trabajo');
 	$('ayuda').textContent = AYUDA[modo];
+	eligiendoDestino = false;
 	// Al pasar a trabajo se cancela cualquier arrastre en curso y se quitan los tiradores.
 	if (modo === 'trabajo') {
 		arrastrando = false;
 		modoPin = false;
 		controles.enabled = true;
+		// Si había una canaleta/riel seleccionado, se deselecciona (no se editan en Trabajo).
+		if (sel && sel.tipo !== 'dispositivo') aplicarSeleccion(undefined);
 	}
 	construirHandles();
 	pintarSeleccion();
