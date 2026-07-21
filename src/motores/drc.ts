@@ -28,10 +28,12 @@ export function verificarProyecto(
 		const d = dispositivo(proyecto, id);
 		return d.designacion ?? d.id;
 	};
+	// Las imágenes de referencia son puramente visuales: no se verifican eléctricamente.
+	const aparatos = proyecto.dispositivos.filter((d) => !d.imagen);
 
 	// R1 — Designaciones duplicadas.
 	const vistas = new Map<string, string>();
-	for (const d of proyecto.dispositivos) {
+	for (const d of aparatos) {
 		if (!d.designacion) continue;
 		const otro = vistas.get(d.designacion);
 		if (otro) {
@@ -47,7 +49,7 @@ export function verificarProyecto(
 	}
 
 	// R2 — Bornes obligatorios sin conectar y dispositivos totalmente aislados.
-	for (const d of proyecto.dispositivos) {
+	for (const d of aparatos) {
 		let conexiones = 0;
 		for (const b of d.bornes) {
 			const n = conductoresEn(proyecto, { dispositivoId: d.id, borneId: b.id }).length;
@@ -96,7 +98,7 @@ export function verificarProyecto(
 
 	// R4 — Coherencia maestro/esclavo (referencias cruzadas).
 	const ids = new Set(proyecto.dispositivos.map((d) => d.id));
-	for (const d of proyecto.dispositivos) {
+	for (const d of aparatos) {
 		if (d.rol?.tipo === 'esclavo') {
 			const m = d.rol.maestroId;
 			if (!ids.has(m) || dispositivo(proyecto, m).rol?.tipo !== 'maestro') {
@@ -124,7 +126,7 @@ export function verificarProyecto(
 	}
 
 	// R5 — Exceso de conductores en un borne.
-	for (const d of proyecto.dispositivos) {
+	for (const d of aparatos) {
 		for (const b of d.bornes) {
 			const n = conductoresEn(proyecto, { dispositivoId: d.id, borneId: b.id }).length;
 			const max = b.maxConductores ?? 2;
@@ -164,7 +166,7 @@ export function verificarProyecto(
 	}
 
 	// R8 — Dispositivos sin posición en el esquema.
-	for (const d of proyecto.dispositivos) {
+	for (const d of aparatos) {
 		if (!d.hojaId || !d.posicion) {
 			hallazgos.push({
 				regla: 'R8-sin-posicion',

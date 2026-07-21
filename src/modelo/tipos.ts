@@ -57,6 +57,9 @@ export interface Borne {
 	obligatorio?: boolean;
 	/** Máximo de conductores admitidos en este punto (por defecto 2). */
 	maxConductores?: number;
+	/** Posición relativa (0..1) del pin sobre la imagen de un dispositivo de referencia. */
+	u?: number;
+	v?: number;
 }
 
 /** Rol lógico para referencias cruzadas (equivalente a Master/Slave de QElectroTech). */
@@ -88,6 +91,12 @@ export interface Dispositivo {
 	tensionNominal?: number;
 	/** True si el aparato está fuera del gabinete (campo): motores, sensores, etc. */
 	campo?: boolean;
+	/**
+	 * Imagen de referencia (data URL). Si está presente, el dispositivo se dibuja como
+	 * la imagen con sus pines (bornes con u,v) en vez de un modelo 3D; sirve para cablear
+	 * de forma visual cualquier foto (un gabinete, un controlador, un motor…).
+	 */
+	imagen?: string;
 	/** Hoja del esquema donde está dibujado. */
 	hojaId?: string;
 	/** Posición en la hoja, en coordenadas de rejilla (columna/fila continuas). */

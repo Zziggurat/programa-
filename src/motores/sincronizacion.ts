@@ -23,12 +23,14 @@ export interface ResultadoSincronizacion {
 
 export function sincronizarEsquemaGabinete(proyecto: Proyecto): ResultadoSincronizacion {
 	const gabinete = proyecto.gabinete;
-	const colocaciones = gabinete?.colocaciones ?? [];
+	// Las imágenes de referencia son visuales: no cuentan como aparatos del montaje físico.
+	const idsImagen = new Set(proyecto.dispositivos.filter((d) => d.imagen).map((d) => d.id));
+	const colocaciones = (gabinete?.colocaciones ?? []).filter((c) => !idsImagen.has(c.dispositivoId));
 	const idsEsquema = new Set(proyecto.dispositivos.map((d) => d.id));
 	const idsColocados = new Set(colocaciones.map((c) => c.dispositivoId));
 
 	const faltanEnGabinete = proyecto.dispositivos
-		.filter((d) => !d.campo && d.tipo !== 'cable' && !idsColocados.has(d.id))
+		.filter((d) => !d.campo && !d.imagen && d.tipo !== 'cable' && !idsColocados.has(d.id))
 		.map((d) => d.designacion ?? d.id);
 
 	const sobranEnGabinete = colocaciones

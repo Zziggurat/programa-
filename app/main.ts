@@ -21,11 +21,19 @@ import { sincronizarEsquemaGabinete } from '../src/motores/sincronizacion.js';
 import { generarReferencias } from '../src/motores/referencias.js';
 import { generarPlanBorneros } from '../src/motores/bornes.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
-import { cajaDe, construirCables, construirCotas, construirEscenario, DatosCota, Escenario } from './escena3d.js';
+import {
+	cajaDe, construirCables, construirCanaleta, construirCotas, construirDispositivo,
+	construirEscenario, construirRiel, DatosCota, Escenario,
+} from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
 
 type Modo = 'editor' | 'trabajo';
 let modo: Modo = 'editor';
+
+type Seleccion =
+	| { tipo: 'dispositivo'; id: string }
+	| { tipo: 'canaleta'; id: string }
+	| { tipo: 'riel'; id: string };
 
 /* ------------------------------ Estado ------------------------------ */
 
@@ -232,12 +240,15 @@ function actualizarTodo(): void {
 
 /** Tras reemplazar el objeto `proyecto` (deshacer/rehacer/abrir/nuevo). */
 function trasCambiarProyecto(): void {
-	if (seleccionadoId && !proyecto.dispositivos.some((d) => d.id === seleccionadoId)) {
-		seleccionadoId = undefined;
-		materialesResaltados = [];
-	}
+	const existe = sel && (sel.tipo === 'dispositivo'
+		? proyecto.dispositivos.some((d) => d.id === sel!.id)
+		: sel.tipo === 'canaleta'
+			? proyecto.gabinete!.canaletas.some((c) => c.id === sel!.id)
+			: proyecto.gabinete!.rieles.some((r) => r.id === sel!.id));
+	if (!existe) { sel = undefined; resaltados = []; }
 	recalcular();
 	montarEscenario();
+	construirHandles();
 	pintarCatalogo();
 	pintarPaneles();
 	pintarEstructura();
@@ -344,7 +355,7 @@ function pintarPaneles(): void {
 	$('contador-dispositivos').textContent = `(${internos.length})`;
 	for (const d of internos) {
 		const li = document.createElement('li');
-		li.className = d.id === seleccionadoId ? 'seleccionado' : '';
+		li.className = d.id === idDispositivoSel() ? 'seleccionado' : '';
 		li.innerHTML = `<span class="des">${d.designacion ?? d.id}</span><span class="desc">${d.descripcion ?? ''}</span>`;
 		li.onclick = () => seleccionar(d.id);
 		lista.appendChild(li);
@@ -392,11 +403,15 @@ const COLORES = ['negro', 'azul', 'rojo', 'blanco', 'gris', 'marrón', 'verde/am
 
 function pintarSeleccion(): void {
 	const panel = $('panel-der');
-	if (!seleccionadoId) {
+	if (!sel) {
 		panel.style.display = 'none';
 		return;
 	}
-	const d = proyecto.dispositivos.find((x) => x.id === seleccionadoId);
+	if (sel.tipo === 'canaleta' || sel.tipo === 'riel') {
+		pintarPanelEstructura(sel);
+		return;
+	}
+	const d = proyecto.dispositivos.find((x) => x.id === sel!.id);
 	if (!d) {
 		panel.style.display = 'none';
 		return;
@@ -412,16 +427,20 @@ function pintarSeleccion(): void {
 
 	const otrosAparatos = proyecto.dispositivos.filter((x) => x.id !== d.id);
 
+	const esImagen = !!d.imagen;
 	panel.style.display = 'block';
 	panel.innerHTML = `
 		<h1>${d.designacion ?? d.id}</h1>
-		<div class="sub">${d.descripcion ?? ''}</div>
+		<div class="sub">${esImagen ? '🖼️ Imagen de referencia' : (d.descripcion ?? '')}</div>
 		<dl>
-			<dt>Referencia</dt><dd>${d.fabricante ?? '—'} ${d.referencia ?? ''}</dd>
+			${esImagen ? '' : `<dt>Referencia</dt><dd>${d.fabricante ?? '—'} ${d.referencia ?? ''}</dd>`}
 			${col ? `<dt>Posición en placa</dt><dd>x ${Math.round(col.x)} mm · y ${Math.round(col.y)} mm · ${col.ancho}×${col.alto} mm</dd>` : ''}
 			${d.tensionNominal ? `<dt>Tensión</dt><dd>${d.tensionNominal} V</dd>` : ''}
-			<dt>Posición en esquema</dt><dd>${posicionTexto(proyecto, d)}</dd>
+			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${posicionTexto(proyecto, d)}</dd>`}
 		</dl>
+		${esImagen ? `<h2>Puntos de conexión (${d.bornes.length})</h2>
+			<button class="boton ${modoPin ? 'primario' : ''} ancho-total" id="btn-pin" style="width:100%">${modoPin ? '✓ Haz clic en la imagen…' : '➕ Añadir punto de conexión'}</button>
+			<div id="lista-pines" style="margin-top:6px"></div>` : ''}
 		${propios.length ? `<h2>Hallazgos DRC</h2><ul>${propios
 			.map((h) => `<li class="hallazgo ${h.severidad}">${h.mensaje}</li>`).join('')}</ul>` : ''}
 		<h2>Cables conectados ${metros ? `· ${(metros / 1000).toFixed(2)} m` : ''}</h2>
@@ -502,6 +521,73 @@ function pintarSeleccion(): void {
 		const plantilla = PLANTILLAS.find((p) => p.referencia === d.referencia);
 		if (plantilla) anadirDesdeCatalogo(plantilla.id);
 	};
+
+	// Imagen de referencia: botón de modo pin y lista de puntos con opción de borrar.
+	if (esImagen) {
+		(panel.querySelector('#btn-pin') as HTMLButtonElement).onclick = () => {
+			modoPin = !modoPin;
+			pintarSeleccion();
+		};
+		const lista = panel.querySelector('#lista-pines')!;
+		for (const b of d.bornes) {
+			const fila = document.createElement('div');
+			fila.className = 'fila-cable';
+			fila.innerHTML = `<span class="num">◉</span><span>${b.id}</span>
+				<button class="quitar" title="Quitar punto">✕</button>`;
+			(fila.querySelector('.quitar') as HTMLButtonElement).onclick = () => {
+				capturar();
+				d.bornes = d.bornes.filter((x) => x.id !== b.id);
+				proyecto.conductores = proyecto.conductores.filter(
+					(c) => !(c.de.dispositivoId === d.id && c.de.borneId === b.id) &&
+						!(c.a.dispositivoId === d.id && c.a.borneId === b.id),
+				);
+				actualizarTodo();
+			};
+			lista.appendChild(fila);
+		}
+	}
+}
+
+/** Panel de propiedades de una canaleta o un riel seleccionado. */
+function pintarPanelEstructura(s: Seleccion): void {
+	const panel = $('panel-der');
+	const g = proyecto.gabinete!;
+	const esCanaleta = s.tipo === 'canaleta';
+	const obj = esCanaleta ? g.canaletas.find((c) => c.id === s.id) : g.rieles.find((r) => r.id === s.id);
+	if (!obj) { panel.style.display = 'none'; return; }
+	const can = esCanaleta ? (obj as typeof g.canaletas[number]) : undefined;
+
+	panel.style.display = 'block';
+	panel.innerHTML = `
+		<h1>${esCanaleta ? '📦 Canaleta' : '➖ Riel DIN'} ${obj.id}</h1>
+		<div class="sub">${esCanaleta ? `Ranurada ${can!.orientacion === 'h' ? 'horizontal' : 'vertical'} · ${can!.ancho}×${can!.alto} mm` : 'Perfil sombrero 35 mm'}</div>
+		<div class="sub" style="margin-top:8px">Arrástrala para moverla, o tira de las esferas de los extremos para alargarla. También puedes ajustar los cm aquí:</div>
+		<dl>
+			<dt>Posición X</dt><dd><input type="number" id="e-x" value="${(obj.x / 10).toFixed(1)}" step="0.5"> cm</dd>
+			<dt>Posición Y</dt><dd><input type="number" id="e-y" value="${(obj.y / 10).toFixed(1)}" step="0.5"> cm</dd>
+			<dt>Largo</dt><dd><input type="number" id="e-largo" value="${(obj.largo / 10).toFixed(1)}" step="0.5"> cm</dd>
+			${esCanaleta ? `<dt>Ancho del canal</dt><dd><input type="number" id="e-ancho" value="${can!.ancho}" step="5"> mm</dd>` : ''}
+			${esCanaleta ? `<dt>Orientación</dt><dd><select id="e-orient"><option value="h" ${can!.orientacion === 'h' ? 'selected' : ''}>Horizontal</option><option value="v" ${can!.orientacion === 'v' ? 'selected' : ''}>Vertical</option></select></dd>` : ''}
+		</dl>
+		<div class="botonera">
+			<button class="boton primario" id="e-aplicar">Aplicar cm</button>
+			<button class="boton peligro" id="e-eliminar">Eliminar</button>
+		</div>
+	`;
+	(panel.querySelector('#e-aplicar') as HTMLButtonElement).onclick = () => {
+		capturar();
+		obj.x = Math.round(Number((panel.querySelector('#e-x') as HTMLInputElement).value) * 10);
+		obj.y = Math.round(Number((panel.querySelector('#e-y') as HTMLInputElement).value) * 10);
+		obj.largo = Math.max(60, Math.round(Number((panel.querySelector('#e-largo') as HTMLInputElement).value) * 10));
+		if (can) {
+			can.ancho = Math.max(15, Number((panel.querySelector('#e-ancho') as HTMLInputElement).value));
+			can.alto = can.ancho >= 60 ? 80 : 60;
+			can.orientacion = (panel.querySelector('#e-orient') as HTMLSelectElement).value as 'h' | 'v';
+		}
+		actualizarTodo();
+		pintarEstructura();
+	};
+	(panel.querySelector('#e-eliminar') as HTMLButtonElement).onclick = () => eliminarEstructura(s);
 }
 
 /* ------------------------ Estructura del gabinete ------------------------ */
@@ -635,43 +721,167 @@ function aplicarEstructura(): void {
 
 const raycaster = new THREE.Raycaster();
 const puntero = new THREE.Vector2();
-let seleccionadoId: string | undefined;
-let materialesResaltados: THREE.MeshStandardMaterial[] = [];
+let sel: Seleccion | undefined;
+let resaltados: THREE.MeshStandardMaterial[] = [];
+let modoPin = false; // añadiendo un punto de conexión sobre una imagen de referencia
+
+function idDispositivoSel(): string | undefined {
+	return sel?.tipo === 'dispositivo' ? sel.id : undefined;
+}
 
 function grupoDe(id: string): THREE.Group | undefined {
 	return escenario.dispositivos.children.find((g) => g.userData.dispositivoId === id) as THREE.Group | undefined;
 }
 
-function seleccionar(id: string | undefined): void {
-	for (const m of materialesResaltados) m.emissive.setHex(0x000000);
-	materialesResaltados = [];
-	seleccionadoId = id;
-	if (id) {
-		grupoDe(id)?.traverse((o) => {
-			if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
-				o.material = o.material.clone();
-				o.material.emissive.setHex(0x1d4ed8);
-				o.material.emissiveIntensity = 0.35;
-				materialesResaltados.push(o.material);
-			}
-		});
-	}
+function limpiarResaltado(): void {
+	for (const m of resaltados) m.emissive.setHex(0x000000);
+	resaltados = [];
+}
+
+function resaltarObjeto(raiz: THREE.Object3D | undefined, color = 0x1d4ed8, intensidad = 0.4): void {
+	raiz?.traverse((o) => {
+		if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
+			o.material = o.material.clone();
+			o.material.emissive.setHex(color);
+			o.material.emissiveIntensity = intensidad;
+			resaltados.push(o.material);
+		}
+	});
+}
+
+function resaltarPorUserData(clave: 'canaletaId' | 'rielId', id: string): void {
+	escenario.raiz.traverse((o) => {
+		if (o.userData[clave] === id && o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
+			o.material = o.material.clone();
+			o.material.emissive.setHex(0x1d4ed8);
+			o.material.emissiveIntensity = 0.55;
+			resaltados.push(o.material);
+		}
+	});
+}
+
+/** Aplica una selección de cualquier tipo (o la limpia) y refresca resaltado, handles y paneles. */
+function aplicarSeleccion(nueva: Seleccion | undefined): void {
+	limpiarResaltado();
+	modoPin = false;
+	sel = nueva;
+	if (sel?.tipo === 'dispositivo') resaltarObjeto(grupoDe(sel.id));
+	else if (sel?.tipo === 'canaleta') resaltarPorUserData('canaletaId', sel.id);
+	else if (sel?.tipo === 'riel') resaltarPorUserData('rielId', sel.id);
+	construirHandles();
 	pintarPaneles();
 	pintarSeleccion();
 }
 
-function dispositivoBajoElPuntero(ev: PointerEvent): string | undefined {
+/** Selección por id de dispositivo (compatibilidad con el resto del código). */
+function seleccionar(id: string | undefined): void {
+	aplicarSeleccion(id ? { tipo: 'dispositivo', id } : undefined);
+}
+
+/** Primer elemento (aparato, canaleta o riel) bajo el puntero. */
+function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camara);
-	const impactos = raycaster.intersectObjects(escenario.dispositivos.children, true);
-	return impactos.find((i) => i.object.userData.dispositivoId)?.object.userData.dispositivoId;
+	const impactos = raycaster.intersectObjects(escenario.raiz.children, true);
+	for (const i of impactos) {
+		const u = i.object.userData;
+		if (u.dispositivoId) return { tipo: 'dispositivo', id: u.dispositivoId };
+		if (u.canaletaId) return { tipo: 'canaleta', id: u.canaletaId };
+		if (u.rielId) return { tipo: 'riel', id: u.rielId };
+	}
+	return undefined;
+}
+
+/* ------------------------ Tiradores (handles) ------------------------ */
+
+interface DatosHandle {
+	rol: 'inicio' | 'fin' | 'esquina';
+	sel: Seleccion;
+}
+
+/** Construye los tiradores de redimensionado del elemento seleccionado (solo modo editor). */
+function construirHandles(): void {
+	escenario.handles.clear();
+	if (modo !== 'editor' || !sel) return;
+	const g = proyecto.gabinete!;
+	const esfera = (p: THREE.Vector3, datos: DatosHandle, color = 0x4da3ff): void => {
+		const m = new THREE.Mesh(
+			new THREE.SphereGeometry(9, 16, 16),
+			new THREE.MeshBasicMaterial({ color, toneMapped: false, depthTest: false }),
+		);
+		m.position.copy(p);
+		m.renderOrder = 999;
+		m.userData.handle = datos;
+		escenario.handles.add(m);
+	};
+
+	if (sel.tipo === 'canaleta') {
+		const can = g.canaletas.find((c) => c.id === sel!.id);
+		if (!can) return;
+		const esH = can.orientacion === 'h';
+		const ini = escenario.aEscena(can.x, can.y, can.alto + 12);
+		const fin = esH
+			? escenario.aEscena(can.x + can.largo, can.y, can.alto + 12)
+			: escenario.aEscena(can.x, can.y + can.largo, can.alto + 12);
+		esfera(ini, { rol: 'inicio', sel }, 0x35c46a);
+		esfera(fin, { rol: 'fin', sel }, 0x35c46a);
+	} else if (sel.tipo === 'riel') {
+		const riel = g.rieles.find((r) => r.id === sel!.id);
+		if (!riel) return;
+		esfera(escenario.aEscena(riel.x, riel.y, 22), { rol: 'inicio', sel }, 0xffcf40);
+		esfera(escenario.aEscena(riel.x + riel.largo, riel.y, 22), { rol: 'fin', sel }, 0xffcf40);
+	} else {
+		const d = proyecto.dispositivos.find((x) => x.id === sel!.id);
+		const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id);
+		if (d?.imagen && col) {
+			esfera(escenario.aEscena(col.x + col.ancho, col.y + col.alto, 12), { rol: 'esquina', sel }, 0xff8c1a);
+		}
+	}
 }
 
 let arrastrando = false;
 let capturadoEsteArrastre = false;
+let handleArrastrado: DatosHandle | undefined;
 const planoArrastre = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const desfase = new THREE.Vector2();
+
+/** Punto del ratón proyectado sobre el plano de la placa, en coordenadas de modelo (mm). */
+function puntoModelo(ev: PointerEvent): { x: number; y: number } | undefined {
+	const r = renderer.domElement.getBoundingClientRect();
+	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+	raycaster.setFromCamera(puntero, camara);
+	const impacto = new THREE.Vector3();
+	if (!raycaster.ray.intersectPlane(planoArrastre, impacto)) return undefined;
+	const g = proyecto.gabinete!;
+	return { x: impacto.x + g.ancho / 2, y: g.alto / 2 - impacto.y };
+}
+
+/** Handle bajo el puntero (tiene prioridad sobre cualquier otra cosa). */
+function handleBajoElPuntero(ev: PointerEvent): DatosHandle | undefined {
+	if (escenario.handles.children.length === 0) return undefined;
+	const r = renderer.domElement.getBoundingClientRect();
+	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+	raycaster.setFromCamera(puntero, camara);
+	const impactos = raycaster.intersectObjects(escenario.handles.children, false);
+	return impactos[0]?.object.userData.handle as DatosHandle | undefined;
+}
+
+/** Reconstruye en la escena solo el riel o canaleta indicado (para arrastre fluido). */
+function reconstruirEstructuraUno(s: Seleccion): void {
+	const g = proyecto.gabinete!;
+	const clave = s.tipo === 'canaleta' ? 'canaletaId' : 'rielId';
+	for (const hijo of [...escenario.raiz.children]) {
+		if (hijo.userData[clave] === s.id) escenario.raiz.remove(hijo);
+	}
+	if (s.tipo === 'canaleta') {
+		const can = g.canaletas.find((c) => c.id === s.id);
+		if (can) escenario.raiz.add(construirCanaleta(can, escenario.aEscena, escenario.tapas));
+	} else {
+		const riel = g.rieles.find((r) => r.id === s.id);
+		if (riel) escenario.raiz.add(construirRiel(riel, escenario.aEscena));
+	}
+}
 
 /** Cota bajo el puntero (etiqueta clicable), solo si "Ver tamaños" está activo. */
 function cotaBajoElPuntero(ev: PointerEvent): DatosCota | undefined {
@@ -681,6 +891,26 @@ function cotaBajoElPuntero(ev: PointerEvent): DatosCota | undefined {
 	raycaster.setFromCamera(puntero, camara);
 	const impactos = raycaster.intersectObjects(escenario.cotas.children, true);
 	return impactos.find((i) => i.object.userData.cota)?.object.userData.cota as DatosCota | undefined;
+}
+
+/** En modo pin, añade un punto de conexión a la imagen seleccionada donde se hizo clic. */
+function anadirPin(ev: PointerEvent): boolean {
+	const id = idDispositivoSel();
+	if (!id) return false;
+	const d = proyecto.dispositivos.find((x) => x.id === id);
+	const col = proyecto.gabinete!.colocaciones.find((c) => c.dispositivoId === id);
+	if (!d?.imagen || !col) return false;
+	const p = puntoModelo(ev);
+	if (!p) return false;
+	const u = (p.x - col.x) / col.ancho;
+	const v = (p.y - col.y) / col.alto;
+	if (u < 0 || u > 1 || v < 0 || v > 1) return false; // clic fuera de la imagen
+	const etiqueta = prompt('Nombre del punto de conexión (p. ej. L1, GND, +24):', `P${d.bornes.length + 1}`);
+	if (etiqueta === null) return false;
+	capturar();
+	d.bornes.push({ id: etiqueta.trim() || `P${d.bornes.length + 1}`, u, v });
+	actualizarTodo();
+	return true;
 }
 
 /** Edita por teclado la dimensión que representa una cota (solo modo editor). */
@@ -724,73 +954,137 @@ function editarCota(datos: DatosCota): void {
 }
 
 renderer.domElement.addEventListener('pointerdown', (ev) => {
-	// En modo editor, un clic sobre una cota la edita (tiene prioridad sobre seleccionar).
 	if (modo === 'editor') {
-		const cota = cotaBajoElPuntero(ev);
-		if (cota) {
-			editarCota(cota);
+		// 1. Tiradores de redimensionado (máxima prioridad).
+		const handle = handleBajoElPuntero(ev);
+		if (handle) {
+			handleArrastrado = handle;
+			arrastrando = true;
+			capturadoEsteArrastre = false;
+			controles.enabled = false;
 			return;
 		}
+		// 2. Modo pin: clic sobre la imagen añade un punto de conexión.
+		if (modoPin && anadirPin(ev)) return;
+		// 3. Cota clicable → editar medida.
+		const cota = cotaBajoElPuntero(ev);
+		if (cota) { editarCota(cota); return; }
 	}
-	const id = dispositivoBajoElPuntero(ev);
-	if (id !== seleccionadoId) seleccionar(id);
-	if (!id) return;
-	// Arrastrar aparatos solo en modo editor; en trabajo nada se mueve.
-	if (modo !== 'editor') return;
-	const grupo = grupoDe(id);
-	if (!grupo || !proyecto.gabinete!.colocaciones.some((c) => c.dispositivoId === id)) return;
+
+	const elem = elementoBajoElPuntero(ev);
+	const mismo = elem && sel && elem.tipo === sel.tipo && elem.id === sel.id;
+	if (!mismo) aplicarSeleccion(elem);
+	if (!elem || modo !== 'editor') return;
+
+	// Preparar arrastre (mover). Los aparatos normales y las imágenes/canaletas/rieles
+	// se pueden mover; los aparatos sin colocación no.
+	const g = proyecto.gabinete!;
+	if (elem.tipo === 'dispositivo' && !g.colocaciones.some((c) => c.dispositivoId === elem.id)) return;
 	arrastrando = true;
+	handleArrastrado = undefined;
 	capturadoEsteArrastre = false;
 	controles.enabled = false;
-	const impacto = new THREE.Vector3();
-	raycaster.ray.intersectPlane(planoArrastre, impacto);
-	desfase.set(impacto.x - grupo.position.x, impacto.y - grupo.position.y);
+	const p = puntoModelo(ev);
+	if (!p) return;
+	if (elem.tipo === 'dispositivo') {
+		const col = g.colocaciones.find((c) => c.dispositivoId === elem.id)!;
+		desfase.set(p.x - (col.x + col.ancho / 2), p.y - (col.y + col.alto / 2));
+	} else if (elem.tipo === 'canaleta') {
+		const can = g.canaletas.find((c) => c.id === elem.id)!;
+		desfase.set(p.x - can.x, p.y - can.y);
+	} else {
+		const riel = g.rieles.find((r) => r.id === elem.id)!;
+		desfase.set(p.x - riel.x, p.y - riel.y);
+	}
 });
 
 renderer.domElement.addEventListener('pointermove', (ev) => {
-	if (!arrastrando || !seleccionadoId) return;
-	const r = renderer.domElement.getBoundingClientRect();
-	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camara);
-	const impacto = new THREE.Vector3();
-	if (!raycaster.ray.intersectPlane(planoArrastre, impacto)) return;
-
-	// La primera vez que realmente se mueve, capturamos el estado para poder deshacer.
-	if (!capturadoEsteArrastre) {
-		capturar();
-		capturadoEsteArrastre = true;
-	}
-
+	if (!arrastrando || !sel) return;
+	const p = puntoModelo(ev);
+	if (!p) return;
+	if (!capturadoEsteArrastre) { capturar(); capturadoEsteArrastre = true; }
 	const g = proyecto.gabinete!;
-	const col = g.colocaciones.find((c) => c.dispositivoId === seleccionadoId)!;
-	// Centro deseado en coordenadas de modelo (mm, Y hacia abajo).
-	const cx = impacto.x - desfase.x + g.ancho / 2;
-	let cy = g.alto / 2 - (impacto.y - desfase.y);
-	// Anclaje al riel más cercano.
-	let mejor: { d: number; y: number } | undefined;
-	for (const riel of g.rieles) {
-		const centroRiel = riel.y + SNAP_RIEL;
-		const dist = Math.abs(cy - centroRiel);
-		if (dist < UMBRAL_SNAP && (!mejor || dist < mejor.d)) mejor = { d: dist, y: centroRiel };
+
+	// --- Redimensionar con un tirador ---
+	if (handleArrastrado) {
+		if (sel.tipo === 'canaleta') {
+			const can = g.canaletas.find((c) => c.id === sel!.id)!;
+			const esH = can.orientacion === 'h';
+			if (handleArrastrado.rol === 'fin') {
+				can.largo = Math.max(60, Math.round((esH ? p.x - can.x : p.y - can.y) / 5) * 5);
+			} else {
+				const fin = esH ? can.x + can.largo : can.y + can.largo;
+				const nuevoIni = Math.min(esH ? p.x : p.y, fin - 60);
+				if (esH) { can.x = Math.round(nuevoIni / 5) * 5; can.largo = fin - can.x; }
+				else { can.y = Math.round(nuevoIni / 5) * 5; can.largo = fin - can.y; }
+			}
+			reconstruirEstructuraUno(sel);
+		} else if (sel.tipo === 'riel') {
+			const riel = g.rieles.find((r) => r.id === sel!.id)!;
+			if (handleArrastrado.rol === 'fin') {
+				riel.largo = Math.max(60, Math.round((p.x - riel.x) / 5) * 5);
+			} else {
+				const fin = riel.x + riel.largo;
+				riel.x = Math.round(Math.min(p.x, fin - 60) / 5) * 5;
+				riel.largo = fin - riel.x;
+			}
+			reconstruirEstructuraUno(sel);
+		} else {
+			const d = proyecto.dispositivos.find((x) => x.id === sel!.id)!;
+			const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id)!;
+			if (d.imagen) {
+				col.ancho = Math.max(40, Math.round((p.x - col.x) / 5) * 5);
+				col.alto = Math.max(40, Math.round((p.y - col.y) / 5) * 5);
+				reconstruirDispositivoUno(sel.id);
+			}
+		}
+		construirHandles();
+		return;
 	}
-	if (mejor) cy = mejor.y;
-	col.x = Math.min(Math.max(cx - col.ancho / 2, 0), g.ancho - col.ancho);
-	col.y = Math.min(Math.max(cy - col.alto / 2, 0), g.alto - col.alto);
-	const grupo = grupoDe(seleccionadoId)!;
-	const c = escenario.aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
-	grupo.position.set(c.x, c.y, 0);
+
+	// --- Mover ---
+	if (sel.tipo === 'dispositivo') {
+		const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id)!;
+		const cx = p.x - desfase.x;
+		let cy = p.y - desfase.y;
+		let mejor: { d: number; y: number } | undefined;
+		for (const riel of g.rieles) {
+			const centroRiel = riel.y + SNAP_RIEL;
+			const dist = Math.abs(cy - centroRiel);
+			if (dist < UMBRAL_SNAP && (!mejor || dist < mejor.d)) mejor = { d: dist, y: centroRiel };
+		}
+		if (mejor) cy = mejor.y;
+		col.x = Math.min(Math.max(cx - col.ancho / 2, 0), g.ancho - col.ancho);
+		col.y = Math.min(Math.max(cy - col.alto / 2, 0), g.alto - col.alto);
+		const c = escenario.aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
+		grupoDe(sel.id)!.position.set(c.x, c.y, 0);
+	} else if (sel.tipo === 'canaleta') {
+		const can = g.canaletas.find((c) => c.id === sel!.id)!;
+		can.x = Math.round((p.x - desfase.x) / 5) * 5;
+		can.y = Math.round((p.y - desfase.y) / 5) * 5;
+		reconstruirEstructuraUno(sel);
+	} else {
+		const riel = g.rieles.find((r) => r.id === sel!.id)!;
+		riel.x = Math.round((p.x - desfase.x) / 5) * 5;
+		riel.y = Math.round((p.y - desfase.y) / 5) * 5;
+		reconstruirEstructuraUno(sel);
+	}
+	construirHandles();
 });
 
 renderer.domElement.addEventListener('pointerup', () => {
 	if (!arrastrando) return;
 	arrastrando = false;
+	handleArrastrado = undefined;
 	controles.enabled = true;
 	if (!capturadoEsteArrastre) return; // fue un clic, no un arrastre real
 	recalcular();
 	reconstruirCables();
 	reconstruirCotas();
+	construirHandles();
 	pintarPaneles();
 	pintarSeleccion();
+	pintarEstructura();
 });
 
 window.addEventListener('keydown', (ev) => {
@@ -803,9 +1097,36 @@ window.addEventListener('keydown', (ev) => {
 		rehacer();
 		return;
 	}
-	if ((ev.key === 'Delete' || ev.key === 'Backspace') && seleccionadoId && modo === 'editor') eliminarDispositivo(seleccionadoId);
-	if (ev.key === 'Escape') seleccionar(undefined);
+	if ((ev.key === 'Delete' || ev.key === 'Backspace') && modo === 'editor' && sel) {
+		if (sel.tipo === 'dispositivo') eliminarDispositivo(sel.id);
+		else eliminarEstructura(sel);
+	}
+	if (ev.key === 'Escape') aplicarSeleccion(undefined);
 });
+
+/** Reconstruye en la escena solo el aparato indicado (para arrastre/resize fluido). */
+function reconstruirDispositivoUno(id: string): void {
+	const viejo = grupoDe(id);
+	if (viejo) escenario.dispositivos.remove(viejo);
+	const col = proyecto.gabinete!.colocaciones.find((c) => c.dispositivoId === id);
+	const d = proyecto.dispositivos.find((x) => x.id === id);
+	if (col && d) {
+		const etq: THREE.Object3D[] = [];
+		escenario.dispositivos.add(construirDispositivo(d, col, escenario.aEscena, etq));
+	}
+}
+
+function eliminarEstructura(s: Seleccion): void {
+	const g = proyecto.gabinete!;
+	const nombre = s.tipo === 'canaleta' ? 'la canaleta' : 'el riel';
+	if (!confirm(`¿Eliminar ${nombre} «${s.id}»?`)) return;
+	capturar();
+	if (s.tipo === 'canaleta') g.canaletas = g.canaletas.filter((c) => c.id !== s.id);
+	else g.rieles = g.rieles.filter((r) => r.id !== s.id);
+	aplicarSeleccion(undefined);
+	actualizarTodo();
+	pintarEstructura();
+}
 
 /* ------------------------------ Barra superior ------------------------------ */
 
@@ -830,6 +1151,43 @@ window.addEventListener('keydown', (ev) => {
 		JSON.stringify(proyecto, null, '\t'),
 		'application/json',
 	);
+};
+
+// Imagen de referencia: se importa como dispositivo con imagen (data URL) y colocación.
+($('btn-imagen') as HTMLButtonElement).onclick = () => ($('archivo-imagen') as HTMLInputElement).click();
+($('archivo-imagen') as HTMLInputElement).onchange = (e) => {
+	const archivo = (e.target as HTMLInputElement).files?.[0];
+	if (!archivo) return;
+	const lector = new FileReader();
+	lector.onload = () => {
+		const url = lector.result as string;
+		const img = new Image();
+		img.onload = () => {
+			if (modo !== 'editor') aplicarModo('editor');
+			capturar();
+			const g = proyecto.gabinete!;
+			// Tamaño inicial ~1/3 del ancho de placa, conservando proporción de la imagen.
+			const ancho = Math.round(g.ancho * 0.35);
+			const alto = Math.round(ancho * (img.height / img.width));
+			const id = `img${Date.now().toString(36)}`;
+			proyecto.dispositivos.push({
+				id, tipo: 'otro', imagen: url, campo: true,
+				descripcion: archivo.name, bornes: [],
+			});
+			g.colocaciones.push({
+				dispositivoId: id,
+				x: Math.max(0, Math.round((g.ancho - ancho) / 2)),
+				y: Math.max(0, Math.round((g.alto - alto) / 2)),
+				ancho, alto,
+			});
+			actualizarTodo();
+			seleccionar(id);
+			$('ayuda').textContent = '🖼️ Imagen añadida — con ella seleccionada, pulsa «➕ Añadir punto de conexión» y haz clic sobre la imagen para marcar cada punto; luego cámbiate a modo Trabajo para cablearlos.';
+		};
+		img.src = url;
+	};
+	lector.readAsDataURL(archivo);
+	(e.target as HTMLInputElement).value = '';
 };
 
 ($('btn-abrir') as HTMLButtonElement).onclick = () => ($('archivo-abrir') as HTMLInputElement).click();
@@ -878,11 +1236,14 @@ function aplicarModo(nuevo: Modo): void {
 	$('modo-editor').classList.toggle('activo', modo === 'editor');
 	$('modo-trabajo').classList.toggle('activo', modo === 'trabajo');
 	$('ayuda').textContent = AYUDA[modo];
-	// Al pasar a trabajo se cancela cualquier arrastre en curso.
+	// Al pasar a trabajo se cancela cualquier arrastre en curso y se quitan los tiradores.
 	if (modo === 'trabajo') {
 		arrastrando = false;
+		modoPin = false;
 		controles.enabled = true;
 	}
+	construirHandles();
+	pintarSeleccion();
 }
 
 $('modo-editor').onclick = () => aplicarModo('editor');

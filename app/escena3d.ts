@@ -26,6 +26,7 @@ export interface Escenario {
 	dispositivos: THREE.Group;   // mallas con userData.dispositivoId
 	cables: THREE.Group;
 	cotas: THREE.Group;          // acotado dimensional (modo "ver tamaños")
+	handles: THREE.Group;        // tiradores de mover/redimensionar del elemento seleccionado
 	tapas: THREE.Object3D[];     // tapas de canaletas (para ocultarlas)
 	etiquetas: THREE.Object3D[]; // sprites de designación
 	centro: THREE.Vector3;
@@ -66,7 +67,10 @@ export function construirEscenario(proyecto: Proyecto): Escenario {
 	cotas.visible = false;
 	raiz.add(cotas);
 
-	return { raiz, dispositivos, cables, cotas, tapas, etiquetas, centro: new THREE.Vector3(0, 0, 0), aEscena };
+	const handles = new THREE.Group();
+	raiz.add(handles);
+
+	return { raiz, dispositivos, cables, cotas, handles, tapas, etiquetas, centro: new THREE.Vector3(0, 0, 0), aEscena };
 }
 
 /* --------------------------------- Cotas --------------------------------- */
@@ -229,8 +233,8 @@ function construirCaja(g: Gabinete): THREE.Group {
 	return grupo;
 }
 
-function construirRiel(
-	riel: { x: number; y: number; largo: number },
+export function construirRiel(
+	riel: { id?: string; x: number; y: number; largo: number },
 	aEscena: Escenario['aEscena'],
 ): THREE.Group {
 	const grupo = new THREE.Group();
@@ -248,6 +252,7 @@ function construirRiel(
 	ala(-(ALTO_RIEL - 10) / 2 - 2);
 	const c = aEscena(riel.x + riel.largo / 2, riel.y, 0);
 	grupo.position.set(c.x, c.y, 0);
+	grupo.traverse((o) => { o.userData.rielId = (riel as { id?: string }).id; });
 	return grupo;
 }
 
@@ -256,7 +261,7 @@ function construirRiel(
  * formadas por "dientes" con ranuras intermedias, por donde cada cable sale hacia el
  * aparato justo en su punto de conexión. Tapa translúcida desmontable.
  */
-function construirCanaleta(
+export function construirCanaleta(
 	can: { id: string; x: number; y: number; largo: number; orientacion: 'h' | 'v'; ancho: number; alto: number },
 	aEscena: Escenario['aEscena'],
 	tapas: THREE.Object3D[],
@@ -329,6 +334,7 @@ function construirCanaleta(
 	const cy = can.y + (esH ? 0 : can.largo / 2);
 	const c = aEscena(cx, cy, 0);
 	grupo.position.set(c.x, c.y, 0);
+	grupo.traverse((o) => { o.userData.canaletaId = can.id; });
 	return grupo;
 }
 
@@ -450,5 +456,51 @@ export function construirCables(
 		tubo.userData.conductorId = conductor.id;
 		grupo.add(tubo);
 	}
+
+	// Cables no ruteados por canaleta (p. ej. entre puntos de imágenes de referencia):
+	// se dibujan como un tramo directo entre los dos puntos de conexión.
+	const ruteados = new Set(rutas.map((r) => r.conductorId));
+	for (const conductor of proyecto.conductores) {
+		if (ruteados.has(conductor.id)) continue;
+		const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
+		const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
+		if (!a || !b) continue;
+		const color = COLOR_CABLE[conductor.color ?? ''] ?? 0x546e7a;
+		const radio = 0.9 + (conductor.seccion ?? 1.5) * 0.35;
+		const pa = aEscena(a.x, a.y, a.z);
+		const pb = aEscena(b.x, b.y, b.z);
+		// Ligera catenaria hacia el frente para que el cable no atraviese las imágenes.
+		const medio = pa.clone().add(pb).multiplyScalar(0.5);
+		medio.z += 18 + pa.distanceTo(pb) * 0.04;
+		const curva = new THREE.CatmullRomCurve3([pa, medio, pb], false, 'catmullrom', 0.1);
+		const tubo = new THREE.Mesh(
+			new THREE.TubeGeometry(curva, 40, radio, 6, false),
+			new THREE.MeshStandardMaterial({ color, roughness: 0.55 }),
+		);
+		tubo.userData.conductorId = conductor.id;
+		grupo.add(tubo);
+	}
 	return grupo;
+}
+
+/**
+ * Posición 3D (en coordenadas de modelo: mm, Y abajo) del punto de conexión de un borne.
+ * Para imágenes de referencia usa la posición (u,v) del pin; para el resto, el frente
+ * del aparato. Devuelve undefined si el aparato no está colocado en la placa.
+ */
+export function anclajeBorne(
+	proyecto: Proyecto,
+	dispositivoId: string,
+	borneId: string,
+): { x: number; y: number; z: number } | undefined {
+	const d = proyecto.dispositivos.find((x) => x.id === dispositivoId);
+	const col = proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === dispositivoId);
+	if (!d || !col) return undefined;
+	if (d.imagen) {
+		const b = d.bornes.find((x) => x.id === borneId);
+		if (b?.u !== undefined && b?.v !== undefined) {
+			return { x: col.x + b.u * col.ancho, y: col.y + b.v * col.alto, z: 10 };
+		}
+	}
+	return { x: col.x + col.ancho / 2, y: col.y + col.alto / 2, z: 40 };
 }

@@ -273,6 +273,50 @@ const COLOR_TIPO: Record<string, number> = {
 	fuente: 0xb9bec2, transformador: 0x86673f, bornero: 0xaeb4b9, otro: 0x777f87,
 };
 
+/**
+ * Panel de imagen de referencia: la foto sobre un plano fino, con un marcador por cada
+ * pin (borne con u,v). Sirve para cablear cualquier imagen de forma visual (estilo EduVolt).
+ */
+function imagenReferencia(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
+	const prof = 6;
+	// Marco/plano trasero.
+	g.add(caja(w + 4, h + 4, 2, M.plastico(0x2a2f34, 0.8), 0, 0, 1));
+
+	// La textura llega asíncrona; se refresca sola en el bucle de render.
+	const tex = new THREE.Texture();
+	const img = new Image();
+	img.onload = () => { tex.image = img; tex.colorSpace = THREE.SRGBColorSpace; tex.needsUpdate = true; };
+	img.src = d.imagen!;
+	const plano = new THREE.Mesh(
+		new THREE.PlaneGeometry(w, h),
+		new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }),
+	);
+	plano.position.z = prof - 1;
+	plano.userData.esPlanoImagen = true; // para calcular u,v al añadir pines
+	g.add(plano);
+
+	// Pines: disco naranja con anillo, en la posición (u,v) de cada borne.
+	for (const b of d.bornes) {
+		if (b.u === undefined || b.v === undefined) continue;
+		const x = (b.u - 0.5) * w;
+		const y = (0.5 - b.v) * h;
+		const disco = new THREE.Mesh(
+			new THREE.CircleGeometry(Math.max(4, Math.min(w, h) * 0.02), 20),
+			new THREE.MeshBasicMaterial({ color: 0xff8c1a, toneMapped: false }),
+		);
+		disco.position.set(x, y, prof + 0.5);
+		disco.userData.pinBorneId = b.id;
+		g.add(disco);
+		const anillo = new THREE.Mesh(
+			new THREE.RingGeometry(Math.max(4, Math.min(w, h) * 0.02), Math.max(6, Math.min(w, h) * 0.03), 20),
+			new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }),
+		);
+		anillo.position.set(x, y, prof + 0.4);
+		g.add(anillo);
+	}
+	return prof;
+}
+
 /** Construye el modelo 3D de un aparato ya colocado. Devuelve el grupo (origen en su centro). */
 export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: THREE.Group; profundidad: number } {
 	const g = new THREE.Group();
@@ -280,6 +324,12 @@ export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: TH
 	const h = col.alto;
 	const color = COLOR_TIPO[d.tipo] ?? COLOR_TIPO.otro;
 	const ref = d.referencia ?? d.tipo;
+
+	if (d.imagen) {
+		const profundidad = imagenReferencia(g, d, w, h);
+		g.traverse((o) => { o.userData.dispositivoId = d.id; });
+		return { grupo: g, profundidad };
+	}
 
 	let profundidad: number;
 	switch (d.tipo) {

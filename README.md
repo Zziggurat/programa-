@@ -68,6 +68,14 @@ Designer, conectado en vivo con los motores del núcleo:
   para cambiar esa medida** (p. ej. el largo de la caja de 100 a 90 cm).
 - **Caja envolvente y placa con dimensiones independientes** (ancho/alto/profundidad de
   la caja; ancho/alto de la placa), como en un gabinete real.
+- **Canaletas y rieles libres**: selecciónalos y arrástralos para moverlos, tira de las
+  esferas de los extremos para alargarlos, o ajusta X/Y/largo/ancho en cm desde el panel.
+  Ideal para replicar un tablero existente o dimensionar uno nuevo y saber los cm que
+  necesitas antes de fabricarlo.
+- **Imágenes de referencia cableables**: importa cualquier foto (un gabinete, un
+  controlador Honeywell, un motor…), colócala y redimensiónala en la placa, marca sobre
+  ella sus puntos de conexión (GND, L1, +24…) y cablea de forma puramente visual entre
+  esos puntos y el resto del tablero — como en EduVolt Designer.
 
 - **Catálogo de aparatos** (15 plantillas: disyuntores, diferencial, guardamotor,
   contactor, relés, variador, PLC, fuente, transformador, borneros, portafusible):
