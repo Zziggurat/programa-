@@ -163,6 +163,20 @@
 	#modal-ayuda .guia li { margin-bottom: 4px; }
 	#modal-ayuda .pie { color: var(--texto-suave); font-size: 12.5px; margin-top: 14px; border-top: 1px solid var(--borde); padding-top: 12px; }
 
+	/* Diálogo in-app (confirm/prompt propios) */
+	#modal-dialogo { position: fixed; inset: 0; z-index: 50; background: #0009; display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-dialogo .caja-dialogo { background: var(--panel); border: 1px solid var(--borde); border-radius: 14px; padding: 22px 24px; max-width: 420px; width: 100%; box-shadow: 0 18px 60px #000a; }
+	#dialogo-msg { font-size: 14px; line-height: 1.5; margin-bottom: 14px; }
+	#dialogo-input { width: 100%; margin-bottom: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+	.dialogo-botones { display: flex; gap: 8px; justify-content: flex-end; }
+	.dialogo-botones .boton { padding: 7px 16px; }
+	#modal-dialogo.peligro #dialogo-ok { background: #7a2b2b; border-color: #a84444; }
+
+	/* Toast (aviso flotante no bloqueante) */
+	#toast { position: fixed; bottom: 54px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--panel-2); color: var(--texto); border: 1px solid var(--borde); border-left: 3px solid var(--acento); border-radius: 10px; padding: 10px 16px; font-size: 13px; box-shadow: 0 8px 30px #0008; max-width: 460px; }
+	#toast.ok { border-left-color: var(--ok); }
+	#toast.error { border-left-color: var(--error); }
+
 	/* Conmutador de modos */
 	#modos { display: flex; border: 1px solid var(--borde); border-radius: 9px; overflow: hidden; }
 	#modos button { background: var(--panel-2); border: none; color: var(--texto-suave); padding: 6px 13px; }
@@ -301,6 +315,21 @@
 		<p class="pie">El semáforo <b>DRC</b> de arriba revisa el tablero en vivo: verde = todo bien, naranja = avisos, rojo = errores. Haz clic en un aviso para ir al aparato.</p>
 	</div>
 </div>
+
+<!-- Diálogo in-app (reemplaza confirm/prompt, que el sandbox bloquea) -->
+<div id="modal-dialogo" hidden>
+	<div class="caja-dialogo">
+		<div id="dialogo-msg"></div>
+		<input id="dialogo-input" type="text" hidden>
+		<div class="dialogo-botones">
+			<button class="boton" id="dialogo-cancelar">Cancelar</button>
+			<button class="boton primario" id="dialogo-ok">Aceptar</button>
+		</div>
+	</div>
+</div>
+
+<!-- Aviso flotante (reemplaza alert) -->
+<div id="toast" hidden></div>
 
 <script type="module" src="./main.ts"></script>
 </body>

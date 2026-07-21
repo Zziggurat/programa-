@@ -12,11 +12,15 @@ límite. Enfoque: que cualquiera —de un niño a una persona mayor— pueda usa
   eliminar, redimensionar, exportar). El único "error" de consola detectado era el
   `favicon.ico` del servidor de pruebas, no de la aplicación.
 
-## Bug encontrado y corregido
+## Bugs encontrados y corregidos
 
 | Bug | Causa | Corrección |
 |---|---|---|
-| La tarjeta de bienvenida y el modal de ayuda no se ocultaban | El selector de id `#bienvenida { display:flex }` ganaba en especificidad al atributo `hidden` del navegador | Regla global `[hidden] { display:none !important }` |
+| La bienvenida y el modal de ayuda no se ocultaban | El selector de id `#bienvenida { display:flex }` ganaba en especificidad al atributo `hidden` | Regla global `[hidden] { display:none !important }` |
+| **Eliminar (botón y tecla Supr) no hacía nada; Duplicar sí** | El editor abierto como Artifact corre en un **iframe sandbox que bloquea `window.confirm/prompt/alert`** (devuelven `false`/`null` sin mostrar nada), así que el borrado se cancelaba solo. Duplicar no usa confirmación, por eso funcionaba | **Diálogos propios dentro de la app** (confirmar / pedir texto / aviso flotante) que funcionan en cualquier entorno; se reemplazaron las 6 llamadas nativas |
+| **Las canaletas no se eliminaban** | Mismo bloqueo de `confirm` en el sandbox | Diálogo in-app |
+| Orientación de canaleta (H/V) | Funcionaba, pero costaba verificarlo | Confirmado con pruebas (v↔h) desde el panel de la canaleta |
+| **Los aparatos podían encimarse unos sobre otros** | El arrastre no comprobaba colisiones | **Prevención de superposición**: aviso rojo en vivo al arrastrar sobre otro aparato; al soltar se corre al hueco libre más cercano y, si no cabe, vuelve a su sitio. Se mantiene además el aviso DRC de solapes |
 
 ## Fricciones de usabilidad detectadas → mejoras aplicadas
 

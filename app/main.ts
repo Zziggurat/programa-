@@ -262,6 +262,56 @@ function $(id: string): HTMLElement {
 	return document.getElementById(id)!;
 }
 
+/* ----------------- Diálogos in-app (confirm/prompt/toast) ----------------- *
+ * Los Artifacts corren en un iframe sandbox que bloquea window.confirm/prompt/alert
+ * (devuelven false/null sin mostrar nada). Estos reemplazos funcionan en cualquier
+ * entorno y dan una experiencia coherente. */
+
+let cerrarDialogo: ((valor: string | null) => void) | undefined;
+
+function abrirDialogo(mensaje: string, opciones: {
+	input?: boolean; valorInicial?: string; ok?: string; peligro?: boolean;
+} = {}): Promise<string | null> {
+	const modal = $('modal-dialogo');
+	const input = $('dialogo-input') as HTMLInputElement;
+	$('dialogo-msg').textContent = mensaje;
+	input.hidden = !opciones.input;
+	input.value = opciones.valorInicial ?? '';
+	($('dialogo-ok') as HTMLButtonElement).textContent = opciones.ok ?? 'Aceptar';
+	modal.classList.toggle('peligro', !!opciones.peligro);
+	modal.hidden = false;
+	if (opciones.input) setTimeout(() => { input.focus(); input.select(); }, 0);
+
+	return new Promise((resolve) => {
+		cerrarDialogo = (valor) => {
+			modal.hidden = true;
+			cerrarDialogo = undefined;
+			resolve(valor);
+		};
+	});
+}
+
+/** Confirmación con botones. Devuelve true si el usuario acepta. */
+async function confirmar(mensaje: string, opciones: { ok?: string; peligro?: boolean } = {}): Promise<boolean> {
+	return (await abrirDialogo(mensaje, opciones)) !== null;
+}
+
+/** Pide un texto. Devuelve la cadena escrita, o null si cancela. */
+function pedirTexto(mensaje: string, valorInicial = ''): Promise<string | null> {
+	return abrirDialogo(mensaje, { input: true, valorInicial });
+}
+
+/** Aviso flotante no bloqueante. */
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+function avisar(mensaje: string, tipo: 'info' | 'ok' | 'error' = 'info'): void {
+	const toast = $('toast');
+	toast.textContent = mensaje;
+	toast.className = tipo;
+	toast.hidden = false;
+	clearTimeout(toastTimer);
+	toastTimer = setTimeout(() => { toast.hidden = true; }, 3200);
+}
+
 function descargar(nombre: string, contenido: string, tipo = 'text/plain'): void {
 	const a = document.createElement('a');
 	a.href = URL.createObjectURL(new Blob([contenido], { type: tipo }));
@@ -331,8 +381,9 @@ function anadirDesdeCatalogo(plantillaId: string): void {
 	seleccionar(d.id);
 }
 
-function eliminarDispositivo(id: string): void {
-	if (!confirm(`¿Eliminar ${etiquetaDe(id)} y sus cables?`)) return;
+async function eliminarDispositivo(id: string): Promise<void> {
+	const nombre = etiquetaDe(id);
+	if (!(await confirmar(`¿Eliminar ${nombre} y sus cables?`, { ok: 'Eliminar', peligro: true }))) return;
 	capturar();
 	proyecto.dispositivos = proyecto.dispositivos.filter((d) => d.id !== id);
 	proyecto.conductores = proyecto.conductores.filter(
@@ -342,6 +393,7 @@ function eliminarDispositivo(id: string): void {
 	g.colocaciones = g.colocaciones.filter((c) => c.dispositivoId !== id);
 	seleccionar(undefined);
 	actualizarTodo();
+	avisar(`${nombre} eliminado · Ctrl+Z para deshacer`);
 }
 
 /* --------------------------- Paneles laterales --------------------------- */
@@ -860,6 +912,7 @@ function construirHandles(): void {
 let arrastrando = false;
 let capturadoEsteArrastre = false;
 let handleArrastrado: DatosHandle | undefined;
+let arrastreInicio: { x: number; y: number } | undefined; // posición del aparato al empezar a arrastrarlo
 const planoArrastre = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const desfase = new THREE.Vector2();
 
@@ -872,6 +925,37 @@ function puntoModelo(ev: PointerEvent): { x: number; y: number } | undefined {
 	if (!raycaster.ray.intersectPlane(planoArrastre, impacto)) return undefined;
 	const g = proyecto.gabinete!;
 	return { x: impacto.x + g.ancho / 2, y: g.alto / 2 - impacto.y };
+}
+
+/* --------------------- Prevención de superposición --------------------- */
+
+const HOLGURA = 3; // mm de separación mínima entre aparatos
+
+/** ¿La huella (x,y,ancho,alto) se solapa con otro aparato real (las imágenes no cuentan)? */
+function solapaCon(x: number, y: number, ancho: number, alto: number, exceptoId: string): boolean {
+	const g = proyecto.gabinete!;
+	for (const c of g.colocaciones) {
+		if (c.dispositivoId === exceptoId) continue;
+		if (proyecto.dispositivos.find((z) => z.id === c.dispositivoId)?.imagen) continue;
+		const separados =
+			x + ancho + HOLGURA <= c.x || c.x + c.ancho + HOLGURA <= x ||
+			y + alto + HOLGURA <= c.y || c.y + c.alto + HOLGURA <= y;
+		if (!separados) return true;
+	}
+	return false;
+}
+
+/** X libre más cercano a `xDeseado` en la misma fila (misma y), sin solapar; undefined si no cabe. */
+function xLibreCercano(xDeseado: number, y: number, ancho: number, alto: number, id: string): number | undefined {
+	const g = proyecto.gabinete!;
+	const maxX = g.ancho - ancho;
+	for (let off = 0; off <= g.ancho; off += 5) {
+		for (const cand of off === 0 ? [xDeseado] : [xDeseado - off, xDeseado + off]) {
+			const x = Math.min(Math.max(cand, 0), maxX);
+			if (!solapaCon(x, y, ancho, alto, id)) return x;
+		}
+	}
+	return undefined;
 }
 
 /** Handle bajo el puntero (tiene prioridad sobre cualquier otra cosa). */
@@ -910,7 +994,10 @@ function cotaBajoElPuntero(ev: PointerEvent): DatosCota | undefined {
 	return impactos.find((i) => i.object.userData.cota)?.object.userData.cota as DatosCota | undefined;
 }
 
-/** En modo pin, añade un punto de conexión a la imagen seleccionada donde se hizo clic. */
+/**
+ * En modo pin, añade un punto de conexión a la imagen seleccionada donde se hizo clic.
+ * Devuelve true si el clic cayó sobre la imagen (y se consume); el nombre se pide después.
+ */
 function anadirPin(ev: PointerEvent): boolean {
 	const id = idDispositivoSel();
 	if (!id) return false;
@@ -922,22 +1009,24 @@ function anadirPin(ev: PointerEvent): boolean {
 	const u = (p.x - col.x) / col.ancho;
 	const v = (p.y - col.y) / col.alto;
 	if (u < 0 || u > 1 || v < 0 || v > 1) return false; // clic fuera de la imagen
-	const etiqueta = prompt('Nombre del punto de conexión (p. ej. L1, GND, +24):', `P${d.bornes.length + 1}`);
-	if (etiqueta === null) return false;
-	capturar();
-	d.bornes.push({ id: etiqueta.trim() || `P${d.bornes.length + 1}`, u, v });
-	actualizarTodo();
+	void (async () => {
+		const etiqueta = await pedirTexto('Nombre del punto de conexión (p. ej. L1, GND, +24):', `P${d.bornes.length + 1}`);
+		if (etiqueta === null) return;
+		capturar();
+		d.bornes.push({ id: etiqueta.trim() || `P${d.bornes.length + 1}`, u, v });
+		actualizarTodo();
+	})();
 	return true;
 }
 
-/** Edita por teclado la dimensión que representa una cota (solo modo editor). */
-function editarCota(datos: DatosCota): void {
+/** Edita la dimensión que representa una cota (solo modo editor). */
+async function editarCota(datos: DatosCota): Promise<void> {
 	const g = proyecto.gabinete!;
 	const actual = datos.valorMm / 10;
-	const entrada = prompt(`Nuevo valor en cm (actual ${actual} cm):`, String(actual));
+	const entrada = await pedirTexto(`Nuevo valor en cm (actual ${actual} cm):`, String(actual));
 	if (entrada === null) return;
 	const cm = Number(entrada.replace(',', '.'));
-	if (!isFinite(cm) || cm <= 0) return;
+	if (!isFinite(cm) || cm <= 0) { avisar('Introduce un número válido en cm', 'error'); return; }
 	capturar();
 	const mm = Math.round(cm * 10);
 	const o = datos.objetivo;
@@ -1024,6 +1113,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	if (elem.tipo === 'dispositivo') {
 		const col = g.colocaciones.find((c) => c.dispositivoId === elem.id)!;
 		desfase.set(p.x - (col.x + col.ancho / 2), p.y - (col.y + col.alto / 2));
+		arrastreInicio = { x: col.x, y: col.y };
 	} else if (elem.tipo === 'canaleta') {
 		const can = g.canaletas.find((c) => c.id === elem.id)!;
 		desfase.set(p.x - can.x, p.y - can.y);
@@ -1093,6 +1183,9 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		col.y = Math.min(Math.max(cy - col.alto / 2, 0), g.alto - col.alto);
 		const c = escenario.aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
 		grupoDe(sel.id)!.position.set(c.x, c.y, 0);
+		// Aviso en vivo: rojo si se solapa con otro aparato, azul si está libre.
+		const solapa = solapaCon(col.x, col.y, col.ancho, col.alto, sel.id);
+		for (const m of resaltados) m.emissive.setHex(solapa ? 0xff3b3b : 0x1d4ed8);
 	} else if (sel.tipo === 'canaleta') {
 		const can = g.canaletas.find((c) => c.id === sel!.id)!;
 		can.x = Math.round((p.x - desfase.x) / 5) * 5;
@@ -1112,7 +1205,30 @@ renderer.domElement.addEventListener('pointerup', () => {
 	arrastrando = false;
 	handleArrastrado = undefined;
 	controles.enabled = true;
-	if (!capturadoEsteArrastre) return; // fue un clic, no un arrastre real
+	if (!capturadoEsteArrastre) { arrastreInicio = undefined; return; } // fue un clic, no un arrastre
+
+	// Resolver superposición al soltar un aparato: se corre al hueco libre más cercano;
+	// si no cabe en ninguna parte de su fila, vuelve a su sitio original.
+	if (sel?.tipo === 'dispositivo' && !handleArrastrado) {
+		const g = proyecto.gabinete!;
+		const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id);
+		if (col && solapaCon(col.x, col.y, col.ancho, col.alto, sel.id)) {
+			const libre = xLibreCercano(col.x, col.y, col.ancho, col.alto, sel.id);
+			if (libre !== undefined) {
+				col.x = libre;
+				avisar('Se movió para no encimarse con otro aparato');
+			} else if (arrastreInicio) {
+				col.x = arrastreInicio.x;
+				col.y = arrastreInicio.y;
+				avisar('No cabe ahí sin encimarse: se devolvió a su sitio', 'error');
+			}
+			const c = escenario.aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
+			grupoDe(sel.id)?.position.set(c.x, c.y, 0);
+		}
+		for (const m of resaltados) m.emissive.setHex(0x1d4ed8); // restaurar color de selección
+	}
+	arrastreInicio = undefined;
+
 	recalcular();
 	reconstruirCables();
 	reconstruirCotas();
@@ -1151,16 +1267,17 @@ function reconstruirDispositivoUno(id: string): void {
 	}
 }
 
-function eliminarEstructura(s: Seleccion): void {
+async function eliminarEstructura(s: Seleccion): Promise<void> {
 	const g = proyecto.gabinete!;
 	const nombre = s.tipo === 'canaleta' ? 'la canaleta' : 'el riel';
-	if (!confirm(`¿Eliminar ${nombre} «${s.id}»?`)) return;
+	if (!(await confirmar(`¿Eliminar ${nombre} «${s.id}»?`, { ok: 'Eliminar', peligro: true }))) return;
 	capturar();
 	if (s.tipo === 'canaleta') g.canaletas = g.canaletas.filter((c) => c.id !== s.id);
 	else g.rieles = g.rieles.filter((r) => r.id !== s.id);
 	aplicarSeleccion(undefined);
 	actualizarTodo();
 	pintarEstructura();
+	avisar(`Se eliminó ${nombre} «${s.id}» · Ctrl+Z para deshacer`);
 }
 
 /* ------------------------------ Barra superior ------------------------------ */
@@ -1170,8 +1287,8 @@ function eliminarEstructura(s: Seleccion): void {
 	recalcular();
 };
 
-($('btn-nuevo') as HTMLButtonElement).onclick = () => {
-	if (!confirm('¿Empezar un tablero nuevo? El actual queda en el último archivo guardado.')) return;
+($('btn-nuevo') as HTMLButtonElement).onclick = async () => {
+	if (!(await confirmar('¿Empezar un tablero nuevo? Se vacía la placa (Ctrl+Z lo deshace).', { ok: 'Empezar de cero' }))) return;
 	capturar();
 	proyecto = proyectoNuevo();
 	seleccionar(undefined);
@@ -1238,8 +1355,9 @@ function eliminarEstructura(s: Seleccion): void {
 		actualizarTodo();
 		pintarEstructura();
 		encuadrar();
+		avisar('Proyecto abierto correctamente', 'ok');
 	} catch {
-		alert('El archivo no es un proyecto de TableroStudio válido.');
+		avisar('El archivo no es un proyecto de TableroStudio válido.', 'error');
 	}
 	(e.target as HTMLInputElement).value = '';
 };
@@ -1312,6 +1430,18 @@ $('modo-trabajo').onclick = () => aplicarModo('trabajo');
 ($('btn-cerrar-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = true; };
 $('modal-ayuda').addEventListener('click', (e) => {
 	if (e.target === $('modal-ayuda')) ($('modal-ayuda') as HTMLElement).hidden = true;
+});
+
+// Botones del diálogo in-app.
+($('dialogo-ok') as HTMLButtonElement).onclick = () => {
+	const input = $('dialogo-input') as HTMLInputElement;
+	cerrarDialogo?.(input.hidden ? 'ok' : input.value);
+};
+($('dialogo-cancelar') as HTMLButtonElement).onclick = () => cerrarDialogo?.(null);
+$('modal-dialogo').addEventListener('keydown', (e) => {
+	const ev = e as KeyboardEvent;
+	if (ev.key === 'Enter') { e.preventDefault(); ($('dialogo-ok') as HTMLButtonElement).click(); }
+	if (ev.key === 'Escape') { e.preventDefault(); cerrarDialogo?.(null); }
 });
 
 ($('btn-empezar-ejemplo') as HTMLButtonElement).onclick = () => {
