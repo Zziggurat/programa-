@@ -138,6 +138,14 @@
 		background: color-mix(in srgb, var(--panel) 88%, transparent);
 		padding: 6px 14px; border-radius: 9px; border: 1px solid var(--borde);
 	}
+
+	/* Conmutador de modos */
+	#modos { display: flex; border: 1px solid var(--borde); border-radius: 9px; overflow: hidden; }
+	#modos button { background: var(--panel-2); border: none; color: var(--texto-suave); padding: 6px 13px; }
+	#modos button.activo { background: #2b4a6f; color: var(--texto); }
+	#modos #modo-editor.activo { background: #5d4a1f; }
+	body.modo-trabajo #seccion-catalogo,
+	body.modo-trabajo #seccion-estructura { display: none; }
 </style>
 </head>
 <body>
@@ -145,6 +153,12 @@
 <header id="barra">
 	<div class="marca">⚡ Tablero<span>Studio</span></div>
 	<input id="nombre-proyecto" title="Nombre del proyecto">
+	<div id="modos" title="Editor: armar y modificar la caja. Trabajo: solo cablear y verificar (nada se mueve).">
+		<button id="modo-editor" class="activo">🔧 Editor</button>
+		<button id="modo-trabajo">🔌 Trabajo</button>
+	</div>
+	<button class="boton" id="btn-deshacer" title="Deshacer (Ctrl+Z)">↶</button>
+	<button class="boton" id="btn-rehacer" title="Rehacer (Ctrl+Y)">↷</button>
 	<div class="sep"></div>
 	<div id="chip-drc" title="Verificación eléctrica en vivo"><span class="punto"></span><span id="chip-drc-texto">DRC</span></div>
 	<button class="boton" id="btn-nuevo" title="Vaciar la placa y empezar de cero">Nuevo</button>
@@ -157,7 +171,7 @@
 <div id="escena"></div>
 
 <aside id="panel-izq" class="panel">
-	<details open>
+	<details open id="seccion-catalogo">
 		<summary>Catálogo — clic para añadir</summary>
 		<div class="contenido" id="catalogo"></div>
 	</details>
@@ -176,12 +190,17 @@
 			<div id="resumen-cables" style="color:var(--texto-suave)"></div>
 		</div>
 	</details>
-	<details>
+	<details id="seccion-estructura">
 		<summary>Gabinete y estructura</summary>
 		<div class="contenido">
-			<div class="campo"><label for="dim-ancho">Ancho de placa</label><span><input type="number" id="dim-ancho" min="20" max="150" step="1"> cm</span></div>
-			<div class="campo"><label for="dim-alto">Alto de placa</label><span><input type="number" id="dim-alto" min="30" max="220" step="1"> cm</span></div>
-			<div class="campo"><label for="dim-canaleta">Canaleta ranurada</label>
+			<div class="grupo-catalogo" style="color:#7cc0ff">Caja eléctrica (envolvente)</div>
+			<div class="campo"><label for="caja-ancho">Ancho</label><span><input type="number" id="caja-ancho" min="20" max="200" step="1"> cm</span></div>
+			<div class="campo"><label for="caja-alto">Alto</label><span><input type="number" id="caja-alto" min="30" max="240" step="1"> cm</span></div>
+			<div class="campo"><label for="caja-prof">Profundidad</label><span><input type="number" id="caja-prof" min="10" max="60" step="1"> cm</span></div>
+			<div class="grupo-catalogo" style="color:#7ee2a1">Placa de montaje</div>
+			<div class="campo"><label for="dim-ancho">Ancho</label><span><input type="number" id="dim-ancho" min="20" max="150" step="1"> cm</span></div>
+			<div class="campo"><label for="dim-alto">Alto</label><span><input type="number" id="dim-alto" min="30" max="220" step="1"> cm</span></div>
+			<div class="campo"><label for="dim-canaleta">Perfil de canaleta</label>
 				<select id="dim-canaleta">
 					<option value="25">25 × 60 mm</option>
 					<option value="40" selected>40 × 60 mm</option>
@@ -189,9 +208,9 @@
 					<option value="80">80 × 80 mm</option>
 				</select>
 			</div>
-			<div class="grupo-catalogo">Rieles DIN — x · y · largo (mm)</div>
+			<div class="grupo-catalogo" style="color:#ffe58f">Rieles DIN — x · y · largo (mm)</div>
 			<div id="lista-rieles"></div>
-			<div class="grupo-catalogo">Canaletas — x · y · largo (mm)</div>
+			<div class="grupo-catalogo" style="color:#ffc069">Canaletas — x · y · largo (mm)</div>
 			<div id="lista-canaletas"></div>
 			<div class="botonera">
 				<button class="boton" id="btn-add-riel">+ Riel</button>
@@ -201,9 +220,10 @@
 			</div>
 		</div>
 	</details>
-	<details>
+	<details open>
 		<summary>Vista</summary>
 		<div class="contenido">
+			<label class="toggle"><input type="checkbox" id="ver-cotas"> <b>Ver tamaños</b> (cotas en cm)</label>
 			<label class="toggle"><input type="checkbox" id="ver-cables" checked> Cables</label>
 			<label class="toggle"><input type="checkbox" id="ver-tapas" checked> Tapas de canaletas</label>
 			<label class="toggle"><input type="checkbox" id="ver-etiquetas" checked> Designaciones</label>
@@ -213,7 +233,7 @@
 
 <aside id="panel-der" class="panel"></aside>
 
-<div id="ayuda">Orbitar: arrastrar fondo · Zoom: rueda · Seleccionar: clic en aparato · Mover: arrastrarlo (se ancla al riel) · Eliminar: tecla Supr</div>
+<div id="ayuda"></div>
 
 <script type="module" src="./main.ts"></script>
 </body>

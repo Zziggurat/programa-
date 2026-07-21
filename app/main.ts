@@ -21,8 +21,11 @@ import { sincronizarEsquemaGabinete } from '../src/motores/sincronizacion.js';
 import { generarReferencias } from '../src/motores/referencias.js';
 import { generarPlanBorneros } from '../src/motores/bornes.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
-import { construirCables, construirEscenario, Escenario } from './escena3d.js';
+import { cajaDe, construirCables, construirCotas, construirEscenario, DatosCota, Escenario } from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
+
+type Modo = 'editor' | 'trabajo';
+let modo: Modo = 'editor';
 
 /* ------------------------------ Estado ------------------------------ */
 
@@ -92,6 +95,51 @@ function recalcular(): void {
 }
 recalcular();
 
+/* ------------------------- Historial (deshacer/rehacer) ------------------------- */
+
+const pila: string[] = [];      // estados anteriores (JSON)
+const rehacerPila: string[] = [];
+let capturaPendiente = false;
+
+/** Guarda el estado ACTUAL antes de una mutación, para poder deshacerla. */
+function capturar(): void {
+	pila.push(JSON.stringify(proyecto));
+	if (pila.length > 60) pila.shift();
+	rehacerPila.length = 0;
+	capturaPendiente = false;
+	actualizarBotonesHistorial();
+}
+
+/** Programa una captura para el próximo microtask (evita duplicar en cambios encadenados). */
+function marcarCambio(): void {
+	if (capturaPendiente) return;
+	capturaPendiente = true;
+	pila.push(JSON.stringify(proyecto));
+	if (pila.length > 60) pila.shift();
+	rehacerPila.length = 0;
+	queueMicrotask(() => { capturaPendiente = false; });
+	actualizarBotonesHistorial();
+}
+
+function deshacer(): void {
+	if (pila.length === 0) return;
+	rehacerPila.push(JSON.stringify(proyecto));
+	proyecto = JSON.parse(pila.pop()!) as Proyecto;
+	trasCambiarProyecto();
+}
+
+function rehacer(): void {
+	if (rehacerPila.length === 0) return;
+	pila.push(JSON.stringify(proyecto));
+	proyecto = JSON.parse(rehacerPila.pop()!) as Proyecto;
+	trasCambiarProyecto();
+}
+
+function actualizarBotonesHistorial(): void {
+	($('btn-deshacer') as HTMLButtonElement).disabled = pila.length === 0;
+	($('btn-rehacer') as HTMLButtonElement).disabled = rehacerPila.length === 0;
+}
+
 /* ------------------------------ Escena ------------------------------ */
 
 const contenedor = document.getElementById('escena')!;
@@ -156,12 +204,19 @@ function reconstruirCables(): void {
 	escenario.cables.visible = ($('ver-cables') as HTMLInputElement).checked;
 }
 
+function reconstruirCotas(): void {
+	escenario.cotas.clear();
+	escenario.cotas.add(construirCotas(proyecto, escenario.aEscena));
+	escenario.cotas.visible = ($('ver-cotas') as HTMLInputElement).checked;
+}
+
 /** Desmonta y vuelve a construir todo el gabinete. */
 function montarEscenario(): void {
 	escena.remove(escenario.raiz);
 	escenario = construirEscenario(proyecto);
 	escena.add(escenario.raiz);
 	reconstruirCables();
+	reconstruirCotas();
 	for (const t of escenario.tapas) t.visible = ($('ver-tapas') as HTMLInputElement).checked;
 	for (const t of escenario.etiquetas) t.visible = ($('ver-etiquetas') as HTMLInputElement).checked;
 	suelo.position.y = -(proyecto.gabinete!.alto / 2 + 42);
@@ -173,6 +228,21 @@ function actualizarTodo(): void {
 	montarEscenario();
 	pintarPaneles();
 	pintarSeleccion();
+}
+
+/** Tras reemplazar el objeto `proyecto` (deshacer/rehacer/abrir/nuevo). */
+function trasCambiarProyecto(): void {
+	if (seleccionadoId && !proyecto.dispositivos.some((d) => d.id === seleccionadoId)) {
+		seleccionadoId = undefined;
+		materialesResaltados = [];
+	}
+	recalcular();
+	montarEscenario();
+	pintarCatalogo();
+	pintarPaneles();
+	pintarEstructura();
+	pintarSeleccion();
+	actualizarBotonesHistorial();
 }
 
 /* --------------------------- Utilidades UI --------------------------- */
@@ -236,6 +306,7 @@ function buscarHueco(ancho: number, alto: number): { x: number; y: number } {
 }
 
 function anadirDesdeCatalogo(plantillaId: string): void {
+	capturar();
 	const plantilla = PLANTILLAS.find((p) => p.id === plantillaId)!;
 	const d = crearDesdePlantilla(plantilla, proyecto);
 	d.hojaId = proyecto.hojas[0]?.id;
@@ -251,6 +322,7 @@ function anadirDesdeCatalogo(plantillaId: string): void {
 
 function eliminarDispositivo(id: string): void {
 	if (!confirm(`¿Eliminar ${etiquetaDe(id)} y sus cables?`)) return;
+	capturar();
 	proyecto.dispositivos = proyecto.dispositivos.filter((d) => d.id !== id);
 	proyecto.conductores = proyecto.conductores.filter(
 		(c) => c.de.dispositivoId !== id && c.a.dispositivoId !== id,
@@ -386,6 +458,7 @@ function pintarSeleccion(): void {
 			<span>${propio.borneId} → ${etiquetaDe(otro.dispositivoId)}:${otro.borneId}${c.seccion ? ` · ${c.seccion} mm²` : ''}</span>
 			<button class="quitar" title="Quitar cable">✕</button>`;
 		(fila.querySelector('.quitar') as HTMLButtonElement).onclick = () => {
+			capturar();
 			proyecto.conductores = proyecto.conductores.filter((x) => x.id !== c.id);
 			recalcular();
 			reconstruirCables();
@@ -410,6 +483,7 @@ function pintarSeleccion(): void {
 	btnConectar.onclick = () => {
 		const destino = selDestino.value;
 		if (!destino) return;
+		capturar();
 		proyecto.conductores.push({
 			id: `c${Date.now().toString(36)}`,
 			de: { dispositivoId: d.id, borneId: (panel.querySelector('#cable-borne-origen') as HTMLSelectElement).value },
@@ -434,6 +508,10 @@ function pintarSeleccion(): void {
 
 function pintarEstructura(): void {
 	const g = proyecto.gabinete!;
+	const caja = cajaDe(g);
+	($('caja-ancho') as HTMLInputElement).value = String(Math.round(caja.ancho / 10));
+	($('caja-alto') as HTMLInputElement).value = String(Math.round(caja.alto / 10));
+	($('caja-prof') as HTMLInputElement).value = String(Math.round(caja.profundidad / 10));
 	($('dim-ancho') as HTMLInputElement).value = String(Math.round(g.ancho / 10));
 	($('dim-alto') as HTMLInputElement).value = String(Math.round(g.alto / 10));
 
@@ -454,6 +532,7 @@ function pintarEstructura(): void {
 
 	for (const btn of document.querySelectorAll('[data-quitar]')) {
 		(btn as HTMLButtonElement).onclick = (ev) => {
+			capturar();
 			const fila = (ev.target as HTMLElement).closest('.fila-estructura') as HTMLElement;
 			const id = fila.dataset.id!;
 			if (fila.dataset.tipo === 'riel') g.rieles = g.rieles.filter((r) => r.id !== id);
@@ -471,7 +550,14 @@ function siguienteId(prefijo: string, existentes: { id: string }[]): string {
 }
 
 function aplicarEstructura(): void {
+	capturar();
 	const g = proyecto.gabinete!;
+	// 0. Caja envolvente (dimensiones propias, independientes de la placa).
+	g.caja = {
+		ancho: Math.min(Math.max(Number(($('caja-ancho') as HTMLInputElement).value) || 66, 20), 200) * 10,
+		alto: Math.min(Math.max(Number(($('caja-alto') as HTMLInputElement).value) || 86, 30), 240) * 10,
+		profundidad: Math.min(Math.max(Number(($('caja-prof') as HTMLInputElement).value) || 16, 10), 60) * 10,
+	};
 	// 1. Leer las filas editadas.
 	for (const fila of document.querySelectorAll('.fila-estructura')) {
 		const el = fila as HTMLElement;
@@ -518,12 +604,14 @@ function aplicarEstructura(): void {
 
 ($('aplicar-dim') as HTMLButtonElement).onclick = aplicarEstructura;
 ($('btn-add-riel') as HTMLButtonElement).onclick = () => {
+	capturar();
 	const g = proyecto.gabinete!;
 	g.rieles.push({ id: siguienteId('riel', g.rieles), x: 30, y: Math.round(g.alto / 2), largo: g.ancho - 60 });
 	actualizarTodo();
 	pintarEstructura();
 };
 ($('btn-add-can-h') as HTMLButtonElement).onclick = () => {
+	capturar();
 	const g = proyecto.gabinete!;
 	g.canaletas.push({
 		id: siguienteId('ch', g.canaletas), x: 20, y: Math.round(g.alto / 2) + 80,
@@ -533,6 +621,7 @@ function aplicarEstructura(): void {
 	pintarEstructura();
 };
 ($('btn-add-can-v') as HTMLButtonElement).onclick = () => {
+	capturar();
 	const g = proyecto.gabinete!;
 	g.canaletas.push({
 		id: siguienteId('cv', g.canaletas), x: g.ancho - 60, y: 140,
@@ -580,16 +669,78 @@ function dispositivoBajoElPuntero(ev: PointerEvent): string | undefined {
 }
 
 let arrastrando = false;
+let capturadoEsteArrastre = false;
 const planoArrastre = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const desfase = new THREE.Vector2();
 
+/** Cota bajo el puntero (etiqueta clicable), solo si "Ver tamaños" está activo. */
+function cotaBajoElPuntero(ev: PointerEvent): DatosCota | undefined {
+	if (!escenario.cotas.visible) return undefined;
+	const r = renderer.domElement.getBoundingClientRect();
+	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+	raycaster.setFromCamera(puntero, camara);
+	const impactos = raycaster.intersectObjects(escenario.cotas.children, true);
+	return impactos.find((i) => i.object.userData.cota)?.object.userData.cota as DatosCota | undefined;
+}
+
+/** Edita por teclado la dimensión que representa una cota (solo modo editor). */
+function editarCota(datos: DatosCota): void {
+	const g = proyecto.gabinete!;
+	const actual = datos.valorMm / 10;
+	const entrada = prompt(`Nuevo valor en cm (actual ${actual} cm):`, String(actual));
+	if (entrada === null) return;
+	const cm = Number(entrada.replace(',', '.'));
+	if (!isFinite(cm) || cm <= 0) return;
+	capturar();
+	const mm = Math.round(cm * 10);
+	const o = datos.objetivo;
+	if (o.tipo === 'caja') {
+		g.caja = g.caja ?? cajaDe(g);
+		g.caja[o.dim] = mm;
+	} else if (o.tipo === 'placa') {
+		const anterior = g[o.dim];
+		g[o.dim] = mm;
+		// Estirar rieles/canaletas con el cambio de placa, como en aplicarEstructura.
+		const delta = mm - anterior;
+		if (o.dim === 'ancho') {
+			for (const riel of g.rieles) riel.largo = Math.max(120, riel.largo + delta);
+			for (const can of g.canaletas) if (can.orientacion === 'h') can.largo = Math.max(120, can.largo + delta);
+		} else {
+			for (const can of g.canaletas) if (can.orientacion === 'v') can.largo = Math.max(120, can.largo + delta);
+		}
+		for (const col of g.colocaciones) {
+			col.x = Math.min(Math.max(col.x, 0), Math.max(0, g.ancho - col.ancho));
+			col.y = Math.min(Math.max(col.y, 0), Math.max(0, g.alto - col.alto));
+		}
+	} else if (o.tipo === 'riel') {
+		const riel = g.rieles.find((r) => r.id === o.id);
+		if (riel) riel.largo = mm;
+	} else {
+		const can = g.canaletas.find((c) => c.id === o.id);
+		if (can) can.largo = mm;
+	}
+	actualizarTodo();
+	pintarEstructura();
+}
+
 renderer.domElement.addEventListener('pointerdown', (ev) => {
+	// En modo editor, un clic sobre una cota la edita (tiene prioridad sobre seleccionar).
+	if (modo === 'editor') {
+		const cota = cotaBajoElPuntero(ev);
+		if (cota) {
+			editarCota(cota);
+			return;
+		}
+	}
 	const id = dispositivoBajoElPuntero(ev);
 	if (id !== seleccionadoId) seleccionar(id);
 	if (!id) return;
+	// Arrastrar aparatos solo en modo editor; en trabajo nada se mueve.
+	if (modo !== 'editor') return;
 	const grupo = grupoDe(id);
 	if (!grupo || !proyecto.gabinete!.colocaciones.some((c) => c.dispositivoId === id)) return;
 	arrastrando = true;
+	capturadoEsteArrastre = false;
 	controles.enabled = false;
 	const impacto = new THREE.Vector3();
 	raycaster.ray.intersectPlane(planoArrastre, impacto);
@@ -604,10 +755,16 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	const impacto = new THREE.Vector3();
 	if (!raycaster.ray.intersectPlane(planoArrastre, impacto)) return;
 
+	// La primera vez que realmente se mueve, capturamos el estado para poder deshacer.
+	if (!capturadoEsteArrastre) {
+		capturar();
+		capturadoEsteArrastre = true;
+	}
+
 	const g = proyecto.gabinete!;
 	const col = g.colocaciones.find((c) => c.dispositivoId === seleccionadoId)!;
 	// Centro deseado en coordenadas de modelo (mm, Y hacia abajo).
-	let cx = impacto.x - desfase.x + g.ancho / 2;
+	const cx = impacto.x - desfase.x + g.ancho / 2;
 	let cy = g.alto / 2 - (impacto.y - desfase.y);
 	// Anclaje al riel más cercano.
 	let mejor: { d: number; y: number } | undefined;
@@ -628,8 +785,10 @@ renderer.domElement.addEventListener('pointerup', () => {
 	if (!arrastrando) return;
 	arrastrando = false;
 	controles.enabled = true;
+	if (!capturadoEsteArrastre) return; // fue un clic, no un arrastre real
 	recalcular();
 	reconstruirCables();
+	reconstruirCotas();
 	pintarPaneles();
 	pintarSeleccion();
 });
@@ -637,7 +796,14 @@ renderer.domElement.addEventListener('pointerup', () => {
 window.addEventListener('keydown', (ev) => {
 	const activo = document.activeElement?.tagName;
 	if (activo === 'INPUT' || activo === 'SELECT' || activo === 'TEXTAREA') return;
-	if (ev.key === 'Delete' && seleccionadoId) eliminarDispositivo(seleccionadoId);
+	const ctrl = ev.ctrlKey || ev.metaKey;
+	if (ctrl && ev.key.toLowerCase() === 'z' && !ev.shiftKey) { ev.preventDefault(); deshacer(); return; }
+	if (ctrl && (ev.key.toLowerCase() === 'y' || (ev.key.toLowerCase() === 'z' && ev.shiftKey))) {
+		ev.preventDefault();
+		rehacer();
+		return;
+	}
+	if ((ev.key === 'Delete' || ev.key === 'Backspace') && seleccionadoId && modo === 'editor') eliminarDispositivo(seleccionadoId);
 	if (ev.key === 'Escape') seleccionar(undefined);
 });
 
@@ -650,6 +816,7 @@ window.addEventListener('keydown', (ev) => {
 
 ($('btn-nuevo') as HTMLButtonElement).onclick = () => {
 	if (!confirm('¿Empezar un tablero nuevo? El actual queda en el último archivo guardado.')) return;
+	capturar();
 	proyecto = proyectoNuevo();
 	seleccionar(undefined);
 	actualizarTodo();
@@ -672,6 +839,7 @@ window.addEventListener('keydown', (ev) => {
 	try {
 		const p = JSON.parse(await archivo.text());
 		if (!p || p.formato !== 'tablero-studio' || !p.gabinete) throw new Error('formato');
+		capturar();
 		proyecto = p as Proyecto;
 		seleccionar(undefined);
 		actualizarTodo();
@@ -697,8 +865,37 @@ window.addEventListener('keydown', (ev) => {
 	descargar(`${proyecto.nombre.replaceAll(/[^\wáéíóúñ -]/gi, '')} - dossier.html`, dossier, 'text/html');
 };
 
+/* ------------------------------- Modos ------------------------------- */
+
+const AYUDA: Record<Modo, string> = {
+	editor: '🔧 EDITOR — Añade aparatos del catálogo · arrástralos (se anclan al riel) · edita la caja, placa, rieles y canaletas · «Ver tamaños» para acotar y editar medidas · Supr elimina · Ctrl+Z deshace',
+	trabajo: '🔌 TRABAJO — Cablea desde la ficha de cada aparato y observa la verificación en vivo. La estructura está bloqueada: nada se mueve por accidente.',
+};
+
+function aplicarModo(nuevo: Modo): void {
+	modo = nuevo;
+	document.body.classList.toggle('modo-trabajo', modo === 'trabajo');
+	$('modo-editor').classList.toggle('activo', modo === 'editor');
+	$('modo-trabajo').classList.toggle('activo', modo === 'trabajo');
+	$('ayuda').textContent = AYUDA[modo];
+	// Al pasar a trabajo se cancela cualquier arrastre en curso.
+	if (modo === 'trabajo') {
+		arrastrando = false;
+		controles.enabled = true;
+	}
+}
+
+$('modo-editor').onclick = () => aplicarModo('editor');
+$('modo-trabajo').onclick = () => aplicarModo('trabajo');
+
+($('btn-deshacer') as HTMLButtonElement).onclick = deshacer;
+($('btn-rehacer') as HTMLButtonElement).onclick = rehacer;
+
 /* ------------------------------- Vista ------------------------------- */
 
+($('ver-cotas') as HTMLInputElement).onchange = (e) => {
+	escenario.cotas.visible = (e.target as HTMLInputElement).checked;
+};
 ($('ver-cables') as HTMLInputElement).onchange = (e) => {
 	escenario.cables.visible = (e.target as HTMLInputElement).checked;
 };
@@ -726,6 +923,9 @@ pintarCatalogo();
 pintarPaneles();
 pintarEstructura();
 reconstruirCables();
+reconstruirCotas();
+aplicarModo('editor');
+actualizarBotonesHistorial();
 
 renderer.setAnimationLoop(() => {
 	controles.update();

@@ -166,6 +166,8 @@ export interface Gabinete {
 	/** Dimensiones útiles de la placa de montaje, en mm. */
 	ancho: number;
 	alto: number;
+	/** Caja envolvente (opcional): si falta, se asume placa + margen estándar. */
+	caja?: { ancho: number; alto: number; profundidad: number };
 	canaletas: Canaleta[];
 	rieles: Riel[];
 	colocaciones: Colocacion[];

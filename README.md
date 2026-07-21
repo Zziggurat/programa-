@@ -56,6 +56,19 @@ npm run ejemplo # genera la documentación de un tablero real en ejemplo/salida/
 Configurador 3D completo del gabinete, al estilo de Schneider eDesign o WAGO Smart
 Designer, conectado en vivo con los motores del núcleo:
 
+- **Dos modos de trabajo** (conmutador en la barra superior):
+  - 🔧 **Editor** — armar y modificar: añadir aparatos, arrastrarlos, editar la caja,
+    la placa, los rieles y las canaletas.
+  - 🔌 **Trabajo** — solo cablear y verificar; la estructura queda bloqueada para que
+    nada se mueva por accidente. Se cambia de modo cuando quieras.
+- **Deshacer / Rehacer** con Ctrl+Z / Ctrl+Y (y botones ↶ ↷ en la barra); historial
+  de hasta 60 pasos que cubre añadir, mover, cablear, eliminar y editar la estructura.
+- **«Ver tamaños»**: cotas acotadas en cm con código de color — caja (azul), placa
+  (verde), rieles (amarillo), canaletas (naranja). En modo editor, **clic en una cota
+  para cambiar esa medida** (p. ej. el largo de la caja de 100 a 90 cm).
+- **Caja envolvente y placa con dimensiones independientes** (ancho/alto/profundidad de
+  la caja; ancho/alto de la placa), como en un gabinete real.
+
 - **Catálogo de aparatos** (15 plantillas: disyuntores, diferencial, guardamotor,
   contactor, relés, variador, PLC, fuente, transformador, borneros, portafusible):
   un clic y el aparato se coloca en el primer hueco libre de un riel, con su

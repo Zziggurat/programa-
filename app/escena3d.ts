@@ -25,6 +25,7 @@ export interface Escenario {
 	raiz: THREE.Group;
 	dispositivos: THREE.Group;   // mallas con userData.dispositivoId
 	cables: THREE.Group;
+	cotas: THREE.Group;          // acotado dimensional (modo "ver tamaños")
 	tapas: THREE.Object3D[];     // tapas de canaletas (para ocultarlas)
 	etiquetas: THREE.Object3D[]; // sprites de designación
 	centro: THREE.Vector3;
@@ -61,17 +62,140 @@ export function construirEscenario(proyecto: Proyecto): Escenario {
 	const cables = new THREE.Group();
 	raiz.add(cables);
 
-	return { raiz, dispositivos, cables, tapas, etiquetas, centro: new THREE.Vector3(0, 0, 0), aEscena };
+	const cotas = new THREE.Group();
+	cotas.visible = false;
+	raiz.add(cotas);
+
+	return { raiz, dispositivos, cables, cotas, tapas, etiquetas, centro: new THREE.Vector3(0, 0, 0), aEscena };
+}
+
+/* --------------------------------- Cotas --------------------------------- */
+
+export interface DatosCota {
+	/** Qué dimensión representa (para editarla con un clic en modo editor). */
+	objetivo:
+		| { tipo: 'caja'; dim: 'ancho' | 'alto' | 'profundidad' }
+		| { tipo: 'placa'; dim: 'ancho' | 'alto' }
+		| { tipo: 'riel'; id: string }
+		| { tipo: 'canaleta'; id: string };
+	valorMm: number;
+}
+
+function etiquetaCota(texto: string, color: string): THREE.Sprite {
+	const canvas = document.createElement('canvas');
+	canvas.width = 240;
+	canvas.height = 80;
+	const ctx = canvas.getContext('2d')!;
+	ctx.fillStyle = color;
+	ctx.beginPath();
+	ctx.roundRect(2, 2, 236, 76, 16);
+	ctx.fill();
+	ctx.fillStyle = '#101215';
+	ctx.font = '700 40px system-ui, sans-serif';
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	ctx.fillText(texto, 120, 42);
+	const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest: false }));
+	sprite.scale.set(52, 17.3, 1);
+	return sprite;
+}
+
+const cm = (mm: number) => `${(mm / 10).toFixed(mm % 10 === 0 ? 0 : 1)} cm`;
+
+/** Línea de cota con marcas en los extremos y etiqueta clicable en el centro. */
+function cota(
+	a: THREE.Vector3,
+	b: THREE.Vector3,
+	color: string,
+	datos: DatosCota,
+	desvio: THREE.Vector3,
+): THREE.Group {
+	const g = new THREE.Group();
+	const material = new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 });
+	const p1 = a.clone().add(desvio);
+	const p2 = b.clone().add(desvio);
+	g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([p1, p2]), material));
+	// Marcas en los extremos (perpendiculares cortas hacia el objeto).
+	const marca = desvio.clone().normalize().multiplyScalar(8);
+	g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([p1.clone().add(marca), p1.clone().sub(marca)]), material));
+	g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([p2.clone().add(marca), p2.clone().sub(marca)]), material));
+	const etiqueta = etiquetaCota(cm(datos.valorMm), color);
+	etiqueta.position.copy(p1.clone().add(p2).multiplyScalar(0.5));
+	etiqueta.userData.cota = datos;
+	g.add(etiqueta);
+	return g;
+}
+
+/** Construye el acotado completo: caja (azul), placa (verde), canaletas (naranja), rieles (amarillo). */
+export function construirCotas(proyecto: Proyecto, aEscena: Escenario['aEscena']): THREE.Group {
+	const grupo = new THREE.Group();
+	const g = proyecto.gabinete;
+	if (!g) return grupo;
+	const caja = cajaDe(g);
+	const v = (x: number, y: number, z: number) => aEscena(x, y, z);
+
+	// Caja envolvente — azul.
+	const AZUL = '#7cc0ff';
+	const cx = (caja.ancho - g.ancho) / 2;   // desborde de la caja respecto de la placa
+	const cy = (caja.alto - g.alto) / 2;
+	grupo.add(cota(
+		v(-cx, g.alto + cy, 0), v(g.ancho + cx, g.alto + cy, 0), AZUL,
+		{ objetivo: { tipo: 'caja', dim: 'ancho' }, valorMm: caja.ancho }, new THREE.Vector3(0, -60, 40),
+	));
+	grupo.add(cota(
+		v(-cx, -cy, 0), v(-cx, g.alto + cy, 0), AZUL,
+		{ objetivo: { tipo: 'caja', dim: 'alto' }, valorMm: caja.alto }, new THREE.Vector3(-60, 0, 40),
+	));
+	grupo.add(cota(
+		v(g.ancho + cx, -cy, 0), v(g.ancho + cx, -cy, caja.profundidad), AZUL,
+		{ objetivo: { tipo: 'caja', dim: 'profundidad' }, valorMm: caja.profundidad }, new THREE.Vector3(40, 40, 0),
+	));
+
+	// Placa de montaje — verde.
+	const VERDE = '#7ee2a1';
+	grupo.add(cota(
+		v(0, -14, 0), v(g.ancho, -14, 0), VERDE,
+		{ objetivo: { tipo: 'placa', dim: 'ancho' }, valorMm: g.ancho }, new THREE.Vector3(0, 0, 30),
+	));
+	grupo.add(cota(
+		v(g.ancho + 14, 0, 0), v(g.ancho + 14, g.alto, 0), VERDE,
+		{ objetivo: { tipo: 'placa', dim: 'alto' }, valorMm: g.alto }, new THREE.Vector3(0, 0, 30),
+	));
+
+	// Canaletas — naranja; rieles — amarillo.
+	for (const can of g.canaletas) {
+		const esH = can.orientacion === 'h';
+		const a = v(can.x, can.y, can.alto + 8);
+		const b = esH ? v(can.x + can.largo, can.y, can.alto + 8) : v(can.x, can.y + can.largo, can.alto + 8);
+		grupo.add(cota(a, b, '#ffc069', { objetivo: { tipo: 'canaleta', id: can.id }, valorMm: can.largo },
+			new THREE.Vector3(esH ? 0 : 14, esH ? 14 : 0, 12)));
+	}
+	for (const riel of g.rieles) {
+		grupo.add(cota(
+			v(riel.x, riel.y, 14), v(riel.x + riel.largo, riel.y, 14), '#ffe58f',
+			{ objetivo: { tipo: 'riel', id: riel.id }, valorMm: riel.largo }, new THREE.Vector3(0, -6, 14),
+		));
+	}
+	return grupo;
 }
 
 /* ------------------------------- Gabinete ------------------------------- */
 
+/** Dimensiones efectivas de la caja envolvente (si no están definidas, placa + margen). */
+export function cajaDe(g: Gabinete): { ancho: number; alto: number; profundidad: number } {
+	return {
+		ancho: Math.max(g.caja?.ancho ?? g.ancho + 60, g.ancho + 10),
+		alto: Math.max(g.caja?.alto ?? g.alto + 60, g.alto + 10),
+		profundidad: g.caja?.profundidad ?? 160,
+	};
+}
+
 function construirCaja(g: Gabinete): THREE.Group {
 	const grupo = new THREE.Group();
-	const margen = 30;     // holgura de la envolvente respecto de la placa
-	const fondo = 160;     // profundidad de la envolvente
-	const ancho = g.ancho + margen * 2;
-	const alto = g.alto + margen * 2;
+	const caja = cajaDe(g);
+	const fondo = caja.profundidad;
+	const ancho = caja.ancho;
+	const alto = caja.alto;
 	// Paredes translúcidas: el interior se ve desde cualquier ángulo de órbita.
 	const chapaLateral = new THREE.MeshStandardMaterial({
 		color: 0xbfc3c7, metalness: 0.15, roughness: 0.75,
