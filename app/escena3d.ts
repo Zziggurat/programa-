@@ -21,6 +21,22 @@ export const COLOR_CABLE: Record<string, number> = {
 	'verde/amarillo': 0x7cb342,
 };
 
+/** Colores por nivel de tensión (referencia visual; niveles habituales en Chile). */
+export const VOLTAJE_COLOR: Record<number, number> = {
+	12: 0x26c6da,
+	24: 0x29b6f6,
+	110: 0xffca28,
+	220: 0xfb8c00,
+	380: 0xe53935,
+	400: 0xd32f2f,
+};
+
+export function colorVoltaje(v?: number): number {
+	return v !== undefined && VOLTAJE_COLOR[v] !== undefined ? VOLTAJE_COLOR[v] : 0x8a929a;
+}
+
+const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
+
 export interface Escenario {
 	raiz: THREE.Group;
 	dispositivos: THREE.Group;   // mallas con userData.dispositivoId
@@ -397,6 +413,26 @@ function textura(texto: string): THREE.CanvasTexture {
 	return t;
 }
 
+/** Chapa de tensión: fondo del color del nivel + texto "220 V". */
+function badgeVoltaje(voltios: number): THREE.CanvasTexture {
+	const canvas = document.createElement('canvas');
+	canvas.width = 128;
+	canvas.height = 64;
+	const ctx = canvas.getContext('2d')!;
+	ctx.fillStyle = hex(colorVoltaje(voltios));
+	ctx.beginPath();
+	ctx.roundRect(4, 4, 120, 56, 12);
+	ctx.fill();
+	ctx.fillStyle = voltios >= 110 ? '#fff' : '#0d1520';
+	ctx.font = 'bold 34px system-ui, sans-serif';
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	ctx.fillText(`${voltios} V`, 64, 34);
+	const t = new THREE.CanvasTexture(canvas);
+	t.anisotropy = 4;
+	return t;
+}
+
 export function construirDispositivo(
 	d: Dispositivo,
 	col: Colocacion,
@@ -413,6 +449,15 @@ export function construirDispositivo(
 		sprite.position.set(0, col.alto / 2 + 13, profundidad);
 		etiquetas.push(sprite);
 		grupo.add(sprite);
+	}
+
+	// Chapa de tensión de trabajo (color por nivel), como el rotulado de un tablero real.
+	if (d.tensionNominal !== undefined && !d.imagen) {
+		const badge = new THREE.Sprite(new THREE.SpriteMaterial({ map: badgeVoltaje(d.tensionNominal), depthTest: false }));
+		badge.scale.set(24, 12, 1);
+		badge.position.set(0, col.alto / 2 + 26, profundidad);
+		etiquetas.push(badge);
+		grupo.add(badge);
 	}
 
 	const c = aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
@@ -450,14 +495,17 @@ export function construirCables(
 	proyecto: Proyecto,
 	rutas: RutaConductor[],
 	aEscena: Escenario['aEscena'],
+	voltajePorConductor?: Map<string, number | undefined>,
 ): THREE.Group {
 	const grupo = new THREE.Group();
 	const separacion = new Map<string, number>(); // desfase por punto de entrada para no solapar tubos
+	const colorDe = (c: { id: string; color?: string }): number =>
+		voltajePorConductor ? colorVoltaje(voltajePorConductor.get(c.id)) : (COLOR_CABLE[c.color ?? ''] ?? 0x546e7a);
 
 	for (const ruta of rutas) {
 		const conductor = proyecto.conductores.find((c) => c.id === ruta.conductorId);
 		if (!conductor || ruta.camino.length < 2) continue;
-		const color = COLOR_CABLE[conductor.color ?? ''] ?? 0x546e7a;
+		const color = colorDe(conductor);
 		const radio = 0.9 + (conductor.seccion ?? 1.5) * 0.35;
 
 		// Desfase pequeño y estable por conductor para que los tubos no coincidan exactamente.
@@ -469,15 +517,17 @@ export function construirCables(
 		const puntos: THREE.Vector3[] = [];
 		const camino = ruta.camino;
 		const ultimo = camino.length - 1;
-		// Origen: frente del aparato → cae por una ranura de la pared dentada (punto de paso
-		// sobre el borde) → recorre la canaleta a Z_CABLE → sube por otra ranura al destino.
-		puntos.push(aEscena(camino[0].x, camino[0].y, 40));
+		// El cable arranca en el BORNE real del aparato (no en su centro), baja por una
+		// ranura de la canaleta, la recorre a Z_CABLE y sube por otra ranura al borne destino.
+		const bDe = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
+		const bA = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
+		puntos.push(aEscena(bDe?.x ?? camino[0].x, bDe?.y ?? camino[0].y, bDe?.z ?? 44));
 		puntos.push(aEscena(camino[1].x, camino[1].y, 52));
 		for (let i = 1; i < ultimo; i++) {
 			puntos.push(aEscena(camino[i].x + desfase * 0.3, camino[i].y + desfase * 0.3, Z_CABLE + desfase));
 		}
 		puntos.push(aEscena(camino[ultimo - 1].x, camino[ultimo - 1].y, 52));
-		puntos.push(aEscena(camino[ultimo].x, camino[ultimo].y, 40));
+		puntos.push(aEscena(bA?.x ?? camino[ultimo].x, bA?.y ?? camino[ultimo].y, bA?.z ?? 44));
 
 		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.08);
 		anadirTuboCable(grupo, curva, Math.max(24, puntos.length * 8), radio, color, conductor.id);
@@ -492,7 +542,7 @@ export function construirCables(
 		const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
 		const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
 		if (!a || !b) continue;
-		const color = COLOR_CABLE[conductor.color ?? ''] ?? 0x546e7a;
+		const color = colorDe(conductor);
 		const radio = 0.9 + (conductor.seccion ?? 1.5) * 0.35;
 		const pa = aEscena(a.x, a.y, a.z);
 		const pb = aEscena(b.x, b.y, b.z);
@@ -524,9 +574,12 @@ export function construirCables(
 }
 
 /**
- * Posición 3D (en coordenadas de modelo: mm, Y abajo) del punto de conexión de un borne.
- * Para imágenes de referencia usa la posición (u,v) del pin; para el resto, el frente
- * del aparato. Devuelve undefined si el aparato no está colocado en la placa.
+ * Posición 3D (en coordenadas de modelo: mm, Y abajo) del BORNE concreto de un aparato,
+ * para que el cable salga exactamente de su terminal (y se vea de dónde viene).
+ * - Imágenes de referencia: usa la posición (u,v) del pin.
+ * - Resto de aparatos: reparte los bornes en dos filas (terminales arriba/abajo), igual
+ *   que en un aparato modular real (1,3,5 arriba · 2,4,6 abajo).
+ * Devuelve undefined si el aparato no está colocado en la placa.
  */
 export function anclajeBorne(
 	proyecto: Proyecto,
@@ -541,6 +594,16 @@ export function anclajeBorne(
 		if (b?.u !== undefined && b?.v !== undefined) {
 			return { x: col.x + b.u * col.ancho, y: col.y + b.v * col.alto, z: 10 };
 		}
+		return { x: col.x + col.ancho / 2, y: col.y + col.alto / 2, z: 10 };
 	}
-	return { x: col.x + col.ancho / 2, y: col.y + col.alto / 2, z: 40 };
+	const idx = d.bornes.findIndex((b) => b.id === borneId);
+	if (idx < 0) return { x: col.x + col.ancho / 2, y: col.y + col.alto / 2, z: 44 };
+	// Índices pares → fila superior; impares → fila inferior (como 1/3/5 vs 2/4/6).
+	const arriba = idx % 2 === 0;
+	const fila = d.bornes.filter((_, i) => (i % 2 === 0) === arriba);
+	const pos = fila.findIndex((b) => b.id === borneId);
+	const n = Math.max(1, fila.length);
+	const x = col.x + (n === 1 ? 0.5 : (pos + 0.5) / n) * col.ancho;
+	const y = arriba ? col.y + 5 : col.y + col.alto - 5;
+	return { x, y, z: 46 };
 }

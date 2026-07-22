@@ -13,7 +13,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { tableroEjemplo } from '../ejemplo/tablero-ejemplo.js';
 import { Proyecto } from '../src/modelo/tipos.js';
 import { conductoresEn, crearProyecto, extremoTexto, posicionTexto } from '../src/modelo/proyecto.js';
-import { calcularPotenciales } from '../src/motores/potenciales.js';
+import { calcularPotenciales, ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
 import { verificarProyecto, Hallazgo } from '../src/motores/drc.js';
 import { rutearConductores, ResultadoRuteo } from '../src/motores/ruteo.js';
@@ -22,8 +22,8 @@ import { generarReferencias } from '../src/motores/referencias.js';
 import { generarPlanBorneros } from '../src/motores/bornes.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
-	anclajeBorne, cajaDe, construirCables, construirCanaleta, construirCotas, construirDispositivo,
-	construirEscenario, construirRiel, DatosCota, Escenario,
+	anclajeBorne, cajaDe, colorVoltaje, construirCables, construirCanaleta, construirCotas, construirDispositivo,
+	construirEscenario, construirRiel, DatosCota, Escenario, VOLTAJE_COLOR,
 } from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
 
@@ -85,9 +85,11 @@ let proyecto: Proyecto = cargarInicial();
 
 let hallazgos: Hallazgo[] = [];
 let ruteo: ResultadoRuteo;
+let potenciales: ResultadoPotenciales;
+let coloreaVoltaje = false; // "Colorear por voltaje" en el panel Vista
 
 function recalcular(): void {
-	const potenciales = calcularPotenciales(proyecto);
+	potenciales = calcularPotenciales(proyecto);
 	numerarConductores(proyecto, potenciales);
 	ruteo = rutearConductores(proyecto);
 	hallazgos = verificarProyecto(proyecto, potenciales);
@@ -209,7 +211,16 @@ encuadrar();
 
 function reconstruirCables(): void {
 	escenario.cables.clear();
-	escenario.cables.add(construirCables(proyecto, ruteo.rutas, escenario.aEscena));
+	// Coloreado por voltaje: cada cable toma el color del nivel de tensión de su potencial.
+	let voltajeMap: Map<string, number | undefined> | undefined;
+	if (coloreaVoltaje && potenciales) {
+		voltajeMap = new Map();
+		for (const c of proyecto.conductores) {
+			const p = potenciales.porConductor.get(c.id);
+			voltajeMap.set(c.id, p?.tensiones[p.tensiones.length - 1]);
+		}
+	}
+	escenario.cables.add(construirCables(proyecto, ruteo.rutas, escenario.aEscena, voltajeMap));
 	escenario.cables.visible = ($('ver-cables') as HTMLInputElement).checked;
 }
 
@@ -264,6 +275,8 @@ function trasCambiarProyecto(): void {
 function $(id: string): HTMLElement {
 	return document.getElementById(id)!;
 }
+
+const hexColor = (c: number): string => '#' + c.toString(16).padStart(6, '0');
 
 /* ----------------- Diálogos in-app (confirm/prompt/toast) ----------------- *
  * Los Artifacts corren en un iframe sandbox que bloquea window.confirm/prompt/alert
@@ -577,6 +590,13 @@ function pintarSeleccion(): void {
 			<select id="cable-color" class="ancho-total" title="Color del conductor">${COLORES.map((c) => `<option ${c === 'negro' ? 'selected' : ''}>${c}</option>`).join('')}</select>
 			<button class="boton primario ancho-total" id="btn-conectar" disabled>Conectar</button>
 		</div>`;
+	// Tensión de trabajo (solo Editor, aparatos que llevan corriente): niveles usuales en Chile.
+	const bloqueTension = esEditor && !esImagen ? `
+		<h2>⚡ Tensión de trabajo</h2>
+		<select id="dev-tension" class="ancho-total" style="width:100%">
+			${['', '12', '24', '110', '220', '380', '400'].map((v) =>
+				`<option value="${v}" ${String(d.tensionNominal ?? '') === v ? 'selected' : ''}>${v === '' ? '— sin definir —' : v + ' V'}</option>`).join('')}
+		</select>` : '';
 	const bloqueAcciones = esEditor ? `
 		<h2>Acciones</h2>
 		<div class="botonera">
@@ -592,9 +612,10 @@ function pintarSeleccion(): void {
 		<dl>
 			${esImagen ? '' : `<dt>Referencia</dt><dd>${d.fabricante ?? '—'} ${d.referencia ?? ''}</dd>`}
 			${col ? `<dt>Posición en placa</dt><dd>x ${Math.round(col.x)} mm · y ${Math.round(col.y)} mm · ${col.ancho}×${col.alto} mm</dd>` : ''}
-			${d.tensionNominal ? `<dt>Tensión</dt><dd>${d.tensionNominal} V</dd>` : ''}
+			${d.tensionNominal !== undefined ? `<dt>Tensión</dt><dd><span class="chip-volt" style="background:${hexColor(colorVoltaje(d.tensionNominal))}">${d.tensionNominal} V</span></dd>` : ''}
 			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${posicionTexto(proyecto, d)}</dd>`}
 		</dl>
+		${bloqueTension}
 		${bloquePines}
 		${bloqueDRC}
 		${bloqueCableado}
@@ -661,6 +682,18 @@ function pintarSeleccion(): void {
 			pintarSeleccion();
 		};
 	}
+
+	// Tensión de trabajo (solo Editor).
+	(panel.querySelector('#dev-tension') as HTMLSelectElement | null)?.addEventListener('change', (e) => {
+		capturar();
+		const v = (e.target as HTMLSelectElement).value;
+		d.tensionNominal = v === '' ? undefined : Number(v);
+		recalcular();
+		reconstruirDispositivoUno(d.id); // actualizar la chapa de tensión sobre el aparato
+		reconstruirCables();
+		pintarPaneles();
+		pintarSeleccion();
+	});
 
 	// Acciones de edición (solo en modo Editor).
 	(panel.querySelector('#btn-eliminar') as HTMLButtonElement | null)?.addEventListener('click', () => eliminarDispositivo(d.id));
@@ -1024,6 +1057,28 @@ interface DatosHandle {
 	sel: Seleccion;
 }
 
+/** Etiqueta flotante (sprite) con fondo de color; para rotular los extremos de un cable. */
+function etiquetaSprite(texto: string, posicion: THREE.Vector3, colorFondo: string): THREE.Sprite {
+	const canvas = document.createElement('canvas');
+	canvas.width = 256;
+	canvas.height = 64;
+	const ctx = canvas.getContext('2d')!;
+	ctx.fillStyle = colorFondo;
+	ctx.beginPath();
+	ctx.roundRect(2, 2, 252, 60, 14);
+	ctx.fill();
+	ctx.fillStyle = '#0d1520';
+	ctx.font = 'bold 34px system-ui, sans-serif';
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	ctx.fillText(texto, 128, 34);
+	const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest: false }));
+	sprite.scale.set(46, 11.5, 1);
+	sprite.position.copy(posicion);
+	sprite.renderOrder = 1000;
+	return sprite;
+}
+
 /** Construye los tiradores del elemento seleccionado (estructura en Editor, cable en Trabajo). */
 function construirHandles(): void {
 	escenario.handles.clear();
@@ -1040,13 +1095,30 @@ function construirHandles(): void {
 		escenario.handles.add(m);
 	};
 
-	// Cable: un tirador en su punto medio para ordenarlo a mano (funciona en modo Trabajo).
+	// Cable: marca de dónde sale (verde) y a dónde llega (naranja) con etiquetas del borne,
+	// más un tirador azul en el medio para ordenarlo a mano.
 	if (sel.tipo === 'cable') {
 		const c = proyecto.conductores.find((x) => x.id === sel!.id);
 		if (!c) return;
 		const a = anclajeBorne(proyecto, c.de.dispositivoId, c.de.borneId);
 		const b = anclajeBorne(proyecto, c.a.dispositivoId, c.a.borneId);
 		if (!a || !b) return;
+		// Marcadores de extremos (no arrastrables).
+		const marca = (p: THREE.Vector3, color: number): void => {
+			const m = new THREE.Mesh(
+				new THREE.SphereGeometry(6, 14, 14),
+				new THREE.MeshBasicMaterial({ color, toneMapped: false, depthTest: false }),
+			);
+			m.position.copy(p);
+			m.renderOrder = 998;
+			escenario.handles.add(m);
+		};
+		const pa = escenario.aEscena(a.x, a.y, a.z + 6);
+		const pb = escenario.aEscena(b.x, b.y, b.z + 6);
+		marca(pa, 0x35c46a); // origen verde
+		marca(pb, 0xff8c1a); // destino naranja
+		escenario.handles.add(etiquetaSprite(`◍ ${etiquetaDe(c.de.dispositivoId)}:${c.de.borneId}`, pa.clone().add(new THREE.Vector3(0, 14, 0)), '#35c46a'));
+		escenario.handles.add(etiquetaSprite(`◍ ${etiquetaDe(c.a.dispositivoId)}:${c.a.borneId}`, pb.clone().add(new THREE.Vector3(0, 14, 0)), '#ff8c1a'));
 		const punto = c.trazado?.[0] ?? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 		esfera(escenario.aEscena(punto.x, punto.y, 55), { rol: 'esquina', sel }, 0x2ea3ff);
 		return;
@@ -1134,7 +1206,8 @@ function handleBajoElPuntero(ev: PointerEvent): DatosHandle | undefined {
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camara);
 	const impactos = raycaster.intersectObjects(escenario.handles.children, false);
-	return impactos[0]?.object.userData.handle as DatosHandle | undefined;
+	// Los marcadores/etiquetas de extremo no tienen `handle`; se ignoran para no bloquear el tirador.
+	return impactos.find((i) => i.object.userData.handle)?.object.userData.handle as DatosHandle | undefined;
 }
 
 /** Reconstruye en la escena solo el riel o canaleta indicado (para arrastre fluido). */
@@ -1591,6 +1664,16 @@ $('modo-trabajo').onclick = () => aplicarModo('trabajo');
 ($('ver-cotas') as HTMLInputElement).onchange = (e) => {
 	escenario.cotas.visible = (e.target as HTMLInputElement).checked;
 };
+($('ver-voltaje') as HTMLInputElement).onchange = (e) => {
+	coloreaVoltaje = (e.target as HTMLInputElement).checked;
+	($('leyenda-voltaje') as HTMLElement).hidden = !coloreaVoltaje;
+	reconstruirCables();
+};
+// Leyenda de colores por voltaje.
+$('leyenda-voltaje').innerHTML =
+	Object.entries(VOLTAJE_COLOR).map(([v, c]) =>
+		`<span><i style="background:${hexColor(c as number)}"></i>${v} V</span>`).join('') +
+	'<span><i style="background:#8a929a"></i>otro</span>';
 ($('ver-cables') as HTMLInputElement).onchange = (e) => {
 	escenario.cables.visible = (e.target as HTMLInputElement).checked;
 };

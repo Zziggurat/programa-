@@ -125,6 +125,10 @@
 	#panel-der dd { margin: 3px 0 0; }
 	#panel-der h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--texto-suave); margin: 16px 0 6px; border-top: 1px solid var(--borde); padding-top: 12px; }
 	.chip { display: inline-block; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 5px; padding: 1px 7px; margin: 2px 3px 0 0; font-size: 12px; }
+	.chip-volt { display: inline-block; border-radius: 5px; padding: 1px 8px; font-size: 12px; font-weight: 700; color: #0d1520; }
+	#leyenda-voltaje { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 4px 0 8px 24px; }
+	#leyenda-voltaje span { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--texto-suave); }
+	#leyenda-voltaje i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 	.fila-cable { display: flex; align-items: center; gap: 6px; padding: 3px 0; color: var(--texto-suave); font-size: 12px; }
 	.fila-cable .num { font-weight: 700; color: var(--texto); min-width: 24px; }
 	.fila-cable .quitar { margin-left: auto; background: none; border: none; color: var(--texto-suave); font-size: 14px; }
@@ -266,6 +270,8 @@
 		<summary>Vista</summary>
 		<div class="contenido">
 			<label class="toggle"><input type="checkbox" id="ver-cotas"> <b>Ver tamaños</b> (cotas en cm)</label>
+			<label class="toggle"><input type="checkbox" id="ver-voltaje"> <b>Colorear por voltaje</b></label>
+			<div id="leyenda-voltaje" hidden></div>
 			<label class="toggle"><input type="checkbox" id="ver-cables" checked> Cables</label>
 			<label class="toggle"><input type="checkbox" id="ver-tapas" checked> Tapas de canaletas</label>
 			<label class="toggle"><input type="checkbox" id="ver-etiquetas" checked> Designaciones</label>
