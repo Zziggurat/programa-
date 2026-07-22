@@ -1,0 +1,48 @@
+name: Construir instaladores
+
+# Genera los instaladores de escritorio (Windows .exe, macOS .dmg, Linux AppImage)
+# y el HTML autocontenido. Se ejecuta al crear una etiqueta v* o manualmente.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  construir:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            comando: dist:win
+          - os: macos-latest
+            comando: dist:mac
+          - os: ubuntu-latest
+            comando: dist:linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 1. Compilar el núcleo + la app web y empaquetar el HTML autocontenido.
+      - run: npm ci
+      - run: npm run editor:build
+      - run: node app/empaquetar.mjs
+
+      # 2. Construir el instalador de escritorio para la plataforma actual.
+      - working-directory: desktop
+        run: npm install
+      - working-directory: desktop
+        run: npm run ${{ matrix.comando }}
+
+      # 3. Publicar los artefactos (instaladores + HTML).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TableroStudio-${{ matrix.os }}
+          path: |
+            desktop/instaladores/*.exe
+            desktop/instaladores/*.dmg
+            desktop/instaladores/*.AppImage
+            dist-final/TableroStudio.html
+          if-no-files-found: warn

@@ -1,0 +1,45 @@
+========================================================================
+  TableroStudio — Editor 3D de tableros eléctricos
+  Cómo abrir el programa
+========================================================================
+
+OPCIÓN 1 — LA MÁS FÁCIL (no hay que instalar nada)
+------------------------------------------------------------------------
+1. Abre el archivo  TableroStudio.html  con doble clic.
+2. Se abre en tu navegador (Chrome, Edge, Firefox…). ¡Listo!
+
+Funciona sin internet y sin instalar nada. Puedes copiarlo a cualquier PC
+(Windows, Mac o Linux) y usarlo igual. Todo lo que hagas se guarda solo en
+el navegador; para llevarte un proyecto usa el botón «Guardar» (crea un
+archivo .tablero.json que luego abres con «Abrir…»).
+
+Consejo (Windows): si quieres tenerlo a mano, clic derecho sobre
+TableroStudio.html → «Enviar a» → «Escritorio (crear acceso directo)».
+
+
+OPCIÓN 2 — INSTALARLO COMO APLICACIÓN DE ESCRITORIO (Windows/Mac/Linux)
+------------------------------------------------------------------------
+Si prefieres un programa con su propia ventana e icono, hay un instalador
+de escritorio (hecho con Electron). Para generarlo hace falta un PC con
+Node.js instalado e internet la primera vez:
+
+   1) Instala Node.js LTS:  https://nodejs.org/es
+   2) En la carpeta del proyecto:
+          npm install
+          npm run editor:build
+          node app/empaquetar.mjs
+   3) En la carpeta  desktop/ :
+          npm install
+          npm run dist:win      (Windows → instalador .exe)
+          npm run dist:mac      (macOS  → .dmg)
+          npm run dist:linux    (Linux  → .AppImage)
+   4) El instalador queda en  desktop/instaladores/
+
+También se generan solos en la nube: al subir una etiqueta «v1.0.0» al
+repositorio, el flujo de GitHub Actions (.github/workflows/instaladores.yml)
+construye los instaladores de Windows, macOS y Linux y los deja como
+artefactos descargables.
+
+========================================================================
+Para el uso del programa, pulsa el botón «❓ Ayuda» dentro de la app.
+========================================================================

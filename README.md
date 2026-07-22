@@ -94,8 +94,23 @@ Designer, conectado en vivo con los motores del núcleo:
 - **Arrastre con anclaje a riel** (también entre rieles), tecla Supr para eliminar,
   Esc para deseleccionar; todo se re-rutea y verifica al soltar.
 - **Guardar / Abrir** proyecto como `.tablero.json`, autoguardado en el navegador,
-  botón **Exportar dossier** (BOM, cables, borneros, referencias cruzadas y DRC en un
-  HTML), y verificación eléctrica en vivo en la barra superior.
+  y verificación eléctrica en vivo en la barra superior.
+- **Exportar a PDF** (botón «📄 Exportar PDF»): dossier técnico completo con portada,
+  **lista de materiales (BOM)**, índice de dispositivos, lista de conductores con
+  longitudes, referencias cruzadas, planes de borneros y verificación DRC. También hay
+  «Dossier HTML» para la misma información en web.
+
+## Enviar el programa (instalador / app)
+
+- **Lo más fácil (sin instalar nada):** `npm run empaquetar` genera
+  `dist-final/TableroStudio.html`, **un único archivo** que se abre con doble clic en
+  cualquier navegador y funciona offline (incluida la exportación a PDF). Se puede copiar
+  a cualquier PC. Ver [`desktop/LÉEME.txt`](desktop/LÉEME.txt).
+- **App de escritorio con instalador** (Windows `.exe`, macOS `.dmg`, Linux `AppImage`):
+  proyecto Electron en [`desktop/`](desktop/). Se construye con
+  `cd desktop && npm install && npm run dist:win` (necesita Node.js), o automáticamente en
+  la nube con el flujo de GitHub Actions [`.github/workflows/instaladores.yml`](.github/workflows/instaladores.yml)
+  al subir una etiqueta `v*`.
 - Iluminación PBR con sombras suaves y entorno de estudio.
 - **Pensado para cualquiera**: tarjeta de bienvenida que guía el primer paso, guía rápida
   (botón ❓) que se abre en la primera visita, **cableado por clic** (elige el destino

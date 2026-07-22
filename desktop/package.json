@@ -1,0 +1,34 @@
+{
+  "name": "tablerostudio-desktop",
+  "productName": "TableroStudio",
+  "version": "1.0.0",
+  "description": "TableroStudio — editor 3D de tableros eléctricos (app de escritorio)",
+  "author": "TableroStudio",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win nsis",
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:linux": "electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "cl.tablerostudio.app",
+    "productName": "TableroStudio",
+    "files": ["main.js", "app.html", "icono.png"],
+    "directories": { "output": "instaladores" },
+    "win": { "target": "nsis", "icon": "icono.png" },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "TableroStudio"
+    },
+    "mac": { "target": "dmg", "icon": "icono.png", "category": "public.app-category.developer-tools" },
+    "linux": { "target": "AppImage", "icon": "icono.png", "category": "Development" }
+  }
+}

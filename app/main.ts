@@ -76,9 +76,9 @@ function cargarInicial(): Proyecto {
 			if (p && p.formato === 'tablero-studio' && p.gabinete) return p as Proyecto;
 		}
 	} catch { /* sin localStorage (p. ej. artifact con storage bloqueado) */ }
-	const p = tableroEjemplo();
-	numerarDispositivos(p);
-	return p;
+	// Primera vez (sin proyecto guardado): placa vacía con la tarjeta de bienvenida.
+	// El tablero de ejemplo se carga a demanda con el botón «Ver un tablero de ejemplo».
+	return proyectoNuevo();
 }
 
 let proyecto: Proyecto = cargarInicial();
@@ -396,11 +396,23 @@ function buscarHueco(ancho: number, alto: number): { x: number; y: number } | un
 			if (x <= limite) return { x, y };
 		}
 	}
-	// Todos los rieles llenos: al inicio del primero (el solape se resuelve después).
-	const r0 = g.rieles[0];
-	return r0.orientacion === 'v'
-		? { x: r0.x + SNAP_RIEL - ancho / 2, y: r0.y }
-		: { x: r0.x, y: r0.y + SNAP_RIEL - alto / 2 };
+	// Ningún riel tiene hueco interno: se añade al final del riel con más sitio libre a la
+	// derecha (o abajo), aunque sobresalga un poco de la placa. Así nunca queda solapado.
+	let mejorRiel = g.rieles[0];
+	let mejorFin = Infinity;
+	for (const riel of g.rieles) {
+		const vertical = riel.orientacion === 'v';
+		const eje = vertical ? riel.x + SNAP_RIEL : riel.y + SNAP_RIEL;
+		const enRiel = g.colocaciones.filter((c) =>
+			vertical ? Math.abs(c.x + c.ancho / 2 - eje) < UMBRAL_SNAP : Math.abs(c.y + c.alto / 2 - eje) < UMBRAL_SNAP);
+		const fin = enRiel.length === 0
+			? (vertical ? riel.y : riel.x)
+			: Math.max(...enRiel.map((c) => (vertical ? c.y + c.alto : c.x + c.ancho)));
+		if (fin < mejorFin) { mejorFin = fin; mejorRiel = riel; }
+	}
+	return mejorRiel.orientacion === 'v'
+		? { x: mejorRiel.x + SNAP_RIEL - ancho / 2, y: mejorFin + MARGEN }
+		: { x: mejorFin + MARGEN, y: mejorRiel.y + SNAP_RIEL - alto / 2 };
 }
 
 /**
@@ -444,12 +456,33 @@ function anadirDesdeCatalogo(plantillaId: string): void {
 	if (solapaCon(x, hueco.y, plantilla.ancho, plantilla.alto, d.id)) {
 		x = xLibreCercano(x, hueco.y, plantilla.ancho, plantilla.alto, d.id) ?? x;
 	}
-	proyecto.gabinete!.colocaciones.push({
+	const col = {
 		dispositivoId: d.id, x, y: hueco.y, ancho: plantilla.ancho, alto: plantilla.alto,
-		rielId: undefined,
-	});
+		rielId: undefined as string | undefined,
+	};
+	proyecto.gabinete!.colocaciones.push(col);
+	extenderRielPara(col); // si el aparato quedó más allá del riel, se alarga el riel
 	actualizarTodo();
 	seleccionar(d.id);
+}
+
+/** Alarga (si hace falta) el riel bajo un aparato para que quede totalmente apoyado sobre él. */
+function extenderRielPara(col: { x: number; y: number; ancho: number; alto: number }): void {
+	const g = proyecto.gabinete!;
+	const cx = col.x + col.ancho / 2;
+	const cy = col.y + col.alto / 2;
+	// Riel horizontal cuyo eje coincide con el centro Y del aparato (o vertical con el centro X).
+	const riel = g.rieles.find((r) => r.orientacion === 'v'
+		? Math.abs(cx - (r.x + SNAP_RIEL)) < UMBRAL_SNAP
+		: Math.abs(cy - (r.y + SNAP_RIEL)) < UMBRAL_SNAP);
+	if (!riel) return;
+	if (riel.orientacion === 'v') {
+		if (col.y < riel.y) { riel.largo += riel.y - col.y; riel.y = col.y; }
+		riel.largo = Math.max(riel.largo, col.y + col.alto - riel.y + 5);
+	} else {
+		if (col.x < riel.x) { riel.largo += riel.x - col.x; riel.x = col.x; }
+		riel.largo = Math.max(riel.largo, col.x + col.ancho - riel.x + 5);
+	}
 }
 
 async function eliminarDispositivo(id: string): Promise<void> {
@@ -1625,6 +1658,16 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 		sincronizacion: sincronizarEsquemaGabinete(proyecto),
 	});
 	descargar(`${proyecto.nombre.replaceAll(/[^\wáéíóúñ -]/gi, '')} - dossier.html`, dossier, 'text/html');
+};
+
+($('btn-pdf') as HTMLButtonElement).onclick = async () => {
+	try {
+		const { exportarPDF } = await import('./pdf.js');
+		exportarPDF(proyecto);
+		avisar('PDF exportado con la lista de materiales', 'ok');
+	} catch (e) {
+		avisar('No se pudo generar el PDF: ' + (e as Error).message, 'error');
+	}
 };
 
 /* ------------------------------- Modos ------------------------------- */
