@@ -864,7 +864,7 @@ function pintarPanelCable(id: string): void {
 		<dl>
 			<dt>Recorrido</dt><dd>${manual ? '✋ ordenado a mano' : ruteado ? '📦 por canaleta' : '〰️ suelto (cuelga)'}</dd>
 		</dl>
-		<div class="sub" style="margin-top:6px">Arrastra la <b>esfera azul</b> del cable en el tablero para ordenarlo y apartarlo de otros.</div>
+		<div class="sub" style="margin-top:6px"><b>Agarra el cable</b> en el tablero y arrástralo para moverlo y apartarlo de otros${ruteado && !manual ? ' (se despega de la canaleta)' : ''}. También puedes tirar de la <b>esfera azul</b>.</div>
 		<div class="form-cable" style="margin-top:10px">
 			<select id="cbl-seccion">${SECCIONES.map((s) => `<option value="${s}" ${s === c.seccion ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
 			<select id="cbl-color">${COLORES.map((col) => `<option ${col === c.color ? 'selected' : ''}>${col}</option>`).join('')}</select>
@@ -1206,8 +1206,9 @@ function cableBajoElPuntero(ev: PointerEvent): string | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camara);
-	const impactos = raycaster.intersectObjects(escenario.cables.children, false);
-	return impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId;
+	// Recursivo: los tubos cuelgan dentro de un grupo hijo de escenario.cables.
+	const impactos = raycaster.intersectObjects(escenario.cables.children, true);
+	return impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId as string | undefined;
 }
 
 /* ------------------------ Tiradores (handles) ------------------------ */
@@ -1279,7 +1280,14 @@ function construirHandles(): void {
 		marca(pb, 0xff8c1a); // destino naranja
 		escenario.handles.add(etiquetaSprite(`◍ ${etiquetaDe(c.de.dispositivoId)}:${c.de.borneId}`, pa.clone().add(new THREE.Vector3(0, 14, 0)), '#35c46a'));
 		escenario.handles.add(etiquetaSprite(`◍ ${etiquetaDe(c.a.dispositivoId)}:${c.a.borneId}`, pb.clone().add(new THREE.Vector3(0, 14, 0)), '#ff8c1a'));
-		const punto = c.trazado?.[0] ?? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+		// El tirador azul se coloca SOBRE el cable: si va a mano, en su punto; si cuelga suelto,
+		// en el punto más bajo de la comba (donde de verdad se ve el cable), no flotando arriba.
+		let punto = c.trazado?.[0];
+		if (!punto) {
+			const dist = Math.hypot(a.x - b.x, a.y - b.y);
+			const comba = Math.min(dist * 0.28, 150);
+			punto = { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2 + comba) };
+		}
 		esfera(escenario.aEscena(punto.x, punto.y, 55), { rol: 'esquina', sel }, 0x2ea3ff);
 		return;
 	}
@@ -1313,6 +1321,7 @@ function construirHandles(): void {
 let arrastrando = false;
 let capturadoEsteArrastre = false;
 let handleArrastrado: DatosHandle | undefined;
+let arrastrandoCable: string | undefined; // id del conductor que se está moviendo agarrándolo directo
 let arrastreInicio: { x: number; y: number } | undefined; // posición del aparato al empezar a arrastrarlo
 const planoArrastre = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const desfase = new THREE.Vector2();
@@ -1499,9 +1508,27 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	}
 
 	let elem = elementoBajoElPuntero(ev);
-	// En modo Trabajo se seleccionan aparatos (para cablear) y cables (para ordenarlos),
-	// pero no la estructura. En modo Editor no se seleccionan cables.
-	if (modo === 'trabajo' && elem && elem.tipo !== 'dispositivo' && elem.tipo !== 'cable') elem = undefined;
+
+	// Modo Trabajo: agarra un cable directo por su tubo y arrástralo para moverlo/ordenarlo,
+	// aunque vaya por una canaleta o cruce por delante de ella (al arrastrarlo se despega y
+	// pasa a mano). Los aparatos tienen prioridad para poder cablearlos con clic.
+	if (modo === 'trabajo' && elem?.tipo !== 'dispositivo') {
+		const cid = cableBajoElPuntero(ev);
+		if (cid) {
+			if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: cid });
+			arrastrandoCable = cid;
+			arrastrando = true;
+			handleArrastrado = undefined;
+			capturadoEsteArrastre = false;
+			controles.enabled = false;
+			renderer.domElement.style.cursor = 'grabbing';
+			return;
+		}
+	}
+
+	// En modo Trabajo solo se seleccionan aparatos (para cablear); la estructura no, y los
+	// cables ya se gestionaron arriba. En modo Editor no se seleccionan cables.
+	if (modo === 'trabajo' && elem && elem.tipo !== 'dispositivo') elem = undefined;
 	if (modo === 'editor' && elem && elem.tipo === 'cable') elem = undefined;
 	const mismo = elem && sel && elem.tipo === sel.tipo && elem.id === sel.id;
 	if (!mismo) aplicarSeleccion(elem);
@@ -1541,6 +1568,17 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (!p) return;
 	if (!capturadoEsteArrastre) { capturar(); capturadoEsteArrastre = true; }
 	const g = proyecto.gabinete!;
+
+	// --- Mover un cable agarrándolo directo por el tubo ---
+	if (arrastrandoCable) {
+		const c = proyecto.conductores.find((x) => x.id === arrastrandoCable);
+		if (c) {
+			c.trazado = [{ x: Math.round(p.x), y: Math.round(p.y) }];
+			reconstruirCables();
+			construirHandles();
+		}
+		return;
+	}
 
 	// --- Redimensionar / ordenar con un tirador ---
 	if (handleArrastrado) {
@@ -1620,8 +1658,18 @@ renderer.domElement.addEventListener('pointerup', () => {
 	if (!arrastrando) return;
 	arrastrando = false;
 	handleArrastrado = undefined;
+	const eraCable = arrastrandoCable;
+	arrastrandoCable = undefined;
 	controles.enabled = true;
+	renderer.domElement.style.cursor = '';
 	if (!capturadoEsteArrastre) { arrastreInicio = undefined; return; } // fue un clic, no un arrastre
+	if (eraCable) { // mover un cable no cambia estructura ni ruteo eléctrico: refresco ligero
+		reconstruirCables();
+		construirHandles();
+		pintarPaneles();
+		pintarSeleccion();
+		return;
+	}
 
 	// Resolver superposición al soltar un aparato: se corre al hueco libre más cercano;
 	// si no cabe en ninguna parte de su fila, vuelve a su sitio original.
