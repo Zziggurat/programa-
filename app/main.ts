@@ -11,7 +11,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { tableroEjemplo } from '../ejemplo/tablero-ejemplo.js';
-import { Proyecto } from '../src/modelo/tipos.js';
+import { Canaleta, Proyecto } from '../src/modelo/tipos.js';
 import { conductoresEn, crearProyecto, extremoTexto, posicionTexto } from '../src/modelo/proyecto.js';
 import { calcularPotenciales, ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
@@ -1337,6 +1337,31 @@ function puntoModelo(ev: PointerEvent): { x: number; y: number } | undefined {
 	return { x: impacto.x + g.ancho / 2, y: g.alto / 2 - impacto.y };
 }
 
+/**
+ * Canaleta cuyo eje está a menos de `umbral` mm del punto (x,y), junto con la proyección
+ * del punto sobre ese eje. Sirve para «meter» un cable en la canaleta al soltarlo cerca.
+ */
+function canaletaCercaDe(x: number, y: number, umbral = 45):
+	{ can: Canaleta; punto: { x: number; y: number } } | undefined {
+	const g = proyecto.gabinete;
+	if (!g) return undefined;
+	let mejor: { can: Canaleta; punto: { x: number; y: number }; d: number } | undefined;
+	for (const can of g.canaletas) {
+		let px: number;
+		let py: number;
+		if (can.orientacion === 'v') {
+			px = can.x + can.ancho / 2;
+			py = Math.max(can.y, Math.min(y, can.y + can.largo));
+		} else {
+			px = Math.max(can.x, Math.min(x, can.x + can.largo));
+			py = can.y + can.ancho / 2;
+		}
+		const d = Math.hypot(x - px, y - py);
+		if (!mejor || d < mejor.d) mejor = { can, punto: { x: Math.round(px), y: Math.round(py) }, d };
+	}
+	return mejor && mejor.d <= umbral ? { can: mejor.can, punto: mejor.punto } : undefined;
+}
+
 /* --------------------- Prevención de superposición --------------------- */
 
 const HOLGURA = 3; // mm de separación mínima entre aparatos
@@ -1663,11 +1688,29 @@ renderer.domElement.addEventListener('pointerup', () => {
 	controles.enabled = true;
 	renderer.domElement.style.cursor = '';
 	if (!capturadoEsteArrastre) { arrastreInicio = undefined; return; } // fue un clic, no un arrastre
-	if (eraCable) { // mover un cable no cambia estructura ni ruteo eléctrico: refresco ligero
+	if (eraCable) {
+		const c = proyecto.conductores.find((x) => x.id === eraCable);
+		const wp = c?.trazado?.[0];
+		// Si se soltó cerca de una canaleta, se «mete» en ella: se le quita el trazado a mano
+		// y el router lo lleva ordenado por dentro. Si no es ruteable (extremo fuera de placa),
+		// al menos se apoya sobre el eje de la canaleta.
+		const cerca = c && wp ? canaletaCercaDe(wp.x, wp.y) : undefined;
+		if (c && wp && cerca) {
+			delete c.trazado;
+			recalcular();
+			if (ruteo.rutas.some((r) => r.conductorId === c.id)) {
+				avisar('Cable metido en la canaleta: ahora corre ordenado por dentro', 'ok');
+			} else {
+				c.trazado = [cerca.punto];
+				avisar('Cable apoyado sobre la canaleta', 'info');
+			}
+			reconstruirCotas();
+		}
 		reconstruirCables();
 		construirHandles();
 		pintarPaneles();
 		pintarSeleccion();
+		pintarEstructura();
 		return;
 	}
 
