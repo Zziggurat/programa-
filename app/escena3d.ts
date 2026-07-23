@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { Canaleta, Colocacion, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { RutaConductor } from '../src/motores/ruteo.js';
+import { orthogonalize } from './geometria-cables.js';
 import { construirAparato3D } from './dispositivos3d.js';
 
 export const COLOR_CABLE: Record<string, number> = {
@@ -500,28 +501,6 @@ function ejeCanaleta(can: Canaleta, px: number, py: number): { x: number; y: num
 	return { x: Math.max(can.x, Math.min(px, can.x + can.largo)), y: can.y + can.ancho / 2 };
 }
 
-/**
- * Convierte una polilínea de nodos en un recorrido ORTOGONAL (solo tramos horizontales y
- * verticales, con esquinas en ángulo recto), al estilo de los cables de Tinkercad. Sale del
- * primer borne en vertical y entra al último en vertical; en medio, codos horizontal→vertical.
- */
-function orthogonalize(nodos: { x: number; y: number }[]): { x: number; y: number }[] {
-	if (nodos.length < 2) return nodos.slice();
-	const salida: { x: number; y: number }[] = [nodos[0]];
-	for (let i = 0; i < nodos.length - 1; i++) {
-		const p = salida[salida.length - 1];
-		const q = nodos[i + 1];
-		if (Math.abs(p.x - q.x) < 1 || Math.abs(p.y - q.y) < 1) { salida.push(q); continue; } // ya alineado
-		const esPrimero = i === 0;                    // salir del borne: primero vertical
-		const esUltimo = i === nodos.length - 2;      // entrar al borne: acercarse en vertical
-		const codo = (esPrimero && !esUltimo)
-			? { x: p.x, y: q.y }                       // vertical y luego horizontal
-			: { x: q.x, y: p.y };                      // horizontal y luego vertical
-		salida.push(codo, q);
-	}
-	return salida;
-}
-
 /** Canaleta cuyo eje central está más cerca del punto (por dónde entra o sale una ruta). */
 function canaletaDe(canaletas: Canaleta[], px: number, py: number): Canaleta | undefined {
 	let mejor: Canaleta | undefined;
@@ -621,9 +600,17 @@ export function construirCables(
 			carrilSuelto++;
 			nodos = [{ x: a.x, y: a.y }, { x: a.x, y: laneY }, { x: b.x, y: laneY }, { x: b.x, y: b.y }];
 		}
-		const puntos = [pa, ...nodos.map((p) => aEscena(p.x, p.y, Z_FRENTE)), pb];
-		const tension = 0.12; // esquinas nítidas (en ángulo recto)
-		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', tension);
+		// Cada punto va al frente (Z_FRENTE), salvo los que caen SOBRE una canaleta: ésos se
+		// hunden a la profundidad del ducto (Z_CABLE), para que el cable se vea metido en la
+		// canaleta por donde pasa por encima de ella, en vez de flotar por delante.
+		const zDe = (p: { x: number; y: number }): number => {
+			const can = canaletaDe(canaletas, p.x, p.y);
+			if (!can) return Z_FRENTE;
+			const e = ejeCanaleta(can, p.x, p.y);
+			return Math.hypot(p.x - e.x, p.y - e.y) <= can.ancho / 2 + 3 ? Z_CABLE : Z_FRENTE;
+		};
+		const puntos = [pa, ...nodos.map((p) => aEscena(p.x, p.y, zDe(p))), pb];
+		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.12);
 		anadirTuboCable(grupo, curva, Math.max(40, puntos.length * 8), radio, color, conductor.id);
 	}
 	return grupo;

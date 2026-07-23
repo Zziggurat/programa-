@@ -26,6 +26,7 @@ import {
 	construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario, VOLTAJE_COLOR,
 } from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
+import { distPuntoSegmento } from './geometria-cables.js';
 
 type Modo = 'editor' | 'trabajo';
 let modo: Modo = 'editor';
@@ -851,7 +852,7 @@ function pintarPanelCable(id: string): void {
 		<h1>Cable ${c.numero ?? ''}</h1>
 		<div class="sub">${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}</div>
 		<dl>
-			<dt>Recorrido</dt><dd>${manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : ruteado ? '📦 por canaleta' : '〰️ suelto (cuelga)'}</dd>
+			<dt>Recorrido</dt><dd>${manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : ruteado ? '📦 por canaleta' : '↳ directo (en L, automático)'}</dd>
 		</dl>
 		<div class="sub" style="margin-top:6px"><b>Clic sobre el cable</b> añade un punto de quiebre ahí y lo mueve (tramos en L, horizontal/vertical). Arrastra las <b>esferas azules</b> para ajustar cada punto · <b>doble clic</b> en una para quitarla.</div>
 		<div class="form-cable" style="margin-top:10px">
@@ -1370,15 +1371,6 @@ function nodosCable(c: Conductor): { x: number; y: number }[] {
 	].filter((p): p is { x: number; y: number } => !!p);
 }
 
-/** Distancia de un punto al segmento p-q (para saber en qué tramo del cable se hizo clic). */
-function distPuntoSegmento(x: number, y: number, p: { x: number; y: number }, q: { x: number; y: number }): number {
-	const dx = q.x - p.x;
-	const dy = q.y - p.y;
-	const largo2 = dx * dx + dy * dy || 1;
-	const t = Math.max(0, Math.min(1, ((x - p.x) * dx + (y - p.y) * dy) / largo2));
-	return Math.hypot(x - (p.x + t * dx), y - (p.y + t * dy));
-}
-
 /** Inserta un punto de quiebre en el tramo del cable más cercano a (x,y). Devuelve su índice. */
 function insertarWaypoint(c: Conductor, x: number, y: number): number {
 	const wps = c.trazado ? c.trazado.slice() : [];
@@ -1395,19 +1387,29 @@ function insertarWaypoint(c: Conductor, x: number, y: number): number {
 	return idx;
 }
 
-/** Mueve el punto de quiebre `idx` a (x,y), alineándolo en vertical/horizontal con sus vecinos. */
+/** Mueve el punto de quiebre `idx` a (x,y), alineándolo en vertical/horizontal con sus vecinos
+ *  y, si queda cerca de una canaleta, pegándolo a su eje (para que el cable se adapte a ella). */
 function moverWaypoint(c: Conductor, idx: number, x: number, y: number): void {
 	const wps = c.trazado;
 	if (!wps || !wps[idx]) return;
-	const nodos = nodosCable(c); // [borne, ...wps, borne]; el vecino previo es nodos[idx], el siguiente nodos[idx+2]
+	const a = anclajeBorne(proyecto, c.de.dispositivoId, c.de.borneId);
+	const b = anclajeBorne(proyecto, c.a.dispositivoId, c.a.borneId);
+	const prev = idx > 0 ? wps[idx - 1] : (a ? { x: a.x, y: a.y } : undefined);
+	const next = idx < wps.length - 1 ? wps[idx + 1] : (b ? { x: b.x, y: b.y } : undefined);
 	let nx = Math.round(x);
 	let ny = Math.round(y);
-	const prev = nodos[idx];
-	const next = nodos[idx + 2];
+	// 1) Alinear en vertical/horizontal con el vecino más cercano en cada eje.
 	if (prev && Math.abs(nx - prev.x) < SNAP_ORTO) nx = prev.x;
 	else if (next && Math.abs(nx - next.x) < SNAP_ORTO) nx = next.x;
 	if (prev && Math.abs(ny - prev.y) < SNAP_ORTO) ny = prev.y;
 	else if (next && Math.abs(ny - next.y) < SNAP_ORTO) ny = next.y;
+	// 2) Adaptar a la canaleta: si el punto queda sobre una canaleta, se pega a su eje (así el
+	//    cable corre por ella en vez de quedar flotando encima medio torcido).
+	const cerca = canaletaCercaDe(nx, ny, 22);
+	if (cerca) {
+		if (cerca.can.orientacion === 'v') nx = cerca.can.x + Math.round(cerca.can.ancho / 2);
+		else ny = cerca.can.y + Math.round(cerca.can.ancho / 2);
+	}
 	wps[idx] = { x: nx, y: ny };
 }
 
@@ -1595,7 +1597,10 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 			const p = puntoModelo(ev);
 			if (c && p) {
 				capturar();
-				const idx = insertarWaypoint(c, p.x, p.y);
+				// Si el clic cae cerca de un punto de quiebre ya existente, se MUEVE ese punto (no se
+				// añade otro): así no se acumulan puntos por fallar el tirador. Si no, se añade uno.
+				let idx = (c.trazado ?? []).findIndex((w) => Math.hypot(w.x - p.x, w.y - p.y) < 18);
+				if (idx < 0) idx = insertarWaypoint(c, p.x, p.y);
 				arrastrandoCable = { id: cid, indice: idx };
 				arrastrando = true;
 				handleArrastrado = undefined;
@@ -1751,28 +1756,13 @@ renderer.domElement.addEventListener('pointerup', () => {
 	renderer.domElement.style.cursor = '';
 	if (!capturadoEsteArrastre) { arrastreInicio = undefined; return; } // fue un clic, no un arrastre
 	if (eraCable) {
-		const c = proyecto.conductores.find((x) => x.id === eraCable.id);
-		const wp = c?.trazado?.[eraCable.indice];
-		// Si el cable tiene UN solo punto y se suelta cerca de una canaleta, se «mete» en ella
-		// (el router lo lleva ordenado por dentro). Con varios puntos, es un trazado a mano
-		// deliberado y no se toca. Si no es ruteable, al menos se apoya sobre el eje.
-		const cerca = c && wp && c.trazado?.length === 1 ? canaletaCercaDe(wp.x, wp.y) : undefined;
-		if (c && wp && cerca) {
-			delete c.trazado;
-			recalcular();
-			if (ruteo.rutas.some((r) => r.conductorId === c.id)) {
-				avisar('Cable metido en la canaleta: ahora corre ordenado por dentro', 'ok');
-			} else {
-				c.trazado = [cerca.punto];
-				avisar('Cable apoyado sobre la canaleta', 'info');
-			}
-			reconstruirCotas();
-		}
+		// Mover un cable a mano no cambia la estructura ni el ruteo eléctrico: refresco ligero.
+		// (La adaptación a la canaleta ya ocurre durante el arrastre, pegando el punto a su eje,
+		// así que no hay ningún «salto» sorpresa al soltar.)
 		reconstruirCables();
 		construirHandles();
 		pintarPaneles();
 		pintarSeleccion();
-		pintarEstructura();
 		return;
 	}
 
