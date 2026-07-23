@@ -51,7 +51,8 @@ export interface Escenario {
 }
 
 const ALTO_RIEL = 35;
-const Z_CABLE = 28; // profundidad a la que corren los cables dentro de la canaleta
+const Z_CABLE = 28;  // profundidad a la que corren los cables dentro de la canaleta
+const Z_FRENTE = 52; // profundidad a la que corren los cables a mano (al frente, sin atravesar aparatos)
 
 export function construirEscenario(proyecto: Proyecto): Escenario {
 	const g = proyecto.gabinete;
@@ -499,6 +500,28 @@ function ejeCanaleta(can: Canaleta, px: number, py: number): { x: number; y: num
 	return { x: Math.max(can.x, Math.min(px, can.x + can.largo)), y: can.y + can.ancho / 2 };
 }
 
+/**
+ * Convierte una polilínea de nodos en un recorrido ORTOGONAL (solo tramos horizontales y
+ * verticales, con esquinas en ángulo recto), al estilo de los cables de Tinkercad. Sale del
+ * primer borne en vertical y entra al último en vertical; en medio, codos horizontal→vertical.
+ */
+function orthogonalize(nodos: { x: number; y: number }[]): { x: number; y: number }[] {
+	if (nodos.length < 2) return nodos.slice();
+	const salida: { x: number; y: number }[] = [nodos[0]];
+	for (let i = 0; i < nodos.length - 1; i++) {
+		const p = salida[salida.length - 1];
+		const q = nodos[i + 1];
+		if (Math.abs(p.x - q.x) < 1 || Math.abs(p.y - q.y) < 1) { salida.push(q); continue; } // ya alineado
+		const esPrimero = i === 0;                    // salir del borne: primero vertical
+		const esUltimo = i === nodos.length - 2;      // entrar al borne: acercarse en vertical
+		const codo = (esPrimero && !esUltimo)
+			? { x: p.x, y: q.y }                       // vertical y luego horizontal
+			: { x: q.x, y: p.y };                      // horizontal y luego vertical
+		salida.push(codo, q);
+	}
+	return salida;
+}
+
 /** Canaleta cuyo eje central está más cerca del punto (por dónde entra o sale una ruta). */
 function canaletaDe(canaletas: Canaleta[], px: number, py: number): Canaleta | undefined {
 	let mejor: Canaleta | undefined;
@@ -573,10 +596,13 @@ export function construirCables(
 		anadirTuboCable(grupo, curva, Math.max(30, puntos.length * 8), radio, color, conductor.id);
 	}
 
-	// Cables que NO van por canaleta (sin ruta, o con trazado manual): se dibujan como un
-	// cable suelto que cuelga con una catenaria natural (igual que en la vida real), o
-	// siguiendo los puntos de paso que el usuario haya colocado a mano para ordenarlo.
+	// Cables que NO van por canaleta (sin ruta, o con trazado a mano): se dibujan SIEMPRE en
+	// tramos horizontales/verticales (estilo Tinkercad), al frente del tablero para no atravesar
+	// aparatos. Con trazado a mano pasan por los puntos del usuario; sin él, siguen un recorrido
+	// ortogonal por defecto en un carril propio (bajan, corren por su carril y suben), para que
+	// queden ordenados y no se crucen.
 	const ruteados = new Set(rutas.map((r) => r.conductorId));
+	let carrilSuelto = 0;
 	for (const conductor of proyecto.conductores) {
 		if (ruteados.has(conductor.id) && !conductor.trazado?.length) continue;
 		const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
@@ -587,28 +613,18 @@ export function construirCables(
 		const pa = aEscena(a.x, a.y, a.z);
 		const pb = aEscena(b.x, b.y, b.z);
 
-		let puntos: THREE.Vector3[];
+		let nodos: { x: number; y: number }[];
 		if (conductor.trazado?.length) {
-			// Trazado a mano: pasa por los puntos de paso (a una profundidad frontal).
-			puntos = [pa, ...conductor.trazado.map((p) => aEscena(p.x, p.y, 45)), pb];
+			nodos = orthogonalize([{ x: a.x, y: a.y }, ...conductor.trazado, { x: b.x, y: b.y }]);
 		} else {
-			// Cable suelto: cuelga hacia abajo (gravedad) y sale al frente, sin tensarse.
-			const dist = pa.distanceTo(pb);
-			const comba = Math.min(dist * 0.28, 150);
-			const frente = Math.min(24 + dist * 0.06, 90);
-			puntos = [];
-			const N = 12;
-			for (let i = 0; i <= N; i++) {
-				const t = i / N;
-				const p = pa.clone().lerp(pb, t);
-				const caida = 4 * t * (1 - t); // parábola: 0 en extremos, máx en el centro
-				p.y -= comba * caida;           // cuelga hacia abajo
-				p.z += 8 + frente * caida;      // se separa al frente para no atravesar nada
-				puntos.push(p);
-			}
+			const laneY = Math.round((a.y + b.y) / 2 + ((carrilSuelto % 8) - 3.5) * 16);
+			carrilSuelto++;
+			nodos = [{ x: a.x, y: a.y }, { x: a.x, y: laneY }, { x: b.x, y: laneY }, { x: b.x, y: b.y }];
 		}
-		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.4);
-		anadirTuboCable(grupo, curva, Math.max(40, puntos.length * 6), radio, color, conductor.id);
+		const puntos = [pa, ...nodos.map((p) => aEscena(p.x, p.y, Z_FRENTE)), pb];
+		const tension = 0.12; // esquinas nítidas (en ángulo recto)
+		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', tension);
+		anadirTuboCable(grupo, curva, Math.max(40, puntos.length * 8), radio, color, conductor.id);
 	}
 	return grupo;
 }

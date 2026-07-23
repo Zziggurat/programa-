@@ -11,8 +11,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { tableroEjemplo } from '../ejemplo/tablero-ejemplo.js';
-import { Canaleta, Proyecto } from '../src/modelo/tipos.js';
-import { conductoresEn, crearProyecto, extremoTexto, posicionTexto } from '../src/modelo/proyecto.js';
+import { Canaleta, Conductor, Proyecto } from '../src/modelo/tipos.js';
+import { crearProyecto, extremoTexto, posicionTexto } from '../src/modelo/proyecto.js';
 import { calcularPotenciales, ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
 import { verificarProyecto, Hallazgo } from '../src/motores/drc.js';
@@ -41,6 +41,8 @@ type Seleccion =
 const CLAVE_AUTOSAVE = 'tablerostudio-proyecto';
 const SNAP_RIEL = 20;      // el centro del aparato queda 20 mm bajo el eje del riel
 const UMBRAL_SNAP = 45;    // distancia máxima para anclarse a un riel
+const Z_HANDLE_CABLE = 55; // profundidad de los tiradores de cable (justo delante del cable a mano)
+const SNAP_ORTO = 14;      // mm para alinear un punto de cable en vertical/horizontal con su vecino
 
 function gabineteVacio(anchoMm = 600, altoMm = 800) {
 	return {
@@ -110,25 +112,12 @@ recalcular();
 
 const pila: string[] = [];      // estados anteriores (JSON)
 const rehacerPila: string[] = [];
-let capturaPendiente = false;
 
 /** Guarda el estado ACTUAL antes de una mutación, para poder deshacerla. */
 function capturar(): void {
 	pila.push(JSON.stringify(proyecto));
 	if (pila.length > 60) pila.shift();
 	rehacerPila.length = 0;
-	capturaPendiente = false;
-	actualizarBotonesHistorial();
-}
-
-/** Programa una captura para el próximo microtask (evita duplicar en cambios encadenados). */
-function marcarCambio(): void {
-	if (capturaPendiente) return;
-	capturaPendiente = true;
-	pila.push(JSON.stringify(proyecto));
-	if (pila.length > 60) pila.shift();
-	rehacerPila.length = 0;
-	queueMicrotask(() => { capturaPendiente = false; });
 	actualizarBotonesHistorial();
 }
 
@@ -862,9 +851,9 @@ function pintarPanelCable(id: string): void {
 		<h1>Cable ${c.numero ?? ''}</h1>
 		<div class="sub">${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}</div>
 		<dl>
-			<dt>Recorrido</dt><dd>${manual ? '✋ ordenado a mano' : ruteado ? '📦 por canaleta' : '〰️ suelto (cuelga)'}</dd>
+			<dt>Recorrido</dt><dd>${manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : ruteado ? '📦 por canaleta' : '〰️ suelto (cuelga)'}</dd>
 		</dl>
-		<div class="sub" style="margin-top:6px"><b>Agarra el cable</b> en el tablero y arrástralo para moverlo y apartarlo de otros${ruteado && !manual ? ' (se despega de la canaleta)' : ''}. También puedes tirar de la <b>esfera azul</b>.</div>
+		<div class="sub" style="margin-top:6px"><b>Clic sobre el cable</b> añade un punto de quiebre ahí y lo mueve (tramos en L, horizontal/vertical). Arrastra las <b>esferas azules</b> para ajustar cada punto · <b>doble clic</b> en una para quitarla.</div>
 		<div class="form-cable" style="margin-top:10px">
 			<select id="cbl-seccion">${SECCIONES.map((s) => `<option value="${s}" ${s === c.seccion ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
 			<select id="cbl-color">${COLORES.map((col) => `<option ${col === c.color ? 'selected' : ''}>${col}</option>`).join('')}</select>
@@ -1216,6 +1205,8 @@ function cableBajoElPuntero(ev: PointerEvent): string | undefined {
 interface DatosHandle {
 	rol: 'inicio' | 'fin' | 'esquina';
 	sel: Seleccion;
+	/** Para cables: índice del punto de quiebre (waypoint) que mueve este tirador; -1 = crear uno nuevo. */
+	indice?: number;
 }
 
 /** Etiqueta flotante (sprite) con fondo de color; para rotular los extremos de un cable. */
@@ -1280,15 +1271,19 @@ function construirHandles(): void {
 		marca(pb, 0xff8c1a); // destino naranja
 		escenario.handles.add(etiquetaSprite(`◍ ${etiquetaDe(c.de.dispositivoId)}:${c.de.borneId}`, pa.clone().add(new THREE.Vector3(0, 14, 0)), '#35c46a'));
 		escenario.handles.add(etiquetaSprite(`◍ ${etiquetaDe(c.a.dispositivoId)}:${c.a.borneId}`, pb.clone().add(new THREE.Vector3(0, 14, 0)), '#ff8c1a'));
-		// El tirador azul se coloca SOBRE el cable: si va a mano, en su punto; si cuelga suelto,
-		// en el punto más bajo de la comba (donde de verdad se ve el cable), no flotando arriba.
-		let punto = c.trazado?.[0];
-		if (!punto) {
+		// Un tirador azul por cada punto de quiebre (waypoint): arrástralo para mover ese punto.
+		// Si el cable aún no tiene puntos, se ofrece uno en el medio para empezar a darle forma.
+		const wps = c.trazado ?? [];
+		if (wps.length === 0) {
 			const dist = Math.hypot(a.x - b.x, a.y - b.y);
 			const comba = Math.min(dist * 0.28, 150);
-			punto = { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2 + comba) };
+			const mid = { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2 + comba) };
+			esfera(escenario.aEscena(mid.x, mid.y, Z_HANDLE_CABLE), { rol: 'esquina', sel, indice: -1 }, 0x2ea3ff);
+		} else {
+			for (let i = 0; i < wps.length; i++) {
+				esfera(escenario.aEscena(wps[i].x, wps[i].y, Z_HANDLE_CABLE), { rol: 'esquina', sel, indice: i }, 0x2ea3ff);
+			}
 		}
-		esfera(escenario.aEscena(punto.x, punto.y, 55), { rol: 'esquina', sel }, 0x2ea3ff);
 		return;
 	}
 
@@ -1321,7 +1316,7 @@ function construirHandles(): void {
 let arrastrando = false;
 let capturadoEsteArrastre = false;
 let handleArrastrado: DatosHandle | undefined;
-let arrastrandoCable: string | undefined; // id del conductor que se está moviendo agarrándolo directo
+let arrastrandoCable: { id: string; indice: number } | undefined; // conductor y punto de quiebre que se arrastra
 let arrastreInicio: { x: number; y: number } | undefined; // posición del aparato al empezar a arrastrarlo
 const planoArrastre = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const desfase = new THREE.Vector2();
@@ -1362,6 +1357,60 @@ function canaletaCercaDe(x: number, y: number, umbral = 45):
 	return mejor && mejor.d <= umbral ? { can: mejor.can, punto: mejor.punto } : undefined;
 }
 
+/* --------------------- Puntos de quiebre de los cables (estilo Tinkercad) --------------------- */
+
+/** Nodos completos del recorrido de un cable en coordenadas de modelo: borne → puntos → borne. */
+function nodosCable(c: Conductor): { x: number; y: number }[] {
+	const a = anclajeBorne(proyecto, c.de.dispositivoId, c.de.borneId);
+	const b = anclajeBorne(proyecto, c.a.dispositivoId, c.a.borneId);
+	return [
+		a ? { x: a.x, y: a.y } : undefined,
+		...(c.trazado ?? []),
+		b ? { x: b.x, y: b.y } : undefined,
+	].filter((p): p is { x: number; y: number } => !!p);
+}
+
+/** Distancia de un punto al segmento p-q (para saber en qué tramo del cable se hizo clic). */
+function distPuntoSegmento(x: number, y: number, p: { x: number; y: number }, q: { x: number; y: number }): number {
+	const dx = q.x - p.x;
+	const dy = q.y - p.y;
+	const largo2 = dx * dx + dy * dy || 1;
+	const t = Math.max(0, Math.min(1, ((x - p.x) * dx + (y - p.y) * dy) / largo2));
+	return Math.hypot(x - (p.x + t * dx), y - (p.y + t * dy));
+}
+
+/** Inserta un punto de quiebre en el tramo del cable más cercano a (x,y). Devuelve su índice. */
+function insertarWaypoint(c: Conductor, x: number, y: number): number {
+	const wps = c.trazado ? c.trazado.slice() : [];
+	const nodos = nodosCable(c);
+	let mejor = 0;
+	let md = Infinity;
+	for (let i = 0; i < nodos.length - 1; i++) {
+		const d = distPuntoSegmento(x, y, nodos[i], nodos[i + 1]);
+		if (d < md) { md = d; mejor = i; }
+	}
+	const idx = Math.min(mejor, wps.length);
+	wps.splice(idx, 0, { x: Math.round(x), y: Math.round(y) });
+	c.trazado = wps;
+	return idx;
+}
+
+/** Mueve el punto de quiebre `idx` a (x,y), alineándolo en vertical/horizontal con sus vecinos. */
+function moverWaypoint(c: Conductor, idx: number, x: number, y: number): void {
+	const wps = c.trazado;
+	if (!wps || !wps[idx]) return;
+	const nodos = nodosCable(c); // [borne, ...wps, borne]; el vecino previo es nodos[idx], el siguiente nodos[idx+2]
+	let nx = Math.round(x);
+	let ny = Math.round(y);
+	const prev = nodos[idx];
+	const next = nodos[idx + 2];
+	if (prev && Math.abs(nx - prev.x) < SNAP_ORTO) nx = prev.x;
+	else if (next && Math.abs(nx - next.x) < SNAP_ORTO) nx = next.x;
+	if (prev && Math.abs(ny - prev.y) < SNAP_ORTO) ny = prev.y;
+	else if (next && Math.abs(ny - next.y) < SNAP_ORTO) ny = next.y;
+	wps[idx] = { x: nx, y: ny };
+}
+
 /* --------------------- Prevención de superposición --------------------- */
 
 const HOLGURA = 3; // mm de separación mínima entre aparatos
@@ -1394,7 +1443,7 @@ function xLibreCercano(xDeseado: number, y: number, ancho: number, alto: number,
 }
 
 /** Handle bajo el puntero (tiene prioridad sobre cualquier otra cosa). */
-function handleBajoElPuntero(ev: PointerEvent): DatosHandle | undefined {
+function handleBajoElPuntero(ev: MouseEvent): DatosHandle | undefined {
 	if (escenario.handles.children.length === 0) return undefined;
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
@@ -1534,19 +1583,28 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 
 	let elem = elementoBajoElPuntero(ev);
 
-	// Modo Trabajo: agarra un cable directo por su tubo y arrástralo para moverlo/ordenarlo,
-	// aunque vaya por una canaleta o cruce por delante de ella (al arrastrarlo se despega y
-	// pasa a mano). Los aparatos tienen prioridad para poder cablearlos con clic.
+	// Modo Trabajo: primer clic sobre un cable lo selecciona; con el cable ya seleccionado, un
+	// clic sobre su tubo AÑADE un punto de quiebre ahí (estilo Tinkercad) y lo arrastra, para
+	// darle forma en tramos horizontales/verticales. Los aparatos tienen prioridad (cablear).
 	if (modo === 'trabajo' && elem?.tipo !== 'dispositivo') {
 		const cid = cableBajoElPuntero(ev);
 		if (cid) {
-			if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: cid });
-			arrastrandoCable = cid;
-			arrastrando = true;
-			handleArrastrado = undefined;
-			capturadoEsteArrastre = false;
-			controles.enabled = false;
-			renderer.domElement.style.cursor = 'grabbing';
+			const yaSel = sel?.tipo === 'cable' && sel.id === cid;
+			if (!yaSel) { aplicarSeleccion({ tipo: 'cable', id: cid }); return; } // 1er clic: solo seleccionar
+			const c = proyecto.conductores.find((x) => x.id === cid);
+			const p = puntoModelo(ev);
+			if (c && p) {
+				capturar();
+				const idx = insertarWaypoint(c, p.x, p.y);
+				arrastrandoCable = { id: cid, indice: idx };
+				arrastrando = true;
+				handleArrastrado = undefined;
+				capturadoEsteArrastre = true;
+				controles.enabled = false;
+				renderer.domElement.style.cursor = 'grabbing';
+				reconstruirCables();
+				construirHandles();
+			}
 			return;
 		}
 	}
@@ -1594,11 +1652,11 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (!capturadoEsteArrastre) { capturar(); capturadoEsteArrastre = true; }
 	const g = proyecto.gabinete!;
 
-	// --- Mover un cable agarrándolo directo por el tubo ---
+	// --- Mover el punto de quiebre que se agarró directo por el tubo ---
 	if (arrastrandoCable) {
-		const c = proyecto.conductores.find((x) => x.id === arrastrandoCable);
+		const c = proyecto.conductores.find((x) => x.id === arrastrandoCable!.id);
 		if (c) {
-			c.trazado = [{ x: Math.round(p.x), y: Math.round(p.y) }];
+			moverWaypoint(c, arrastrandoCable.indice, p.x, p.y);
 			reconstruirCables();
 			construirHandles();
 		}
@@ -1608,9 +1666,13 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	// --- Redimensionar / ordenar con un tirador ---
 	if (handleArrastrado) {
 		if (sel.tipo === 'cable') {
-			// Ordenar el cable: el punto de paso sigue al ratón; el cable deja de estar tenso.
+			// Mover el punto de quiebre del tirador (o crear el primero si el cable no tenía).
 			const c = proyecto.conductores.find((x) => x.id === sel!.id)!;
-			c.trazado = [{ x: Math.round(p.x), y: Math.round(p.y) }];
+			if (handleArrastrado.indice === undefined || handleArrastrado.indice < 0) {
+				c.trazado = [{ x: Math.round(p.x), y: Math.round(p.y) }];
+			} else {
+				moverWaypoint(c, handleArrastrado.indice, p.x, p.y);
+			}
 			reconstruirCables();
 			construirHandles();
 			return;
@@ -1689,12 +1751,12 @@ renderer.domElement.addEventListener('pointerup', () => {
 	renderer.domElement.style.cursor = '';
 	if (!capturadoEsteArrastre) { arrastreInicio = undefined; return; } // fue un clic, no un arrastre
 	if (eraCable) {
-		const c = proyecto.conductores.find((x) => x.id === eraCable);
-		const wp = c?.trazado?.[0];
-		// Si se soltó cerca de una canaleta, se «mete» en ella: se le quita el trazado a mano
-		// y el router lo lleva ordenado por dentro. Si no es ruteable (extremo fuera de placa),
-		// al menos se apoya sobre el eje de la canaleta.
-		const cerca = c && wp ? canaletaCercaDe(wp.x, wp.y) : undefined;
+		const c = proyecto.conductores.find((x) => x.id === eraCable.id);
+		const wp = c?.trazado?.[eraCable.indice];
+		// Si el cable tiene UN solo punto y se suelta cerca de una canaleta, se «mete» en ella
+		// (el router lo lleva ordenado por dentro). Con varios puntos, es un trazado a mano
+		// deliberado y no se toca. Si no es ruteable, al menos se apoya sobre el eje.
+		const cerca = c && wp && c.trazado?.length === 1 ? canaletaCercaDe(wp.x, wp.y) : undefined;
 		if (c && wp && cerca) {
 			delete c.trazado;
 			recalcular();
@@ -1743,6 +1805,24 @@ renderer.domElement.addEventListener('pointerup', () => {
 	pintarPaneles();
 	pintarSeleccion();
 	pintarEstructura();
+});
+
+// Doble clic sobre un punto de quiebre de un cable → se quita ese punto.
+renderer.domElement.addEventListener('dblclick', (ev) => {
+	if (modo !== 'trabajo') return;
+	const handle = handleBajoElPuntero(ev);
+	if (handle?.sel.tipo === 'cable' && handle.indice !== undefined && handle.indice >= 0) {
+		const c = proyecto.conductores.find((x) => x.id === handle.sel.id);
+		if (c?.trazado && handle.indice < c.trazado.length) {
+			capturar();
+			c.trazado.splice(handle.indice, 1);
+			if (c.trazado.length === 0) delete c.trazado;
+			reconstruirCables();
+			construirHandles();
+			pintarPaneles();
+			avisar('Punto del cable quitado');
+		}
+	}
 });
 
 window.addEventListener('keydown', (ev) => {

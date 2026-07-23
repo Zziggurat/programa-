@@ -8,7 +8,7 @@
  *  - Exportadores CSV y un informe HTML completo.
  */
 import { Proyecto } from '../modelo/tipos.js';
-import { extremoTexto, posicionTexto } from '../modelo/proyecto.js';
+import { extremoTexto } from '../modelo/proyecto.js';
 import { Hallazgo } from './drc.js';
 import { PlanBornero } from './bornes.js';
 import { ResultadoPotenciales } from './potenciales.js';

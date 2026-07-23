@@ -121,7 +121,6 @@ function construirGrafo(
 }
 
 function dijkstra(
-	nodos: Nodo[],
 	aristas: Arista[],
 	origen: number,
 	destino: number,
@@ -229,7 +228,7 @@ export function rutearConductores(proyecto: Proyecto): ResultadoRuteo {
 		}
 		const e1 = entradaDe.get(conductor.de.dispositivoId)!;
 		const e2 = entradaDe.get(conductor.a.dispositivoId)!;
-		const resultado = dijkstra(nodos, aristas, nodo(e1.punto), nodo(e2.punto));
+		const resultado = dijkstra(aristas, nodo(e1.punto), nodo(e2.punto));
 		if (!resultado) {
 			avisos.push(`Conductor ${conductor.numero ?? conductor.id}: las canaletas no conectan origen y destino`);
 			continue;
