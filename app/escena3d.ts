@@ -6,7 +6,7 @@
  * hacia el frente. Todo se centra en el origen para orbitar cómodo.
  */
 import * as THREE from 'three';
-import { Colocacion, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
+import { Canaleta, Colocacion, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { RutaConductor } from '../src/motores/ruteo.js';
 import { construirAparato3D } from './dispositivos3d.js';
 
@@ -491,6 +491,26 @@ function anadirTuboCable(
 	grupo.add(agarre);
 }
 
+/** Proyección de (px,py) sobre el eje central de una canaleta, acotada a su largo. */
+function ejeCanaleta(can: Canaleta, px: number, py: number): { x: number; y: number } {
+	if (can.orientacion === 'v') {
+		return { x: can.x + can.ancho / 2, y: Math.max(can.y, Math.min(py, can.y + can.largo)) };
+	}
+	return { x: Math.max(can.x, Math.min(px, can.x + can.largo)), y: can.y + can.ancho / 2 };
+}
+
+/** Canaleta cuyo eje central está más cerca del punto (por dónde entra o sale una ruta). */
+function canaletaDe(canaletas: Canaleta[], px: number, py: number): Canaleta | undefined {
+	let mejor: Canaleta | undefined;
+	let md = Infinity;
+	for (const can of canaletas) {
+		const e = ejeCanaleta(can, px, py);
+		const d = Math.hypot(px - e.x, py - e.y);
+		if (d < md) { md = d; mejor = can; }
+	}
+	return mejor;
+}
+
 export function construirCables(
 	proyecto: Proyecto,
 	rutas: RutaConductor[],
@@ -498,7 +518,8 @@ export function construirCables(
 	voltajePorConductor?: Map<string, number | undefined>,
 ): THREE.Group {
 	const grupo = new THREE.Group();
-	const separacion = new Map<string, number>(); // desfase por punto de entrada para no solapar tubos
+	const canaletas = proyecto.gabinete?.canaletas ?? [];
+	const carrilPorCanaleta = new Map<string, number>(); // nº de cables por canaleta → carril propio
 	const colorDe = (c: { id: string; color?: string }): number =>
 		voltajePorConductor ? colorVoltaje(voltajePorConductor.get(c.id)) : (COLOR_CABLE[c.color ?? ''] ?? 0x546e7a);
 
@@ -507,30 +528,49 @@ export function construirCables(
 		if (!conductor || ruta.camino.length < 2) continue;
 		const color = colorDe(conductor);
 		const radio = 0.9 + (conductor.seccion ?? 1.5) * 0.35;
-
-		// Desfase pequeño y estable por conductor para que los tubos no coincidan exactamente.
-		const clave = `${ruta.camino[1].x},${ruta.camino[1].y}`;
-		const n = separacion.get(clave) ?? 0;
-		separacion.set(clave, n + 1);
-		const desfase = (n % 5 - 2) * 2.4;
-
-		const puntos: THREE.Vector3[] = [];
 		const camino = ruta.camino;
 		const ultimo = camino.length - 1;
-		// El cable arranca en el BORNE real del aparato (no en su centro), baja por una
-		// ranura de la canaleta, la recorre a Z_CABLE y sube por otra ranura al borne destino.
+
+		// Cada cable arranca en el BORNE real y BAJA RECTO por su propia ranura hasta el eje de
+		// la canaleta, justo a la altura de su borne (no todos al centro del aparato): así dejan
+		// de converger en un punto. Dentro de la canaleta corren en carriles paralelos separados.
 		const bDe = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
 		const bA = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
-		puntos.push(aEscena(bDe?.x ?? camino[0].x, bDe?.y ?? camino[0].y, bDe?.z ?? 44));
-		puntos.push(aEscena(camino[1].x, camino[1].y, 52));
-		for (let i = 1; i < ultimo; i++) {
-			puntos.push(aEscena(camino[i].x + desfase * 0.3, camino[i].y + desfase * 0.3, Z_CABLE + desfase));
-		}
-		puntos.push(aEscena(camino[ultimo - 1].x, camino[ultimo - 1].y, 52));
-		puntos.push(aEscena(bA?.x ?? camino[ultimo].x, bA?.y ?? camino[ultimo].y, bA?.z ?? 44));
+		const entryCan = canaletaDe(canaletas, camino[1].x, camino[1].y);
+		const exitCan = canaletaDe(canaletas, camino[ultimo - 1].x, camino[ultimo - 1].y);
 
-		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.08);
-		anadirTuboCable(grupo, curva, Math.max(24, puntos.length * 8), radio, color, conductor.id);
+		// Carril propio dentro de la canaleta de entrada: separación perpendicular al ducto,
+		// repartida dentro de su ancho, para que los tubos no queden uno encima de otro.
+		const clave = entryCan?.id ?? `${camino[1].x},${camino[1].y}`;
+		const k = carrilPorCanaleta.get(clave) ?? 0;
+		carrilPorCanaleta.set(clave, k + 1);
+		const util = Math.max(6, (entryCan?.ancho ?? 40) / 2 - 6);
+		const carril = (((k % 7) - 3) / 3) * util; // ~7 carriles repartidos en el ancho útil
+		const perp = (can: Canaleta | undefined): { dx: number; dy: number } =>
+			can?.orientacion === 'v' ? { dx: carril, dy: 0 } : { dx: 0, dy: carril };
+		const oIn = perp(entryCan);
+		const oOut = perp(exitCan);
+
+		const entryPt = entryCan
+			? ejeCanaleta(entryCan, bDe?.x ?? camino[1].x, bDe?.y ?? camino[1].y)
+			: camino[1];
+		const exitPt = exitCan
+			? ejeCanaleta(exitCan, bA?.x ?? camino[ultimo - 1].x, bA?.y ?? camino[ultimo - 1].y)
+			: camino[ultimo - 1];
+
+		const puntos: THREE.Vector3[] = [];
+		puntos.push(aEscena(bDe?.x ?? camino[0].x, bDe?.y ?? camino[0].y, bDe?.z ?? 46));     // borne origen
+		puntos.push(aEscena(entryPt.x + oIn.dx, entryPt.y + oIn.dy, 40));                     // boca de entrada
+		puntos.push(aEscena(entryPt.x + oIn.dx, entryPt.y + oIn.dy, Z_CABLE));                // dentro de la canaleta
+		for (let i = 2; i <= ultimo - 2; i++) {                                               // esquinas/cruces internos
+			puntos.push(aEscena(camino[i].x + oIn.dx, camino[i].y + oIn.dy, Z_CABLE));
+		}
+		puntos.push(aEscena(exitPt.x + oOut.dx, exitPt.y + oOut.dy, Z_CABLE));                 // hacia la salida
+		puntos.push(aEscena(exitPt.x + oOut.dx, exitPt.y + oOut.dy, 40));                      // boca de salida
+		puntos.push(aEscena(bA?.x ?? camino[ultimo].x, bA?.y ?? camino[ultimo].y, bA?.z ?? 46)); // borne destino
+
+		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.05);
+		anadirTuboCable(grupo, curva, Math.max(30, puntos.length * 8), radio, color, conductor.id);
 	}
 
 	// Cables que NO van por canaleta (sin ruta, o con trazado manual): se dibujan como un
