@@ -188,6 +188,15 @@
 	#modos #modo-editor.activo { background: #5d4a1f; }
 	body.modo-trabajo #seccion-catalogo,
 	body.modo-trabajo #seccion-estructura { display: none; }
+	/* La lista de cables solo tiene sentido en modo Trabajo (conexiones). */
+	body:not(.modo-trabajo) #seccion-cables { display: none; }
+	#lista-cables li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; cursor: pointer; }
+	#lista-cables li:hover { background: var(--panel-2); }
+	#lista-cables li.seleccionado { background: #29405c; }
+	#lista-cables .via { width: 9px; height: 9px; border-radius: 50%; flex: none; border: 1px solid #0006; }
+	#lista-cables .num { font-weight: 700; min-width: 26px; }
+	#lista-cables .ruta { color: var(--texto-suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+	#lista-cables .estado { margin-left: auto; font-size: 11px; opacity: .7; }
 </style>
 </head>
 <body>
@@ -225,6 +234,14 @@
 	<details open>
 		<summary>Dispositivos <span id="contador-dispositivos"></span></summary>
 		<div class="contenido"><ul id="lista-dispositivos"></ul></div>
+	</details>
+	<details open id="seccion-cables">
+		<summary>Cables <span id="contador-cables"></span></summary>
+		<div class="contenido">
+			<div class="sub" style="color:var(--texto-suave);margin-bottom:6px">Pasa el ratón por un cable para resaltarlo · clic para seleccionarlo, moverlo u ordenarlo.</div>
+			<ul id="lista-cables"></ul>
+			<button class="boton" id="btn-ordenar-cables" style="width:100%;margin-top:8px" title="Separa los cables sueltos para que no se crucen ni se enreden">✨ Ordenar cables sueltos</button>
+		</div>
 	</details>
 	<details open>
 		<summary>Verificación eléctrica</summary>

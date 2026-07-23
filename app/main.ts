@@ -22,8 +22,8 @@ import { generarReferencias } from '../src/motores/referencias.js';
 import { generarPlanBorneros } from '../src/motores/bornes.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
-	anclajeBorne, cajaDe, colorVoltaje, construirCables, construirCanaleta, construirCotas, construirDispositivo,
-	construirEscenario, construirRiel, DatosCota, Escenario, VOLTAJE_COLOR,
+	anclajeBorne, cajaDe, colorVoltaje, COLOR_CABLE, construirCables, construirCanaleta, construirCotas,
+	construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario, VOLTAJE_COLOR,
 } from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
 
@@ -222,6 +222,9 @@ function reconstruirCables(): void {
 	}
 	escenario.cables.add(construirCables(proyecto, ruteo.rutas, escenario.aEscena, voltajeMap));
 	escenario.cables.visible = ($('ver-cables') as HTMLInputElement).checked;
+	// Reaplicar el resaltado/atenuado del cable seleccionado tras reconstruir.
+	cableHover = undefined;
+	if (sel?.tipo === 'cable') { resaltarCable(sel.id); atenuarCables(sel.id); }
 }
 
 function reconstruirCotas(): void {
@@ -555,9 +558,38 @@ function pintarPaneles(): void {
 		? 'Todavía no hay cables.'
 		: `${nc} ${nc === 1 ? 'conductor' : 'conductores'} · ${ruteo.rutas.length} ruteados · ${(total / 1000).toFixed(1)} m de cable`;
 
+	pintarListaCables();
+
 	// Estado vacío de bienvenida (solo cuando la placa no tiene aparatos reales).
 	const aparatos = proyecto.dispositivos.filter((d) => !d.campo && !d.imagen).length;
 	($('bienvenida') as HTMLElement).hidden = aparatos > 0;
+}
+
+/** Lista de todos los cables del panel (modo Trabajo): clic para seleccionar/ordenar. */
+function pintarListaCables(): void {
+	const cont = $('lista-cables');
+	$('contador-cables').textContent = `(${proyecto.conductores.length})`;
+	cont.innerHTML = '';
+	if (proyecto.conductores.length === 0) {
+		cont.innerHTML = '<div class="sub" style="color:var(--texto-suave)">Aún no hay cables. Selecciona un aparato y conéctalo.</div>';
+		return;
+	}
+	const idSel = sel?.tipo === 'cable' ? sel.id : undefined;
+	const ruteados = new Set(ruteo.rutas.map((r) => r.conductorId));
+	for (const c of proyecto.conductores) {
+		const li = document.createElement('li');
+		li.className = c.id === idSel ? 'seleccionado' : '';
+		const estado = c.trazado?.length ? 'a mano' : ruteados.has(c.id) ? 'canaleta' : 'suelto';
+		const colorCss = c.color ? hexColor(COLOR_CABLE[c.color] ?? 0x888888) : '#888';
+		li.innerHTML = `<span class="via" style="background:${colorCss}"></span>
+			<span class="num">${c.numero ?? '—'}</span>
+			<span class="ruta">${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}</span>
+			<span class="estado">${estado}</span>`;
+		li.onmouseenter = () => resaltarHoverCable(c.id);
+		li.onmouseleave = () => resaltarHoverCable(undefined);
+		li.onclick = () => { aplicarSeleccion({ tipo: 'cable', id: c.id }); enfocarCamaraEnCable(c.id); };
+		cont.appendChild(li);
+	}
 }
 
 const SECCIONES = [0.5, 0.75, 1, 1.5, 2.5, 4, 6, 10];
@@ -1045,6 +1077,8 @@ function aplicarSeleccion(nueva: Seleccion | undefined): void {
 	else if (sel?.tipo === 'canaleta') resaltarPorUserData('canaletaId', sel.id);
 	else if (sel?.tipo === 'riel') resaltarPorUserData('rielId', sel.id);
 	else if (sel?.tipo === 'cable') resaltarCable(sel.id);
+	// Al seleccionar un cable, se atenúan los demás para que se vea cuál estás tocando.
+	atenuarCables(sel?.tipo === 'cable' ? sel.id : undefined);
 	construirHandles();
 	pintarPaneles();
 	pintarSeleccion();
@@ -1055,10 +1089,94 @@ function resaltarCable(id: string): void {
 		if (o.userData.conductorId === id && o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
 			o.material = o.material.clone();
 			o.material.emissive.setHex(0x2ea3ff);
-			o.material.emissiveIntensity = 0.6;
+			o.material.emissiveIntensity = 0.7;
 			resaltados.push(o.material);
 		}
 	});
+}
+
+/** Atenúa (baja opacidad) todos los cables salvo el resaltado; sin argumento, los devuelve a opacos. */
+function atenuarCables(exceptoId: string | undefined): void {
+	escenario.cables.traverse((o) => {
+		if (!(o instanceof THREE.Mesh) || !(o.material instanceof THREE.MeshStandardMaterial)) return;
+		if (!o.userData.conductorId) return;
+		const atenuar = exceptoId !== undefined && o.userData.conductorId !== exceptoId;
+		o.material.transparent = atenuar;
+		o.material.opacity = atenuar ? 0.25 : 1;
+	});
+}
+
+let cableHover: string | undefined;
+/** Resalta suavemente el cable bajo el ratón (o desde la lista) y pone el cursor de agarre. */
+function resaltarHoverCable(id: string | undefined): void {
+	if (id === cableHover) return;
+	escenario.cables.traverse((o) => {
+		if (!(o instanceof THREE.Mesh) || !(o.material instanceof THREE.MeshStandardMaterial)) return;
+		const cid = o.userData.conductorId;
+		if (!cid) return;
+		const esSel = sel?.tipo === 'cable' && sel.id === cid;
+		if (cid === cableHover && !esSel) o.material.emissiveIntensity = 0;   // quitar hover anterior
+		if (cid === id && !esSel) { o.material.emissive.setHex(0x8fd0ff); o.material.emissiveIntensity = 0.5; }
+	});
+	cableHover = id;
+	renderer.domElement.style.cursor = id ? 'grab' : '';
+}
+
+/** Centra suavemente la vista sobre un cable (para encontrarlo tras clic en la lista). */
+function enfocarCamaraEnCable(id: string): void {
+	const c = proyecto.conductores.find((x) => x.id === id);
+	if (!c) return;
+	const a = anclajeBorne(proyecto, c.de.dispositivoId, c.de.borneId);
+	const b = anclajeBorne(proyecto, c.a.dispositivoId, c.a.borneId);
+	if (!a || !b) return;
+	const medio = c.trazado?.[0] ?? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+	const destino = escenario.aEscena(medio.x, medio.y, 0);
+	controles.target.copy(destino);
+	controles.update();
+}
+
+/**
+ * Ordena los cables SUELTOS (los que cuelgan, sin canaleta ni trazado a mano): a cada uno
+ * le asigna un punto de paso en un «carril» propio y escalonado, de modo que los cables que
+ * corren en paralelo se separan en filas y dejan de cruzarse o enredarse. Los que ya van por
+ * canaleta o están ordenados a mano se respetan. Después, cada punto se puede arrastrar.
+ */
+function ordenarCablesSueltos(): void {
+	const ruteados = new Set(ruteo.rutas.map((r) => r.conductorId));
+	const noCanaleta = proyecto.conductores.filter((c) => !ruteados.has(c.id));
+	const sueltos = noCanaleta.filter((c) => !c.trazado?.length);
+	if (sueltos.length === 0) {
+		avisar('No hay cables sueltos que ordenar. Los cables sueltos son los que cuelgan sin pasar por una canaleta.', 'info');
+		return;
+	}
+	// Un carril por cable: dentro de cada zona horizontal, se escalonan en 6 filas para que
+	// los paralelos no se solapen. El punto va al medio de los dos bornes, bajado a su fila.
+	// Solo se pueden ordenar los cables cuyos dos extremos están colocados en la placa (los
+	// que van a la red o a un aparato de campo no tienen una posición fija que ordenar).
+	const nuevos: { c: (typeof sueltos)[number]; x: number; y: number }[] = [];
+	let carril = 0;
+	for (const c of sueltos) {
+		const a = anclajeBorne(proyecto, c.de.dispositivoId, c.de.borneId);
+		const b = anclajeBorne(proyecto, c.a.dispositivoId, c.a.borneId);
+		if (!a || !b) continue; // extremo fuera de la placa: no se puede ordenar
+		const midX = Math.round((a.x + b.x) / 2);
+		const baseY = Math.max(a.y, b.y);
+		const filaY = Math.round(baseY + 34 + (carril % 6) * 24);
+		nuevos.push({ c, x: midX, y: filaY });
+		carril++;
+	}
+	if (nuevos.length === 0) {
+		avisar('Estos cables sueltos van a la red o a aparatos de campo (fuera de la placa), así que no tienen un recorrido en el tablero que ordenar.', 'info');
+		return;
+	}
+	capturar();
+	for (const { c, x, y } of nuevos) c.trazado = [{ x, y }];
+	reconstruirCables();
+	pintarPaneles();
+	const n = nuevos.length;
+	const resto = sueltos.length - n;
+	const extra = resto > 0 ? ` (${resto} van a la red o al campo y se dejan colgando).` : '';
+	avisar(`${n} ${n === 1 ? 'cable suelto ordenado' : 'cables sueltos ordenados'} en carriles. Arrastra la esfera azul de cualquiera para afinarlo.${extra}`, 'ok');
 }
 
 /** Selección por id de dispositivo (compatibilidad con el resto del código). */
@@ -1081,6 +1199,15 @@ function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 		if (u.conductorId && !cable) cable = { tipo: 'cable', id: u.conductorId };
 	}
 	return cable; // los cables tienen la prioridad más baja
+}
+
+/** Conductor cuyo tubo está bajo el puntero (para el resaltado al pasar el ratón). */
+function cableBajoElPuntero(ev: PointerEvent): string | undefined {
+	const r = renderer.domElement.getBoundingClientRect();
+	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+	raycaster.setFromCamera(puntero, camara);
+	const impactos = raycaster.intersectObjects(escenario.cables.children, false);
+	return impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId;
 }
 
 /* ------------------------ Tiradores (handles) ------------------------ */
@@ -1404,7 +1531,12 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 });
 
 renderer.domElement.addEventListener('pointermove', (ev) => {
-	if (!arrastrando || !sel) return;
+	// Resaltado al pasar el ratón sobre un cable (modo Trabajo): así se ve cuál se puede tocar.
+	if (!arrastrando) {
+		if (modo === 'trabajo') resaltarHoverCable(cableBajoElPuntero(ev));
+		return;
+	}
+	if (!sel) return;
 	const p = puntoModelo(ev);
 	if (!p) return;
 	if (!capturadoEsteArrastre) { capturar(); capturadoEsteArrastre = true; }
@@ -1732,6 +1864,8 @@ $('leyenda-voltaje').innerHTML =
 /* --------------------- Ayuda, centrar vista y ejemplo --------------------- */
 
 ($('btn-centrar') as HTMLButtonElement).onclick = () => encuadrar();
+
+($('btn-ordenar-cables') as HTMLButtonElement).onclick = () => ordenarCablesSueltos();
 
 ($('btn-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = false; };
 ($('btn-cerrar-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = true; };
