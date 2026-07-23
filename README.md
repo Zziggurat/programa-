@@ -25,7 +25,7 @@ ocho motores independientes y testeados:
 
 **Opción A — sin instalar nada (un clic):** cada vez que avanza el desarrollo se publica
 una versión jugable del editor 3D como página web en Claude:
-<https://claude.ai/code/artifact/69527c7e-71c7-4635-99be-453757e6efb0>
+<https://claude.ai/code/artifact/a0a740c7-1552-425c-a168-324a9f8fcdaf>
 (se abre en el navegador; también aparece en la galería de *Artifacts* de claude.ai/code).
 
 **Opción B — en tu PC (recomendada para desarrollo):**
