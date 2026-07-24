@@ -41,6 +41,7 @@ export interface Escenario {
 	raiz: THREE.Group;
 	dispositivos: THREE.Group;   // mallas con userData.dispositivoId
 	cables: THREE.Group;
+	bornes: THREE.Group;         // puntos de conexión clicables (para cablear en modo Trabajo)
 	cotas: THREE.Group;          // acotado dimensional (modo "ver tamaños")
 	handles: THREE.Group;        // tiradores de mover/redimensionar del elemento seleccionado
 	tapas: THREE.Object3D[];     // tapas de canaletas (para ocultarlas)
@@ -79,6 +80,10 @@ export function construirEscenario(proyecto: Proyecto): Escenario {
 	const cables = new THREE.Group();
 	raiz.add(cables);
 
+	const bornes = new THREE.Group();
+	bornes.visible = false;
+	raiz.add(bornes);
+
 	const cotas = new THREE.Group();
 	cotas.visible = false;
 	raiz.add(cotas);
@@ -86,7 +91,33 @@ export function construirEscenario(proyecto: Proyecto): Escenario {
 	const handles = new THREE.Group();
 	raiz.add(handles);
 
-	return { raiz, dispositivos, cables, cotas, handles, tapas, etiquetas, centro: new THREE.Vector3(0, 0, 0), aEscena };
+	return { raiz, dispositivos, cables, bornes, cotas, handles, tapas, etiquetas, centro: new THREE.Vector3(0, 0, 0), aEscena };
+}
+
+/**
+ * Puntos de conexión (bornes) clicables de todos los aparatos colocados, para cablear con clic
+ * como en un tablero real: se toca un borne y luego otro. Cada esfera lleva su aparato y borne.
+ */
+export function construirBornes(proyecto: Proyecto, aEscena: Escenario['aEscena']): THREE.Group {
+	const grupo = new THREE.Group();
+	const geo = new THREE.SphereGeometry(4.2, 12, 12);
+	for (const col of proyecto.gabinete?.colocaciones ?? []) {
+		const d = proyecto.dispositivos.find((x) => x.id === col.dispositivoId);
+		if (!d) continue;
+		for (const b of d.bornes) {
+			const pos = anclajeBorne(proyecto, d.id, b.id);
+			if (!pos) continue;
+			const m = new THREE.Mesh(
+				geo,
+				new THREE.MeshStandardMaterial({ color: 0xffb63a, emissive: 0x4a3200, emissiveIntensity: 1, roughness: 0.35, metalness: 0.2 }),
+			);
+			m.position.copy(aEscena(pos.x, pos.y, pos.z + 4));
+			m.userData = { borneDispositivoId: d.id, borneId: b.id };
+			m.renderOrder = 997;
+			grupo.add(m);
+		}
+	}
+	return grupo;
 }
 
 /* --------------------------------- Cotas --------------------------------- */

@@ -22,8 +22,8 @@ import { generarReferencias } from '../src/motores/referencias.js';
 import { generarPlanBorneros } from '../src/motores/bornes.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
-	anclajeBorne, cajaDe, colorVoltaje, COLOR_CABLE, construirCables, construirCanaleta, construirCotas,
-	construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario, VOLTAJE_COLOR,
+	anclajeBorne, cajaDe, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
+	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario, VOLTAJE_COLOR,
 } from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
 import { distPuntoSegmento, orthogonalize } from './geometria-cables.js';
@@ -223,12 +223,20 @@ function reconstruirCotas(): void {
 	escenario.cotas.visible = ($('ver-cotas') as HTMLInputElement).checked;
 }
 
+/** Reconstruye los puntos de conexión clicables (bornes); solo visibles en modo Trabajo. */
+function reconstruirBornes(): void {
+	escenario.bornes.clear();
+	escenario.bornes.add(construirBornes(proyecto, escenario.aEscena));
+	escenario.bornes.visible = modo === 'trabajo';
+}
+
 /** Desmonta y vuelve a construir todo el gabinete. */
 function montarEscenario(): void {
 	escena.remove(escenario.raiz);
 	escenario = construirEscenario(proyecto);
 	escena.add(escenario.raiz);
 	reconstruirCables();
+	reconstruirBornes();
 	reconstruirCotas();
 	for (const t of escenario.tapas) t.visible = ($('ver-tapas') as HTMLInputElement).checked;
 	for (const t of escenario.etiquetas) t.visible = ($('ver-etiquetas') as HTMLInputElement).checked;
@@ -618,6 +626,7 @@ function pintarSeleccion(): void {
 	const bloqueCableado = esEditor ? '' : `
 		<h2>Cables conectados ${metros ? `· ${(metros / 1000).toFixed(2)} m` : ''}</h2>
 		<div id="cables-aparato">${cablesDelAparato.length === 0 ? '<div class="sub">Sin cables todavía</div>' : ''}</div>
+		<div class="sub" style="margin:8px 0;padding:8px;background:var(--panel-2);border-radius:8px">💡 <b>Lo más fácil:</b> toca un <b>borne</b> (punto naranja) de un aparato y luego otro en el tablero, y el cable se conecta solo. O usa el formulario de abajo.</div>
 		<h2>Conectar cable nuevo</h2>
 		<div class="form-cable">
 			<select id="cable-borne-origen" title="Borne de este aparato">
@@ -1165,6 +1174,99 @@ function cableBajoElPuntero(ev: MouseEvent): string | undefined {
 	return impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId as string | undefined;
 }
 
+/* --------------- Cableado por clic en los bornes (como un tablero real) --------------- */
+
+type RefBorne = { dispositivoId: string; borneId: string };
+let cableandoDesde: RefBorne | undefined;   // borne de origen mientras se está tendiendo un cable
+let gomaCable: THREE.Line | undefined;      // «goma elástica» del cable que sigue al cursor
+
+/** Borne (punto de conexión) bajo el puntero, si lo hay. */
+function borneBajoElPuntero(ev: MouseEvent): RefBorne | undefined {
+	const r = renderer.domElement.getBoundingClientRect();
+	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+	raycaster.setFromCamera(puntero, camara);
+	const o = raycaster.intersectObjects(escenario.bornes.children, true).find((i) => i.object.userData.borneId)?.object;
+	return o ? { dispositivoId: o.userData.borneDispositivoId, borneId: o.userData.borneId } : undefined;
+}
+
+/** Resalta el borne bajo el ratón (y el de origen si se está cableando); pone el cursor de mira. */
+function resaltarHoverBorne(b: RefBorne | undefined): void {
+	for (const m of escenario.bornes.children) {
+		if (!(m instanceof THREE.Mesh) || !(m.material instanceof THREE.MeshStandardMaterial)) continue;
+		const esOrigen = cableandoDesde
+			&& m.userData.borneDispositivoId === cableandoDesde.dispositivoId && m.userData.borneId === cableandoDesde.borneId;
+		const esHover = b && m.userData.borneDispositivoId === b.dispositivoId && m.userData.borneId === b.borneId;
+		m.scale.setScalar(esOrigen ? 1.7 : esHover ? 1.5 : 1);
+		m.material.color.setHex(esOrigen ? 0x35c46a : esHover ? 0xffe08a : 0xffb63a);
+		m.material.emissiveIntensity = esOrigen || esHover ? 2 : 1;
+	}
+}
+
+/** Empieza a tender un cable desde un borne. */
+function iniciarCableado(b: RefBorne): void {
+	cableandoDesde = b;
+	resaltarHoverBorne(b);
+	avisar('Ahora haz clic en el otro borne para conectar el cable (Esc cancela).', 'info');
+}
+
+/** Cancela el cableado en curso y quita la goma elástica. */
+function cancelarCableado(): void {
+	cableandoDesde = undefined;
+	if (gomaCable) {
+		escenario.raiz.remove(gomaCable);
+		gomaCable.geometry.dispose();
+		(gomaCable.material as THREE.Material).dispose();
+		gomaCable = undefined;
+	}
+	resaltarHoverBorne(undefined);
+}
+
+/** Actualiza la goma elástica desde el borne de origen hasta el punto (x,y) del cursor. */
+function actualizarGomaCable(x: number, y: number): void {
+	if (!cableandoDesde) return;
+	const a = anclajeBorne(proyecto, cableandoDesde.dispositivoId, cableandoDesde.borneId);
+	if (!a) return;
+	const pts = [escenario.aEscena(a.x, a.y, a.z + 4), escenario.aEscena(x, y, 50)];
+	if (!gomaCable) {
+		gomaCable = new THREE.Line(
+			new THREE.BufferGeometry().setFromPoints(pts),
+			new THREE.LineBasicMaterial({ color: 0x35c46a, depthTest: false, transparent: true, opacity: 0.9 }),
+		);
+		gomaCable.renderOrder = 999;
+		escenario.raiz.add(gomaCable);
+	} else {
+		gomaCable.geometry.setFromPoints(pts);
+	}
+}
+
+/** Conecta el borne de origen con `destino` creando un cable nuevo (evita duplicados y bucles). */
+function completarCableado(destino: RefBorne): void {
+	const origen = cableandoDesde;
+	if (!origen) return;
+	if (origen.dispositivoId === destino.dispositivoId && origen.borneId === destino.borneId) { cancelarCableado(); return; }
+	const yaExiste = proyecto.conductores.some((c) =>
+		(c.de.dispositivoId === origen.dispositivoId && c.de.borneId === origen.borneId
+			&& c.a.dispositivoId === destino.dispositivoId && c.a.borneId === destino.borneId)
+		|| (c.a.dispositivoId === origen.dispositivoId && c.a.borneId === origen.borneId
+			&& c.de.dispositivoId === destino.dispositivoId && c.de.borneId === destino.borneId));
+	if (yaExiste) { avisar('Esos dos bornes ya están conectados.', 'info'); cancelarCableado(); return; }
+	capturar();
+	proyecto.conductores.push({
+		id: `c${Date.now().toString(36)}`,
+		de: { dispositivoId: origen.dispositivoId, borneId: origen.borneId },
+		a: { dispositivoId: destino.dispositivoId, borneId: destino.borneId },
+		seccion: 1.5,
+		color: 'negro',
+	});
+	cancelarCableado();
+	recalcular();
+	reconstruirCables();
+	reconstruirBornes();
+	pintarPaneles();
+	pintarSeleccion();
+	avisar('Cable conectado', 'ok');
+}
+
 /* ------------------------ Tiradores (handles) ------------------------ */
 
 interface DatosHandle {
@@ -1509,6 +1611,18 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		return;
 	}
 
+	// Cableado por clic en los bornes (modo Trabajo, clic izquierdo): clic en un borne y luego
+	// en otro crea el cable, como en un tablero real. Tiene prioridad para poder conectar.
+	if (modo === 'trabajo' && ev.button === 0) {
+		const borne = borneBajoElPuntero(ev);
+		if (borne) {
+			if (cableandoDesde) completarCableado(borne);
+			else iniciarCableado(borne);
+			return;
+		}
+		if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); return; }
+	}
+
 	// Tiradores (redimensionar estructura en Editor, ordenar cable en Trabajo): máxima prioridad.
 	const handle = handleBajoElPuntero(ev);
 	if (handle) {
@@ -1586,9 +1700,15 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 });
 
 renderer.domElement.addEventListener('pointermove', (ev) => {
-	// Resaltado al pasar el ratón sobre un cable (modo Trabajo): así se ve cuál se puede tocar.
+	// Resaltado al pasar el ratón (modo Trabajo): bornes (para cablear) y cables (para tocarlos).
 	if (!arrastrando) {
-		if (modo === 'trabajo') resaltarHoverCable(cableBajoElPuntero(ev));
+		if (modo === 'trabajo') {
+			const b = borneBajoElPuntero(ev);
+			resaltarHoverBorne(b);
+			resaltarHoverCable(b ? undefined : cableBajoElPuntero(ev));
+			if (cableandoDesde) { const p = puntoModelo(ev); if (p) actualizarGomaCable(p.x, p.y); }
+			renderer.domElement.style.cursor = b || cableandoDesde ? 'crosshair' : (cableBajoElPuntero(ev) ? 'grab' : '');
+		}
 		return;
 	}
 	if (!sel) return;
@@ -1760,6 +1880,7 @@ renderer.domElement.addEventListener('dblclick', (ev) => {
 renderer.domElement.addEventListener('contextmenu', (ev) => {
 	ev.preventDefault(); // sin menú del navegador
 	if (modo !== 'trabajo') return;
+	if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); return; }
 	const cid = cableBajoElPuntero(ev);
 	if (!cid) return;
 	const c = proyecto.conductores.find((x) => x.id === cid);
@@ -1789,7 +1910,10 @@ window.addEventListener('keydown', (ev) => {
 		if (sel.tipo === 'dispositivo') eliminarDispositivo(sel.id);
 		else eliminarEstructura(sel);
 	}
-	if (ev.key === 'Escape') aplicarSeleccion(undefined);
+	if (ev.key === 'Escape') {
+		if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); }
+		else aplicarSeleccion(undefined);
+	}
 });
 
 /** Reconstruye en la escena solo el aparato indicado (para arrastre/resize fluido). */
@@ -1928,7 +2052,7 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 
 const AYUDA: Record<Modo, string> = {
 	editor: '🔧 EDITOR (armar) — Añade aparatos del catálogo (van sobre un riel) · arrástralos · edita caja, placa, rieles y canaletas (botón «Girar H↔V») · Duplicar/Eliminar · Supr borra · Ctrl+Z deshace',
-	trabajo: '🔌 TRABAJO (conexiones) — Cablea seleccionando un aparato · arrastra los cables sueltos para ordenarlos · verificación DRC en vivo. La estructura y los aparatos están bloqueados.',
+	trabajo: '🔌 TRABAJO (conexiones) — Cablea tocando un borne (punto naranja) y luego otro · clic izq mueve puntos del cable, clic der crea una unión · Esc cancela · DRC en vivo. La estructura está bloqueada.',
 };
 
 function aplicarModo(nuevo: Modo): void {
@@ -1938,6 +2062,8 @@ function aplicarModo(nuevo: Modo): void {
 	$('modo-trabajo').classList.toggle('activo', modo === 'trabajo');
 	$('ayuda').textContent = AYUDA[modo];
 	eligiendoDestino = false;
+	cancelarCableado();
+	escenario.bornes.visible = modo === 'trabajo'; // los bornes clicables solo en Trabajo
 	// Al pasar a trabajo se cancela cualquier arrastre en curso y se quitan los tiradores.
 	if (modo === 'trabajo') {
 		arrastrando = false;
