@@ -238,9 +238,9 @@
 	<details open id="seccion-cables">
 		<summary>Cables <span id="contador-cables"></span></summary>
 		<div class="contenido">
-			<div class="sub" style="color:var(--texto-suave);margin-bottom:6px">Selecciona un cable y haz <b>clic sobre él</b> para añadir puntos de quiebre (en L, horizontal/vertical, como en Tinkercad); arrastra las esferas para ajustarlos. Pasa el ratón por la lista para resaltar y haz clic para ir a él.</div>
+			<div class="sub" style="color:var(--texto-suave);margin-bottom:6px">Como en Tinkercad: <b>clic izquierdo</b> arrastra los puntos de un cable · <b>clic derecho</b> sobre un cable crea una unión (punto nuevo) · <b>doble clic</b> en un punto lo quita. Pasa el ratón por la lista para resaltar.</div>
 			<ul id="lista-cables"></ul>
-			<button class="boton" id="btn-ordenar-cables" style="width:100%;margin-top:8px" title="Separa los cables sueltos para que no se crucen ni se enreden">✨ Ordenar cables sueltos</button>
+			<button class="boton" id="btn-ordenar-cables" style="width:100%;margin-top:8px" title="Devuelve todos los cables a su recorrido automático ordenado (quita los puntos a mano)">✨ Auto-ordenar cables</button>
 		</div>
 	</details>
 	<details open>
@@ -248,9 +248,8 @@
 		<div class="contenido"><ul id="lista-drc"></ul></div>
 	</details>
 	<details>
-		<summary>Canaletas y cableado</summary>
+		<summary>Cableado</summary>
 		<div class="contenido">
-			<div id="ocupacion"></div>
 			<div id="resumen-cables" style="color:var(--texto-suave)"></div>
 		</div>
 	</details>
@@ -313,7 +312,10 @@
 			<span><b>2.</b> Colócalos (arrástralos)</span>
 			<span><b>3.</b> Cablea y revisa</span>
 		</div>
-		<button class="boton primario" id="btn-empezar-ejemplo">Ver un tablero de ejemplo</button>
+		<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+			<button class="boton primario" id="btn-empezar-blanco">Empezar en blanco</button>
+			<button class="boton" id="btn-empezar-ejemplo">Ver un tablero de ejemplo</button>
+		</div>
 	</div>
 </div>
 

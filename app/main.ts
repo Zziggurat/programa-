@@ -11,7 +11,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { tableroEjemplo } from '../ejemplo/tablero-ejemplo.js';
-import { Canaleta, Conductor, Proyecto } from '../src/modelo/tipos.js';
+import { Conductor, Proyecto } from '../src/modelo/tipos.js';
 import { crearProyecto, extremoTexto, posicionTexto } from '../src/modelo/proyecto.js';
 import { calcularPotenciales, ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
@@ -26,7 +26,7 @@ import {
 	construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario, VOLTAJE_COLOR,
 } from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
-import { distPuntoSegmento } from './geometria-cables.js';
+import { distPuntoSegmento, orthogonalize } from './geometria-cables.js';
 
 type Modo = 'editor' | 'trabajo';
 let modo: Modo = 'editor';
@@ -210,7 +210,7 @@ function reconstruirCables(): void {
 			voltajeMap.set(c.id, p?.tensiones[p.tensiones.length - 1]);
 		}
 	}
-	escenario.cables.add(construirCables(proyecto, ruteo.rutas, escenario.aEscena, voltajeMap));
+	escenario.cables.add(construirCables(proyecto, escenario.aEscena, voltajeMap));
 	escenario.cables.visible = ($('ver-cables') as HTMLInputElement).checked;
 	// Reaplicar el resaltado/atenuado del cable seleccionado tras reconstruir.
 	cableHover = undefined;
@@ -532,28 +532,19 @@ function pintarPaneles(): void {
 		? `${errores} errores · ${avisos} avisos`
 		: 'DRC sin hallazgos';
 
-	const ocup = $('ocupacion');
-	ocup.innerHTML = '';
-	for (const o of ruteo.ocupaciones) {
-		const pct = Math.min(100, Math.round(o.ocupacion * 100));
-		ocup.insertAdjacentHTML(
-			'beforeend',
-			`<div style="display:flex;justify-content:space-between"><span>${o.canaletaId}</span><span>${pct} %</span></div>
-			 <div class="barra-ocupacion"><div class="${o.excedida ? 'excedida' : ''}" style="width:${pct}%"></div></div>`,
-		);
-	}
-	const total = ruteo.rutas.reduce((s, r) => s + r.longitudMm, 0);
+	const total = proyecto.conductores.reduce((s, c) => s + longitudCableMm(c), 0);
 	const nc = proyecto.conductores.length;
 	$('resumen-cables').textContent = nc === 0
 		? 'Todavía no hay cables.'
-		: `${nc} ${nc === 1 ? 'conductor' : 'conductores'} · ${ruteo.rutas.length} ruteados · ${(total / 1000).toFixed(1)} m de cable`;
+		: `${nc} ${nc === 1 ? 'conductor' : 'conductores'} · ~${(total / 1000).toFixed(1)} m de cable`;
 
 	pintarListaCables();
 
-	// Estado vacío de bienvenida (solo cuando la placa no tiene aparatos reales).
+	// Estado vacío de bienvenida (solo si la placa no tiene aparatos y no se ha descartado).
 	const aparatos = proyecto.dispositivos.filter((d) => !d.campo && !d.imagen).length;
-	($('bienvenida') as HTMLElement).hidden = aparatos > 0;
+	($('bienvenida') as HTMLElement).hidden = aparatos > 0 || bienvenidaDescartada;
 }
+let bienvenidaDescartada = false;
 
 /** Lista de todos los cables del panel (modo Trabajo): clic para seleccionar/ordenar. */
 function pintarListaCables(): void {
@@ -565,11 +556,10 @@ function pintarListaCables(): void {
 		return;
 	}
 	const idSel = sel?.tipo === 'cable' ? sel.id : undefined;
-	const ruteados = new Set(ruteo.rutas.map((r) => r.conductorId));
 	for (const c of proyecto.conductores) {
 		const li = document.createElement('li');
 		li.className = c.id === idSel ? 'seleccionado' : '';
-		const estado = c.trazado?.length ? 'a mano' : ruteados.has(c.id) ? 'canaleta' : 'suelto';
+		const estado = c.trazado?.length ? `a mano (${c.trazado.length})` : 'directo';
 		const colorCss = c.color ? hexColor(COLOR_CABLE[c.color] ?? 0x888888) : '#888';
 		li.innerHTML = `<span class="via" style="background:${colorCss}"></span>
 			<span class="num">${c.numero ?? '—'}</span>
@@ -609,9 +599,7 @@ function pintarSeleccion(): void {
 		(c) => c.de.dispositivoId === d.id || c.a.dispositivoId === d.id,
 	);
 	const propios = hallazgos.filter((h) => h.dispositivoId === d.id);
-	const metros = ruteo.rutas
-		.filter((r) => cablesDelAparato.some((c) => c.id === r.conductorId))
-		.reduce((s, r) => s + r.longitudMm, 0);
+	const metros = cablesDelAparato.reduce((s, c) => s + longitudCableMm(c), 0);
 
 	const otrosAparatos = proyecto.dispositivos.filter((x) => x.id !== d.id);
 
@@ -844,7 +832,6 @@ function pintarPanelCable(id: string): void {
 	const panel = $('panel-der');
 	const c = proyecto.conductores.find((x) => x.id === id);
 	if (!c) { panel.style.display = 'none'; return; }
-	const ruteado = ruteo.rutas.some((r) => r.conductorId === id);
 	const manual = !!c.trazado?.length;
 
 	panel.style.display = 'block';
@@ -852,9 +839,9 @@ function pintarPanelCable(id: string): void {
 		<h1>Cable ${c.numero ?? ''}</h1>
 		<div class="sub">${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}</div>
 		<dl>
-			<dt>Recorrido</dt><dd>${manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : ruteado ? '📦 por canaleta' : '↳ directo (en L, automático)'}</dd>
+			<dt>Recorrido</dt><dd>${manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : '↳ directo (en L, automático)'}</dd>
 		</dl>
-		<div class="sub" style="margin-top:6px"><b>Clic sobre el cable</b> añade un punto de quiebre ahí y lo mueve (tramos en L, horizontal/vertical). Arrastra las <b>esferas azules</b> para ajustar cada punto · <b>doble clic</b> en una para quitarla.</div>
+		<div class="sub" style="margin-top:6px"><b>Arrastra</b> las esferas azules con el <b>clic izquierdo</b> para mover cada punto · <b>clic derecho</b> sobre el cable para crear una unión (punto nuevo) · <b>doble clic</b> en una esfera para quitarla.</div>
 		<div class="form-cable" style="margin-top:10px">
 			<select id="cbl-seccion">${SECCIONES.map((s) => `<option value="${s}" ${s === c.seccion ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
 			<select id="cbl-color">${COLORES.map((col) => `<option ${col === c.color ? 'selected' : ''}>${col}</option>`).join('')}</select>
@@ -1126,47 +1113,24 @@ function enfocarCamaraEnCable(id: string): void {
 }
 
 /**
- * Ordena los cables SUELTOS (los que cuelgan, sin canaleta ni trazado a mano): a cada uno
- * le asigna un punto de paso en un «carril» propio y escalonado, de modo que los cables que
- * corren en paralelo se separan en filas y dejan de cruzarse o enredarse. Los que ya van por
- * canaleta o están ordenados a mano se respetan. Después, cada punto se puede arrastrar.
+ * Devuelve TODOS los cables a su recorrido automático (ortogonal, en carriles separados),
+ * quitándoles los puntos de quiebre a mano. Útil para «enderezar» de golpe si el cableado
+ * manual quedó enredado. Es deshacer-able con Ctrl+Z.
  */
-function ordenarCablesSueltos(): void {
-	const ruteados = new Set(ruteo.rutas.map((r) => r.conductorId));
-	const noCanaleta = proyecto.conductores.filter((c) => !ruteados.has(c.id));
-	const sueltos = noCanaleta.filter((c) => !c.trazado?.length);
-	if (sueltos.length === 0) {
-		avisar('No hay cables sueltos que ordenar. Los cables sueltos son los que cuelgan sin pasar por una canaleta.', 'info');
-		return;
-	}
-	// Un carril por cable: dentro de cada zona horizontal, se escalonan en 6 filas para que
-	// los paralelos no se solapen. El punto va al medio de los dos bornes, bajado a su fila.
-	// Solo se pueden ordenar los cables cuyos dos extremos están colocados en la placa (los
-	// que van a la red o a un aparato de campo no tienen una posición fija que ordenar).
-	const nuevos: { c: (typeof sueltos)[number]; x: number; y: number }[] = [];
-	let carril = 0;
-	for (const c of sueltos) {
-		const a = anclajeBorne(proyecto, c.de.dispositivoId, c.de.borneId);
-		const b = anclajeBorne(proyecto, c.a.dispositivoId, c.a.borneId);
-		if (!a || !b) continue; // extremo fuera de la placa: no se puede ordenar
-		const midX = Math.round((a.x + b.x) / 2);
-		const baseY = Math.max(a.y, b.y);
-		const filaY = Math.round(baseY + 34 + (carril % 6) * 24);
-		nuevos.push({ c, x: midX, y: filaY });
-		carril++;
-	}
-	if (nuevos.length === 0) {
-		avisar('Estos cables sueltos van a la red o a aparatos de campo (fuera de la placa), así que no tienen un recorrido en el tablero que ordenar.', 'info');
+function autoEnderezarCables(): void {
+	const conManual = proyecto.conductores.filter((c) => c.trazado?.length);
+	if (conManual.length === 0) {
+		avisar('Todos los cables ya van en su recorrido automático (en L, por carriles separados).', 'info');
 		return;
 	}
 	capturar();
-	for (const { c, x, y } of nuevos) c.trazado = [{ x, y }];
+	for (const c of conManual) delete c.trazado;
 	reconstruirCables();
+	construirHandles();
 	pintarPaneles();
-	const n = nuevos.length;
-	const resto = sueltos.length - n;
-	const extra = resto > 0 ? ` (${resto} van a la red o al campo y se dejan colgando).` : '';
-	avisar(`${n} ${n === 1 ? 'cable suelto ordenado' : 'cables sueltos ordenados'} en carriles. Arrastra la esfera azul de cualquiera para afinarlo.${extra}`, 'ok');
+	pintarSeleccion();
+	const n = conManual.length;
+	avisar(`${n} ${n === 1 ? 'cable devuelto' : 'cables devueltos'} a su recorrido automático ordenado.`, 'ok');
 }
 
 /** Selección por id de dispositivo (compatibilidad con el resto del código). */
@@ -1192,7 +1156,7 @@ function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 }
 
 /** Conductor cuyo tubo está bajo el puntero (para el resaltado al pasar el ratón). */
-function cableBajoElPuntero(ev: PointerEvent): string | undefined {
+function cableBajoElPuntero(ev: MouseEvent): string | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camara);
@@ -1323,7 +1287,7 @@ const planoArrastre = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const desfase = new THREE.Vector2();
 
 /** Punto del ratón proyectado sobre el plano de la placa, en coordenadas de modelo (mm). */
-function puntoModelo(ev: PointerEvent): { x: number; y: number } | undefined {
+function puntoModelo(ev: MouseEvent): { x: number; y: number } | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camara);
@@ -1331,31 +1295,6 @@ function puntoModelo(ev: PointerEvent): { x: number; y: number } | undefined {
 	if (!raycaster.ray.intersectPlane(planoArrastre, impacto)) return undefined;
 	const g = proyecto.gabinete!;
 	return { x: impacto.x + g.ancho / 2, y: g.alto / 2 - impacto.y };
-}
-
-/**
- * Canaleta cuyo eje está a menos de `umbral` mm del punto (x,y), junto con la proyección
- * del punto sobre ese eje. Sirve para «meter» un cable en la canaleta al soltarlo cerca.
- */
-function canaletaCercaDe(x: number, y: number, umbral = 45):
-	{ can: Canaleta; punto: { x: number; y: number } } | undefined {
-	const g = proyecto.gabinete;
-	if (!g) return undefined;
-	let mejor: { can: Canaleta; punto: { x: number; y: number }; d: number } | undefined;
-	for (const can of g.canaletas) {
-		let px: number;
-		let py: number;
-		if (can.orientacion === 'v') {
-			px = can.x + can.ancho / 2;
-			py = Math.max(can.y, Math.min(y, can.y + can.largo));
-		} else {
-			px = Math.max(can.x, Math.min(x, can.x + can.largo));
-			py = can.y + can.ancho / 2;
-		}
-		const d = Math.hypot(x - px, y - py);
-		if (!mejor || d < mejor.d) mejor = { can, punto: { x: Math.round(px), y: Math.round(py) }, d };
-	}
-	return mejor && mejor.d <= umbral ? { can: mejor.can, punto: mejor.punto } : undefined;
 }
 
 /* --------------------- Puntos de quiebre de los cables (estilo Tinkercad) --------------------- */
@@ -1369,6 +1308,18 @@ function nodosCable(c: Conductor): { x: number; y: number }[] {
 		...(c.trazado ?? []),
 		b ? { x: b.x, y: b.y } : undefined,
 	].filter((p): p is { x: number; y: number } => !!p);
+}
+
+/** Longitud aproximada del cable (mm) según su recorrido ortogonal real (Manhattan). */
+function longitudCableMm(c: Conductor): number {
+	const nodos = nodosCable(c);
+	if (nodos.length < 2) return 0;
+	const orto = orthogonalize(nodos);
+	let largo = 0;
+	for (let i = 0; i < orto.length - 1; i++) {
+		largo += Math.abs(orto[i].x - orto[i + 1].x) + Math.abs(orto[i].y - orto[i + 1].y);
+	}
+	return largo;
 }
 
 /** Inserta un punto de quiebre en el tramo del cable más cercano a (x,y). Devuelve su índice. */
@@ -1388,7 +1339,7 @@ function insertarWaypoint(c: Conductor, x: number, y: number): number {
 }
 
 /** Mueve el punto de quiebre `idx` a (x,y), alineándolo en vertical/horizontal con sus vecinos
- *  y, si queda cerca de una canaleta, pegándolo a su eje (para que el cable se adapte a ella). */
+ *  (para que los tramos queden rectos, como en Tinkercad). */
 function moverWaypoint(c: Conductor, idx: number, x: number, y: number): void {
 	const wps = c.trazado;
 	if (!wps || !wps[idx]) return;
@@ -1398,18 +1349,11 @@ function moverWaypoint(c: Conductor, idx: number, x: number, y: number): void {
 	const next = idx < wps.length - 1 ? wps[idx + 1] : (b ? { x: b.x, y: b.y } : undefined);
 	let nx = Math.round(x);
 	let ny = Math.round(y);
-	// 1) Alinear en vertical/horizontal con el vecino más cercano en cada eje.
+	// Alinear en vertical/horizontal con el vecino más cercano en cada eje.
 	if (prev && Math.abs(nx - prev.x) < SNAP_ORTO) nx = prev.x;
 	else if (next && Math.abs(nx - next.x) < SNAP_ORTO) nx = next.x;
 	if (prev && Math.abs(ny - prev.y) < SNAP_ORTO) ny = prev.y;
 	else if (next && Math.abs(ny - next.y) < SNAP_ORTO) ny = next.y;
-	// 2) Adaptar a la canaleta: si el punto queda sobre una canaleta, se pega a su eje (así el
-	//    cable corre por ella en vez de quedar flotando encima medio torcido).
-	const cerca = canaletaCercaDe(nx, ny, 22);
-	if (cerca) {
-		if (cerca.can.orientacion === 'v') nx = cerca.can.x + Math.round(cerca.can.ancho / 2);
-		else ny = cerca.can.y + Math.round(cerca.can.ancho / 2);
-	}
 	wps[idx] = { x: nx, y: ny };
 }
 
@@ -1585,9 +1529,10 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 
 	let elem = elementoBajoElPuntero(ev);
 
-	// Modo Trabajo: primer clic sobre un cable lo selecciona; con el cable ya seleccionado, un
-	// clic sobre su tubo AÑADE un punto de quiebre ahí (estilo Tinkercad) y lo arrastra, para
-	// darle forma en tramos horizontales/verticales. Los aparatos tienen prioridad (cablear).
+	// Modo Trabajo (CLIC IZQUIERDO = mover): primer clic sobre un cable lo selecciona; si ya
+	// está seleccionado y el clic cae sobre uno de sus puntos de quiebre, se arrastra ese punto.
+	// Para CREAR un punto (unión) se usa el clic DERECHO (ver contextmenu). Los aparatos tienen
+	// prioridad (para cablearlos con clic).
 	if (modo === 'trabajo' && elem?.tipo !== 'dispositivo') {
 		const cid = cableBajoElPuntero(ev);
 		if (cid) {
@@ -1595,22 +1540,17 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 			if (!yaSel) { aplicarSeleccion({ tipo: 'cable', id: cid }); return; } // 1er clic: solo seleccionar
 			const c = proyecto.conductores.find((x) => x.id === cid);
 			const p = puntoModelo(ev);
-			if (c && p) {
+			const idx = c && p ? (c.trazado ?? []).findIndex((w) => Math.hypot(w.x - p.x, w.y - p.y) < 22) : -1;
+			if (c && p && idx >= 0) { // clic sobre un punto existente → moverlo
 				capturar();
-				// Si el clic cae cerca de un punto de quiebre ya existente, se MUEVE ese punto (no se
-				// añade otro): así no se acumulan puntos por fallar el tirador. Si no, se añade uno.
-				let idx = (c.trazado ?? []).findIndex((w) => Math.hypot(w.x - p.x, w.y - p.y) < 18);
-				if (idx < 0) idx = insertarWaypoint(c, p.x, p.y);
 				arrastrandoCable = { id: cid, indice: idx };
 				arrastrando = true;
 				handleArrastrado = undefined;
 				capturadoEsteArrastre = true;
 				controles.enabled = false;
 				renderer.domElement.style.cursor = 'grabbing';
-				reconstruirCables();
-				construirHandles();
 			}
-			return;
+			return; // clic sobre el cable pero no sobre un punto: solo queda seleccionado
 		}
 	}
 
@@ -1810,9 +1750,29 @@ renderer.domElement.addEventListener('dblclick', (ev) => {
 			reconstruirCables();
 			construirHandles();
 			pintarPaneles();
+			pintarSeleccion();
 			avisar('Punto del cable quitado');
 		}
 	}
+});
+
+// CLIC DERECHO sobre un cable = crear una unión (punto de quiebre) ahí, estilo Tinkercad.
+renderer.domElement.addEventListener('contextmenu', (ev) => {
+	ev.preventDefault(); // sin menú del navegador
+	if (modo !== 'trabajo') return;
+	const cid = cableBajoElPuntero(ev);
+	if (!cid) return;
+	const c = proyecto.conductores.find((x) => x.id === cid);
+	const p = puntoModelo(ev);
+	if (!c || !p) return;
+	if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: cid });
+	capturar();
+	insertarWaypoint(c, p.x, p.y);
+	reconstruirCables();
+	construirHandles();
+	pintarPaneles();
+	pintarSeleccion();
+	avisar('Unión creada. Arrástrala con el clic izquierdo para moverla.', 'ok');
 });
 
 window.addEventListener('keydown', (ev) => {
@@ -1869,6 +1829,7 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 	capturar();
 	proyecto = proyectoNuevo();
 	seleccionar(undefined);
+	aplicarModo('editor'); // que se vea el catálogo para poder empezar a añadir aparatos
 	actualizarTodo();
 	pintarEstructura();
 	encuadrar();
@@ -2026,7 +1987,7 @@ $('leyenda-voltaje').innerHTML =
 
 ($('btn-centrar') as HTMLButtonElement).onclick = () => encuadrar();
 
-($('btn-ordenar-cables') as HTMLButtonElement).onclick = () => ordenarCablesSueltos();
+($('btn-ordenar-cables') as HTMLButtonElement).onclick = () => autoEnderezarCables();
 
 ($('btn-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = false; };
 ($('btn-cerrar-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = true; };
@@ -2053,6 +2014,14 @@ $('modal-dialogo').addEventListener('keydown', (e) => {
 	aplicarSeleccion(undefined);
 	trasCambiarProyecto();
 	encuadrar();
+};
+
+// «Empezar en blanco»: cierra la tarjeta y deja el modo Editor listo para añadir aparatos.
+($('btn-empezar-blanco') as HTMLButtonElement).onclick = () => {
+	bienvenidaDescartada = true;
+	aplicarModo('editor');
+	($('bienvenida') as HTMLElement).hidden = true;
+	avisar('Placa en blanco. Haz clic en un aparato del catálogo (izquierda) para colocarlo.', 'ok');
 };
 
 // Primera visita: abrir la guía automáticamente una sola vez.
