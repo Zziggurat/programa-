@@ -7,7 +7,7 @@
  */
 import * as THREE from 'three';
 import { Colocacion, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
-import { orthogonalize } from './geometria-cables.js';
+import { Banda, corredoresLibres, orthogonalize, rutaAutomatica } from './geometria-cables.js';
 import { construirAparato3D } from './dispositivos3d.js';
 
 export const COLOR_CABLE: Record<string, number> = {
@@ -68,6 +68,9 @@ export function construirEscenario(proyecto: Proyecto): Escenario {
 	const tapas: THREE.Object3D[] = [];
 	for (const can of g.canaletas) raiz.add(construirCanaleta(can, aEscena, tapas));
 
+	// Prensaestopas de entrada: por ahí salen los cables hacia la red y hacia el campo.
+	raiz.add(construirEntradasCampo(proyecto, aEscena));
+
 	const dispositivos = new THREE.Group();
 	const etiquetas: THREE.Object3D[] = [];
 	for (const col of g.colocaciones) {
@@ -95,24 +98,35 @@ export function construirEscenario(proyecto: Proyecto): Escenario {
 }
 
 /**
- * Puntos de conexión (bornes) clicables de todos los aparatos colocados, para cablear con clic
- * como en un tablero real: se toca un borne y luego otro. Cada esfera lleva su aparato y borne.
+ * Puntos de conexión (bornes) clicables de TODOS los aparatos —los de la placa y los de
+ * campo/red por su prensaestopas—, para cablear con clic como en un tablero real: se toca
+ * un borne y luego otro. Cada esfera lleva su aparato y su borne.
  */
 export function construirBornes(proyecto: Proyecto, aEscena: Escenario['aEscena']): THREE.Group {
 	const grupo = new THREE.Group();
 	const geo = new THREE.SphereGeometry(4.2, 12, 12);
-	for (const col of proyecto.gabinete?.colocaciones ?? []) {
-		const d = proyecto.dispositivos.find((x) => x.id === col.dispositivoId);
-		if (!d) continue;
+	// Bornes ya cableados: se pintan apagados; los que faltan por conectar, en naranja vivo.
+	// Así de un vistazo se ve qué queda por cablear, como al revisar un tablero de verdad.
+	const usados = new Set<string>();
+	for (const c of proyecto.conductores) {
+		usados.add(`${c.de.dispositivoId}:${c.de.borneId}`);
+		usados.add(`${c.a.dispositivoId}:${c.a.borneId}`);
+	}
+	for (const d of proyecto.dispositivos) {
 		for (const b of d.bornes) {
 			const pos = anclajeBorne(proyecto, d.id, b.id);
 			if (!pos) continue;
-			const m = new THREE.Mesh(
-				geo,
-				new THREE.MeshStandardMaterial({ color: 0xffb63a, emissive: 0x4a3200, emissiveIntensity: 1, roughness: 0.35, metalness: 0.2 }),
-			);
+			const conectado = usados.has(`${d.id}:${b.id}`);
+			const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+				color: conectado ? 0x6f7c89 : 0xffb63a,
+				emissive: conectado ? 0x11161b : 0x4a3200,
+				emissiveIntensity: 1,
+				roughness: 0.35,
+				metalness: 0.2,
+			}));
 			m.position.copy(aEscena(pos.x, pos.y, pos.z + 4));
-			m.userData = { borneDispositivoId: d.id, borneId: b.id };
+			m.scale.setScalar(conectado ? 0.78 : 1);
+			m.userData = { borneDispositivoId: d.id, borneId: b.id, conectado };
 			m.renderOrder = 997;
 			grupo.add(m);
 		}
@@ -532,31 +546,100 @@ export function construirCables(
 		voltajePorConductor ? colorVoltaje(voltajePorConductor.get(c.id)) : (COLOR_CABLE[c.color ?? ''] ?? 0x546e7a);
 
 	// TODOS los cables se dibujan en tramos horizontales/verticales (estilo Tinkercad), al
-	// FRENTE del tablero para no atravesar aparatos. Con puntos de quiebre a mano pasan por
-	// ellos; sin puntos, siguen un recorrido ortogonal por defecto en un carril propio para que
-	// queden ordenados y no se crucen. Las canaletas son solo ductos físicos: los cables ya no
-	// se ordenan por dentro de ellas (más simple y predecible).
+	// FRENTE del tablero. Con puntos de quiebre a mano pasan por ellos; sin puntos, se rutean
+	// solos por un CORREDOR LIBRE (franja sin aparatos) con un carril propio, para que no
+	// pasen por encima de los aparatos ni se solapen entre ellos.
+	const corredores = corredoresLibresDe(proyecto);
 	let carril = 0;
 	for (const conductor of proyecto.conductores) {
 		const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
 		const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
-		if (!a || !b) continue;
+		if (!a || !b) continue; // solo si falta el aparato entero (se limpia al eliminarlo)
 		const color = colorDe(conductor);
 		const radio = 0.9 + (conductor.seccion ?? 1.5) * 0.35;
 		const pa = aEscena(a.x, a.y, a.z);
 		const pb = aEscena(b.x, b.y, b.z);
 
-		let nodos: { x: number; y: number }[];
-		if (conductor.trazado?.length) {
-			nodos = orthogonalize([{ x: a.x, y: a.y }, ...conductor.trazado, { x: b.x, y: b.y }]);
-		} else {
-			const laneY = Math.round((a.y + b.y) / 2 + ((carril % 8) - 3.5) * 16);
-			carril++;
-			nodos = [{ x: a.x, y: a.y }, { x: a.x, y: laneY }, { x: b.x, y: laneY }, { x: b.x, y: b.y }];
-		}
+		const intermedios = conductor.trazado?.length
+			? conductor.trazado
+			: rutaAutomatica({ x: a.x, y: a.y }, { x: b.x, y: b.y }, corredores, carril++);
+		const nodos = orthogonalize([{ x: a.x, y: a.y }, ...intermedios, { x: b.x, y: b.y }]);
 		const puntos = [pa, ...nodos.map((p) => aEscena(p.x, p.y, Z_FRENTE)), pb];
 		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.12);
 		anadirTuboCable(grupo, curva, Math.max(40, puntos.length * 8), radio, color, conductor.id);
+	}
+	return grupo;
+}
+
+/** Corredores libres del gabinete: franjas sin aparatos, incluida la que va a los prensaestopas. */
+export function corredoresLibresDe(proyecto: Proyecto): Banda[] {
+	const g = proyecto.gabinete;
+	if (!g) return [];
+	const ocupadas = g.colocaciones.map((c) => ({ y0: c.y - 4, y1: c.y + c.alto + 4 }));
+	return corredoresLibres(ocupadas, -10, yEntradasCampo(proyecto) - 8);
+}
+
+/* ------------------- Entradas de campo (prensaestopas del gabinete) ------------------- */
+
+/** Aparatos que no están sobre la placa (acometida y aparatos de campo), en orden estable. */
+export function aparatosDeCampo(proyecto: Proyecto): Dispositivo[] {
+	const colocados = new Set(proyecto.gabinete?.colocaciones.map((c) => c.dispositivoId) ?? []);
+	return proyecto.dispositivos.filter((d) => !colocados.has(d.id));
+}
+
+/** Y (mm) de la regleta de entrada de campo: justo por debajo de la placa, dentro de la caja. */
+export function yEntradasCampo(proyecto: Proyecto): number {
+	return (proyecto.gabinete?.alto ?? 0) + 26;
+}
+
+/** Centro X (mm) del prensaestopas de un aparato de campo, repartidos a lo ancho del gabinete. */
+function xEntradaCampo(proyecto: Proyecto, dispositivoId: string): number | undefined {
+	const campo = aparatosDeCampo(proyecto);
+	const i = campo.findIndex((d) => d.id === dispositivoId);
+	if (i < 0) return undefined;
+	const ancho = proyecto.gabinete?.ancho ?? 0;
+	return Math.round(((i + 1) * ancho) / (campo.length + 1));
+}
+
+/** Anclaje de un borne de un aparato de campo: sobre su prensaestopas, un punto por borne. */
+function anclajeCampo(
+	proyecto: Proyecto,
+	d: Dispositivo,
+	borneId: string,
+): { x: number; y: number; z: number } | undefined {
+	const cx = xEntradaCampo(proyecto, d.id);
+	if (cx === undefined) return undefined;
+	const j = Math.max(0, d.bornes.findIndex((b) => b.id === borneId));
+	const n = Math.max(1, d.bornes.length);
+	return { x: Math.round(cx + (j - (n - 1) / 2) * 13), y: yEntradasCampo(proyecto), z: 30 };
+}
+
+/**
+ * Prensaestopas + rótulo de cada aparato de campo, en el borde inferior del gabinete: es el
+ * punto físico por donde el cable sale del tablero hacia la red o hacia el campo.
+ */
+export function construirEntradasCampo(proyecto: Proyecto, aEscena: Escenario['aEscena']): THREE.Group {
+	const grupo = new THREE.Group();
+	const campo = aparatosDeCampo(proyecto);
+	if (campo.length === 0) return grupo;
+	const y = yEntradasCampo(proyecto);
+	for (const d of campo) {
+		const cx = xEntradaCampo(proyecto, d.id);
+		if (cx === undefined) continue;
+		const ancho = Math.max(26, d.bornes.length * 13 + 10);
+		// Cuerpo del prensaestopas (regleta pasamuros).
+		const cuerpo = new THREE.Mesh(
+			new THREE.BoxGeometry(ancho, 16, 20),
+			new THREE.MeshStandardMaterial({ color: 0x8b95a1, roughness: 0.6, metalness: 0.35 }),
+		);
+		cuerpo.position.copy(aEscena(cx, y, 10));
+		cuerpo.castShadow = true;
+		grupo.add(cuerpo);
+		// Rótulo del destino (a dónde va: red, motor, sensor…).
+		const etq = etiquetaCota(d.designacion ?? d.id, '#cfd6de');
+		etq.position.copy(aEscena(cx, y + 24, 26));
+		etq.scale.set(44, 14.6, 1);
+		grupo.add(etq);
 	}
 	return grupo;
 }
@@ -565,9 +648,8 @@ export function construirCables(
  * Posición 3D (en coordenadas de modelo: mm, Y abajo) del BORNE concreto de un aparato,
  * para que el cable salga exactamente de su terminal (y se vea de dónde viene).
  * - Imágenes de referencia: usa la posición (u,v) del pin.
- * - Resto de aparatos: reparte los bornes en dos filas (terminales arriba/abajo), igual
- *   que en un aparato modular real (1,3,5 arriba · 2,4,6 abajo).
- * Devuelve undefined si el aparato no está colocado en la placa.
+ * - Aparatos sobre la placa: dos filas de terminales (1,3,5 arriba · 2,4,6 abajo).
+ * - Aparatos de campo/red (no colocados): su prensaestopas en el borde del gabinete.
  */
 export function anclajeBorne(
 	proyecto: Proyecto,
@@ -576,7 +658,11 @@ export function anclajeBorne(
 ): { x: number; y: number; z: number } | undefined {
 	const d = proyecto.dispositivos.find((x) => x.id === dispositivoId);
 	const col = proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === dispositivoId);
-	if (!d || !col) return undefined;
+	if (!d) return undefined;
+	// Aparato NO colocado en la placa (red/acometida o aparato de campo): su cable no puede
+	// quedar en el aire («cable fantasma»). Entra por un PRENSAESTOPAS en el borde inferior
+	// del gabinete, igual que en un tablero real, para que el cable tenga un recorrido visible.
+	if (!col) return anclajeCampo(proyecto, d, borneId);
 	if (d.imagen) {
 		const b = d.bornes.find((x) => x.id === borneId);
 		if (b?.u !== undefined && b?.v !== undefined) {

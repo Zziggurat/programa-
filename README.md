@@ -47,9 +47,24 @@ npm run editor  # arranca el editor 3D
 Otros comandos útiles:
 
 ```bash
-npm test        # 22 tests de los motores
+npm test        # tests de los motores y de la geometría de cables
+npm run qa      # pruebas automáticas sobre el editor 3D real (ver abajo)
 npm run ejemplo # genera la documentación de un tablero real en ejemplo/salida/
 ```
+
+### Pruebas automáticas del editor (`qa/`)
+
+Además de los tests del núcleo, hay tres suites que manejan el editor 3D de verdad
+(con un navegador) y comprueban lo que ve el usuario:
+
+| Suite | Qué verifica |
+|---|---|
+| `npm run qa:cables` | Cero cables fantasma, cablear por clic, codos, uniones, arrastre, Supr y deshacer |
+| `npm run qa:general` | Empezar de cero, catálogo, anclaje a riel, modos, DRC, guardar, dossier y PDF |
+| `npm run qa:estres` | Decenas de operaciones al azar verificando los invariantes tras cada una |
+
+Se apoyan en una sonda que solo existe abriendo la página con `?qa=1`; en el uso normal
+del programa no se define nada.
 
 ### Editor 3D (`app/`)
 
@@ -81,9 +96,19 @@ Designer, conectado en vivo con los motores del núcleo:
   contactor, relés, variador, PLC, fuente, transformador, borneros, portafusible):
   un clic y el aparato se coloca en el primer hueco libre de un riel, con su
   designación IEC correlativa.
-- **Cableado desde la ficha del aparato**: elige borne origen, aparato y borne destino,
-  sección y color → el cable se rutea por las canaletas al instante; también se
-  pueden quitar cables uno a uno.
+- **Cableado por clic en los bornes** (modo Trabajo), como en un tablero real: cada
+  aparato muestra sus terminales como puntos naranjas; tocas uno y luego otro y el cable
+  queda conectado. Mientras lo tiendes, una goma elástica lo sigue y **cada clic en un
+  punto libre marca un codo** (estilo Tinkercad). Esc o clic derecho cancelan. No permite
+  duplicar una conexión existente. También queda el formulario clásico como alternativa.
+- **Cables ordenables, sin fantasmas**: todos los cables corren en tramos horizontales y
+  verticales por un **corredor libre** (franja sin aparatos) y en un carril propio, así no
+  se cruzan ni pasan por encima de los aparatos. Con el **clic izquierdo** se arrastran sus
+  uniones, con el **clic derecho** se crea una unión nueva, con **doble clic** se quita y
+  con **Supr** se borra el cable. «✨ Auto-ordenar» los devuelve al recorrido automático.
+- **Los aparatos de campo entran por prensaestopas**: la acometida, los sensores y demás
+  aparatos fuera del gabinete tienen su pasamuros rotulado en el borde inferior, de modo
+  que **ningún cable queda invisible**: todos tienen un recorrido y un propósito.
 - **Modelos 3D detallados por tipo**: palanca y mirilla en disyuntores, tornillos de
   borne, peines y LEDs en el PLC, aletas de disipación, núcleo y bobina del
   transformador, bloques individuales con borna de tierra en los borneros…

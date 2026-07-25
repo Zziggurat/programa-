@@ -223,10 +223,13 @@ function reconstruirCotas(): void {
 	escenario.cotas.visible = ($('ver-cotas') as HTMLInputElement).checked;
 }
 
-/** Reconstruye los puntos de conexión clicables (bornes); solo visibles en modo Trabajo. */
+/** Reconstruye los puntos de conexión clicables (bornes); solo visibles en modo Trabajo.
+ *  Las esferas se cuelgan DIRECTAMENTE del grupo (sin envolverlas en otro) para poder
+ *  recorrerlas de forma plana al resaltarlas. */
 function reconstruirBornes(): void {
 	escenario.bornes.clear();
-	escenario.bornes.add(construirBornes(proyecto, escenario.aEscena));
+	const esferas = [...construirBornes(proyecto, escenario.aEscena).children];
+	if (esferas.length) escenario.bornes.add(...esferas); // add() sin argumentos da error en three
 	escenario.bornes.visible = modo === 'trabajo';
 }
 
@@ -364,7 +367,7 @@ function pintarCatalogo(): void {
 
 /** Busca el primer hueco libre sobre un riel para una huella ancho×alto. */
 /** Primer hueco libre sobre un riel para una huella ancho×alto. undefined si no hay rieles. */
-function buscarHueco(ancho: number, alto: number): { x: number; y: number } | undefined {
+function buscarHueco(ancho: number, alto: number): { x: number; y: number; rielId: string } | undefined {
 	const g = proyecto.gabinete!;
 	if (g.rieles.length === 0) return undefined;
 	const MARGEN = 8;
@@ -381,7 +384,7 @@ function buscarHueco(ancho: number, alto: number): { x: number; y: number } | un
 				if (c.y - y >= alto + MARGEN) break;
 				y = Math.max(y, c.y + c.alto + MARGEN);
 			}
-			if (y <= limite) return { x, y };
+			if (y <= limite) return { x, y, rielId: riel.id };
 		} else {
 			const y = riel.y + SNAP_RIEL - alto / 2;
 			if (y < 0 || y + alto > g.alto) continue;
@@ -394,7 +397,7 @@ function buscarHueco(ancho: number, alto: number): { x: number; y: number } | un
 				if (c.x - x >= ancho + MARGEN) break;
 				x = Math.max(x, c.x + c.ancho + MARGEN);
 			}
-			if (x <= limite) return { x, y };
+			if (x <= limite) return { x, y, rielId: riel.id };
 		}
 	}
 	// Ningún riel tiene hueco interno: se añade al final del riel con más sitio libre a la
@@ -412,8 +415,8 @@ function buscarHueco(ancho: number, alto: number): { x: number; y: number } | un
 		if (fin < mejorFin) { mejorFin = fin; mejorRiel = riel; }
 	}
 	return mejorRiel.orientacion === 'v'
-		? { x: mejorRiel.x + SNAP_RIEL - ancho / 2, y: mejorFin + MARGEN }
-		: { x: mejorFin + MARGEN, y: mejorRiel.y + SNAP_RIEL - alto / 2 };
+		? { x: mejorRiel.x + SNAP_RIEL - ancho / 2, y: mejorFin + MARGEN, rielId: mejorRiel.id }
+		: { x: mejorFin + MARGEN, y: mejorRiel.y + SNAP_RIEL - alto / 2, rielId: mejorRiel.id };
 }
 
 /**
@@ -457,9 +460,10 @@ function anadirDesdeCatalogo(plantillaId: string): void {
 	if (solapaCon(x, hueco.y, plantilla.ancho, plantilla.alto, d.id)) {
 		x = xLibreCercano(x, hueco.y, plantilla.ancho, plantilla.alto, d.id) ?? x;
 	}
+	// Queda ANCLADO a su riel: así lo acompaña si después se mueve o se gira el riel.
 	const col = {
 		dispositivoId: d.id, x, y: hueco.y, ancho: plantilla.ancho, alto: plantilla.alto,
-		rielId: undefined as string | undefined,
+		rielId: hueco.rielId as string | undefined,
 	};
 	proyecto.gabinete!.colocaciones.push(col);
 	extenderRielPara(col); // si el aparato quedó más allá del riel, se alarga el riel
@@ -875,12 +879,7 @@ function pintarPanelCable(id: string): void {
 		delete c.trazado;
 		recalcular(); reconstruirCables(); construirHandles(); pintarSeleccion();
 	});
-	(panel.querySelector('#cbl-quitar') as HTMLButtonElement).onclick = () => {
-		capturar();
-		proyecto.conductores = proyecto.conductores.filter((x) => x.id !== id);
-		aplicarSeleccion(undefined);
-		recalcular(); reconstruirCables(); pintarPaneles();
-	};
+	(panel.querySelector('#cbl-quitar') as HTMLButtonElement).onclick = () => quitarCable(id);
 }
 
 /* ------------------------ Estructura del gabinete ------------------------ */
@@ -1177,8 +1176,9 @@ function cableBajoElPuntero(ev: MouseEvent): string | undefined {
 /* --------------- Cableado por clic en los bornes (como un tablero real) --------------- */
 
 type RefBorne = { dispositivoId: string; borneId: string };
-let cableandoDesde: RefBorne | undefined;   // borne de origen mientras se está tendiendo un cable
-let gomaCable: THREE.Line | undefined;      // «goma elástica» del cable que sigue al cursor
+let cableandoDesde: RefBorne | undefined;              // borne de origen mientras se tiende un cable
+let codosCableado: { x: number; y: number }[] = [];    // codos marcados con clic durante el tendido
+let gomaCable: THREE.Line | undefined;                 // «goma elástica» del cable que sigue al cursor
 
 /** Borne (punto de conexión) bajo el puntero, si lo hay. */
 function borneBajoElPuntero(ev: MouseEvent): RefBorne | undefined {
@@ -1196,22 +1196,47 @@ function resaltarHoverBorne(b: RefBorne | undefined): void {
 		const esOrigen = cableandoDesde
 			&& m.userData.borneDispositivoId === cableandoDesde.dispositivoId && m.userData.borneId === cableandoDesde.borneId;
 		const esHover = b && m.userData.borneDispositivoId === b.dispositivoId && m.userData.borneId === b.borneId;
-		m.scale.setScalar(esOrigen ? 1.7 : esHover ? 1.5 : 1);
-		m.material.color.setHex(esOrigen ? 0x35c46a : esHover ? 0xffe08a : 0xffb63a);
+		const base = m.userData.conectado ? 0x6f7c89 : 0xffb63a; // color de reposo según esté cableado
+		m.scale.setScalar(esOrigen ? 1.7 : esHover ? 1.5 : (m.userData.conectado ? 0.78 : 1));
+		m.material.color.setHex(esOrigen ? 0x35c46a : esHover ? 0xffe08a : base);
 		m.material.emissiveIntensity = esOrigen || esHover ? 2 : 1;
 	}
+}
+
+/** Muestra junto al cursor qué terminal se está tocando (p. ej. «-Q1:2 · libre»). */
+function mostrarTipBorne(b: RefBorne | undefined, ev?: MouseEvent): void {
+	const tip = $('tip-borne') as HTMLElement;
+	if (!b || !ev) { tip.hidden = true; return; }
+	const d = proyecto.dispositivos.find((x) => x.id === b.dispositivoId);
+	const n = proyecto.conductores.filter((c) =>
+		(c.de.dispositivoId === b.dispositivoId && c.de.borneId === b.borneId)
+		|| (c.a.dispositivoId === b.dispositivoId && c.a.borneId === b.borneId)).length;
+	const estado = n === 0 ? 'libre' : `${n} ${n === 1 ? 'cable' : 'cables'}`;
+	tip.innerHTML = `${d?.designacion ?? b.dispositivoId}:${b.borneId} <span class="estado">· ${estado}</span>`;
+	tip.style.left = `${ev.clientX + 14}px`;
+	tip.style.top = `${ev.clientY - 30}px`;
+	tip.hidden = false;
 }
 
 /** Empieza a tender un cable desde un borne. */
 function iniciarCableado(b: RefBorne): void {
 	cableandoDesde = b;
+	codosCableado = [];
 	resaltarHoverBorne(b);
-	avisar('Ahora haz clic en el otro borne para conectar el cable (Esc cancela).', 'info');
+	avisar('Haz clic en el otro borne para conectar · clic en un punto libre marca un codo · Esc cancela.', 'info');
+}
+
+/** Marca un codo del cable que se está tendiendo (como en Tinkercad, clic a clic). */
+function anadirCodoCableado(x: number, y: number): void {
+	if (!cableandoDesde) return;
+	codosCableado.push({ x: Math.round(x), y: Math.round(y) });
+	actualizarGomaCable(x, y);
 }
 
 /** Cancela el cableado en curso y quita la goma elástica. */
 function cancelarCableado(): void {
 	cableandoDesde = undefined;
+	codosCableado = [];
 	if (gomaCable) {
 		escenario.raiz.remove(gomaCable);
 		gomaCable.geometry.dispose();
@@ -1221,12 +1246,14 @@ function cancelarCableado(): void {
 	resaltarHoverBorne(undefined);
 }
 
-/** Actualiza la goma elástica desde el borne de origen hasta el punto (x,y) del cursor. */
+/** Actualiza la goma elástica: borne de origen → codos marcados → cursor, en tramos rectos. */
 function actualizarGomaCable(x: number, y: number): void {
 	if (!cableandoDesde) return;
 	const a = anclajeBorne(proyecto, cableandoDesde.dispositivoId, cableandoDesde.borneId);
 	if (!a) return;
-	const pts = [escenario.aEscena(a.x, a.y, a.z + 4), escenario.aEscena(x, y, 50)];
+	const nodos = orthogonalize([{ x: a.x, y: a.y }, ...codosCableado, { x, y }]);
+	const pts = nodos.map((p) => escenario.aEscena(p.x, p.y, 50));
+	pts[0] = escenario.aEscena(a.x, a.y, a.z + 4);
 	if (!gomaCable) {
 		gomaCable = new THREE.Line(
 			new THREE.BufferGeometry().setFromPoints(pts),
@@ -1237,6 +1264,19 @@ function actualizarGomaCable(x: number, y: number): void {
 	} else {
 		gomaCable.geometry.setFromPoints(pts);
 	}
+}
+
+/** Quita un cable del proyecto (botón del panel o tecla Supr). Se deshace con Ctrl+Z. */
+function quitarCable(id: string): void {
+	if (!proyecto.conductores.some((x) => x.id === id)) return;
+	capturar();
+	proyecto.conductores = proyecto.conductores.filter((x) => x.id !== id);
+	aplicarSeleccion(undefined);
+	recalcular();
+	reconstruirCables();
+	reconstruirBornes(); // el borne que queda libre vuelve a naranja
+	pintarPaneles();
+	avisar('Cable quitado · Ctrl+Z para deshacer');
 }
 
 /** Conecta el borne de origen con `destino` creando un cable nuevo (evita duplicados y bucles). */
@@ -1251,12 +1291,14 @@ function completarCableado(destino: RefBorne): void {
 			&& c.de.dispositivoId === destino.dispositivoId && c.de.borneId === destino.borneId));
 	if (yaExiste) { avisar('Esos dos bornes ya están conectados.', 'info'); cancelarCableado(); return; }
 	capturar();
+	const codos = codosCableado.slice(); // los codos marcados al tender el cable quedan fijados
 	proyecto.conductores.push({
 		id: `c${Date.now().toString(36)}`,
 		de: { dispositivoId: origen.dispositivoId, borneId: origen.borneId },
 		a: { dispositivoId: destino.dispositivoId, borneId: destino.borneId },
 		seccion: 1.5,
 		color: 'negro',
+		...(codos.length ? { trazado: codos } : {}),
 	});
 	cancelarCableado();
 	recalcular();
@@ -1620,7 +1662,12 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 			else iniciarCableado(borne);
 			return;
 		}
-		if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); return; }
+		// Tendiendo un cable: cada clic en un punto libre marca un CODO (como en Tinkercad).
+		if (cableandoDesde) {
+			const p = puntoModelo(ev);
+			if (p) anadirCodoCableado(p.x, p.y);
+			return;
+		}
 	}
 
 	// Tiradores (redimensionar estructura en Editor, ordenar cable en Trabajo): máxima prioridad.
@@ -1705,6 +1752,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		if (modo === 'trabajo') {
 			const b = borneBajoElPuntero(ev);
 			resaltarHoverBorne(b);
+			mostrarTipBorne(b, ev);
 			resaltarHoverCable(b ? undefined : cableBajoElPuntero(ev));
 			if (cableandoDesde) { const p = puntoModelo(ev); if (p) actualizarGomaCable(p.x, p.y); }
 			renderer.domElement.style.cursor = b || cableandoDesde ? 'crosshair' : (cableBajoElPuntero(ev) ? 'grab' : '');
@@ -1806,6 +1854,8 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	construirHandles();
 });
 
+renderer.domElement.addEventListener('pointerleave', () => mostrarTipBorne(undefined));
+
 renderer.domElement.addEventListener('pointerup', () => {
 	if (!arrastrando) return;
 	arrastrando = false;
@@ -1850,6 +1900,7 @@ renderer.domElement.addEventListener('pointerup', () => {
 
 	recalcular();
 	reconstruirCables();
+	reconstruirBornes(); // si se movió un aparato, sus bornes clicables van con él
 	reconstruirCotas();
 	construirHandles();
 	pintarPaneles();
@@ -1906,9 +1957,13 @@ window.addEventListener('keydown', (ev) => {
 		rehacer();
 		return;
 	}
-	if ((ev.key === 'Delete' || ev.key === 'Backspace') && modo === 'editor' && sel) {
-		if (sel.tipo === 'dispositivo') eliminarDispositivo(sel.id);
-		else eliminarEstructura(sel);
+	if (ev.key === 'Delete' || ev.key === 'Backspace') {
+		// En Trabajo, Supr quita el CABLE seleccionado (lo natural al estar cableando).
+		if (modo === 'trabajo' && sel?.tipo === 'cable') { quitarCable(sel.id); return; }
+		if (modo === 'editor' && sel) {
+			if (sel.tipo === 'dispositivo') eliminarDispositivo(sel.id);
+			else eliminarEstructura(sel);
+		}
 	}
 	if (ev.key === 'Escape') {
 		if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); }
@@ -2063,7 +2118,11 @@ function aplicarModo(nuevo: Modo): void {
 	$('ayuda').textContent = AYUDA[modo];
 	eligiendoDestino = false;
 	cancelarCableado();
-	escenario.bornes.visible = modo === 'trabajo'; // los bornes clicables solo en Trabajo
+	mostrarTipBorne(undefined);
+	// Los bornes clicables solo se ven en Trabajo, y se reconstruyen al entrar para que estén
+	// donde de verdad quedaron los aparatos si se movieron en el Editor.
+	if (modo === 'trabajo') reconstruirBornes();
+	escenario.bornes.visible = modo === 'trabajo';
 	// Al pasar a trabajo se cancela cualquier arrastre en curso y se quitan los tiradores.
 	if (modo === 'trabajo') {
 		arrastrando = false;
@@ -2181,3 +2240,44 @@ renderer.setAnimationLoop(() => {
 	controles.update();
 	renderer.render(escena, camara);
 });
+
+/*
+ * Sonda de pruebas automáticas: solo se activa abriendo la página con «?qa=1», así las
+ * pruebas de regresión pueden localizar bornes y cables en pantalla sin barrer píxeles.
+ * No existe para el usuario final (sin el parámetro, no se define nada).
+ */
+if (new URLSearchParams(location.search).has('qa')) {
+	const aPantalla = (v: THREE.Vector3): { x: number; y: number } => {
+		const r = renderer.domElement.getBoundingClientRect();
+		const p = v.clone().project(camara);
+		return { x: r.left + (p.x * 0.5 + 0.5) * r.width, y: r.top + (-p.y * 0.5 + 0.5) * r.height };
+	};
+	(window as unknown as Record<string, unknown>).qa = {
+		/** Bornes clicables con su posición en pantalla. */
+		bornes: () => escenario.bornes.children.map((m) => ({
+			dispositivo: m.userData.borneDispositivoId as string,
+			borne: m.userData.borneId as string,
+			...aPantalla(m.getWorldPosition(new THREE.Vector3())),
+		})),
+		/** Nº de cables realmente dibujados en 3D (para detectar «cables fantasma»). */
+		cablesDibujados: () => new Set(
+			escenario.cables.children.flatMap((g) => g.children.map((m) => m.userData.conductorId as string)).filter(Boolean),
+		).size,
+		/** Puntos en pantalla repartidos A LO LARGO del tubo de un cable, para poder pincharlo. */
+		puntosDeCable: (id: string, muestras = 9) => {
+			const malla = escenario.cables.children
+				.flatMap((g) => g.children)
+				.find((m) => m.userData.conductorId === id) as THREE.Mesh | undefined;
+			if (!malla) return [];
+			const pos = malla.geometry.getAttribute('position');
+			const out: { x: number; y: number }[] = [];
+			for (let k = 1; k < muestras; k++) {
+				const i = Math.round((k * (pos.count - 1)) / muestras);
+				const v = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(malla.matrixWorld);
+				out.push(aPantalla(v));
+			}
+			return out;
+		},
+		proyecto: () => proyecto,
+	};
+}

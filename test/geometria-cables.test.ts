@@ -5,7 +5,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { orthogonalize, distPuntoSegmento, Punto } from '../app/geometria-cables.js';
+import {
+	Banda, corredoresLibres, distPuntoSegmento, orthogonalize, Punto, rutaAutomatica,
+} from '../app/geometria-cables.js';
 
 /** ¿Todos los tramos consecutivos son horizontales o verticales (nunca diagonales)? */
 function esOrtogonal(pts: Punto[]): boolean {
@@ -53,4 +55,43 @@ test('orthogonalize: puntos ya alineados no meten codos de más', () => {
 test('distPuntoSegmento: distancia perpendicular y sobre el segmento', () => {
 	assert.ok(Math.abs(distPuntoSegmento(5, 10, { x: 0, y: 0 }, { x: 10, y: 0 }) - 10) < 0.001);
 	assert.ok(distPuntoSegmento(5, 0, { x: 0, y: 0 }, { x: 10, y: 0 }) < 0.001);
+});
+
+/* ------------------------ Corredores libres y ruta automática ------------------------ */
+
+test('corredoresLibres: devuelve las franjas sin aparatos y fusiona las solapadas', () => {
+	const ocupadas: Banda[] = [{ y0: 20, y1: 60 }, { y0: 50, y1: 90 }, { y0: 150, y1: 180 }];
+	const libres = corredoresLibres(ocupadas, 0, 250);
+	// Libres esperados: 0-20, 90-150, 180-250 (las dos primeras ocupadas se fusionan en 20-90).
+	assert.deepEqual(libres, [{ y0: 0, y1: 20 }, { y0: 90, y1: 150 }, { y0: 180, y1: 250 }]);
+});
+
+test('corredoresLibres: descarta franjas más finas que el mínimo', () => {
+	const libres = corredoresLibres([{ y0: 10, y1: 100 }], 0, 200, 20);
+	assert.deepEqual(libres, [{ y0: 100, y1: 200 }]); // la franja 0-10 es demasiado fina
+});
+
+test('corredoresLibres: sin aparatos, todo el alto es un corredor', () => {
+	assert.deepEqual(corredoresLibres([], 0, 120), [{ y0: 0, y1: 120 }]);
+});
+
+test('rutaAutomatica: pasa por un corredor libre, no por encima de un aparato', () => {
+	const ocupadas: Banda[] = [{ y0: 40, y1: 120 }];           // aparato entre 40 y 120
+	const corredores = corredoresLibres(ocupadas, 0, 300);
+	const r = rutaAutomatica({ x: 10, y: 30 }, { x: 200, y: 200 }, corredores, 0);
+	assert.equal(r.length, 2, 'dos codos: baja, recorre el corredor y sube');
+	assert.equal(r[0].y, r[1].y, 'el tramo intermedio es horizontal');
+	const dentroDelAparato = r[0].y > 40 && r[0].y < 120;
+	assert.ok(!dentroDelAparato, `el corredor ${r[0].y} no debe caer sobre el aparato (40-120)`);
+});
+
+test('rutaAutomatica: cables paralelos toman carriles distintos (no se solapan)', () => {
+	const corredores = corredoresLibres([], 0, 200);
+	const ys = [0, 1, 2, 3].map((k) => rutaAutomatica({ x: 0, y: 10 }, { x: 100, y: 190 }, corredores, k)[0].y);
+	assert.equal(new Set(ys).size, ys.length, `cada carril debe tener su altura: ${ys.join(',')}`);
+});
+
+test('rutaAutomatica: bornes en la misma vertical no meten codos', () => {
+	const corredores = corredoresLibres([], 0, 200);
+	assert.deepEqual(rutaAutomatica({ x: 50, y: 10 }, { x: 50, y: 150 }, corredores, 0), []);
 });
