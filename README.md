@@ -60,7 +60,9 @@ Además de los tests del núcleo, hay tres suites que manejan el editor 3D de ve
 | Suite | Qué verifica |
 |---|---|
 | `npm run qa:cables` | Cero cables fantasma, cablear por clic, codos, uniones, arrastre, Supr y deshacer |
+| `npm run qa:agarre` | Que **todo** cable visible se pueda agarrar y mover, desde varios ángulos de cámara |
 | `npm run qa:general` | Empezar de cero, catálogo, anclaje a riel, modos, DRC, guardar, dossier y PDF |
+| `npm run qa:tablero` | Monta un tablero completo desde cero y mide el amontonamiento del cableado |
 | `npm run qa:estres` | Decenas de operaciones al azar verificando los invariantes tras cada una |
 
 Se apoyan en una sonda que solo existe abriendo la página con `?qa=1`; en el uso normal

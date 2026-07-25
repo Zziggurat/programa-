@@ -84,6 +84,44 @@ export function rutaAutomatica(a: Punto, b: Punto, corredores: Banda[], carril: 
 	return [{ x: a.x, y }, { x: b.x, y }];
 }
 
+/** Tramo recto de un cable (horizontal o vertical) entre dos nodos consecutivos. */
+export interface Tramo { a: Punto; b: Punto }
+
+/** Trocea una polilínea en sus tramos rectos. */
+export function tramos(nodos: Punto[]): Tramo[] {
+	const out: Tramo[] = [];
+	for (let i = 0; i < nodos.length - 1; i++) out.push({ a: nodos[i], b: nodos[i + 1] });
+	return out;
+}
+
+/**
+ * Longitud (mm) en la que dos recorridos van MONTADOS uno encima del otro: tramos paralelos
+ * a menos de `tolerancia` mm que además se pisan. Es la medida de «cables amontonados»: en un
+ * tablero bien hecho debe ser prácticamente cero.
+ */
+export function longitudSolapada(unos: Punto[], otros: Punto[], tolerancia = 3): number {
+	let total = 0;
+	for (const s of tramos(unos)) {
+		const sh = Math.abs(s.a.y - s.b.y) < 0.5; // tramo horizontal
+		const sv = Math.abs(s.a.x - s.b.x) < 0.5; // tramo vertical
+		if (!sh && !sv) continue;
+		for (const t of tramos(otros)) {
+			const th = Math.abs(t.a.y - t.b.y) < 0.5;
+			const tv = Math.abs(t.a.x - t.b.x) < 0.5;
+			if (sh && th && Math.abs(s.a.y - t.a.y) <= tolerancia) {
+				const i0 = Math.max(Math.min(s.a.x, s.b.x), Math.min(t.a.x, t.b.x));
+				const i1 = Math.min(Math.max(s.a.x, s.b.x), Math.max(t.a.x, t.b.x));
+				if (i1 > i0) total += i1 - i0;
+			} else if (sv && tv && Math.abs(s.a.x - t.a.x) <= tolerancia) {
+				const i0 = Math.max(Math.min(s.a.y, s.b.y), Math.min(t.a.y, t.b.y));
+				const i1 = Math.min(Math.max(s.a.y, s.b.y), Math.max(t.a.y, t.b.y));
+				if (i1 > i0) total += i1 - i0;
+			}
+		}
+	}
+	return total;
+}
+
 /** Distancia de un punto al segmento p-q (para saber en qué tramo del cable se hizo clic). */
 export function distPuntoSegmento(x: number, y: number, p: Punto, q: Punto): number {
 	const dx = q.x - p.x;

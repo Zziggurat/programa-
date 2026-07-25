@@ -52,7 +52,8 @@ export interface Escenario {
 }
 
 const ALTO_RIEL = 35;
-const Z_FRENTE = 52; // profundidad a la que corren los cables (al frente, sin atravesar aparatos)
+/** Profundidad a la que corren los cables (al frente, sin atravesar aparatos). */
+export const Z_FRENTE = 52;
 
 export function construirEscenario(proyecto: Proyecto): Escenario {
 	const g = proyecto.gabinete;
@@ -527,13 +528,50 @@ function anadirTuboCable(
 	);
 	tubo.userData.conductorId = conductorId;
 	grupo.add(tubo);
-	// Tubo de agarre invisible (radio mayor) para seleccionar el cable con facilidad.
+	// Tubo de agarre invisible (bastante más grueso) para poder pinchar el cable con facilidad
+	// aunque se esté viendo el tablero alejado.
 	const agarre = new THREE.Mesh(
-		new THREE.TubeGeometry(curva, segmentos, Math.max(radio + 4, 5), 6, false),
+		new THREE.TubeGeometry(curva, segmentos, Math.max(radio + 7, 9), 6, false),
 		new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
 	);
 	agarre.userData.conductorId = conductorId;
 	grupo.add(agarre);
+}
+
+/** Recorrido de un cable ya resuelto: sus anclajes y la polilínea ortogonal que sigue. */
+export interface RutaCable {
+	conductorId: string;
+	de: { x: number; y: number; z: number };
+	a: { x: number; y: number; z: number };
+	/** Nodos del recorrido en coordenadas de modelo, ya ortogonalizados. */
+	nodos: { x: number; y: number }[];
+}
+
+/**
+ * Resuelve el recorrido de TODOS los cables: única fuente de verdad que usan tanto el dibujo
+ * 3D como las comprobaciones de calidad (que no se amontonen ni pasen sobre los aparatos).
+ * Con puntos de quiebre a mano pasa por ellos; sin puntos, se rutea por un CORREDOR LIBRE
+ * (franja sin aparatos) tomando un carril propio.
+ */
+export function rutasDeCables(proyecto: Proyecto): RutaCable[] {
+	const corredores = corredoresLibresDe(proyecto);
+	const rutas: RutaCable[] = [];
+	let carril = 0;
+	for (const conductor of proyecto.conductores) {
+		const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
+		const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
+		if (!a || !b) continue; // solo si falta el aparato entero (se limpia al eliminarlo)
+		const intermedios = conductor.trazado?.length
+			? conductor.trazado
+			: rutaAutomatica({ x: a.x, y: a.y }, { x: b.x, y: b.y }, corredores, carril++);
+		rutas.push({
+			conductorId: conductor.id,
+			de: a,
+			a: b,
+			nodos: orthogonalize([{ x: a.x, y: a.y }, ...intermedios, { x: b.x, y: b.y }]),
+		});
+	}
+	return rutas;
 }
 
 export function construirCables(
@@ -545,28 +583,18 @@ export function construirCables(
 	const colorDe = (c: { id: string; color?: string }): number =>
 		voltajePorConductor ? colorVoltaje(voltajePorConductor.get(c.id)) : (COLOR_CABLE[c.color ?? ''] ?? 0x546e7a);
 
-	// TODOS los cables se dibujan en tramos horizontales/verticales (estilo Tinkercad), al
-	// FRENTE del tablero. Con puntos de quiebre a mano pasan por ellos; sin puntos, se rutean
-	// solos por un CORREDOR LIBRE (franja sin aparatos) con un carril propio, para que no
-	// pasen por encima de los aparatos ni se solapen entre ellos.
-	const corredores = corredoresLibresDe(proyecto);
-	let carril = 0;
-	for (const conductor of proyecto.conductores) {
-		const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
-		const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
-		if (!a || !b) continue; // solo si falta el aparato entero (se limpia al eliminarlo)
-		const color = colorDe(conductor);
+	// Los cables se dibujan en tramos horizontales/verticales (estilo Tinkercad), al FRENTE
+	// del tablero para no atravesar los aparatos.
+	for (const ruta of rutasDeCables(proyecto)) {
+		const conductor = proyecto.conductores.find((c) => c.id === ruta.conductorId)!;
 		const radio = 0.9 + (conductor.seccion ?? 1.5) * 0.35;
-		const pa = aEscena(a.x, a.y, a.z);
-		const pb = aEscena(b.x, b.y, b.z);
-
-		const intermedios = conductor.trazado?.length
-			? conductor.trazado
-			: rutaAutomatica({ x: a.x, y: a.y }, { x: b.x, y: b.y }, corredores, carril++);
-		const nodos = orthogonalize([{ x: a.x, y: a.y }, ...intermedios, { x: b.x, y: b.y }]);
-		const puntos = [pa, ...nodos.map((p) => aEscena(p.x, p.y, Z_FRENTE)), pb];
+		const puntos = [
+			aEscena(ruta.de.x, ruta.de.y, ruta.de.z),
+			...ruta.nodos.map((p) => aEscena(p.x, p.y, Z_FRENTE)),
+			aEscena(ruta.a.x, ruta.a.y, ruta.a.z),
+		];
 		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.12);
-		anadirTuboCable(grupo, curva, Math.max(40, puntos.length * 8), radio, color, conductor.id);
+		anadirTuboCable(grupo, curva, Math.max(40, puntos.length * 8), radio, colorDe(conductor), conductor.id);
 	}
 	return grupo;
 }

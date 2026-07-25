@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-	Banda, corredoresLibres, distPuntoSegmento, orthogonalize, Punto, rutaAutomatica,
+	Banda, corredoresLibres, distPuntoSegmento, longitudSolapada, orthogonalize, Punto, rutaAutomatica,
 } from '../app/geometria-cables.js';
 
 /** ¿Todos los tramos consecutivos son horizontales o verticales (nunca diagonales)? */
@@ -94,4 +94,33 @@ test('rutaAutomatica: cables paralelos toman carriles distintos (no se solapan)'
 test('rutaAutomatica: bornes en la misma vertical no meten codos', () => {
 	const corredores = corredoresLibres([], 0, 200);
 	assert.deepEqual(rutaAutomatica({ x: 50, y: 10 }, { x: 50, y: 150 }, corredores, 0), []);
+});
+
+/* --------------------- Amontonamiento (cables montados unos sobre otros) --------------------- */
+
+test('longitudSolapada: dos tramos horizontales encimados se miden', () => {
+	const a: Punto[] = [{ x: 0, y: 50 }, { x: 100, y: 50 }];
+	const b: Punto[] = [{ x: 40, y: 50 }, { x: 200, y: 50 }];
+	assert.equal(longitudSolapada(a, b), 60); // se pisan de x=40 a x=100
+});
+
+test('longitudSolapada: tramos separados o perpendiculares no cuentan', () => {
+	const a: Punto[] = [{ x: 0, y: 50 }, { x: 100, y: 50 }];
+	assert.equal(longitudSolapada(a, [{ x: 0, y: 90 }, { x: 100, y: 90 }]), 0, 'separados en Y');
+	assert.equal(longitudSolapada(a, [{ x: 50, y: 0 }, { x: 50, y: 100 }]), 0, 'perpendiculares (se cruzan)');
+});
+
+test('rutaAutomatica: cables en paralelo (bornes distintos) no quedan montados', () => {
+	// Caso real: cinco cables que van de una fila de bornes a otra, cada uno desde su terminal.
+	const corredores = corredoresLibres([], 0, 200);
+	const rutas = [0, 1, 2, 3, 4].map((k) => {
+		const a = { x: 20 + k * 25, y: 10 };   // bornes separados, como en un aparato real
+		const b = { x: 200 + k * 25, y: 190 };
+		return orthogonalize([a, ...rutaAutomatica(a, b, corredores, k), b]);
+	});
+	let solape = 0;
+	for (let i = 0; i < rutas.length; i++) {
+		for (let j = i + 1; j < rutas.length; j++) solape += longitudSolapada(rutas[i], rutas[j]);
+	}
+	assert.equal(solape, 0, `los cables no deben pisarse entre sí (solape ${solape} mm)`);
 });

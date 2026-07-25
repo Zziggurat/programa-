@@ -23,10 +23,11 @@ import { generarPlanBorneros } from '../src/motores/bornes.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
 	anclajeBorne, cajaDe, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
-	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario, VOLTAJE_COLOR,
+	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
+	rutasDeCables, VOLTAJE_COLOR, Z_FRENTE,
 } from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
-import { distPuntoSegmento, orthogonalize } from './geometria-cables.js';
+import { distPuntoSegmento, longitudSolapada, orthogonalize } from './geometria-cables.js';
 
 type Modo = 'editor' | 'trabajo';
 let modo: Modo = 'editor';
@@ -161,7 +162,13 @@ const camara = new THREE.PerspectiveCamera(42, 1, 1, 8000);
 const controles = new OrbitControls(camara, renderer.domElement);
 controles.enableDamping = true;
 controles.dampingFactor = 0.08;
-controles.maxPolarAngle = Math.PI * 0.55;
+// La cámara se mantiene SIEMPRE por delante del tablero, como en un configurador profesional:
+// se puede girar de lado a lado y mirar desde arriba o abajo, pero nunca pasar por detrás
+// (donde todo se ve espejado, los cables quedan tapados por la caja y no hay forma de trabajar).
+controles.minAzimuthAngle = -Math.PI * 0.42;
+controles.maxAzimuthAngle = Math.PI * 0.42;
+controles.minPolarAngle = Math.PI * 0.10;
+controles.maxPolarAngle = Math.PI * 0.80;
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 escena.environment = pmrem.fromScene(new RoomEnvironment(), 0.045).texture;
@@ -1173,6 +1180,19 @@ function cableBajoElPuntero(ev: MouseEvent): string | undefined {
 	return impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId as string | undefined;
 }
 
+/** ¿El cable bajo el puntero está MÁS CERCA de la cámara que el aparato que hay detrás?
+ *  Sirve para poder agarrar un cable que cruza por delante de un aparato. */
+function cableEstaDelante(ev: MouseEvent): boolean {
+	const r = renderer.domElement.getBoundingClientRect();
+	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+	raycaster.setFromCamera(puntero, camara);
+	const dCable = raycaster.intersectObjects(escenario.cables.children, true)
+		.find((i) => i.object.userData.conductorId)?.distance ?? Infinity;
+	const dAparato = raycaster.intersectObjects(escenario.dispositivos.children, true)
+		.find((i) => i.object.userData.dispositivoId)?.distance ?? Infinity;
+	return dCable <= dAparato;
+}
+
 /* --------------- Cableado por clic en los bornes (como un tablero real) --------------- */
 
 type RefBorne = { dispositivoId: string; borneId: string };
@@ -1426,19 +1446,35 @@ let arrastrando = false;
 let capturadoEsteArrastre = false;
 let handleArrastrado: DatosHandle | undefined;
 let arrastrandoCable: { id: string; indice: number } | undefined; // conductor y punto de quiebre que se arrastra
+/** Cable agarrado a la espera de que el ratón se mueva para empezar a arrastrarlo de verdad. */
+let pendienteCable: { id: string; indice: number; x: number; y: number } | undefined;
 let arrastreInicio: { x: number; y: number } | undefined; // posición del aparato al empezar a arrastrarlo
-const planoArrastre = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const desfase = new THREE.Vector2();
 
-/** Punto del ratón proyectado sobre el plano de la placa, en coordenadas de modelo (mm). */
-function puntoModelo(ev: MouseEvent): { x: number; y: number } | undefined {
+/**
+ * Punto del ratón proyectado sobre un plano a la profundidad `z`, en coordenadas de modelo (mm).
+ * La profundidad IMPORTA: los cables se dibujan al frente (Z_FRENTE) y, con la cámara
+ * inclinada, proyectar su clic sobre el plano de la placa (z=0) lo desplazaba varios
+ * centímetros — por eso a veces «no se podía agarrar» un cable.
+ */
+function puntoModeloEnZ(ev: MouseEvent, z: number): { x: number; y: number } | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camara);
 	const impacto = new THREE.Vector3();
-	if (!raycaster.ray.intersectPlane(planoArrastre, impacto)) return undefined;
+	if (!raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -z), impacto)) return undefined;
 	const g = proyecto.gabinete!;
 	return { x: impacto.x + g.ancho / 2, y: g.alto / 2 - impacto.y };
+}
+
+/** Punto del ratón sobre el plano de la placa (para mover aparatos y estructura). */
+function puntoModelo(ev: MouseEvent): { x: number; y: number } | undefined {
+	return puntoModeloEnZ(ev, 0);
+}
+
+/** Punto del ratón a la altura a la que corren los cables (para cablear y mover uniones). */
+function puntoCable(ev: MouseEvent): { x: number; y: number } | undefined {
+	return puntoModeloEnZ(ev, Z_FRENTE);
 }
 
 /* --------------------- Puntos de quiebre de los cables (estilo Tinkercad) --------------------- */
@@ -1664,7 +1700,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		}
 		// Tendiendo un cable: cada clic en un punto libre marca un CODO (como en Tinkercad).
 		if (cableandoDesde) {
-			const p = puntoModelo(ev);
+			const p = puntoCable(ev);
 			if (p) anadirCodoCableado(p.x, p.y);
 			return;
 		}
@@ -1690,28 +1726,28 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 
 	let elem = elementoBajoElPuntero(ev);
 
-	// Modo Trabajo (CLIC IZQUIERDO = mover): primer clic sobre un cable lo selecciona; si ya
-	// está seleccionado y el clic cae sobre uno de sus puntos de quiebre, se arrastra ese punto.
-	// Para CREAR un punto (unión) se usa el clic DERECHO (ver contextmenu). Los aparatos tienen
-	// prioridad (para cablearlos con clic).
-	if (modo === 'trabajo' && elem?.tipo !== 'dispositivo') {
+	// Modo Trabajo (CLIC IZQUIERDO = agarrar y mover el cable): se puede agarrar CUALQUIER
+	// cable por cualquier punto de su recorrido, esté o no seleccionado. Si el punto de agarre
+	// cae sobre una unión existente se mueve esa; si no, al empezar a arrastrar se crea una
+	// unión ahí (si solo se hace clic sin arrastrar, únicamente se selecciona: no deja uniones
+	// sueltas). Los aparatos solo tienen prioridad si están DELANTE del cable.
+	if (modo === 'trabajo') {
 		const cid = cableBajoElPuntero(ev);
-		if (cid) {
-			const yaSel = sel?.tipo === 'cable' && sel.id === cid;
-			if (!yaSel) { aplicarSeleccion({ tipo: 'cable', id: cid }); return; } // 1er clic: solo seleccionar
+		if (cid && (elem?.tipo !== 'dispositivo' || cableEstaDelante(ev))) {
+			if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: cid });
 			const c = proyecto.conductores.find((x) => x.id === cid);
-			const p = puntoModelo(ev);
-			const idx = c && p ? (c.trazado ?? []).findIndex((w) => Math.hypot(w.x - p.x, w.y - p.y) < 22) : -1;
-			if (c && p && idx >= 0) { // clic sobre un punto existente → moverlo
-				capturar();
-				arrastrandoCable = { id: cid, indice: idx };
+			const p = puntoCable(ev);
+			if (c && p) {
+				const idx = (c.trazado ?? []).findIndex((w) => Math.hypot(w.x - p.x, w.y - p.y) < 26);
+				// Se anota la intención de arrastre; el punto no se crea hasta que el ratón se mueve.
+				pendienteCable = { id: cid, indice: idx, x: p.x, y: p.y };
 				arrastrando = true;
 				handleArrastrado = undefined;
-				capturadoEsteArrastre = true;
+				capturadoEsteArrastre = false;
 				controles.enabled = false;
 				renderer.domElement.style.cursor = 'grabbing';
 			}
-			return; // clic sobre el cable pero no sobre un punto: solo queda seleccionado
+			return;
 		}
 	}
 
@@ -1754,27 +1790,46 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			resaltarHoverBorne(b);
 			mostrarTipBorne(b, ev);
 			resaltarHoverCable(b ? undefined : cableBajoElPuntero(ev));
-			if (cableandoDesde) { const p = puntoModelo(ev); if (p) actualizarGomaCable(p.x, p.y); }
+			if (cableandoDesde) { const p = puntoCable(ev); if (p) actualizarGomaCable(p.x, p.y); }
 			renderer.domElement.style.cursor = b || cableandoDesde ? 'crosshair' : (cableBajoElPuntero(ev) ? 'grab' : '');
 		}
 		return;
 	}
-	if (!sel) return;
-	const p = puntoModelo(ev);
-	if (!p) return;
-	if (!capturadoEsteArrastre) { capturar(); capturadoEsteArrastre = true; }
-	const g = proyecto.gabinete!;
+	// --- Cable agarrado: al primer movimiento real empieza el arrastre de verdad ---
+	if (pendienteCable) {
+		const pc = puntoCable(ev);
+		if (!pc) return;
+		if (Math.hypot(pc.x - pendienteCable.x, pc.y - pendienteCable.y) < 6) return; // aún es un clic
+		const c = proyecto.conductores.find((x) => x.id === pendienteCable!.id);
+		if (c) {
+			capturar();
+			// Si no se agarró por una unión existente, se crea una justo donde se pinchó.
+			const idx = pendienteCable.indice >= 0
+				? pendienteCable.indice
+				: insertarWaypoint(c, pendienteCable.x, pendienteCable.y);
+			arrastrandoCable = { id: pendienteCable.id, indice: idx };
+			capturadoEsteArrastre = true;
+		}
+		pendienteCable = undefined;
+	}
 
 	// --- Mover el punto de quiebre que se agarró directo por el tubo ---
 	if (arrastrandoCable) {
+		const pc = puntoCable(ev);
 		const c = proyecto.conductores.find((x) => x.id === arrastrandoCable!.id);
-		if (c) {
-			moverWaypoint(c, arrastrandoCable.indice, p.x, p.y);
+		if (c && pc) {
+			moverWaypoint(c, arrastrandoCable.indice, pc.x, pc.y);
 			reconstruirCables();
 			construirHandles();
 		}
 		return;
 	}
+
+	if (!sel) return;
+	const p = puntoModelo(ev);
+	if (!p) return;
+	if (!capturadoEsteArrastre) { capturar(); capturadoEsteArrastre = true; }
+	const g = proyecto.gabinete!;
 
 	// --- Redimensionar / ordenar con un tirador ---
 	if (handleArrastrado) {
@@ -1862,6 +1917,7 @@ renderer.domElement.addEventListener('pointerup', () => {
 	handleArrastrado = undefined;
 	const eraCable = arrastrandoCable;
 	arrastrandoCable = undefined;
+	pendienteCable = undefined; // si no llegó a moverse, fue solo un clic de selección
 	controles.enabled = true;
 	renderer.domElement.style.cursor = '';
 	if (!capturadoEsteArrastre) { arrastreInicio = undefined; return; } // fue un clic, no un arrastre
@@ -1935,7 +1991,7 @@ renderer.domElement.addEventListener('contextmenu', (ev) => {
 	const cid = cableBajoElPuntero(ev);
 	if (!cid) return;
 	const c = proyecto.conductores.find((x) => x.id === cid);
-	const p = puntoModelo(ev);
+	const p = puntoCable(ev);
 	if (!c || !p) return;
 	if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: cid });
 	capturar();
@@ -2263,6 +2319,32 @@ if (new URLSearchParams(location.search).has('qa')) {
 		cablesDibujados: () => new Set(
 			escenario.cables.children.flatMap((g) => g.children.map((m) => m.userData.conductorId as string)).filter(Boolean),
 		).size,
+		/**
+		 * Puntos del cable que el usuario VE de verdad: aquellos en los que, al disparar un rayo
+		 * desde la cámara, lo primero que se encuentra es el propio cable (no un aparato delante).
+		 * Es la definición honesta de «se puede pinchar aquí».
+		 */
+		puntosVisiblesDeCable: (id: string, muestras = 15) => {
+			const malla = escenario.cables.children
+				.flatMap((g) => g.children)
+				.find((m) => m.userData.conductorId === id) as THREE.Mesh | undefined;
+			if (!malla) return [];
+			const r = renderer.domElement.getBoundingClientRect();
+			const pos = malla.geometry.getAttribute('position');
+			const out: { x: number; y: number }[] = [];
+			for (let k = 1; k < muestras; k++) {
+				const i = Math.round((k * (pos.count - 1)) / muestras);
+				const mundo = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(malla.matrixWorld);
+				const p = aPantalla(mundo);
+				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
+				raycaster.setFromCamera(puntero, camara);
+				const impactos = raycaster.intersectObjects(
+					[...escenario.cables.children, ...escenario.dispositivos.children], true,
+				).filter((h) => h.object.userData.conductorId || h.object.userData.dispositivoId);
+				if (impactos[0]?.object.userData.conductorId === id) out.push(p);
+			}
+			return out;
+		},
 		/** Puntos en pantalla repartidos A LO LARGO del tubo de un cable, para poder pincharlo. */
 		puntosDeCable: (id: string, muestras = 9) => {
 			const malla = escenario.cables.children
@@ -2277,6 +2359,24 @@ if (new URLSearchParams(location.search).has('qa')) {
 				out.push(aPantalla(v));
 			}
 			return out;
+		},
+		/** Qué hay seleccionado ahora mismo (para distinguir a quién agarró un clic). */
+		seleccion: () => (sel ? { tipo: sel.tipo, id: sel.id } : undefined),
+		/**
+		 * Cuánto van MONTADOS unos cables sobre otros (mm de tramos paralelos que se pisan).
+		 * Es la medida de «cables amontonados»: en un tablero bien ruteado ronda cero.
+		 */
+		amontonamiento: () => {
+			const rutas = rutasDeCables(proyecto);
+			let total = 0;
+			let pares = 0;
+			for (let i = 0; i < rutas.length; i++) {
+				for (let j = i + 1; j < rutas.length; j++) {
+					const mm = longitudSolapada(rutas[i].nodos, rutas[j].nodos);
+					if (mm > 0) { total += mm; pares++; }
+				}
+			}
+			return { totalMm: Math.round(total), pares, cables: rutas.length };
 		},
 		proyecto: () => proyecto,
 	};
