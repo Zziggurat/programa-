@@ -1,0 +1,283 @@
+/**
+ * QA de las funciones profesionales: esquema eléctrico, DRC eléctrico, multi-selección con
+ * alineado, rótulos y DXF. Son las que convierten el programa en algo entregable a un cliente,
+ * así que se prueban tocando la interfaz de verdad, no llamando a las funciones por dentro.
+ *
+ *   node qa/profesional.mjs
+ */
+import { chromium } from 'playwright-core';
+import http from 'node:http';
+import { readFileSync, existsSync } from 'node:fs';
+import { join, extname, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'dist');
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
+const server = http.createServer((req, res) => {
+	let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html';
+	const f = join(ROOT, p); if (!existsSync(f)) { res.statusCode = 404; res.end(''); return; }
+	res.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); res.end(readFileSync(f));
+});
+await new Promise((r) => server.listen(0, r));
+const url = `http://127.0.0.1:${server.address().port}/?qa=1`;
+
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+const errs = [];
+page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
+page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errs.push(m.text()); });
+
+let fallos = 0;
+const must = (n, c, extra = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${extra ? ' → ' + extra : ''}`); };
+const info = (t) => console.log('     ' + t);
+const jsClick = (id) => page.evaluate((i) => document.getElementById(i)?.click(), id);
+const qa = (f, ...a) => page.evaluate(([n, g]) => window.qa[n](...g), [f, a]);
+
+await page.goto(url); await page.waitForTimeout(900);
+if (await page.isVisible('#modal-ayuda')) { await jsClick('btn-cerrar-ayuda'); await page.waitForTimeout(200); }
+await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
+if (await page.isVisible('#modal-ejemplos')) {
+	await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(700);
+	await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+}
+
+/* ============================ 1. La barra cabe en pantalla ============================ */
+console.log('\n--- 1. La barra superior no se desborda ---');
+const barra = await page.evaluate(() => {
+	const b = document.getElementById('barra');
+	const r = b.getBoundingClientRect();
+	const ultimo = [...b.children].at(-1).getBoundingClientRect();
+	return { alto: r.height, desbordaAbajo: ultimo.bottom > r.bottom + 1, botones: b.querySelectorAll('button').length };
+});
+info(`${barra.botones} botones, ${Math.round(barra.alto)} px de alto`);
+must('la barra no se parte en dos filas', !barra.desbordaAbajo);
+must('la barra mantiene su altura de una fila', barra.alto <= 52, `${Math.round(barra.alto)} px`);
+
+/* ============================== 2. Esquema eléctrico ============================== */
+console.log('\n--- 2. Esquema eléctrico ---');
+await jsClick('btn-esquema'); await page.waitForTimeout(800);
+must('se abre la vista de esquema', await page.isVisible('#panel-esquema'));
+const hojas1 = await page.textContent('#esq-indicador');
+info(`indicador: ${hojas1}`);
+must('hay al menos una hoja', /Hoja \d+ \/ \d+/.test(hojas1));
+
+const simbolos = await page.evaluate(() => document.querySelectorAll('#esquema-hoja [data-dispositivo]').length);
+const hilos = await page.evaluate(() => document.querySelectorAll('#esquema-hoja [data-conductor]').length);
+info(`${simbolos} símbolos y ${hilos} hilos dibujados`);
+must('se dibujan símbolos', simbolos > 0);
+must('se dibujan hilos', hilos > 0);
+
+// Todos los aparatos del tablero deben acabar en alguna hoja: un aparato que no sale del
+// esquema es un aparato que el electricista no va a montar.
+const proyecto = await qa('proyecto');
+const enTablero = proyecto.dispositivos.filter((d) => !d.imagen).map((d) => d.id);
+const dibujados = new Set();
+const total = Number(hojas1.split('/')[1].trim());
+for (let h = 0; h < total; h++) {
+	for (const id of await page.evaluate(() => [...document.querySelectorAll('#esquema-hoja [data-dispositivo]')].map((e) => e.getAttribute('data-dispositivo')))) {
+		dibujados.add(id);
+	}
+	if (h < total - 1) { await jsClick('esq-siguiente'); await page.waitForTimeout(450); }
+}
+const faltan = enTablero.filter((id) => !dibujados.has(id));
+must('TODOS los aparatos salen en el esquema', faltan.length === 0, faltan.join(', '));
+
+// Nada puede salirse del papel.
+const fuera = await page.evaluate(() => {
+	const svg = document.querySelector('#esquema-hoja svg');
+	const vb = svg.viewBox.baseVal;
+	let mal = 0;
+	for (const g of svg.querySelectorAll('[data-dispositivo]')) {
+		const b = g.getBBox();
+		if (b.x < -1 || b.y < -1 || b.x + b.width > vb.width + 1 || b.y + b.height > vb.height + 1) mal++;
+	}
+	return mal;
+});
+must('ningún símbolo se sale de la hoja', fuera === 0, `${fuera} fuera`);
+
+// Pinchar un símbolo selecciona ese aparato en todo el programa.
+await page.evaluate(() => document.querySelector('#esquema-hoja [data-dispositivo]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+await page.waitForTimeout(400);
+const selTrasClic = await qa('seleccion');
+must('pinchar un símbolo selecciona ese aparato', selTrasClic?.tipo === 'dispositivo', JSON.stringify(selTrasClic));
+
+// Navegación y zoom.
+await jsClick('esq-ajustar'); await page.waitForTimeout(250);
+const anchoAjustado = await page.evaluate(() => document.getElementById('esquema-hoja').getBoundingClientRect().width);
+await jsClick('esq-acercar'); await page.waitForTimeout(250);
+const anchoZoom = await page.evaluate(() => document.getElementById('esquema-hoja').getBoundingClientRect().width);
+must('el zoom acerca de verdad', anchoZoom > anchoAjustado, `${Math.round(anchoAjustado)} → ${Math.round(anchoZoom)} px`);
+
+await jsClick('esq-cerrar'); await page.waitForTimeout(400);
+must('se cierra y vuelve el tablero 3D', !(await page.isVisible('#panel-esquema')));
+
+/* ============================ 3. DRC eléctrico ============================ */
+console.log('\n--- 3. DRC eléctrico (la física, no solo el dibujo) ---');
+// Se monta a propósito el error clásico: automático grande sobre cable fino.
+await page.evaluate(() => {
+	const p = window.qa.proyecto();
+	const q = p.dispositivos.find((d) => d.tipo === 'disyuntor');
+	if (q) q.corrienteNominal = 32;
+	for (const c of p.conductores) c.seccion = 1.5;
+});
+await jsClick('btn-centrar'); await page.waitForTimeout(200);
+await page.evaluate(() => window.qa.recalcular?.());
+await page.waitForTimeout(400);
+const hall = await qa('hallazgos');
+const r9 = hall.filter((h) => h.regla === 'R9-proteccion-sobredimensionada');
+info(`${hall.length} hallazgos · ${r9.length} de coordinación`);
+must('detecta la protección sobredimensionada sobre cable fino', r9.length > 0);
+if (r9.length) {
+	must('el mensaje dice a qué sección subir', /mm²/.test(r9[0].mensaje), r9[0].mensaje.slice(0, 90));
+	must('lo marca como ERROR, no como aviso', r9[0].severidad === 'error');
+}
+const r11 = hall.filter((h) => h.regla === 'R11-sin-tierra');
+info(`${r11.length} bornes de tierra sin conectar`);
+
+/* ====================== 4. Multi-selección, mover y alinear ====================== */
+console.log('\n--- 4. Multi-selección y alineado ---');
+await jsClick('btn-nuevo'); await page.waitForTimeout(250);
+if (await page.isVisible('#modal-dialogo')) { await jsClick('dialogo-ok'); await page.waitForTimeout(350); }
+await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
+if (await page.isVisible('#modal-ejemplos')) {
+	await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(700);
+	await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+}
+await jsClick('modo-editor'); await page.waitForTimeout(300);
+
+const p0 = await qa('proyecto');
+const colocados = p0.gabinete.colocaciones
+	.filter((c) => { const d = p0.dispositivos.find((x) => x.id === c.dispositivoId); return d && !d.imagen; })
+	.slice(0, 3);
+must('hay al menos 3 aparatos para agrupar', colocados.length === 3);
+
+await page.evaluate((ids) => {
+	document.activeElement?.blur?.();
+	window.qa.seleccionarPorId(ids[0]);
+	window.qa.anadirASeleccion(ids[1]);
+	window.qa.anadirASeleccion(ids[2]);
+}, colocados.map((c) => c.dispositivoId));
+await page.waitForTimeout(350);
+must('el panel pasa a modo grupo', /3 aparatos seleccionados/.test(await page.textContent('#panel-der')));
+
+// Alinear arriba: todos deben acabar a la misma Y.
+await page.click('[data-alinear="arriba"]'); await page.waitForTimeout(450);
+const tras = await qa('proyecto');
+const ys = colocados.map((c) => tras.gabinete.colocaciones.find((x) => x.dispositivoId === c.dispositivoId).y);
+info(`Y tras alinear: ${ys.join(', ')}`);
+must('alinear arriba deja todos a la misma altura', new Set(ys).size === 1, ys.join(', '));
+
+// Y nada puede quedar encimado ni fuera de la placa.
+const cols = tras.gabinete.colocaciones;
+let choques = 0;
+for (let i = 0; i < cols.length; i++) for (let j = i + 1; j < cols.length; j++) {
+	const a = cols[i], b = cols[j];
+	if (a.x < b.x + b.ancho && b.x < a.x + a.ancho && a.y < b.y + b.alto && b.y < a.y + a.alto) choques++;
+}
+must('alinear no deja aparatos encimados', choques === 0, `${choques} choques`);
+must('todo sigue dentro de la placa', cols.every((c) => c.x >= 0 && c.y >= 0
+	&& c.x + c.ancho <= tras.gabinete.ancho && c.y + c.alto <= tras.gabinete.alto));
+
+// Repartir por igual.
+await page.click('[data-alinear="repartir-h"]'); await page.waitForTimeout(450);
+const rep = await qa('proyecto');
+const orden = colocados
+	.map((c) => rep.gabinete.colocaciones.find((x) => x.dispositivoId === c.dispositivoId))
+	.sort((a, b) => a.x - b.x);
+const huecos = [orden[1].x - (orden[0].x + orden[0].ancho), orden[2].x - (orden[1].x + orden[1].ancho)];
+info(`huecos: ${huecos.map((h) => Math.round(h)).join(' y ')} mm`);
+must('repartir deja la misma separación entre aparatos', Math.abs(huecos[0] - huecos[1]) <= 2, huecos.join(', '));
+
+// Ctrl+Z deshace el alineado completo.
+await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
+must('Ctrl+Z deshace el alineado', JSON.stringify((await qa('proyecto')).gabinete.colocaciones) !== JSON.stringify(rep.gabinete.colocaciones));
+
+/* ============================ 5. Rótulos y DXF ============================ */
+console.log('\n--- 5. Entregables: rótulos y DXF ---');
+const descargas = [];
+page.on('download', (d) => descargas.push(d.suggestedFilename()));
+
+await jsClick('btn-etiquetas'); await page.waitForTimeout(1200);
+must('los rótulos se descargan en PDF', descargas.some((f) => /rotulos\.pdf$/.test(f)), descargas.join(', '));
+
+await jsClick('btn-dxf-placa'); await page.waitForTimeout(900);
+must('la placa se descarga en DXF', descargas.some((f) => /placa\.dxf$/.test(f)), descargas.join(', '));
+
+await jsClick('btn-dxf-esquema'); await page.waitForTimeout(900);
+must('el esquema se descarga en DXF', descargas.some((f) => /esquema-\d+\.dxf$/.test(f)), descargas.join(', '));
+
+/* ==================== 6. Copiar/pegar y plantillas propias ==================== */
+console.log('\n--- 6. Copiar, pegar y plantillas ---');
+await jsClick('modo-editor'); await page.waitForTimeout(300);
+const antesCopia = (await qa('proyecto')).dispositivos.length;
+const unId = (await qa('proyecto')).gabinete.colocaciones[0].dispositivoId;
+await page.evaluate((id) => { document.activeElement?.blur?.(); window.qa.seleccionarPorId(id); }, unId);
+await page.waitForTimeout(250);
+await page.keyboard.press('Control+c'); await page.waitForTimeout(300);
+await page.keyboard.press('Control+v'); await page.waitForTimeout(600);
+const trasPegar = await qa('proyecto');
+must('Ctrl+C / Ctrl+V pega un aparato', trasPegar.dispositivos.length === antesCopia + 1,
+	`${antesCopia} → ${trasPegar.dispositivos.length}`);
+must('el pegado NO trae cables del original',
+	!trasPegar.conductores.some((c) => c.de.dispositivoId === trasPegar.dispositivos.at(-1).id
+		|| c.a.dispositivoId === trasPegar.dispositivos.at(-1).id));
+must('ninguna designación queda repetida tras pegar',
+	new Set(trasPegar.dispositivos.map((d) => d.designacion)).size === trasPegar.dispositivos.length);
+const colPegado = trasPegar.gabinete.colocaciones.find((c) => c.dispositivoId === trasPegar.dispositivos.at(-1).id);
+must('el pegado cae dentro de la placa', !!colPegado && colPegado.x >= 0
+	&& colPegado.x + colPegado.ancho <= trasPegar.gabinete.ancho);
+let choquePegado = 0;
+for (const o of trasPegar.gabinete.colocaciones) {
+	if (o.dispositivoId === colPegado.dispositivoId) continue;
+	if (colPegado.x < o.x + o.ancho && o.x < colPegado.x + colPegado.ancho
+		&& colPegado.y < o.y + o.alto && o.y < colPegado.y + colPegado.alto) choquePegado++;
+}
+must('el pegado no queda encimado con otro aparato', choquePegado === 0, `${choquePegado}`);
+
+// Copiar un GRUPO y pegarlo entero.
+const tresIds = trasPegar.gabinete.colocaciones.slice(0, 3).map((c) => c.dispositivoId);
+await page.evaluate((ids) => {
+	document.activeElement?.blur?.();
+	window.qa.seleccionarPorId(ids[0]);
+	window.qa.anadirASeleccion(ids[1]);
+	window.qa.anadirASeleccion(ids[2]);
+}, tresIds);
+await page.waitForTimeout(300);
+const antesGrupo = (await qa('proyecto')).dispositivos.length;
+await page.keyboard.press('Control+c'); await page.waitForTimeout(300);
+await page.keyboard.press('Control+v'); await page.waitForTimeout(700);
+must('se pega el grupo entero', (await qa('proyecto')).dispositivos.length === antesGrupo + 3,
+	`${antesGrupo} → ${(await qa('proyecto')).dispositivos.length}`);
+
+// Guardar como plantilla y volver a abrirla.
+await page.evaluate(() => localStorage.removeItem('tablerostudio-plantillas'));
+await jsClick('btn-plantilla'); await page.waitForTimeout(350);
+if (await page.isVisible('#modal-dialogo')) {
+	await page.fill('#dialogo-input', 'Mi arranque de prueba');
+	await jsClick('dialogo-ok'); await page.waitForTimeout(500);
+}
+const guardadas = await page.evaluate(() => JSON.parse(localStorage.getItem('tablerostudio-plantillas') ?? '[]').length);
+must('la plantilla queda guardada', guardadas === 1, `${guardadas}`);
+
+await jsClick('btn-nuevo'); await page.waitForTimeout(250);
+if (await page.isVisible('#modal-dialogo')) { await jsClick('dialogo-ok'); await page.waitForTimeout(400); }
+const vacio = (await qa('proyecto')).dispositivos.length;
+await jsClick('btn-ejemplos'); await page.waitForTimeout(450);
+must('la plantilla aparece en la biblioteca', await page.isVisible('[data-plantilla="0"]'));
+await page.click('[data-plantilla="0"]'); await page.waitForTimeout(700);
+const recuperado = await qa('proyecto');
+must('al abrir la plantilla vuelve el tablero entero', recuperado.dispositivos.length > vacio,
+	`${vacio} → ${recuperado.dispositivos.length}`);
+must('la plantilla conserva su nombre', recuperado.nombre === 'Mi arranque de prueba', recuperado.nombre);
+must('la plantilla conserva los cables', recuperado.conductores.length > 0, `${recuperado.conductores.length}`);
+
+/* ============================== 7. Coherencia ============================== */
+console.log('\n--- 7. Coherencia final ---');
+const fin = await qa('proyecto');
+must('sin cables fantasma', (await qa('cablesDibujados')) === fin.conductores.length,
+	`${await qa('cablesDibujados')}/${fin.conductores.length}`);
+must('sin errores de JavaScript en toda la sesión', errs.length === 0, errs.slice(0, 3).join(' | '));
+
+console.log(fallos === 0 ? '\n=== TODO OK ✔ ===' : `\n=== ${fallos} FALLOS ✗ ===`);
+await browser.close(); server.close();
+process.exit(fallos === 0 ? 0 : 1);

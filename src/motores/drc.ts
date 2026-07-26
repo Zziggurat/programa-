@@ -7,6 +7,7 @@
 import { Proyecto } from '../modelo/tipos.js';
 import { conductoresEn, dispositivo } from '../modelo/proyecto.js';
 import { ResultadoPotenciales } from './potenciales.js';
+import { ampacidad, caidaTensionPct, CAIDA_MAX_PCT, seccionMinima } from './electrico.js';
 
 export type Severidad = 'error' | 'aviso';
 
@@ -19,9 +20,22 @@ export interface Hallazgo {
 	potencialId?: string;
 }
 
+/** Datos físicos que el DRC no puede deducir del modelo (los aporta quien dibuja). */
+export interface ContextoFisico {
+	/** Longitud real de cada conductor en mm, por id. Sin ella no se calcula la caída de tensión. */
+	longitudesMm?: Map<string, number>;
+	/**
+	 * Ocupación real de cada canaleta (la calcula el motor de ruteo con la geometría del cable).
+	 * Se pasa el DATO, no el texto del aviso: filtrar mensajes por palabras es frágil y ya
+	 * coló una vez un aviso que no tenía nada que ver.
+	 */
+	canaletas?: { canaletaId: string; ocupacion: number; excedida: boolean }[];
+}
+
 export function verificarProyecto(
 	proyecto: Proyecto,
 	potenciales: ResultadoPotenciales,
+	fisico: ContextoFisico = {},
 ): Hallazgo[] {
 	const hallazgos: Hallazgo[] = [];
 	const etiqueta = (id: string) => {
@@ -165,16 +179,111 @@ export function verificarProyecto(
 		}
 	}
 
-	// R8 — Dispositivos sin posición en el esquema.
-	for (const d of aparatos) {
-		if (!d.hojaId || !d.posicion) {
-			hallazgos.push({
-				regla: 'R8-sin-posicion',
-				severidad: 'aviso',
-				mensaje: `${etiqueta(d.id)} no está dibujado en ninguna hoja`,
-				dispositivoId: d.id,
-			});
+	// (La antigua R8 «sin posición en el esquema» se retiró: desde que el motor de esquema
+	// coloca solo a cada aparato en su hoja y su columna, un aparato sin posición guardada ya
+	// no es un defecto, y avisar de ello solo generaba ruido que tapaba los errores de verdad.)
+
+	/* ------------------------ Reglas ELÉCTRICAS (la física) ------------------------ */
+
+	// Protecciones del proyecto con su calibre. Es lo que permite comprobar de verdad si un
+	// conductor está protegido, que es la diferencia entre un dibujo bonito y un tablero seguro.
+	const ES_PROTECCION = new Set(['disyuntor', 'guardamotor', 'fusible', 'diferencial', 'seccionador']);
+	const conductorDe = new Map(proyecto.conductores.map((c) => [c.id, c]));
+
+	// R9 — Coordinación protección ↔ sección. Regla de oro: In ≤ Iz. Si el calibre supera la
+	// intensidad admisible del cable, el cable puede arder sin que la protección salte nunca.
+	// Se compara por POTENCIAL: los conductores que salen de una protección comparten su nodo.
+	for (const p of potenciales.potenciales) {
+		let mayorIn = 0;
+		let proteccion: string | undefined;
+		for (const clave of p.bornes) {
+			const d = proyecto.dispositivos.find((x) => x.id === clave.split('::')[0]);
+			if (!d || d.imagen || !ES_PROTECCION.has(d.tipo) || !d.corrienteNominal) continue;
+			if (d.corrienteNominal > mayorIn) { mayorIn = d.corrienteNominal; proteccion = d.id; }
 		}
+		if (!mayorIn || !proteccion) continue;
+		for (const cid of p.conductores) {
+			const c = conductorDe.get(cid);
+			if (!c?.seccion) continue;
+			const iz = ampacidad(c.seccion);
+			if (mayorIn > iz + 1e-9) {
+				const minima = seccionMinima(mayorIn);
+				hallazgos.push({
+					regla: 'R9-proteccion-sobredimensionada',
+					severidad: 'error',
+					mensaje: `${etiqueta(proteccion)} es de ${mayorIn} A pero el conductor `
+						+ `${c.numero ?? c.id} es de ${c.seccion} mm² (admite ${iz} A). `
+						+ `Sube el conductor a ${minima ?? '—'} mm² o baja la protección.`,
+					conductorId: c.id,
+					dispositivoId: proteccion,
+					potencialId: p.id,
+				});
+			}
+		}
+	}
+
+	// R10 — Caída de tensión. Solo se puede calcular si quien dibuja aporta las longitudes
+	// reales; sin ellas no se inventa un número (más vale callar que mentir en un cálculo).
+	if (fisico.longitudesMm?.size) {
+		for (const c of proyecto.conductores) {
+			const largoMm = fisico.longitudesMm.get(c.id);
+			if (!c.seccion || !largoMm) continue;
+			// Corriente e información de fases: de la protección o del consumo del potencial.
+			const pot = potenciales.porConductor.get(c.id);
+			let corriente = 0;
+			let tension = 0;
+			let trifasico = false;
+			for (const clave of pot?.bornes ?? []) {
+				const d = proyecto.dispositivos.find((x) => x.id === clave.split('::')[0]);
+				if (!d || d.imagen) continue;
+				if (d.corrienteNominal && d.corrienteNominal > corriente) corriente = d.corrienteNominal;
+				if (d.tensionNominal && d.tensionNominal > tension) tension = d.tensionNominal;
+				if ((d.polos ?? 0) >= 3) trifasico = true;
+			}
+			if (!corriente || !tension) continue;
+			const pct = caidaTensionPct({
+				corrienteA: corriente, longitudM: largoMm / 1000, seccionMm2: c.seccion, tensionV: tension, trifasico,
+			});
+			const limite = tension <= 60 ? CAIDA_MAX_PCT.control : CAIDA_MAX_PCT.fuerza;
+			if (pct > limite) {
+				hallazgos.push({
+					regla: 'R10-caida-tension',
+					severidad: 'aviso',
+					mensaje: `El conductor ${c.numero ?? c.id} cae ${pct.toFixed(1)} % `
+						+ `(${corriente} A · ${(largoMm / 1000).toFixed(1)} m · ${c.seccion} mm²), `
+						+ `por encima del ${limite} % admisible. Sube la sección.`,
+					conductorId: c.id,
+				});
+			}
+		}
+	}
+
+	// R11 — Puesta a tierra. Un borne PE sin conductor no es un descuido menor: es la
+	// protección de las personas. Nunca es opcional, tenga o no la marca de obligatorio.
+	for (const d of aparatos) {
+		for (const b of d.bornes) {
+			if (b.tipo !== 'PE') continue;
+			if (conductoresEn(proyecto, { dispositivoId: d.id, borneId: b.id }).length === 0) {
+				hallazgos.push({
+					regla: 'R11-sin-tierra',
+					severidad: 'error',
+					mensaje: `${etiqueta(d.id)}: el borne de tierra "${b.id}" está sin conectar`,
+					dispositivoId: d.id,
+				});
+			}
+		}
+	}
+
+	// R12 — Llenado de canaletas. Una canaleta demasiado llena no cierra la tapa y calienta los
+	// conductores; es de las primeras cosas que mira un inspector.
+	for (const c of fisico.canaletas ?? []) {
+		if (!c.excedida) continue;
+		hallazgos.push({
+			regla: 'R12-canaleta-llena',
+			severidad: 'aviso',
+			mensaje: `La canaleta ${c.canaletaId} va al ${Math.round(c.ocupacion * 100)} % del llenado `
+				+ 'recomendado: usa una más ancha o reparte los conductores.',
+		});
 	}
 
 	const orden: Severidad[] = ['error', 'aviso'];

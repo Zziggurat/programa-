@@ -267,6 +267,41 @@ function generico(g: THREE.Group, w: number, h: number, color: number): number {
 	return prof;
 }
 
+/**
+ * Aparato de mando de puerta (pulsador, seta de emergencia, selector, piloto): cuerpo trasero
+ * cuadrado con los contactos y, al frente, el aro metálico y la cabeza redonda que es lo que
+ * se ve desde fuera del tablero.
+ */
+function mando(g: THREE.Group, w: number, h: number, color: number, forma: 'seta' | 'pulsador' | 'piloto' | 'selector'): number {
+	const prof = 46;
+	const cuerpo = Math.min(w, h) * 0.8;
+	g.add(caja(cuerpo, cuerpo, prof - 12, M.plastico(0x2a2f33), 0, 0, (prof - 12) / 2));
+	// Aro metálico de fijación a la puerta.
+	const aro = new THREE.Mesh(
+		new THREE.CylinderGeometry(cuerpo * 0.52, cuerpo * 0.52, 4, 24),
+		M.metal(0xb6bcc2),
+	);
+	aro.rotation.x = Math.PI / 2;
+	aro.position.set(0, 0, prof - 10);
+	g.add(aro);
+
+	const r = cuerpo * (forma === 'seta' ? 0.58 : 0.36);
+	const alto = forma === 'seta' ? 12 : forma === 'selector' ? 5 : 8;
+	const cabeza = new THREE.Mesh(new THREE.CylinderGeometry(r, r * (forma === 'seta' ? 0.8 : 1), alto, 24), M.plastico(color));
+	cabeza.rotation.x = Math.PI / 2;
+	cabeza.position.set(0, 0, prof - 8 + alto / 2);
+	g.add(cabeza);
+
+	if (forma === 'selector') { // maneta de la maneta giratoria
+		const maneta = new THREE.Mesh(new THREE.BoxGeometry(r * 1.9, r * 0.5, 4), M.plastico(0x1b1f22));
+		maneta.position.set(0, 0, prof - 8 + alto + 1.5);
+		maneta.rotation.z = -Math.PI / 6;
+		g.add(maneta);
+	}
+	filaBornes(g, 4, cuerpo * 0.8, -h / 2 + 5, 6);
+	return prof;
+}
+
 const COLOR_TIPO: Record<string, number> = {
 	disyuntor: 0xe8e8e4, diferencial: 0xe8e8e4, guardamotor: 0x3d4348, fusible: 0x5d666e,
 	contactor: 0x2f3437, rele: 0x3b6ea5, variador: 0x26292c, plc: 0x23272b,
@@ -363,6 +398,15 @@ export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: TH
 			break;
 		case 'fusible':
 			profundidad = fusibleModelo(g, w, h, color);
+			break;
+		case 'pulsador':
+			profundidad = mando(g, w, h, color, w >= 38 ? 'seta' : 'pulsador');
+			break;
+		case 'selector':
+			profundidad = mando(g, w, h, color, 'selector');
+			break;
+		case 'piloto':
+			profundidad = mando(g, w, h, color, 'piloto');
 			break;
 		default:
 			profundidad = generico(g, w, h, color);

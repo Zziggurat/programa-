@@ -28,7 +28,10 @@ export function exportarPDF(proyecto: Proyecto): void {
 	const potenciales = calcularPotenciales(proyecto);
 	numerarConductores(proyecto, potenciales);
 	const ruteo = rutearConductores(proyecto);
-	const hallazgos = verificarProyecto(proyecto, potenciales);
+	const hallazgos = verificarProyecto(proyecto, potenciales, {
+		longitudesMm: new Map(ruteo.rutas.map((r) => [r.conductorId, r.longitudMm])),
+		canaletas: ruteo.ocupaciones,
+	});
 	const referencias = generarReferencias(proyecto);
 	const bom = generarBOM(proyecto);
 	const conductores = generarListaConductores(proyecto, ruteo);

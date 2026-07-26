@@ -27,6 +27,11 @@ import {
 	rutasDeCables, salidasDeCable, VOLTAJE_COLOR, Z_FRENTE,
 } from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
+import { avisar, confirmar, descargar, pedirTexto, responderDialogo } from './dialogos.js';
+import { HojaEsq, montarEsquema } from '../src/motores/esquema.js';
+import { hojaASvg } from './esquema-svg.js';
+import { exportarEsquemaPDF } from './esquema-pdf.js';
+import { dxfDeEsquema, dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
 import { distPuntoSegmento, longitudSolapada, orthogonalize } from './geometria-cables.js';
 
 type Modo = 'editor' | 'trabajo';
@@ -96,7 +101,12 @@ function recalcular(): void {
 	potenciales = calcularPotenciales(proyecto);
 	numerarConductores(proyecto, potenciales);
 	ruteo = rutearConductores(proyecto);
-	hallazgos = verificarProyecto(proyecto, potenciales);
+	// El DRC recibe las longitudes REALES del recorrido dibujado (no una estimación): con ellas
+	// puede calcular la caída de tensión de cada circuito, y los avisos de llenado de canaleta.
+	hallazgos = verificarProyecto(proyecto, potenciales, {
+		longitudesMm: new Map(proyecto.conductores.map((c) => [c.id, longitudCableMm(c)])),
+		canaletas: ruteo.ocupaciones,
+	});
 	const sync = sincronizarEsquemaGabinete(proyecto);
 	for (const [a, b] of sync.solapes) {
 		hallazgos.push({ regla: 'S1-solape', severidad: 'error', mensaje: `${a} y ${b} se solapan en la placa` });
@@ -263,6 +273,7 @@ function actualizarTodo(): void {
 	montarEscenario();
 	pintarPaneles();
 	pintarSeleccion();
+	refrescarEsquema(); // si el esquema está abierto, se redibuja: es la misma verdad, otra vista
 }
 
 /** Tras reemplazar el objeto `proyecto` (deshacer/rehacer/abrir/nuevo). */
@@ -293,62 +304,9 @@ function $(id: string): HTMLElement {
 
 const hexColor = (c: number): string => '#' + c.toString(16).padStart(6, '0');
 
-/* ----------------- Diálogos in-app (confirm/prompt/toast) ----------------- *
- * Los Artifacts corren en un iframe sandbox que bloquea window.confirm/prompt/alert
- * (devuelven false/null sin mostrar nada). Estos reemplazos funcionan en cualquier
- * entorno y dan una experiencia coherente. */
-
-let cerrarDialogo: ((valor: string | null) => void) | undefined;
-
-function abrirDialogo(mensaje: string, opciones: {
-	input?: boolean; valorInicial?: string; ok?: string; peligro?: boolean;
-} = {}): Promise<string | null> {
-	const modal = $('modal-dialogo');
-	const input = $('dialogo-input') as HTMLInputElement;
-	$('dialogo-msg').textContent = mensaje;
-	input.hidden = !opciones.input;
-	input.value = opciones.valorInicial ?? '';
-	($('dialogo-ok') as HTMLButtonElement).textContent = opciones.ok ?? 'Aceptar';
-	modal.classList.toggle('peligro', !!opciones.peligro);
-	modal.hidden = false;
-	if (opciones.input) setTimeout(() => { input.focus(); input.select(); }, 0);
-
-	return new Promise((resolve) => {
-		cerrarDialogo = (valor) => {
-			modal.hidden = true;
-			cerrarDialogo = undefined;
-			resolve(valor);
-		};
-	});
-}
-
-/** Confirmación con botones. Devuelve true si el usuario acepta. */
-async function confirmar(mensaje: string, opciones: { ok?: string; peligro?: boolean } = {}): Promise<boolean> {
-	return (await abrirDialogo(mensaje, opciones)) !== null;
-}
-
-/** Pide un texto. Devuelve la cadena escrita, o null si cancela. */
-function pedirTexto(mensaje: string, valorInicial = ''): Promise<string | null> {
-	return abrirDialogo(mensaje, { input: true, valorInicial });
-}
-
-/** Aviso flotante no bloqueante. */
-let toastTimer: ReturnType<typeof setTimeout> | undefined;
-function avisar(mensaje: string, tipo: 'info' | 'ok' | 'error' = 'info'): void {
-	const toast = $('toast');
-	toast.textContent = mensaje;
-	toast.className = tipo;
-	toast.hidden = false;
-	clearTimeout(toastTimer);
-	toastTimer = setTimeout(() => { toast.hidden = true; }, 3200);
-}
-
-function descargar(nombre: string, contenido: string, tipo = 'text/plain'): void {
-	const a = document.createElement('a');
-	a.href = URL.createObjectURL(new Blob([contenido], { type: tipo }));
-	a.download = nombre;
-	a.click();
-	URL.revokeObjectURL(a.href);
+/** Nombre de archivo seguro a partir del nombre del proyecto. */
+function nombreArchivo(): string {
+	return proyecto.nombre.replaceAll(/[^\wáéíóúñ -]/gi, '').trim() || 'tablero';
 }
 
 const etiquetaDe = (id: string): string => {
@@ -616,8 +574,10 @@ function pintarPaneles(): void {
 	const chip = $('chip-drc');
 	chip.className = errores ? 'con-errores' : avisos ? 'con-avisos' : '';
 	chip.id = 'chip-drc';
+	const plural = (n: number, uno: string, varios: string) => `${n} ${n === 1 ? uno : varios}`;
 	$('chip-drc-texto').textContent = errores || avisos
-		? `${errores} errores · ${avisos} avisos`
+		? [errores ? plural(errores, 'error', 'errores') : '', avisos ? plural(avisos, 'aviso', 'avisos') : '']
+			.filter(Boolean).join(' · ')
 		: 'DRC sin hallazgos';
 
 	const total = proyecto.conductores.reduce((s, c) => s + longitudCableMm(c), 0);
@@ -663,6 +623,41 @@ function pintarListaCables(): void {
 const SECCIONES = [0.5, 0.75, 1, 1.5, 2.5, 4, 6, 10];
 const COLORES = ['negro', 'azul', 'rojo', 'blanco', 'gris', 'marrón', 'verde/amarillo'];
 
+/** Panel de un GRUPO de aparatos (Shift+clic): alinear, repartir y borrar de una vez. */
+function pintarPanelGrupo(): void {
+	const panel = $('panel-der');
+	const ids = aparatosSeleccionados();
+	const g = proyecto.gabinete!;
+	const nombres = ids.map(etiquetaDe).join(', ');
+	panel.style.display = 'block';
+	panel.innerHTML = `
+		<h2>${ids.length} aparatos seleccionados</h2>
+		<p class="pista">${nombres}</p>
+		<p class="pista">Shift + clic añade o quita aparatos. Arrastra uno y se mueven todos.</p>
+		<h3>Alinear</h3>
+		<div class="rejilla-botones">
+			<button class="boton" data-alinear="izquierda" title="Alinear por el borde izquierdo">⬅ Izquierda</button>
+			<button class="boton" data-alinear="centrar-h" title="Centrar en horizontal">↔ Centrar</button>
+			<button class="boton" data-alinear="derecha" title="Alinear por el borde derecho">Derecha ➡</button>
+			<button class="boton" data-alinear="arriba" title="Alinear por el borde superior">⬆ Arriba</button>
+			<button class="boton" data-alinear="centrar-v" title="Centrar en vertical">↕ Centrar</button>
+			<button class="boton" data-alinear="abajo" title="Alinear por el borde inferior">⬇ Abajo</button>
+		</div>
+		<h3>Repartir</h3>
+		<button class="boton ancho-total" data-alinear="repartir-h" title="Dejar la misma separación entre todos">⇹ Repartir a la misma distancia</button>
+		<h3>Acciones</h3>
+		<button class="boton peligro ancho-total" id="grupo-borrar">🗑️ Eliminar los ${ids.length} aparatos</button>
+	`;
+	for (const b of panel.querySelectorAll<HTMLButtonElement>('[data-alinear]')) {
+		b.onclick = () => alinearSeleccionados(b.dataset.alinear as Alineacion);
+	}
+	(panel.querySelector('#grupo-borrar') as HTMLButtonElement).onclick = () => { void eliminarSeleccionados(); };
+	// Aviso si el grupo no cabe: mejor decirlo antes de que el usuario intente alinearlo.
+	if (ids.some((id) => !g.colocaciones.some((c) => c.dispositivoId === id))) {
+		panel.insertAdjacentHTML('beforeend', '<p class="pista">Algún aparato del grupo no está colocado en la placa.</p>');
+	}
+}
+
 function pintarSeleccion(): void {
 	const panel = $('panel-der');
 	if (!sel) {
@@ -675,6 +670,12 @@ function pintarSeleccion(): void {
 	}
 	if (sel.tipo === 'cable') {
 		pintarPanelCable(sel.id);
+		return;
+	}
+	// Con varios aparatos seleccionados, el panel pasa a ser el de GRUPO: alinear, repartir y
+	// borrar en bloque. Mostrar la ficha de uno solo cuando hay ocho marcados sería mentir.
+	if (seleccionExtra.length > 0) {
+		pintarPanelGrupo();
 		return;
 	}
 	const d = proyecto.dispositivos.find((x) => x.id === sel!.id);
@@ -1150,7 +1151,144 @@ function resaltarPorUserData(clave: 'canaletaId' | 'rielId', id: string): void {
 }
 
 /** Aplica una selección de cualquier tipo (o la limpia) y refresca resaltado, handles y paneles. */
+/**
+ * Selección múltiple de aparatos.
+ *
+ * `sel` sigue siendo la selección principal (todo el programa trabaja con ella); aquí solo se
+ * guardan los aparatos AÑADIDOS con Shift. Se hace así a propósito: el resto del código no se
+ * entera de que existe la multi-selección y no hay dos caminos que puedan desincronizarse.
+ */
+let seleccionExtra: string[] = [];
+/** true mientras se está añadiendo con Shift, para que `aplicarSeleccion` no borre lo añadido. */
+let construyendoSeleccion = false;
+
+/** Todos los aparatos seleccionados ahora mismo (el principal primero). */
+function aparatosSeleccionados(): string[] {
+	if (sel?.tipo !== 'dispositivo') return [];
+	return [sel.id, ...seleccionExtra.filter((id) => id !== sel!.id)];
+}
+
+/** Añade o quita un aparato de la selección (Shift+clic). */
+function alternarEnSeleccion(id: string): void {
+	if (sel?.tipo !== 'dispositivo') { seleccionar(id); return; }
+	if (id === sel.id) {
+		// Se quita el principal: pasa a mandar el primero de los añadidos, si queda alguno.
+		const siguiente = seleccionExtra.shift();
+		if (siguiente) { const resto = seleccionExtra.slice(); aplicarSeleccion({ tipo: 'dispositivo', id: siguiente }); seleccionExtra = resto; }
+		else aplicarSeleccion(undefined);
+	} else if (seleccionExtra.includes(id)) {
+		seleccionExtra = seleccionExtra.filter((x) => x !== id);
+	} else {
+		seleccionExtra.push(id);
+	}
+	resaltarSeleccionExtra();
+	pintarSeleccion();
+}
+
+/** Desplaza los aparatos acompañantes el mismo (dx, dy) que el principal, sin salirse de la placa. */
+function moverAcompanantes(dx: number, dy: number): void {
+	const g = proyecto.gabinete!;
+	for (const id of seleccionExtra) {
+		const col = g.colocaciones.find((c) => c.dispositivoId === id);
+		if (!col) continue;
+		col.x = Math.min(Math.max(col.x + dx, 0), Math.max(0, g.ancho - col.ancho));
+		col.y = Math.min(Math.max(col.y + dy, 0), Math.max(0, g.alto - col.alto));
+		const grupo = grupoDe(id);
+		if (grupo) {
+			const c = escenario.aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
+			grupo.position.set(c.x, c.y, grupo.position.z);
+		}
+	}
+}
+
+/** Borra de una vez todos los aparatos seleccionados, con una sola confirmación. */
+async function eliminarSeleccionados(): Promise<void> {
+	const ids = aparatosSeleccionados();
+	if (ids.length <= 1) { if (ids[0]) await eliminarDispositivo(ids[0]); return; }
+	const cables = proyecto.conductores.filter(
+		(c) => ids.includes(c.de.dispositivoId) || ids.includes(c.a.dispositivoId),
+	).length;
+	const detalle = cables ? ` y sus ${cables} cables` : '';
+	if (!(await confirmar(`¿Eliminar ${ids.length} aparatos${detalle}?`, { ok: 'Eliminar', peligro: true }))) return;
+	capturar();
+	const fuera = new Set(ids);
+	proyecto.dispositivos = proyecto.dispositivos.filter((d) => !fuera.has(d.id));
+	proyecto.conductores = proyecto.conductores.filter(
+		(c) => !fuera.has(c.de.dispositivoId) && !fuera.has(c.a.dispositivoId),
+	);
+	const g = proyecto.gabinete!;
+	g.colocaciones = g.colocaciones.filter((c) => !fuera.has(c.dispositivoId));
+	seleccionExtra = [];
+	aplicarSeleccion(undefined);
+	actualizarTodo();
+	avisar(`${ids.length} aparatos eliminados`, 'ok');
+}
+
+/** Cómo se puede ordenar un grupo de aparatos, igual que en cualquier programa de dibujo. */
+type Alineacion = 'izquierda' | 'derecha' | 'arriba' | 'abajo' | 'centrar-h' | 'centrar-v' | 'repartir-h';
+
+/**
+ * Alinea o reparte los aparatos seleccionados. Es lo que convierte un montaje «a ojo» en uno
+ * presentable: en un tablero real los aparatos van a escuadra, no cada uno a su altura.
+ */
+function alinearSeleccionados(como: Alineacion): void {
+	const g = proyecto.gabinete;
+	const ids = aparatosSeleccionados();
+	if (!g || ids.length < 2) { avisar('Selecciona dos o más aparatos con Shift para alinearlos.', 'info'); return; }
+	const cols = ids.map((id) => g.colocaciones.find((c) => c.dispositivoId === id)).filter((c): c is NonNullable<typeof c> => !!c);
+	if (cols.length < 2) return;
+	capturar();
+
+	const izq = Math.min(...cols.map((c) => c.x));
+	const der = Math.max(...cols.map((c) => c.x + c.ancho));
+	const arr = Math.min(...cols.map((c) => c.y));
+	const aba = Math.max(...cols.map((c) => c.y + c.alto));
+	for (const c of cols) {
+		if (como === 'izquierda') c.x = izq;
+		else if (como === 'derecha') c.x = der - c.ancho;
+		else if (como === 'arriba') c.y = arr;
+		else if (como === 'abajo') c.y = aba - c.alto;
+		else if (como === 'centrar-h') c.x = Math.round((izq + der) / 2 - c.ancho / 2);
+		else if (como === 'centrar-v') c.y = Math.round((arr + aba) / 2 - c.alto / 2);
+	}
+	if (como === 'repartir-h') {
+		// Reparte con la misma separación entre aparatos, respetando los dos extremos.
+		const orden = [...cols].sort((a, b) => a.x - b.x);
+		const anchoTotal = orden.reduce((s, c) => s + c.ancho, 0);
+		const hueco = (der - izq - anchoTotal) / (orden.length - 1);
+		let x = izq;
+		for (const c of orden) { c.x = Math.round(x); x += c.ancho + hueco; }
+	}
+	// Alinear no puede dejar aparatos encimados: si pasa, se deshace y se avisa.
+	const choque = cols.find((c) => solapaCon(c.x, c.y, c.ancho, c.alto, c.dispositivoId));
+	if (choque) {
+		deshacer();
+		avisar('Así quedarían aparatos encimados: no se ha alineado.', 'error');
+		return;
+	}
+	actualizarTodo();
+	avisar(`${cols.length} aparatos alineados`, 'ok');
+}
+
+/** Marca en la escena los aparatos añadidos a la selección (el principal ya lo marca el resto). */
+function resaltarSeleccionExtra(): void {
+	for (const id of seleccionExtra) {
+		const g = grupoDe(id);
+		if (!g) continue;
+		g.traverse((o) => {
+			if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
+				o.material = o.material.clone();
+				o.material.emissive.setHex(0x1d4ed8);
+				o.material.emissiveIntensity = 0.45;
+				resaltados.push(o.material);
+			}
+		});
+	}
+}
+
 function aplicarSeleccion(nueva: Seleccion | undefined): void {
+	// Cambiar de selección principal deshace la múltiple, salvo que se esté construyendo con Shift.
+	if (!construyendoSeleccion) seleccionExtra = [];
 	limpiarResaltado();
 	modoPin = false;
 	sel = nueva;
@@ -1160,6 +1298,7 @@ function aplicarSeleccion(nueva: Seleccion | undefined): void {
 	else if (sel?.tipo === 'cable') resaltarCable(sel.id);
 	// Al seleccionar un cable, se atenúan los demás para que se vea cuál estás tocando.
 	atenuarCables(sel?.tipo === 'cable' ? sel.id : undefined);
+	resaltarSeleccionExtra();
 	construirHandles();
 	pintarPaneles();
 	pintarSeleccion();
@@ -1918,6 +2057,18 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		if (cota) { editarCota(cota); return; }
 	}
 
+	// Shift+clic sobre un aparato: lo añade o lo quita de la selección múltiple. En un tablero
+	// se mueven y se borran grupos de aparatos constantemente; de uno en uno es inviable.
+	if (modo === 'editor' && ev.shiftKey) {
+		const bajo = elementoBajoElPuntero(ev);
+		if (bajo?.tipo === 'dispositivo') {
+			construyendoSeleccion = true;
+			alternarEnSeleccion(bajo.id);
+			construyendoSeleccion = false;
+			return;
+		}
+	}
+
 	let elem = elementoBajoElPuntero(ev);
 
 	// Modo Trabajo (CLIC IZQUIERDO = agarrar y mover el cable): se puede agarrar CUALQUIER
@@ -2080,6 +2231,8 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	// --- Mover ---
 	if (sel.tipo === 'dispositivo') {
 		const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id)!;
+		const antesX = col.x;
+		const antesY = col.y;
 		// El aparato SIEMPRE se pega al riel más cercano (nunca queda flotando).
 		const snap = snapAriel(p.x - desfase.x, p.y - desfase.y, col.ancho, col.alto);
 		const cx = snap ? snap.cx : p.x - desfase.x;
@@ -2089,8 +2242,15 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		col.y = Math.min(Math.max(cy - col.alto / 2, 0), g.alto - col.alto);
 		const c = escenario.aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
 		grupoDe(sel.id)!.position.set(c.x, c.y, 0);
+		// Si hay más aparatos seleccionados, se mueven TODOS lo mismo: el grupo viaja junto.
+		const dx = col.x - antesX;
+		const dy = col.y - antesY;
+		if ((dx || dy) && seleccionExtra.length) moverAcompanantes(dx, dy);
 		// Aviso en vivo: rojo si se solapa con otro aparato, azul si está libre.
-		const solapa = solapaCon(col.x, col.y, col.ancho, col.alto, sel.id);
+		const solapa = aparatosSeleccionados().some((id) => {
+			const o = g.colocaciones.find((x) => x.dispositivoId === id);
+			return o && solapaCon(o.x, o.y, o.ancho, o.alto, id);
+		});
 		for (const m of resaltados) m.emissive.setHex(solapa ? 0xff3b3b : 0x1d4ed8);
 	} else if (sel.tipo === 'canaleta') {
 		const can = g.canaletas.find((c) => c.id === sel!.id)!;
@@ -2237,9 +2397,19 @@ window.addEventListener('keydown', (ev) => {
 		// En Trabajo, Supr quita el CABLE seleccionado (lo natural al estar cableando).
 		if (modo === 'trabajo' && sel?.tipo === 'cable') { quitarCable(sel.id); return; }
 		if (modo === 'editor' && sel) {
-			if (sel.tipo === 'dispositivo') eliminarDispositivo(sel.id);
+			if (sel.tipo === 'dispositivo') eliminarSeleccionados();
 			else eliminarEstructura(sel);
 		}
+	}
+	if (ctrl && ev.key.toLowerCase() === 'c' && modo === 'editor' && sel?.tipo === 'dispositivo') {
+		ev.preventDefault();
+		copiarSeleccionados();
+		return;
+	}
+	if (ctrl && ev.key.toLowerCase() === 'v' && modo === 'editor') {
+		ev.preventDefault();
+		pegarAparatos();
+		return;
 	}
 	if (ctrl && ev.key.toLowerCase() === 'd') {
 		ev.preventDefault();
@@ -2298,7 +2468,7 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 
 ($('btn-guardar') as HTMLButtonElement).onclick = () => {
 	descargar(
-		`${proyecto.nombre.replaceAll(/[^\wáéíóúñ -]/gi, '')}.tablero.json`,
+		`${nombreArchivo()}.tablero.json`,
 		JSON.stringify(proyecto, null, '\t'),
 		'application/json',
 	);
@@ -2462,6 +2632,304 @@ $('modo-trabajo').onclick = () => { if (!visualizacion) aplicarModo('trabajo'); 
 ($('btn-deshacer') as HTMLButtonElement).onclick = deshacer;
 ($('btn-rehacer') as HTMLButtonElement).onclick = rehacer;
 
+/* ----------------------------- Vista de esquema ----------------------------- */
+
+/**
+ * El esquema eléctrico: el plano de mando y potencia que se entrega al cliente y con el que
+ * trabaja el electricista. Se monta desde el mismo modelo que el 3D —no hay dos verdades— y
+ * se muestra como una capa por encima del lienzo, igual que el modo Visualización.
+ */
+let esquemaAbierto = false;
+let hojasEsquema: HojaEsq[] = [];
+let hojaActual = 0;
+let zoomEsquema = 1;
+
+/** Vuelve a montar el esquema desde el modelo actual y lo pinta. */
+function refrescarEsquema(): void {
+	if (!esquemaAbierto) return;
+	hojasEsquema = montarEsquema(proyecto, potenciales);
+	if (hojasEsquema.length === 0) {
+		$('esquema-hoja').innerHTML = '<div id="esquema-vacio">Todavía no hay nada que dibujar.<br>'
+			+ 'Coloca aparatos y conéctalos, y el esquema se dibuja solo.</div>';
+		$('esq-indicador').textContent = 'Sin hojas';
+		$('esq-titulo').textContent = '';
+		return;
+	}
+	hojaActual = Math.max(0, Math.min(hojaActual, hojasEsquema.length - 1));
+	const hoja = hojasEsquema[hojaActual];
+	$('esquema-hoja').innerHTML = hojaASvg(hoja, {
+		proyecto: proyecto.nombre,
+		totalHojas: hojasEsquema.length,
+		resaltado: sel?.tipo === 'dispositivo' ? sel.id : undefined,
+	});
+	$('esq-indicador').textContent = `Hoja ${hoja.numero} / ${hojasEsquema.length}`;
+	$('esq-titulo').textContent = hoja.titulo;
+	aplicarZoomEsquema();
+
+	// Pinchar un símbolo selecciona ese aparato en todo el programa: el esquema y el 3D son
+	// dos vistas del mismo tablero, no dos programas distintos.
+	for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('[data-dispositivo]')) {
+		g.addEventListener('click', () => {
+			const id = g.getAttribute('data-dispositivo');
+			if (id) { seleccionar(id); refrescarEsquema(); }
+		});
+	}
+}
+
+function aplicarZoomEsquema(): void {
+	const hoja = hojasEsquema[hojaActual];
+	if (!hoja) return;
+	const caja = $('esquema-lienzo').getBoundingClientRect();
+	// «Ajustar» = zoom 1: la hoja entra entera con un margen cómodo.
+	const base = Math.min((caja.width - 40) / hoja.anchoMm, (caja.height - 40) / hoja.altoMm);
+	const escala = base * zoomEsquema;
+	const el = $('esquema-hoja');
+	el.style.width = `${hoja.anchoMm * escala}px`;
+	el.style.height = `${hoja.altoMm * escala}px`;
+}
+
+function abrirEsquema(abrir: boolean): void {
+	esquemaAbierto = abrir;
+	($('panel-esquema') as HTMLElement).hidden = !abrir;
+	$('btn-esquema').classList.toggle('activo', abrir);
+	if (abrir) {
+		if (visualizacion) aplicarVisualizacion(false); // las dos capas no pueden convivir
+		zoomEsquema = 1;
+		refrescarEsquema();
+	}
+}
+
+/* ------------------ Copiar / pegar aparatos y plantillas propias ------------------ */
+
+/** Lo que viaja en el portapapeles interno: aparatos con su huella, sin cables. */
+interface Portapapeles {
+	aparatos: { dispositivo: Dispositivo; ancho: number; alto: number; dx: number; dy: number }[];
+}
+const CLAVE_PORTAPAPELES = 'tablerostudio-portapapeles';
+const CLAVE_PLANTILLAS = 'tablerostudio-plantillas';
+
+/**
+ * Copia los aparatos seleccionados. Se guarda en `localStorage` a propósito: así se pueden
+ * pegar en OTRO proyecto (o tras recargar), que es justo el caso que interesa —reutilizar el
+ * arranque que ya montaste en el tablero anterior—.
+ */
+function copiarSeleccionados(): void {
+	const g = proyecto.gabinete;
+	const ids = aparatosSeleccionados();
+	if (!g || ids.length === 0) { avisar('Selecciona uno o más aparatos para copiarlos.', 'info'); return; }
+	const cols = ids
+		.map((id) => ({ col: g.colocaciones.find((c) => c.dispositivoId === id), d: proyecto.dispositivos.find((x) => x.id === id) }))
+		.filter((x): x is { col: NonNullable<typeof x.col>; d: Dispositivo } => !!x.col && !!x.d && !x.d.imagen);
+	if (cols.length === 0) { avisar('Las imágenes de referencia no se copian.', 'info'); return; }
+	// Las posiciones se guardan RELATIVAS a la esquina del grupo, para pegarlo entero donde quepa.
+	const x0 = Math.min(...cols.map((c) => c.col.x));
+	const y0 = Math.min(...cols.map((c) => c.col.y));
+	const datos: Portapapeles = {
+		aparatos: cols.map(({ col, d }) => ({
+			dispositivo: structuredClone(d), ancho: col.ancho, alto: col.alto, dx: col.x - x0, dy: col.y - y0,
+		})),
+	};
+	try {
+		localStorage.setItem(CLAVE_PORTAPAPELES, JSON.stringify(datos));
+		avisar(`${cols.length} aparato${cols.length > 1 ? 's' : ''} copiado${cols.length > 1 ? 's' : ''}`, 'ok');
+	} catch {
+		avisar('No se pudo copiar (el navegador no deja guardar datos).', 'error');
+	}
+}
+
+/** Pega lo copiado en el primer hueco libre, renumerando para no repetir designaciones. */
+function pegarAparatos(): void {
+	const g = proyecto.gabinete;
+	if (!g) return;
+	let datos: Portapapeles | undefined;
+	try {
+		const bruto = localStorage.getItem(CLAVE_PORTAPAPELES);
+		if (bruto) datos = JSON.parse(bruto) as Portapapeles;
+	} catch { /* portapapeles ilegible */ }
+	if (!datos?.aparatos?.length) { avisar('No hay nada copiado todavía (Ctrl+C sobre un aparato).', 'info'); return; }
+
+	const primero = datos.aparatos[0];
+	const hueco = buscarHueco(primero.ancho, primero.alto);
+	if (!hueco) { avisar('Añade un riel antes de pegar.', 'error'); return; }
+	capturar();
+
+	const nuevos: string[] = [];
+	for (const a of datos.aparatos) {
+		const copia = renumerar(structuredClone(a.dispositivo));
+		proyecto.dispositivos.push(copia);
+		const x = Math.min(Math.max(hueco.x + a.dx, 0), Math.max(0, g.ancho - a.ancho));
+		const y = Math.min(Math.max(hueco.y + a.dy, 0), Math.max(0, g.alto - a.alto));
+		const col = { dispositivoId: copia.id, x, y, ancho: a.ancho, alto: a.alto, rielId: hueco.rielId };
+		// Si cae encima de algo, se busca el hueco libre más cercano en su fila.
+		if (solapaCon(col.x, col.y, col.ancho, col.alto, copia.id)) {
+			col.x = xLibreCercano(col.x, col.y, col.ancho, col.alto, copia.id) ?? col.x;
+		}
+		g.colocaciones.push(col);
+		extenderRielPara(col);
+		nuevos.push(copia.id);
+	}
+	seleccionExtra = nuevos.slice(1);
+	aplicarSeleccion(nuevos[0] ? { tipo: 'dispositivo', id: nuevos[0] } : undefined);
+	actualizarTodo();
+	avisar(`${nuevos.length} aparato${nuevos.length > 1 ? 's' : ''} pegado${nuevos.length > 1 ? 's' : ''}`, 'ok');
+}
+
+/** Da id nuevo y la siguiente designación libre de su clase a un aparato copiado. */
+function renumerar(d: Dispositivo): Dispositivo {
+	const clase = d.clase ?? CLASE_POR_TIPO[d.tipo];
+	let maximo = 0;
+	for (const x of proyecto.dispositivos) {
+		if ((x.clase ?? CLASE_POR_TIPO[x.tipo]) === clase && x.numero) maximo = Math.max(maximo, x.numero);
+	}
+	const numero = maximo + 1;
+	return {
+		...d,
+		id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`,
+		numero,
+		designacion: (d.designacion ?? '').replace(/\d+$/, '') + numero,
+	};
+}
+
+/* ---------------------------- Plantillas de tablero ---------------------------- */
+
+interface PlantillaTablero { nombre: string; fecha: string; proyecto: Proyecto }
+
+function plantillasGuardadas(): PlantillaTablero[] {
+	try {
+		return JSON.parse(localStorage.getItem(CLAVE_PLANTILLAS) ?? '[]') as PlantillaTablero[];
+	} catch { return []; }
+}
+
+/**
+ * Guarda el tablero entero como plantilla reutilizable. En una empresa el 80 % de los tableros
+ * se parecen entre sí: partir de «mi arranque estrella-triángulo» ahorra media jornada.
+ */
+async function guardarComoPlantilla(): Promise<void> {
+	const nombre = (await pedirTexto('¿Cómo se llama esta plantilla?', proyecto.nombre))?.trim();
+	if (!nombre) return;
+	const lista = plantillasGuardadas().filter((p) => p.nombre !== nombre);
+	lista.push({ nombre, fecha: new Date().toISOString(), proyecto: structuredClone(proyecto) });
+	try {
+		localStorage.setItem(CLAVE_PLANTILLAS, JSON.stringify(lista));
+		avisar(`Plantilla «${nombre}» guardada`, 'ok');
+	} catch {
+		avisar('No se pudo guardar la plantilla (falta espacio en el navegador).', 'error');
+	}
+}
+
+/** Lista las plantillas propias dentro de la biblioteca de ejemplos. */
+function pintarPlantillasPropias(): string {
+	const lista = plantillasGuardadas();
+	if (lista.length === 0) return '';
+	return `<h3 class="titulo-biblioteca">Tus plantillas</h3><div class="rejilla-ejemplos">`
+		+ lista.map((p, i) => `
+			<article class="tarjeta-ejemplo">
+				<h4>${p.nombre}</h4>
+				<p>Guardada el ${new Date(p.fecha).toLocaleDateString('es-CL')} · `
+				+ `${p.proyecto.dispositivos.length} aparatos, ${p.proyecto.conductores.length} cables</p>
+				<div class="acciones-ejemplo">
+					<button class="boton primario" data-plantilla="${i}">Abrir</button>
+					<button class="boton peligro" data-borrar-plantilla="${i}" title="Eliminar esta plantilla">🗑️</button>
+				</div>
+			</article>`).join('')
+		+ `</div>`;
+}
+
+/* ------------------------ Entregables: rótulos y DXF ------------------------ */
+
+($('btn-plantilla') as HTMLButtonElement).onclick = () => { void guardarComoPlantilla(); };
+
+($('btn-etiquetas') as HTMLButtonElement).onclick = () => {
+	try {
+		exportarEtiquetasPDF(proyecto, potenciales, `${nombreArchivo()}-rotulos.pdf`);
+		avisar('Rótulos exportados — imprímelos al 100 %, sin ajustar a la página', 'ok');
+	} catch (e) {
+		avisar(`No se pudieron generar los rótulos: ${(e as Error).message}`, 'error');
+	}
+};
+
+($('btn-dxf-placa') as HTMLButtonElement).onclick = () => {
+	try {
+		descargar(`${nombreArchivo()}-placa.dxf`, dxfDePlaca(proyecto), 'image/vnd.dxf');
+		avisar('Placa de montaje exportada a DXF', 'ok');
+	} catch (e) {
+		avisar(`No se pudo exportar el DXF: ${(e as Error).message}`, 'error');
+	}
+};
+
+($('btn-dxf-esquema') as HTMLButtonElement).onclick = () => {
+	// Si el esquema no está abierto se monta al vuelo: el usuario no tiene por qué abrirlo antes.
+	const hojas = hojasEsquema.length ? hojasEsquema : montarEsquema(proyecto, potenciales);
+	const hoja = hojas[Math.min(hojaActual, hojas.length - 1)];
+	if (!hoja) { avisar('Todavía no hay esquema que exportar.', 'info'); return; }
+	descargar(`${nombreArchivo()}-esquema-${hoja.numero}.dxf`, dxfDeEsquema(hoja), 'image/vnd.dxf');
+	avisar(`Hoja ${hoja.numero} del esquema exportada a DXF`, 'ok');
+};
+
+// Menú «Aprender»: un solo botón en la barra en vez de tres sueltos.
+{
+	const menu = $('menu-aprender');
+	($('btn-aprender') as HTMLButtonElement).onclick = (ev) => {
+		ev.stopPropagation();
+		menu.classList.toggle('abierto');
+	};
+	// Un clic fuera, o elegir una opción, lo cierra: nunca se queda tapando el tablero.
+	document.addEventListener('click', () => menu.classList.remove('abierto'));
+	for (const b of menu.querySelectorAll('.lista button')) {
+		b.addEventListener('click', () => menu.classList.remove('abierto'));
+	}
+}
+
+// Menú «Entregar»: dossier, rótulos y DXF juntos, que es lo que se manda al cliente.
+{
+	const menu = $('menu-exportar');
+	($('btn-exportar') as HTMLButtonElement).onclick = (ev) => {
+		ev.stopPropagation();
+		menu.classList.toggle('abierto');
+	};
+	document.addEventListener('click', () => menu.classList.remove('abierto'));
+	for (const b of menu.querySelectorAll('.lista button')) {
+		b.addEventListener('click', () => menu.classList.remove('abierto'));
+	}
+}
+
+($('btn-esquema') as HTMLButtonElement).onclick = () => abrirEsquema(!esquemaAbierto);
+($('esq-cerrar') as HTMLButtonElement).onclick = () => abrirEsquema(false);
+($('esq-anterior') as HTMLButtonElement).onclick = () => { hojaActual--; refrescarEsquema(); };
+($('esq-siguiente') as HTMLButtonElement).onclick = () => { hojaActual++; refrescarEsquema(); };
+($('esq-acercar') as HTMLButtonElement).onclick = () => { zoomEsquema = Math.min(6, zoomEsquema * 1.3); aplicarZoomEsquema(); };
+($('esq-alejar') as HTMLButtonElement).onclick = () => { zoomEsquema = Math.max(0.4, zoomEsquema / 1.3); aplicarZoomEsquema(); };
+($('esq-ajustar') as HTMLButtonElement).onclick = () => { zoomEsquema = 1; aplicarZoomEsquema(); };
+
+($('esq-pdf') as HTMLButtonElement).onclick = async () => {
+	if (hojasEsquema.length === 0) { avisar('No hay esquema que exportar todavía.', 'info'); return; }
+	const btn = $('esq-pdf') as HTMLButtonElement;
+	btn.disabled = true;
+	const antes = btn.textContent;
+	btn.textContent = 'Generando…';
+	try {
+		await exportarEsquemaPDF(hojasEsquema, proyecto.nombre, `${nombreArchivo()}-esquema.pdf`);
+		avisar(`Esquema exportado (${hojasEsquema.length} hoja${hojasEsquema.length > 1 ? 's' : ''})`, 'ok');
+	} catch (e) {
+		avisar(`No se pudo exportar el esquema: ${(e as Error).message}`, 'error');
+	} finally {
+		btn.disabled = false;
+		btn.textContent = antes;
+	}
+};
+
+($('esq-svg') as HTMLButtonElement).onclick = () => {
+	const hoja = hojasEsquema[hojaActual];
+	if (!hoja) { avisar('No hay ninguna hoja que descargar.', 'info'); return; }
+	// Se descarga en tinta negra sobre papel blanco: es lo que se imprime y se archiva.
+	descargar(
+		`${nombreArchivo()}-esquema-${hoja.numero}.svg`,
+		hojaASvg(hoja, { proyecto: proyecto.nombre, totalHojas: hojasEsquema.length }),
+		'image/svg+xml',
+	);
+	avisar(`Hoja ${hoja.numero} descargada en SVG`, 'ok');
+};
+
 /* ------------------------------- Vista ------------------------------- */
 
 ($('ver-cotas') as HTMLInputElement).onchange = (e) => {
@@ -2504,13 +2972,13 @@ $('modal-ayuda').addEventListener('click', (e) => {
 // Botones del diálogo in-app.
 ($('dialogo-ok') as HTMLButtonElement).onclick = () => {
 	const input = $('dialogo-input') as HTMLInputElement;
-	cerrarDialogo?.(input.hidden ? 'ok' : input.value);
+	responderDialogo(input.hidden ? 'ok' : input.value);
 };
-($('dialogo-cancelar') as HTMLButtonElement).onclick = () => cerrarDialogo?.(null);
+($('dialogo-cancelar') as HTMLButtonElement).onclick = () => responderDialogo(null);
 $('modal-dialogo').addEventListener('keydown', (e) => {
 	const ev = e as KeyboardEvent;
 	if (ev.key === 'Enter') { e.preventDefault(); ($('dialogo-ok') as HTMLButtonElement).click(); }
-	if (ev.key === 'Escape') { e.preventDefault(); cerrarDialogo?.(null); }
+	if (ev.key === 'Escape') { e.preventDefault(); responderDialogo(null); }
 });
 
 /* ------------------- Biblioteca de tableros de ejemplo (para estudiar) ------------------- */
@@ -2563,7 +3031,42 @@ function abrirBibliotecaEjemplos(): void {
 		div.appendChild(b);
 		cont.appendChild(div);
 	}
+	// Tras los ejemplos, las plantillas que ha guardado el propio usuario.
+	cont.insertAdjacentHTML('beforeend', pintarPlantillasPropias());
+	for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-plantilla]')) {
+		b.onclick = () => abrirPlantilla(Number(b.dataset.plantilla));
+	}
+	for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-borrar-plantilla]')) {
+		b.onclick = () => { void borrarPlantilla(Number(b.dataset.borrarPlantilla)); };
+	}
 	($('modal-ejemplos') as HTMLElement).hidden = false;
+}
+
+/** Abre una plantilla guardada como si fuera un proyecto nuevo. */
+function abrirPlantilla(indice: number): void {
+	const p = plantillasGuardadas()[indice];
+	if (!p) return;
+	capturar();
+	proyecto = structuredClone(p.proyecto);
+	proyecto.nombre = p.nombre;
+	ejemploAbierto = undefined;
+	($('btn-explicacion') as HTMLElement).hidden = true;
+	($('modal-ejemplos') as HTMLElement).hidden = true;
+	seleccionExtra = [];
+	aplicarSeleccion(undefined);
+	trasCambiarProyecto();
+	avisar(`Plantilla «${p.nombre}» abierta`, 'ok');
+}
+
+async function borrarPlantilla(indice: number): Promise<void> {
+	const lista = plantillasGuardadas();
+	const p = lista[indice];
+	if (!p) return;
+	if (!(await confirmar(`¿Eliminar la plantilla «${p.nombre}»?`, { ok: 'Eliminar', peligro: true }))) return;
+	lista.splice(indice, 1);
+	try { localStorage.setItem(CLAVE_PLANTILLAS, JSON.stringify(lista)); } catch { /* sin storage */ }
+	abrirBibliotecaEjemplos();
+	avisar('Plantilla eliminada', 'ok');
 }
 
 ($('btn-empezar-ejemplo') as HTMLButtonElement).onclick = () => abrirBibliotecaEjemplos();
@@ -2694,6 +3197,12 @@ if (new URLSearchParams(location.search).has('qa')) {
 		seleccion: () => (sel ? { tipo: sel.tipo, id: sel.id } : undefined),
 		/** Selecciona un aparato por id, como si se hubiera pinchado en él. */
 		seleccionarPorId: (id: string) => seleccionar(id),
+		/** Añade un aparato a la selección múltiple, como haría un Shift+clic. */
+		anadirASeleccion: (id: string) => { construyendoSeleccion = true; alternarEnSeleccion(id); construyendoSeleccion = false; },
+		/** Hallazgos del DRC en vivo (para comprobar las reglas eléctricas). */
+		hallazgos: () => hallazgos,
+		/** Fuerza un recálculo completo (tras tocar el proyecto desde la prueba). */
+		recalcular: () => actualizarTodo(),
 		/** Estado de la interacción (para diagnosticar un clic que se fue por otro camino). */
 		estadoInteraccion: () => ({
 			modo,

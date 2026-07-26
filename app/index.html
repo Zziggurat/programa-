@@ -27,8 +27,10 @@
 	/* ---- Barra superior ---- */
 	#barra {
 		position: fixed; top: 0; left: 0; right: 0; height: 46px; z-index: 20;
-		display: flex; align-items: center; gap: 10px; padding: 0 12px;
+		display: flex; align-items: center; gap: 8px; padding: 0 12px;
 		background: var(--panel); border-bottom: 1px solid var(--borde);
+		/* En pantallas estrechas la barra se aprieta en vez de desbordarse por encima del lienzo. */
+		overflow-x: auto; overflow-y: visible; scrollbar-width: thin;
 	}
 	#barra .marca { font-weight: 700; font-size: 14px; letter-spacing: .01em; }
 	#barra .marca span { color: var(--acento); }
@@ -46,7 +48,26 @@
 	.boton.primario { background: #2b4a6f; border-color: #3f6796; }
 	.boton.primario:hover { background: #33587f; }
 	.boton.peligro:hover { background: #5c2b2b; border-color: #8a4444; }
-	#chip-drc { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 12px; border: 1px solid var(--borde); background: var(--panel-2); }
+	/* Panel de grupo (varios aparatos seleccionados con Shift). */
+	.rejilla-ejemplos { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+	.tarjeta-ejemplo h4 { margin: 0 0 6px; font-size: 15px; }
+	.titulo-biblioteca { margin: 18px 0 8px; font-size: 14px; color: var(--texto-suave); }
+	.acciones-ejemplo { display: flex; gap: 6px; align-items: center; }
+	.rejilla-botones { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+	.rejilla-botones .boton { padding: 7px 4px; font-size: 12px; }
+	#panel-der .ancho-total { width: 100%; box-sizing: border-box; }
+	#chip-drc { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 12px; border: 1px solid var(--borde); background: var(--panel-2); white-space: nowrap; flex: none; }
+	/* Menú «Aprender»: agrupa guía, ejemplos y explicación para no llenar la barra de botones. */
+	.menu { position: relative; }
+	.menu > .lista { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; min-width: 230px;
+		background: var(--panel); border: 1px solid var(--borde); border-radius: 10px; padding: 5px;
+		box-shadow: 0 14px 40px #000a; display: none; }
+	.menu.abierto > .lista { display: block; }
+	.menu .lista button { display: block; width: 100%; text-align: left; background: none; border: none;
+		color: var(--texto); padding: 8px 10px; border-radius: 7px; font-size: 13px; }
+	.menu .lista button:hover { background: var(--panel-2); }
+	.menu .lista small { display: block; color: var(--texto-suave); font-size: 11.5px; margin-top: 1px; }
+	#barra > * { flex: none; }
 	#chip-drc .punto { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
 	#chip-drc.con-errores .punto { background: var(--error); }
 	#chip-drc.con-avisos .punto { background: var(--aviso); }
@@ -232,6 +253,17 @@
 	body.modo-trabajo #seccion-estructura { display: none; }
 	/* La lista de cables solo tiene sentido en modo Trabajo (conexiones). */
 	body:not(.modo-trabajo) #seccion-cables { display: none; }
+	/* Vista de esquema: se superpone al lienzo 3D, como el modo Visualización. */
+	#panel-esquema { position: fixed; inset: 48px 0 0 0; z-index: 30; background: #11151a; display: flex; flex-direction: column; }
+	#esquema-barra { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--panel); border-bottom: 1px solid var(--borde); flex: none; }
+	#esquema-barra .sep { width: 1px; height: 20px; background: var(--borde); margin: 0 4px; }
+	#esq-indicador { font-size: 12.5px; min-width: 86px; text-align: center; color: var(--texto-suave); }
+	#esq-titulo { font-size: 13px; font-weight: 600; margin-left: 6px; }
+	#esquema-lienzo { flex: 1; overflow: auto; padding: 18px; display: flex; align-items: flex-start; justify-content: center; }
+	#esquema-hoja { box-shadow: 0 10px 40px #0009; border-radius: 3px; overflow: hidden; line-height: 0; }
+	#esquema-hoja .simbolo { cursor: pointer; }
+	#esquema-hoja .simbolo:hover { opacity: .65; }
+	#esquema-vacio { color: var(--texto-suave); font-size: 14px; text-align: center; padding: 60px 20px; line-height: 1.7; }
 	#lista-cables li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; cursor: pointer; }
 	#lista-cables li:hover { background: var(--panel-2); }
 	#lista-cables li.seleccionado { background: #29405c; }
@@ -254,22 +286,55 @@
 	<button class="boton" id="btn-rehacer" title="Rehacer (Ctrl+Y)">↷</button>
 	<button class="boton" id="btn-centrar" title="Centrar la vista (si te pierdes girando la cámara)">🏠 Centrar</button>
 	<button class="boton" id="btn-ver" title="Modo Visualización: ver el tablero como quedaría de verdad, con la puerta abierta y sin transparencias (no se puede editar)">👁️ Ver</button>
+	<button class="boton" id="btn-esquema" title="Esquema eléctrico (mando y potencia): el plano que se entrega al cliente y usa el electricista">📐 Esquema</button>
 	<div class="sep"></div>
 	<div id="chip-drc" title="Verificación eléctrica en vivo"><span class="punto"></span><span id="chip-drc-texto">DRC</span></div>
-	<button class="boton" id="btn-ayuda" title="Guía rápida de uso">❓ Ayuda</button>
-	<button class="boton" id="btn-ejemplos" title="Tableros de ejemplo explicados, para estudiar cómo funcionan">📚 Ejemplos</button>
-	<button class="boton" id="btn-explicacion" title="Volver a leer cómo funciona este tablero" hidden>📖 Cómo funciona</button>
+	<div class="menu" id="menu-aprender">
+		<button class="boton" id="btn-aprender" title="Guía, ejemplos y explicación del tablero abierto">❓ Aprender ▾</button>
+		<div class="lista">
+			<button id="btn-ayuda">❓ Guía rápida<small>Cómo se usa el programa, paso a paso</small></button>
+			<button id="btn-ejemplos">📚 Tableros de ejemplo<small>Montajes reales explicados para estudiar</small></button>
+			<button id="btn-explicacion" hidden>📖 Cómo funciona este tablero<small>Qué hace el tablero que tienes abierto</small></button>
+		</div>
+	</div>
 	<button class="boton" id="btn-imagen" title="Añadir una imagen (foto de gabinete, controlador, motor…) como referencia visual para cablear sobre ella">🖼️ Imagen</button>
 	<input type="file" id="archivo-imagen" accept="image/*" hidden>
 	<button class="boton" id="btn-nuevo" title="Vaciar la placa y empezar de cero">Nuevo</button>
 	<button class="boton" id="btn-abrir" title="Abrir un proyecto .tablero.json">Abrir…</button>
 	<input type="file" id="archivo-abrir" accept=".json" hidden>
 	<button class="boton" id="btn-guardar" title="Descargar el proyecto como archivo">Guardar</button>
-	<button class="boton" id="btn-dossier" title="Descargar el dossier técnico en HTML (BOM, cables, borneros, DRC)">Dossier HTML</button>
+	<div class="menu" id="menu-exportar">
+		<button class="boton" id="btn-exportar" title="Entregables: dossier, rótulos y DXF">📤 Entregar ▾</button>
+		<div class="lista">
+			<button id="btn-dossier">📋 Dossier HTML<small>Materiales, cables, borneros y verificación</small></button>
+			<button id="btn-plantilla">💾 Guardar como plantilla<small>Reutilizar este tablero en el próximo trabajo</small></button>
+			<button id="btn-etiquetas">🏷️ Rótulos de bornes (PDF)<small>Tiras a tamaño real para la impresora</small></button>
+			<button id="btn-dxf-placa">📐 Placa de montaje (DXF)<small>Para AutoCAD, LibreCAD, QCAD…</small></button>
+			<button id="btn-dxf-esquema">📐 Esquema (DXF)<small>La hoja de esquema abierta, en CAD</small></button>
+		</div>
+	</div>
 	<button class="boton primario" id="btn-pdf" title="Exportar a PDF con la lista de materiales y toda la documentación">📄 Exportar PDF</button>
 </header>
 
 <div id="escena"></div>
+
+<section id="panel-esquema" hidden>
+	<div id="esquema-barra">
+		<button class="boton" id="esq-anterior" title="Hoja anterior">‹</button>
+		<span id="esq-indicador">Hoja 1 / 1</span>
+		<button class="boton" id="esq-siguiente" title="Hoja siguiente">›</button>
+		<span id="esq-titulo"></span>
+		<div class="sep"></div>
+		<button class="boton" id="esq-alejar" title="Alejar">−</button>
+		<button class="boton" id="esq-ajustar" title="Ajustar la hoja a la ventana">Ajustar</button>
+		<button class="boton" id="esq-acercar" title="Acercar">+</button>
+		<div class="sep"></div>
+		<button class="boton" id="esq-svg" title="Descargar la hoja en SVG (vectorial, para editarla o imprimirla en A3)">Descargar SVG</button>
+		<button class="boton primario" id="esq-pdf" title="Exportar TODAS las hojas del esquema a PDF">📄 Esquema a PDF</button>
+		<button class="boton" id="esq-cerrar" title="Volver al tablero 3D">✕ Cerrar</button>
+	</div>
+	<div id="esquema-lienzo"><div id="esquema-hoja"></div></div>
+</section>
 
 <aside id="panel-izq" class="panel">
 	<details open id="seccion-catalogo">

@@ -10,6 +10,7 @@
  */
 import { Canaleta, Colocacion, Proyecto } from '../modelo/tipos.js';
 import { opcionesDe } from '../modelo/proyecto.js';
+import { areaConductorAisladoMm2 } from './electrico.js';
 
 export interface Punto { x: number; y: number }
 
@@ -208,6 +209,7 @@ export function rutearConductores(proyecto: Proyecto): ResultadoRuteo {
 	const { nodos, aristas, nodo } = construirGrafo(gabinete.canaletas, puntosExtra);
 
 	const seccionEnCanaleta = new Map<string, number>();
+	const areaEnCanaleta = new Map<string, number>(); // área real ocupada (cobre + aislación)
 
 	const esCampo = new Map(proyecto.dispositivos.map((d) => [d.id, d.campo ?? false]));
 	let conductoresDeCampo = 0;
@@ -244,6 +246,7 @@ export function rutearConductores(proyecto: Proyecto): ResultadoRuteo {
 		const seccion = conductor.seccion ?? 1.5;
 		for (const canId of resultado.canaletas) {
 			seccionEnCanaleta.set(canId, (seccionEnCanaleta.get(canId) ?? 0) + seccion);
+			areaEnCanaleta.set(canId, (areaEnCanaleta.get(canId) ?? 0) + areaConductorAisladoMm2(seccion));
 		}
 	}
 
@@ -251,11 +254,11 @@ export function rutearConductores(proyecto: Proyecto): ResultadoRuteo {
 		avisos.push(`${conductoresDeCampo} conductores van a aparatos de campo y no se rutean por canaleta`);
 	}
 
-	// Ocupación de canaletas: los cables reales ocupan más que su sección de cobre
-	// (aislamiento + aire); factor práctico ×3 sobre la sección nominal.
+	// Ocupación de canaletas con la geometría REAL del conductor aislado (cobre + aislación),
+	// no un factor a ojo: es lo que decide si la tapa cierra y si los cables se calientan.
 	const ocupaciones: OcupacionCanaleta[] = gabinete.canaletas.map((can) => {
 		const util = can.ancho * can.alto;
-		const ocupada = (seccionEnCanaleta.get(can.id) ?? 0) * 3;
+		const ocupada = areaEnCanaleta.get(can.id) ?? 0;
 		const ocupacion = ocupada / (util * opciones.ocupacionMaxCanaleta);
 		const excedida = ocupacion > 1;
 		if (excedida) {

@@ -89,6 +89,14 @@ export interface Dispositivo {
 	referencia?: string;
 	/** Tensión nominal de trabajo en voltios (para el DRC). */
 	tensionNominal?: number;
+	/**
+	 * Corriente nominal en amperios. En una protección (automático, fusible, guardamotor) es su
+	 * calibre In: con él se comprueba que el conductor aguas abajo esté de verdad protegido.
+	 * En un consumo (motor, resistencia) es la corriente de empleo Ib.
+	 */
+	corrienteNominal?: number;
+	/** Nº de polos de la protección o del consumo (1, 2, 3 o 4). Trifásico = 3 o más. */
+	polos?: number;
 	/** True si el aparato está fuera del gabinete (campo): motores, sensores, etc. */
 	campo?: boolean;
 	/**

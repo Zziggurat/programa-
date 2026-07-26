@@ -105,3 +105,127 @@ test('un circuito sano no produce errores', () => {
 	// q1:2 queda libre pero no es obligatorio → sin errores (solo avisos).
 	assert.deepEqual(errores, []);
 });
+
+/* ==================== Reglas ELÉCTRICAS (la física del tablero) ==================== */
+
+/** Un circuito mínimo: protección de `In` A alimentando un motor por un cable de `seccion` mm². */
+function circuito(In: number, seccion: number, opciones: { tension?: number; polos?: number } = {}): Proyecto {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{
+			id: 'q1', tipo: 'disyuntor', designacion: '-Q1', corrienteNominal: In,
+			polos: opciones.polos ?? 1, tensionNominal: opciones.tension ?? 220,
+			bornes: [{ id: '1', tipo: 'L' }, { id: '2', tipo: 'L' }],
+		},
+		{
+			id: 'm1', tipo: 'motor', designacion: '-M1', corrienteNominal: In,
+			tensionNominal: opciones.tension ?? 220, polos: opciones.polos ?? 1,
+			bornes: [{ id: 'U', tipo: 'L' }],
+		},
+	];
+	p.conductores = [{ id: 'c1', de: { dispositivoId: 'q1', borneId: '2' }, a: { dispositivoId: 'm1', borneId: 'U' }, seccion }];
+	return p;
+}
+
+test('R9: un automático de 25 A sobre cable de 2,5 mm² es un ERROR (el cable arde sin que salte)', () => {
+	const hs = verificar(circuito(25, 2.5));
+	const r9 = hs.find((h) => h.regla === 'R9-proteccion-sobredimensionada');
+	assert.ok(r9, 'debe detectarse la descoordinación');
+	assert.equal(r9.severidad, 'error');
+	assert.match(r9.mensaje, /25 A/);
+	assert.match(r9.mensaje, /2\.5 mm²/);
+	assert.match(r9.mensaje, /4 mm²/, 'debe decir a qué sección subir');
+});
+
+test('R9: la misma protección sobre 4 mm² está bien coordinada', () => {
+	assert.ok(!reglas(verificar(circuito(25, 4))).includes('R9-proteccion-sobredimensionada'));
+});
+
+test('R9: el límite justo (16 A sobre 2,5 mm², que admite 19,5 A) se acepta', () => {
+	assert.ok(!reglas(verificar(circuito(16, 2.5))).includes('R9-proteccion-sobredimensionada'));
+});
+
+test('R9: sin calibre declarado no inventa un hallazgo', () => {
+	const p = circuito(25, 1.5);
+	delete p.dispositivos[0].corrienteNominal;
+	delete p.dispositivos[1].corrienteNominal;
+	assert.ok(!reglas(verificar(p)).includes('R9-proteccion-sobredimensionada'));
+});
+
+test('R10: sin longitudes reales NO se calcula la caída de tensión (no se inventa)', () => {
+	const p = circuito(16, 1.5);
+	assert.ok(!reglas(verificar(p)).includes('R10-caida-tension'));
+});
+
+test('R10: un cable largo y fino avisa de caída de tensión excesiva', () => {
+	const p = circuito(16, 1.5);
+	// 60 m con 16 A por 1,5 mm² a 220 V → ~13 %, muy por encima del 5 %.
+	const hs = verificarProyecto(p, calcularPotenciales(p), { longitudesMm: new Map([['c1', 60000]]) });
+	const r10 = hs.find((h) => h.regla === 'R10-caida-tension');
+	assert.ok(r10, 'debe avisar');
+	assert.equal(r10.severidad, 'aviso');
+	assert.match(r10.mensaje, /%/);
+});
+
+test('R10: el mismo circuito corto (1 m, como dentro de un tablero) no avisa', () => {
+	const p = circuito(16, 1.5);
+	const hs = verificarProyecto(p, calcularPotenciales(p), { longitudesMm: new Map([['c1', 1000]]) });
+	assert.ok(!hs.some((h) => h.regla === 'R10-caida-tension'));
+});
+
+test('R10: en 24 V el listón es más estricto que en 220 V', () => {
+	const p = circuito(2, 1, { tension: 24 });
+	const hs = verificarProyecto(p, calcularPotenciales(p), { longitudesMm: new Map([['c1', 20000]]) });
+	assert.ok(hs.some((h) => h.regla === 'R10-caida-tension'), 'en 24 V, 20 m con 2 A ya se nota');
+});
+
+test('R11: un borne de tierra sin conectar es ERROR aunque no esté marcado obligatorio', () => {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{ id: 'm1', tipo: 'motor', designacion: '-M1', bornes: [{ id: 'U', tipo: 'L' }, { id: 'PE', tipo: 'PE' }] },
+		{ id: 'x1', tipo: 'bornero', designacion: '-X1', bornes: [{ id: '1', tipo: 'L' }] },
+	];
+	p.conductores = [{ id: 'c1', de: { dispositivoId: 'm1', borneId: 'U' }, a: { dispositivoId: 'x1', borneId: '1' } }];
+	const r11 = verificar(p).find((h) => h.regla === 'R11-sin-tierra');
+	assert.ok(r11);
+	assert.equal(r11.severidad, 'error');
+	assert.equal(r11.dispositivoId, 'm1');
+});
+
+test('R11: con la tierra conectada no protesta', () => {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{ id: 'm1', tipo: 'motor', bornes: [{ id: 'PE', tipo: 'PE' }] },
+		{ id: 'x1', tipo: 'bornero', bornes: [{ id: 'PE', tipo: 'PE' }] },
+	];
+	p.conductores = [{ id: 'c1', de: { dispositivoId: 'm1', borneId: 'PE' }, a: { dispositivoId: 'x1', borneId: 'PE' }, seccion: 2.5 }];
+	assert.ok(!reglas(verificar(p)).includes('R11-sin-tierra'));
+});
+
+test('R12: avisa de la canaleta que se pasa de llenado, y solo de esa', () => {
+	const p = crearProyecto('t');
+	const hs = verificarProyecto(p, calcularPotenciales(p), {
+		canaletas: [
+			{ canaletaId: 'can1', ocupacion: 1.3, excedida: true },
+			{ canaletaId: 'can2', ocupacion: 0.4, excedida: false },
+		],
+	});
+	const r12 = hs.filter((h) => h.regla === 'R12-canaleta-llena');
+	assert.equal(r12.length, 1, 'la canaleta holgada no genera aviso');
+	assert.match(r12[0].mensaje, /can1/);
+	assert.match(r12[0].mensaje, /130 %/);
+});
+
+test('R12: sin datos de canaletas no se inventa ningún aviso', () => {
+	const p = crearProyecto('t');
+	assert.ok(!verificarProyecto(p, calcularPotenciales(p)).some((h) => h.regla === 'R12-canaleta-llena'));
+});
+
+test('un tablero correcto no dispara ninguna regla eléctrica', () => {
+	const p = circuito(16, 2.5);
+	p.dispositivos.forEach((d) => { d.bornes.push({ id: 'PE', tipo: 'PE' }); });
+	p.conductores.push({ id: 'cpe', de: { dispositivoId: 'q1', borneId: 'PE' }, a: { dispositivoId: 'm1', borneId: 'PE' }, seccion: 2.5 });
+	const hs = verificarProyecto(p, calcularPotenciales(p), { longitudesMm: new Map([['c1', 1500], ['cpe', 1500]]) });
+	const electricas = hs.filter((h) => /^R(9|10|11|12)-/.test(h.regla));
+	assert.deepEqual(electricas.map((h) => h.regla + ': ' + h.mensaje), []);
+});
