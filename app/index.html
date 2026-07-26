@@ -167,6 +167,40 @@
 	#modal-ayuda .guia li { margin-bottom: 4px; }
 	#modal-ayuda .pie { color: var(--texto-suave); font-size: 12.5px; margin-top: 14px; border-top: 1px solid var(--borde); padding-top: 12px; }
 
+	/* Modo Visualización: se ve el tablero como quedaría montado, sin nada que estorbe */
+	body.modo-visualizacion #panel-izq,
+	body.modo-visualizacion #panel-der,
+	body.modo-visualizacion #modos,
+	body.modo-visualizacion #chip-drc,
+	body.modo-visualizacion #bienvenida,
+	body.modo-visualizacion #tip-borne,
+	body.modo-visualizacion #btn-imagen,
+	body.modo-visualizacion #btn-nuevo,
+	body.modo-visualizacion #btn-abrir,
+	body.modo-visualizacion #btn-deshacer,
+	body.modo-visualizacion #btn-rehacer { display: none !important; }
+	body.modo-visualizacion #escena { inset: 46px 0 0 0; }
+	#btn-ver.activo { background: #1d4ed8; border-color: #2f6bff; color: #fff; }
+
+	/* Biblioteca de ejemplos y su explicación (reutilizan el aspecto del modal de ayuda) */
+	#modal-ejemplos, #modal-explicacion { position: fixed; inset: 0; z-index: 42; background: #0009;
+		display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-ejemplos .caja-modal, #modal-explicacion .caja-modal { position: relative; background: var(--panel);
+		border: 1px solid var(--borde); border-radius: 16px; padding: 26px 30px; max-width: 660px;
+		max-height: 88vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
+	#modal-ejemplos h2, #modal-explicacion h2 { margin: 0 0 14px; font-size: 20px; }
+	#modal-ejemplos .cerrar, #modal-explicacion .cerrar { position: absolute; top: 14px; right: 14px;
+		background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px;
+		height: 30px; border-radius: 8px; cursor: pointer; }
+	.tarjeta-ejemplo { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 12px;
+		padding: 14px 16px; margin-bottom: 10px; }
+	.tarjeta-ejemplo h3 { margin: 0 0 4px; font-size: 15px; }
+	.tarjeta-ejemplo p { margin: 0 0 10px; color: var(--texto-suave); font-size: 13px; line-height: 1.5; }
+	#modal-explicacion h3 { font-size: 14px; margin: 16px 0 6px; color: var(--acento); }
+	#modal-explicacion p { line-height: 1.6; color: var(--texto); margin: 0 0 8px; }
+	#modal-explicacion ol, #modal-explicacion ul { line-height: 1.7; padding-left: 20px; margin: 0; }
+	#modal-explicacion li { margin-bottom: 6px; }
+
 	/* Diálogo in-app (confirm/prompt propios) */
 	#modal-dialogo { position: fixed; inset: 0; z-index: 50; background: #0009; display: flex; align-items: center; justify-content: center; padding: 20px; }
 	#modal-dialogo .caja-dialogo { background: var(--panel); border: 1px solid var(--borde); border-radius: 14px; padding: 22px 24px; max-width: 420px; width: 100%; box-shadow: 0 18px 60px #000a; }
@@ -216,9 +250,12 @@
 	<button class="boton" id="btn-deshacer" title="Deshacer (Ctrl+Z)">↶</button>
 	<button class="boton" id="btn-rehacer" title="Rehacer (Ctrl+Y)">↷</button>
 	<button class="boton" id="btn-centrar" title="Centrar la vista (si te pierdes girando la cámara)">🏠 Centrar</button>
+	<button class="boton" id="btn-ver" title="Modo Visualización: ver el tablero como quedaría de verdad, con la puerta abierta y sin transparencias (no se puede editar)">👁️ Ver</button>
 	<div class="sep"></div>
 	<div id="chip-drc" title="Verificación eléctrica en vivo"><span class="punto"></span><span id="chip-drc-texto">DRC</span></div>
 	<button class="boton" id="btn-ayuda" title="Guía rápida de uso">❓ Ayuda</button>
+	<button class="boton" id="btn-ejemplos" title="Tableros de ejemplo explicados, para estudiar cómo funcionan">📚 Ejemplos</button>
+	<button class="boton" id="btn-explicacion" title="Volver a leer cómo funciona este tablero" hidden>📖 Cómo funciona</button>
 	<button class="boton" id="btn-imagen" title="Añadir una imagen (foto de gabinete, controlador, motor…) como referencia visual para cablear sobre ella">🖼️ Imagen</button>
 	<input type="file" id="archivo-imagen" accept="image/*" hidden>
 	<button class="boton" id="btn-nuevo" title="Vaciar la placa y empezar de cero">Nuevo</button>
@@ -321,6 +358,25 @@
 			<button class="boton primario" id="btn-empezar-blanco">Empezar en blanco</button>
 			<button class="boton" id="btn-empezar-ejemplo">Ver un tablero de ejemplo</button>
 		</div>
+	</div>
+</div>
+
+<!-- Biblioteca de tableros de ejemplo, con su explicación para estudiarlos -->
+<div id="modal-ejemplos" hidden>
+	<div class="caja-modal">
+		<button class="cerrar" id="btn-cerrar-ejemplos" title="Cerrar">✕</button>
+		<h2>Tableros de ejemplo</h2>
+		<p class="sub" style="margin-top:-6px">Tableros reales ya armados y cableados. Ábrelos para
+		estudiar cómo funcionan: puedes girarlos, seguir cada cable y ver la verificación eléctrica.</p>
+		<div id="lista-ejemplos"></div>
+	</div>
+</div>
+
+<!-- Explicación del tablero abierto (qué hace y cómo funciona) -->
+<div id="modal-explicacion" hidden>
+	<div class="caja-modal">
+		<button class="cerrar" id="btn-cerrar-explicacion" title="Cerrar">✕</button>
+		<div id="texto-explicacion"></div>
 	</div>
 </div>
 

@@ -55,7 +55,7 @@ const ALTO_RIEL = 35;
 /** Profundidad a la que corren los cables (al frente, sin atravesar aparatos). */
 export const Z_FRENTE = 52;
 
-export function construirEscenario(proyecto: Proyecto): Escenario {
+export function construirEscenario(proyecto: Proyecto, realista = false): Escenario {
 	const g = proyecto.gabinete;
 	if (!g) throw new Error('El proyecto no tiene gabinete');
 
@@ -63,7 +63,7 @@ export function construirEscenario(proyecto: Proyecto): Escenario {
 	const aEscena = (x: number, y: number, z: number) =>
 		new THREE.Vector3(x - g.ancho / 2, g.alto / 2 - y, z);
 
-	raiz.add(construirCaja(g));
+	raiz.add(construirCaja(g, realista));
 	for (const riel of g.rieles) raiz.add(construirRiel(riel, aEscena));
 
 	const tapas: THREE.Object3D[] = [];
@@ -256,17 +256,23 @@ export function cajaDe(g: Gabinete): { ancho: number; alto: number; profundidad:
 	};
 }
 
-function construirCaja(g: Gabinete): THREE.Group {
+/**
+ * Envolvente del gabinete. En modo normal las paredes son translúcidas para poder trabajar
+ * viendo el interior; en modo VISUALIZACIÓN (`realista`) son de chapa opaca y se añade la
+ * puerta abierta, para ver el tablero tal como quedaría montado.
+ */
+function construirCaja(g: Gabinete, realista = false): THREE.Group {
 	const grupo = new THREE.Group();
 	const caja = cajaDe(g);
 	const fondo = caja.profundidad;
 	const ancho = caja.ancho;
 	const alto = caja.alto;
-	// Paredes translúcidas: el interior se ve desde cualquier ángulo de órbita.
-	const chapaLateral = new THREE.MeshStandardMaterial({
-		color: 0xbfc3c7, metalness: 0.15, roughness: 0.75,
-		transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false,
-	});
+	const chapaLateral = realista
+		? new THREE.MeshStandardMaterial({ color: 0xdadde0, metalness: 0.45, roughness: 0.42, side: THREE.DoubleSide })
+		: new THREE.MeshStandardMaterial({
+			color: 0xbfc3c7, metalness: 0.15, roughness: 0.75,
+			transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false,
+		});
 
 	// Placa de montaje (galvanizada, ligeramente cálida).
 	const placa = new THREE.Mesh(
@@ -291,6 +297,27 @@ function construirCaja(g: Gabinete): THREE.Group {
 	pared(2, alto, ancho / 2, 0);
 	pared(ancho, 2, 0, alto / 2);
 	pared(ancho, 2, 0, -alto / 2);
+
+	// Modo visualización: puerta de chapa ABIERTA sobre la bisagra izquierda, con su manilla.
+	if (realista) {
+		const puerta = new THREE.Group();
+		const hoja = new THREE.Mesh(
+			new THREE.BoxGeometry(ancho, alto, 12),
+			new THREE.MeshStandardMaterial({ color: 0xe3e6e8, metalness: 0.5, roughness: 0.35 }),
+		);
+		hoja.position.set(ancho / 2, 0, 0); // el pivote queda en el borde izquierdo (la bisagra)
+		hoja.castShadow = true;
+		puerta.add(hoja);
+		const manilla = new THREE.Mesh(
+			new THREE.BoxGeometry(16, 60, 16),
+			new THREE.MeshStandardMaterial({ color: 0x2f3438, metalness: 0.7, roughness: 0.3 }),
+		);
+		manilla.position.set(ancho - 26, 0, 12);
+		puerta.add(manilla);
+		puerta.position.set(-ancho / 2, 0, fondo - 12);
+		puerta.rotation.y = -Math.PI * 0.62; // abierta hacia el frente-izquierda
+		grupo.add(puerta);
+	}
 
 	return grupo;
 }

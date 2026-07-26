@@ -10,8 +10,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-import { tableroEjemplo } from '../ejemplo/tablero-ejemplo.js';
-import { Conductor, Proyecto } from '../src/modelo/tipos.js';
+import { EJEMPLOS, EjemploTablero } from '../ejemplo/biblioteca.js';
+import { Colocacion, Conductor, Proyecto } from '../src/modelo/tipos.js';
 import { crearProyecto, extremoTexto, posicionTexto } from '../src/modelo/proyecto.js';
 import { calcularPotenciales, ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
@@ -243,13 +243,17 @@ function reconstruirBornes(): void {
 /** Desmonta y vuelve a construir todo el gabinete. */
 function montarEscenario(): void {
 	escena.remove(escenario.raiz);
-	escenario = construirEscenario(proyecto);
+	escenario = construirEscenario(proyecto, visualizacion);
 	escena.add(escenario.raiz);
 	reconstruirCables();
 	reconstruirBornes();
 	reconstruirCotas();
-	for (const t of escenario.tapas) t.visible = ($('ver-tapas') as HTMLInputElement).checked;
-	for (const t of escenario.etiquetas) t.visible = ($('ver-etiquetas') as HTMLInputElement).checked;
+	// En Visualización se ve el tablero terminado: tapas de canaleta puestas y sin rótulos
+	// flotantes ni cotas (en la vida real no existen), para que se vea tal cual quedaría.
+	const verTapas = visualizacion || ($('ver-tapas') as HTMLInputElement).checked;
+	for (const t of escenario.tapas) t.visible = verTapas;
+	const verEtiquetas = !visualizacion && ($('ver-etiquetas') as HTMLInputElement).checked;
+	for (const t of escenario.etiquetas) t.visible = verEtiquetas;
 	suelo.position.y = -(proyecto.gabinete!.alto / 2 + 42);
 }
 
@@ -1537,6 +1541,61 @@ function moverWaypoint(c: Conductor, idx: number, x: number, y: number): void {
 	wps[idx] = { x: nx, y: ny };
 }
 
+/* ------------- Riel y sus aparatos: se mueven juntos y se revierte si chocan ------------- */
+
+/** Foto del riel y de los aparatos anclados a él, para poder deshacer un movimiento inválido. */
+interface EstadoRiel {
+	riel: { x: number; y: number; largo: number };
+	aparatos: { dispositivoId: string; x: number; y: number }[];
+}
+let estadoRielArrastre: EstadoRiel | undefined;
+
+function capturarEstadoRiel(rielId: string): EstadoRiel | undefined {
+	const g = proyecto.gabinete;
+	const riel = g?.rieles.find((r) => r.id === rielId);
+	if (!g || !riel) return undefined;
+	return {
+		riel: { x: riel.x, y: riel.y, largo: riel.largo },
+		aparatos: g.colocaciones
+			.filter((c) => c.rielId === rielId)
+			.map((c) => ({ dispositivoId: c.dispositivoId, x: c.x, y: c.y })),
+	};
+}
+
+function restaurarEstadoRiel(rielId: string, e: EstadoRiel): void {
+	const g = proyecto.gabinete!;
+	const riel = g.rieles.find((r) => r.id === rielId);
+	if (riel) { riel.x = e.riel.x; riel.y = e.riel.y; riel.largo = e.riel.largo; }
+	for (const a of e.aparatos) {
+		const col = g.colocaciones.find((c) => c.dispositivoId === a.dispositivoId);
+		if (col) { col.x = a.x; col.y = a.y; }
+	}
+}
+
+/** Aparatos anclados a un riel (los que se mueven con él). */
+function aparatosDelRiel(rielId: string): Colocacion[] {
+	return proyecto.gabinete?.colocaciones.filter((c) => c.rielId === rielId) ?? [];
+}
+
+/** Coloca en la escena los aparatos del riel en su posición actual (arrastre fluido). */
+function refrescarAparatosDelRiel(rielId: string): void {
+	for (const c of aparatosDelRiel(rielId)) {
+		const centro = escenario.aEscena(c.x + c.ancho / 2, c.y + c.alto / 2, 0);
+		grupoDe(c.dispositivoId)?.position.set(centro.x, centro.y, 0);
+	}
+}
+
+/** ¿Los aparatos del riel caben donde están, sin chocar con otros ni salirse de la placa? */
+function rielValido(rielId: string): boolean {
+	const g = proyecto.gabinete;
+	if (!g) return true;
+	for (const c of aparatosDelRiel(rielId)) {
+		if (c.x < 0 || c.y < 0 || c.x + c.ancho > g.ancho || c.y + c.alto > g.alto) return false;
+		if (solapaCon(c.x, c.y, c.ancho, c.alto, c.dispositivoId)) return false;
+	}
+	return true;
+}
+
 /* --------------------- Prevención de superposición --------------------- */
 
 const HOLGURA = 3; // mm de separación mínima entre aparatos
@@ -1671,6 +1730,7 @@ async function editarCota(datos: DatosCota): Promise<void> {
 }
 
 renderer.domElement.addEventListener('pointerdown', (ev) => {
+	if (visualizacion) return; // en Visualización solo se mira: nada se selecciona ni se mueve
 	// Cablear por clic: si estamos eligiendo destino, el próximo clic sobre otro aparato
 	// lo fija como destino en el formulario (funciona en cualquier modo). Se actualiza el
 	// DOM en el sitio para no perder la selección de destino al re-renderizar.
@@ -1783,6 +1843,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 });
 
 renderer.domElement.addEventListener('pointermove', (ev) => {
+	if (visualizacion) return;
 	// Resaltado al pasar el ratón (modo Trabajo): bornes (para cablear) y cables (para tocarlos).
 	if (!arrastrando) {
 		if (modo === 'trabajo') {
@@ -1829,6 +1890,8 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	const p = puntoModelo(ev);
 	if (!p) return;
 	if (!capturadoEsteArrastre) { capturar(); capturadoEsteArrastre = true; }
+	// Antes de tocar nada: foto del riel y de sus aparatos, por si hay que devolverlos.
+	if (!estadoRielArrastre && sel.tipo === 'riel') estadoRielArrastre = capturarEstadoRiel(sel.id);
 	const g = proyecto.gabinete!;
 
 	// --- Redimensionar / ordenar con un tirador ---
@@ -1901,10 +1964,20 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		can.y = Math.round((p.y - desfase.y) / 5) * 5;
 		reconstruirEstructuraUno(sel);
 	} else {
+		// Mover un riel ARRASTRA CONSIGO los aparatos anclados a él (como al soltar el perfil
+		// DIN en un tablero real). Si algo choca o se sale, se avisa en rojo en el momento.
 		const riel = g.rieles.find((r) => r.id === sel!.id)!;
-		riel.x = Math.round((p.x - desfase.x) / 5) * 5;
-		riel.y = Math.round((p.y - desfase.y) / 5) * 5;
+		const nx = Math.round((p.x - desfase.x) / 5) * 5;
+		const ny = Math.round((p.y - desfase.y) / 5) * 5;
+		const dx = nx - riel.x;
+		const dy = ny - riel.y;
+		riel.x = nx;
+		riel.y = ny;
+		for (const c of aparatosDelRiel(riel.id)) { c.x += dx; c.y += dy; }
 		reconstruirEstructuraUno(sel);
+		refrescarAparatosDelRiel(riel.id);
+		const ok = rielValido(riel.id);
+		for (const m of resaltados) m.emissive.setHex(ok ? 0x1d4ed8 : 0xff3b3b);
 	}
 	construirHandles();
 });
@@ -1920,7 +1993,20 @@ renderer.domElement.addEventListener('pointerup', () => {
 	pendienteCable = undefined; // si no llegó a moverse, fue solo un clic de selección
 	controles.enabled = true;
 	renderer.domElement.style.cursor = '';
-	if (!capturadoEsteArrastre) { arrastreInicio = undefined; return; } // fue un clic, no un arrastre
+	if (!capturadoEsteArrastre) { arrastreInicio = undefined; estadoRielArrastre = undefined; return; } // fue un clic
+	// Riel soltado: si sus aparatos chocaron con otros o se salieron de la placa, se devuelve
+	// TODO (riel y aparatos) a donde estaba. Nada queda encimado ni fuera del tablero.
+	if (sel?.tipo === 'riel' && estadoRielArrastre) {
+		if (!rielValido(sel.id)) {
+			restaurarEstadoRiel(sel.id, estadoRielArrastre);
+			avisar('Ahí no cabe: chocaba con otro aparato, así que el riel volvió a su sitio', 'error');
+		}
+		estadoRielArrastre = undefined;
+		for (const m of resaltados) m.emissive.setHex(0x1d4ed8);
+		actualizarTodo();
+		pintarEstructura();
+		return;
+	}
 	if (eraCable) {
 		// Mover un cable a mano no cambia la estructura ni el ruteo eléctrico: refresco ligero.
 		// (La adaptación a la canaleta ya ocurre durante el arrastre, pegando el punto a su eje,
@@ -2166,6 +2252,37 @@ const AYUDA: Record<Modo, string> = {
 	trabajo: '🔌 TRABAJO (conexiones) — Cablea tocando un borne (punto naranja) y luego otro · clic izq mueve puntos del cable, clic der crea una unión · Esc cancela · DRC en vivo. La estructura está bloqueada.',
 };
 
+/* ------------------------------- Modo Visualización ------------------------------- */
+
+/** True cuando se está viendo el tablero «como quedaría de verdad» (no se puede editar). */
+let visualizacion = false;
+
+/**
+ * Entra o sale del modo Visualización: caja de chapa opaca con la puerta abierta, sin
+ * transparencias ni ayudas de edición, paneles laterales ocultos y toda edición bloqueada.
+ * Solo se puede girar y acercar la vista, como enseñando el tablero terminado.
+ */
+function aplicarVisualizacion(activo: boolean): void {
+	visualizacion = activo;
+	document.body.classList.toggle('modo-visualizacion', activo);
+	$('btn-ver').classList.toggle('activo', activo);
+	($('btn-ver') as HTMLButtonElement).textContent = activo ? '👁️ Salir' : '👁️ Ver';
+	if (activo) {
+		cancelarCableado();
+		mostrarTipBorne(undefined);
+		aplicarSeleccion(undefined);
+		arrastrando = false;
+		controles.enabled = true;
+	}
+	montarEscenario();
+	escenario.bornes.visible = !activo && modo === 'trabajo';
+	$('ayuda').textContent = activo
+		? '👁️ VISUALIZACIÓN — Así queda el tablero montado, con la puerta abierta. Gira y acerca la vista; para editar, pulsa «Salir».'
+		: AYUDA[modo];
+	pintarSeleccion();
+	encuadrar();
+}
+
 function aplicarModo(nuevo: Modo): void {
 	modo = nuevo;
 	document.body.classList.toggle('modo-trabajo', modo === 'trabajo');
@@ -2191,8 +2308,9 @@ function aplicarModo(nuevo: Modo): void {
 	pintarSeleccion();
 }
 
-$('modo-editor').onclick = () => aplicarModo('editor');
-$('modo-trabajo').onclick = () => aplicarModo('trabajo');
+$('modo-editor').onclick = () => { if (!visualizacion) aplicarModo('editor'); };
+$('modo-trabajo').onclick = () => { if (!visualizacion) aplicarModo('trabajo'); };
+($('btn-ver') as HTMLButtonElement).onclick = () => aplicarVisualizacion(!visualizacion);
 
 ($('btn-deshacer') as HTMLButtonElement).onclick = deshacer;
 ($('btn-rehacer') as HTMLButtonElement).onclick = rehacer;
@@ -2248,14 +2366,67 @@ $('modal-dialogo').addEventListener('keydown', (e) => {
 	if (ev.key === 'Escape') { e.preventDefault(); cerrarDialogo?.(null); }
 });
 
-($('btn-empezar-ejemplo') as HTMLButtonElement).onclick = () => {
+/* ------------------- Biblioteca de tableros de ejemplo (para estudiar) ------------------- */
+
+/** Abre un tablero de ejemplo y ofrece su explicación. */
+function abrirEjemplo(ej: EjemploTablero): void {
 	capturar();
-	proyecto = tableroEjemplo();
+	proyecto = ej.crear();
 	numerarDispositivos(proyecto);
 	aplicarSeleccion(undefined);
+	bienvenidaDescartada = true;
+	aplicarModo('trabajo'); // se abre listo para recorrer el cableado
 	trasCambiarProyecto();
 	encuadrar();
-};
+	($('modal-ejemplos') as HTMLElement).hidden = true;
+	ejemploAbierto = ej;
+	($('btn-explicacion') as HTMLElement).hidden = false; // queda a mano para releerla
+	mostrarExplicacion(ej);
+}
+
+let ejemploAbierto: EjemploTablero | undefined;
+
+/** Ventana con qué hace el tablero, cómo funciona y en qué fijarse. */
+function mostrarExplicacion(ej: EjemploTablero): void {
+	$('texto-explicacion').innerHTML = `
+		<h2>${ej.titulo}</h2>
+		<p><b>${ej.resumen}</b></p>
+		<h3>Qué hace</h3>
+		<p>${ej.queHace}</p>
+		<h3>Cómo funciona, paso a paso</h3>
+		<ol>${ej.comoFunciona.map((x) => `<li>${x}</li>`).join('')}</ol>
+		<h3>Para estudiarlo en el 3D</h3>
+		<ul>${ej.aprender.map((x) => `<li>${x}</li>`).join('')}</ul>
+	`;
+	($('modal-explicacion') as HTMLElement).hidden = false;
+}
+
+/** Pinta la biblioteca de ejemplos y la abre. */
+function abrirBibliotecaEjemplos(): void {
+	const cont = $('lista-ejemplos');
+	cont.innerHTML = '';
+	for (const ej of EJEMPLOS) {
+		const div = document.createElement('div');
+		div.className = 'tarjeta-ejemplo';
+		div.innerHTML = `<h3>${ej.titulo}</h3><p>${ej.resumen}</p>`;
+		const b = document.createElement('button');
+		b.className = 'boton primario';
+		b.textContent = 'Abrir y estudiar';
+		b.onclick = () => abrirEjemplo(ej);
+		div.appendChild(b);
+		cont.appendChild(div);
+	}
+	($('modal-ejemplos') as HTMLElement).hidden = false;
+}
+
+($('btn-empezar-ejemplo') as HTMLButtonElement).onclick = () => abrirBibliotecaEjemplos();
+($('btn-ejemplos') as HTMLButtonElement).onclick = () => abrirBibliotecaEjemplos();
+($('btn-explicacion') as HTMLButtonElement).onclick = () => { if (ejemploAbierto) mostrarExplicacion(ejemploAbierto); };
+($('btn-cerrar-ejemplos') as HTMLButtonElement).onclick = () => { ($('modal-ejemplos') as HTMLElement).hidden = true; };
+($('btn-cerrar-explicacion') as HTMLButtonElement).onclick = () => { ($('modal-explicacion') as HTMLElement).hidden = true; };
+for (const id of ['modal-ejemplos', 'modal-explicacion']) {
+	$(id).addEventListener('click', (e) => { if (e.target === $(id)) ($(id) as HTMLElement).hidden = true; });
+}
 
 // «Empezar en blanco»: cierra la tarjeta y deja el modo Editor listo para añadir aparatos.
 ($('btn-empezar-blanco') as HTMLButtonElement).onclick = () => {
@@ -2362,6 +2533,36 @@ if (new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Qué hay seleccionado ahora mismo (para distinguir a quién agarró un clic). */
 		seleccion: () => (sel ? { tipo: sel.tipo, id: sel.id } : undefined),
+		/** Cuántos píxeles de pantalla equivale un milímetro del modelo en la vista actual. */
+		escalaPantalla: () => {
+			const a = aPantalla(escenario.aEscena(0, 0, 30));
+			const b = aPantalla(escenario.aEscena(100, 100, 30));
+			return { porMmX: (b.x - a.x) / 100, porMmY: (b.y - a.y) / 100 };
+		},
+		/**
+		 * Punto en pantalla de un tramo LIBRE de un riel o canaleta (sin aparatos encima), que es
+		 * por donde se agarra de verdad para moverlo.
+		 */
+		puntoDeEstructura: (tipo: 'riel' | 'canaleta', id: string) => {
+			const g = proyecto.gabinete;
+			const e = tipo === 'riel' ? g?.rieles.find((r) => r.id === id) : g?.canaletas.find((c) => c.id === id);
+			if (!g || !e) return undefined;
+			const vertical = e.orientacion === 'v';
+			const clave = tipo === 'riel' ? 'rielId' : 'canaletaId';
+			const r = renderer.domElement.getBoundingClientRect();
+			for (let t = 6; t <= e.largo - 6; t += 4) {
+				const x = vertical ? e.x + 20 : e.x + t;
+				const y = vertical ? e.y + t : e.y + 20;
+				const p = aPantalla(escenario.aEscena(x, y, 30));
+				// Solo vale si en ese píxel lo primero que se ve es el propio perfil (no un aparato).
+				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
+				raycaster.setFromCamera(puntero, camara);
+				const golpe = raycaster.intersectObjects(escenario.raiz.children, true)
+					.find((h) => h.object.userData[clave] || h.object.userData.dispositivoId);
+				if (golpe?.object.userData[clave] === id) return p;
+			}
+			return undefined; // el perfil está totalmente cubierto de aparatos
+		},
 		/**
 		 * Cuánto van MONTADOS unos cables sobre otros (mm de tramos paralelos que se pisan).
 		 * Es la medida de «cables amontonados»: en un tablero bien ruteado ronda cero.

@@ -33,11 +33,20 @@ const qa = (fn, ...a) => page.evaluate(([f, args]) => window.qa[f](...args), [fn
 const proyecto = () => qa('proyecto');
 const enTrabajo = () => page.evaluate(() => document.body.classList.contains('modo-trabajo'));
 
+/** Carga el tablero de control de la biblioteca (el que usan estas comprobaciones). */
+async function cargarEjemplo() {
+	await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(300);
+	if (await page.isVisible('#modal-ejemplos')) {
+		await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(650);
+		await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(150);
+	}
+}
+
 await page.goto(url, { waitUntil: 'networkidle' }); await page.waitForTimeout(600);
 await jsClick('btn-cerrar-ayuda'); await page.waitForTimeout(120);
 
 console.log('\n--- 1. Empezar un tablero nuevo ---');
-await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(300);
+await cargarEjemplo();
 await jsClick('modo-trabajo'); await page.waitForTimeout(200);
 await jsClick('btn-nuevo'); await page.waitForTimeout(200);
 must('pide confirmación', await page.isVisible('#modal-dialogo'));
@@ -75,7 +84,7 @@ await jsClick('modo-editor'); await page.waitForTimeout(250);
 must('en Editor vuelve el catálogo', await page.isVisible('#catalogo'));
 
 console.log('\n--- 5. Verificación eléctrica (DRC) ---');
-await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(400);
+await cargarEjemplo();
 must('el ejemplo pasa el DRC sin hallazgos', /sin hallazgos/i.test(await page.textContent('#chip-drc-texto')));
 
 console.log('\n--- 6. Guardar, dossier y PDF ---');

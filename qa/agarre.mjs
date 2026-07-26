@@ -65,9 +65,18 @@ async function intentarAgarrar(id) {
 /** Deja el ejemplo recién cargado en modo Trabajo (cada bloque parte de un tablero limpio,
  *  para medir la capacidad real de agarre y no el enredo que dejó la prueba anterior). */
 async function tableroLimpio() {
-	await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(400);
+	await cargarEjemplo();
 	await jsClick('modo-trabajo'); await page.waitForTimeout(300);
 	await jsClick('btn-centrar'); await page.waitForTimeout(400);
+}
+
+/** Carga el tablero de control de la biblioteca (el que usan estas comprobaciones). */
+async function cargarEjemplo() {
+	await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(300);
+	if (await page.isVisible('#modal-ejemplos')) {
+		await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(650);
+		await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(150);
+	}
 }
 
 await page.goto(url, { waitUntil: 'networkidle' }); await page.waitForTimeout(600);

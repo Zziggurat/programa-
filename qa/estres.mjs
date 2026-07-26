@@ -37,9 +37,18 @@ let semilla = Number(process.argv[3] ?? 12345);
 const rnd = () => (semilla = (semilla * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
 const elige = (arr) => arr[Math.floor(rnd() * arr.length)];
 
+/** Carga el tablero de control de la biblioteca (el que usan estas comprobaciones). */
+async function cargarEjemplo() {
+	await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(300);
+	if (await page.isVisible('#modal-ejemplos')) {
+		await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(650);
+		await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(150);
+	}
+}
+
 await page.goto(url, { waitUntil: 'networkidle' }); await page.waitForTimeout(600);
 await jsClick('btn-cerrar-ayuda'); await page.waitForTimeout(120);
-await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(400);
+await cargarEjemplo();
 await jsClick('modo-trabajo'); await page.waitForTimeout(350);
 
 const problemas = [];

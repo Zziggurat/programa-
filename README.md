@@ -63,6 +63,8 @@ Además de los tests del núcleo, hay tres suites que manejan el editor 3D de ve
 | `npm run qa:agarre` | Que **todo** cable visible se pueda agarrar y mover, desde varios ángulos de cámara |
 | `npm run qa:general` | Empezar de cero, catálogo, anclaje a riel, modos, DRC, guardar, dossier y PDF |
 | `npm run qa:tablero` | Monta un tablero completo desde cero y mide el amontonamiento del cableado |
+| `npm run qa:riel` | El riel arrastra sus aparatos, y si chocan vuelve todo a su sitio |
+| `npm run qa:nuevas` | Biblioteca de ejemplos con su explicación y modo Visualización |
 | `npm run qa:estres` | Decenas de operaciones al azar verificando los invariantes tras cada una |
 
 Se apoyan en una sonda que solo existe abriendo la página con `?qa=1`; en el uso normal
@@ -73,6 +75,19 @@ del programa no se define nada.
 Configurador 3D completo del gabinete, al estilo de Schneider eDesign o WAGO Smart
 Designer, conectado en vivo con los motores del núcleo:
 
+- **Tableros de ejemplo explicados** (botón «📚 Ejemplos»): arranque directo de motor,
+  bomba de agua con boya de nivel y tablero de control con PLC a 24 V. Cada uno se abre
+  armado y cableado, con una ficha que cuenta **qué hace**, **cómo funciona paso a paso**
+  (la secuencia de maniobra real) y **en qué fijarse** en el 3D para estudiarlo. La ficha
+  se puede volver a abrir cuando quieras con «📖 Cómo funciona».
+- **Modo Visualización** (botón «👁️ Ver»): enseña el tablero **como quedaría montado de
+  verdad** — envolvente de chapa opaca con la **puerta abierta**, tapas de canaleta puestas
+  y sin rótulos flotantes ni ayudas de edición. Se ocultan los paneles laterales y no se
+  puede tocar nada: solo girar y acercar la vista. Ideal para enseñárselo al cliente.
+- **El riel manda sobre sus aparatos**: al mover un perfil DIN, **los aparatos anclados van
+  con él**. Si en el sitio nuevo chocarían con otro aparato o se saldrían de la placa, se
+  avisa en rojo durante el arrastre y al soltar **el riel y sus aparatos vuelven a su
+  posición inicial**: nunca queda nada encimado.
 - **Dos modos de trabajo** (conmutador en la barra superior):
   - 🔧 **Editor** — armar y modificar: añadir aparatos, arrastrarlos, editar la caja,
     la placa, los rieles y las canaletas.
