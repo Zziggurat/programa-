@@ -140,9 +140,9 @@ function arranqueDirecto(): Proyecto {
 		ancho: 400,
 		alto: 500,
 		rieles: [
-			{ id: 'r1', x: 30, y: 60, largo: 340 },
-			{ id: 'r2', x: 30, y: 240, largo: 340 },
-			{ id: 'r3', x: 30, y: 390, largo: 340 },
+			{ id: 'r1', x: 30, y: 80, largo: 340 },
+			{ id: 'r2', x: 30, y: 260, largo: 340 },
+			{ id: 'r3', x: 30, y: 410, largo: 340 },
 		],
 		canaletas: [
 			{ id: 'c1', x: 20, y: 160, largo: 360, orientacion: 'h', ancho: 40, alto: 60 },
@@ -150,12 +150,12 @@ function arranqueDirecto(): Proyecto {
 			{ id: 'c3', x: 20, y: 160, largo: 300, orientacion: 'v', ancho: 40, alto: 60 },
 		],
 		colocaciones: [
-			{ dispositivoId: 'q1', x: 45, y: 40, ancho: 45, alto: 89, rielId: 'r1' },
-			{ dispositivoId: 'km1', x: 120, y: 42, ancho: 45, alto: 86, rielId: 'r1' },
-			{ dispositivoId: 'f2', x: 195, y: 50, ancho: 45, alto: 70, rielId: 'r1' },
-			{ dispositivoId: 'f1', x: 270, y: 50, ancho: 18, alto: 70, rielId: 'r1' },
-			{ dispositivoId: 'x1', x: 60, y: 230, ancho: 90, alto: 50, rielId: 'r2' },
-			{ dispositivoId: 'x2', x: 190, y: 230, ancho: 90, alto: 50, rielId: 'r2' },
+			{ dispositivoId: 'q1', x: 45, y: 36, ancho: 45, alto: 89, rielId: 'r1' },
+			{ dispositivoId: 'km1', x: 120, y: 37, ancho: 45, alto: 86, rielId: 'r1' },
+			{ dispositivoId: 'f2', x: 195, y: 45, ancho: 45, alto: 70, rielId: 'r1' },
+			{ dispositivoId: 'f1', x: 270, y: 45, ancho: 18, alto: 70, rielId: 'r1' },
+			{ dispositivoId: 'x1', x: 60, y: 235, ancho: 90, alto: 50, rielId: 'r2' },
+			{ dispositivoId: 'x2', x: 190, y: 235, ancho: 90, alto: 50, rielId: 'r2' },
 		],
 	};
 	return p;
@@ -232,18 +232,18 @@ function bombaConBoya(): Proyecto {
 		ancho: 300,
 		alto: 400,
 		rieles: [
-			{ id: 'r1', x: 25, y: 60, largo: 250 },
-			{ id: 'r2', x: 25, y: 260, largo: 250 },
+			{ id: 'r1', x: 25, y: 80, largo: 250 },
+			{ id: 'r2', x: 25, y: 280, largo: 250 },
 		],
 		canaletas: [
 			{ id: 'c1', x: 15, y: 170, largo: 270, orientacion: 'h', ancho: 40, alto: 60 },
 			{ id: 'c2', x: 15, y: 170, largo: 160, orientacion: 'v', ancho: 40, alto: 60 },
 		],
 		colocaciones: [
-			{ dispositivoId: 'q1', x: 40, y: 45, ancho: 36, alto: 80, rielId: 'r1' },
-			{ dispositivoId: 'q2', x: 95, y: 45, ancho: 36, alto: 80, rielId: 'r1' },
-			{ dispositivoId: 'km1', x: 155, y: 42, ancho: 45, alto: 86, rielId: 'r1' },
-			{ dispositivoId: 'x1', x: 60, y: 250, ancho: 110, alto: 50, rielId: 'r2' },
+			{ dispositivoId: 'q1', x: 40, y: 40, ancho: 36, alto: 80, rielId: 'r1' },
+			{ dispositivoId: 'q2', x: 95, y: 40, ancho: 36, alto: 80, rielId: 'r1' },
+			{ dispositivoId: 'km1', x: 155, y: 37, ancho: 45, alto: 86, rielId: 'r1' },
+			{ dispositivoId: 'x1', x: 60, y: 255, ancho: 110, alto: 50, rielId: 'r2' },
 		],
 	};
 	return p;

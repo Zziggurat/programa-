@@ -84,6 +84,40 @@ export function rutaAutomatica(a: Punto, b: Punto, corredores: Banda[], carril: 
 	return [{ x: a.x, y }, { x: b.x, y }];
 }
 
+/**
+ * Redondea las esquinas de una polilínea: cada vértice se sustituye por un arco suave del
+ * radio pedido. Un cable real nunca dobla en pico —tiene un radio mínimo de curvatura—, y
+ * además así el tubo 3D no se «pellizca» ni se retuerce en los codos.
+ */
+export function redondearEsquinas(nodos: Punto[], radio = 14, pasos = 6): Punto[] {
+	if (nodos.length < 3) return nodos.slice();
+	const salida: Punto[] = [nodos[0]];
+	for (let i = 1; i < nodos.length - 1; i++) {
+		const a = nodos[i - 1];
+		const b = nodos[i];
+		const c = nodos[i + 1];
+		const d1 = Math.hypot(b.x - a.x, b.y - a.y);
+		const d2 = Math.hypot(c.x - b.x, c.y - b.y);
+		// El radio nunca se come más de la mitad de cada tramo (si no, se deformaría el recorrido).
+		const r = Math.min(radio, d1 / 2, d2 / 2);
+		if (r < 1.5) { salida.push(b); continue; }
+		const p1 = { x: b.x + ((a.x - b.x) / d1) * r, y: b.y + ((a.y - b.y) / d1) * r };
+		const p2 = { x: b.x + ((c.x - b.x) / d2) * r, y: b.y + ((c.y - b.y) / d2) * r };
+		salida.push(p1);
+		for (let k = 1; k < pasos; k++) { // arco (Bézier cuadrática) con el vértice como control
+			const t = k / pasos;
+			const u = 1 - t;
+			salida.push({
+				x: u * u * p1.x + 2 * u * t * b.x + t * t * p2.x,
+				y: u * u * p1.y + 2 * u * t * b.y + t * t * p2.y,
+			});
+		}
+		salida.push(p2);
+	}
+	salida.push(nodos[nodos.length - 1]);
+	return salida;
+}
+
 /** Tramo recto de un cable (horizontal o vertical) entre dos nodos consecutivos. */
 export interface Tramo { a: Punto; b: Punto }
 

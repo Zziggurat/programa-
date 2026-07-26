@@ -158,9 +158,9 @@ export function tableroEjemplo(): Proyecto {
 		ancho: 380,
 		alto: 580,
 		rieles: [
-			{ id: 'riel1', x: 30, y: 40, largo: 320 },
-			{ id: 'riel2', x: 30, y: 200, largo: 320 },
-			{ id: 'riel3', x: 30, y: 370, largo: 320 },
+			{ id: 'riel1', x: 30, y: 60, largo: 320 },
+			{ id: 'riel2', x: 30, y: 220, largo: 320 },
+			{ id: 'riel3', x: 30, y: 390, largo: 320 },
 		],
 		canaletas: [
 			{ id: 'ch1', x: 20, y: 110, largo: 340, orientacion: 'h', ancho: 40, alto: 60 },

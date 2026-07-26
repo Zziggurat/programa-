@@ -83,7 +83,11 @@ Designer, conectado en vivo con los motores del núcleo:
 - **Modo Visualización** (botón «👁️ Ver»): enseña el tablero **como quedaría montado de
   verdad** — envolvente de chapa opaca con la **puerta abierta**, tapas de canaleta puestas
   y sin rótulos flotantes ni ayudas de edición. Se ocultan los paneles laterales y no se
-  puede tocar nada: solo girar y acercar la vista. Ideal para enseñárselo al cliente.
+  puede tocar nada: solo mirar. Aquí la **cámara va suelta** y se puede dar toda la vuelta
+  al tablero (mientras se edita, en cambio, la vista se mantiene por delante para que no se
+  trabaje «desde atrás» con todo espejado). Ideal para enseñárselo al cliente.
+- **Imágenes de referencia con profundidad**: botones «⬇️ Al fondo» y «⬆️ Al frente» para
+  que la foto no quede tapada por un riel o una canaleta.
 - **El riel manda sobre sus aparatos**: al mover un perfil DIN, **los aparatos anclados van
   con él**. Si en el sitio nuevo chocarían con otro aparato o se saldrían de la placa, se
   avisa en rojo durante el arrastre y al soltar **el riel y sus aparatos vuelven a su

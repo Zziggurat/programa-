@@ -41,7 +41,7 @@ type Seleccion =
 /* ------------------------------ Estado ------------------------------ */
 
 const CLAVE_AUTOSAVE = 'tablerostudio-proyecto';
-const SNAP_RIEL = 20;      // el centro del aparato queda 20 mm bajo el eje del riel
+const SNAP_RIEL = 0;       // el aparato queda CENTRADO en el eje del riel (el perfil va detrás)
 const UMBRAL_SNAP = 45;    // distancia máxima para anclarse a un riel
 const Z_HANDLE_CABLE = 55; // profundidad de los tiradores de cable (justo delante del cable a mano)
 const SNAP_ORTO = 14;      // mm para alinear un punto de cable en vertical/horizontal con su vecino
@@ -51,9 +51,9 @@ function gabineteVacio(anchoMm = 600, altoMm = 800) {
 		ancho: anchoMm,
 		alto: altoMm,
 		rieles: [
-			{ id: 'riel1', x: 30, y: 60, largo: anchoMm - 60 },
-			{ id: 'riel2', x: 30, y: Math.round(altoMm * 0.45), largo: anchoMm - 60 },
-			{ id: 'riel3', x: 30, y: altoMm - 180, largo: anchoMm - 60 },
+			{ id: 'riel1', x: 30, y: 80, largo: anchoMm - 60 },
+			{ id: 'riel2', x: 30, y: Math.round(altoMm * 0.45) + 20, largo: anchoMm - 60 },
+			{ id: 'riel3', x: 30, y: altoMm - 160, largo: anchoMm - 60 },
 		],
 		canaletas: [
 			{ id: 'ch1', x: 20, y: 140, largo: anchoMm - 40, orientacion: 'h' as const, ancho: 40, alto: 60 },
@@ -631,7 +631,14 @@ function pintarSeleccion(): void {
 	// División de modos:  Editor = colocar/mover/duplicar/eliminar y (en imágenes) marcar puntos.
 	//                     Trabajo = cablear y revisar.
 	const bloquePines = esImagen && esEditor
-		? `<h2>Puntos de conexión (${d.bornes.length})</h2>
+		? `<h2>Profundidad</h2>
+			<div class="sub">Para que el riel o la canaleta no te tapen la imagen.</div>
+			<div class="botonera" style="margin-top:6px">
+				<button class="boton" id="btn-img-fondo" title="Mandar la imagen detrás de rieles y canaletas">⬇️ Al fondo</button>
+				<button class="boton" id="btn-img-frente" title="Traer la imagen delante de la estructura">⬆️ Al frente</button>
+			</div>
+			<div class="sub" style="margin-top:4px">Ahora: ${Math.round(col?.z ?? 0)} mm</div>
+			<h2>Puntos de conexión (${d.bornes.length})</h2>
 			<button class="boton ${modoPin ? 'primario' : ''} ancho-total" id="btn-pin" style="width:100%">${modoPin ? '✓ Haz clic en la imagen…' : '➕ Añadir punto de conexión'}</button>
 			<div id="lista-pines" style="margin-top:6px"></div>`
 		: '';
@@ -775,6 +782,19 @@ function pintarSeleccion(): void {
 			modoPin = !modoPin;
 			pintarSeleccion();
 		};
+		// Profundidad de la imagen: al fondo (detrás del riel) o al frente.
+		const moverEnZ = (paso: number) => {
+			if (!col) return;
+			capturar();
+			col.z = Math.max(-40, Math.min(60, Math.round((col.z ?? 0) + paso)));
+			reconstruirDispositivoUno(d.id);
+			pintarSeleccion();
+			avisar(col.z <= -10 ? 'Imagen al fondo: la estructura queda por delante'
+				: col.z >= 20 ? 'Imagen al frente: por delante de rieles y canaletas'
+					: `Profundidad de la imagen: ${col.z} mm`);
+		};
+		(panel.querySelector('#btn-img-fondo') as HTMLButtonElement).onclick = () => moverEnZ(-15);
+		(panel.querySelector('#btn-img-frente') as HTMLButtonElement).onclick = () => moverEnZ(15);
 		const lista = panel.querySelector('#lista-pines')!;
 		for (const b of d.bornes) {
 			const fila = document.createElement('div');
@@ -2274,6 +2294,13 @@ function aplicarVisualizacion(activo: boolean): void {
 		arrastrando = false;
 		controles.enabled = true;
 	}
+	// Aquí no se trabaja, así que la cámara va SUELTA: se puede dar toda la vuelta al tablero
+	// y mirarlo desde donde se quiera. Al volver a editar se recuperan los topes de trabajo
+	// (que evitan quedar detrás del tablero, donde no se puede cablear).
+	controles.minAzimuthAngle = activo ? -Infinity : -Math.PI * 0.42;
+	controles.maxAzimuthAngle = activo ? Infinity : Math.PI * 0.42;
+	controles.minPolarAngle = activo ? 0.01 : Math.PI * 0.10;
+	controles.maxPolarAngle = activo ? Math.PI - 0.01 : Math.PI * 0.80;
 	montarEscenario();
 	escenario.bornes.visible = !activo && modo === 'trabajo';
 	$('ayuda').textContent = activo

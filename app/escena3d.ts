@@ -7,7 +7,7 @@
  */
 import * as THREE from 'three';
 import { Colocacion, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
-import { Banda, corredoresLibres, orthogonalize, rutaAutomatica } from './geometria-cables.js';
+import { Banda, corredoresLibres, orthogonalize, redondearEsquinas, rutaAutomatica } from './geometria-cables.js';
 import { construirAparato3D } from './dispositivos3d.js';
 
 export const COLOR_CABLE: Record<string, number> = {
@@ -533,8 +533,9 @@ export function construirDispositivo(
 		grupo.add(badge);
 	}
 
+	// col.z permite mandar una imagen de referencia al fondo (detrás del riel) o traerla al frente.
 	const c = aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
-	grupo.position.set(c.x, c.y, 0);
+	grupo.position.set(c.x, c.y, col.z ?? 0);
 	return grupo;
 }
 
@@ -615,13 +616,17 @@ export function construirCables(
 	for (const ruta of rutasDeCables(proyecto)) {
 		const conductor = proyecto.conductores.find((c) => c.id === ruta.conductorId)!;
 		const radio = 0.9 + (conductor.seccion ?? 1.5) * 0.35;
+		// Codos redondeados con el radio mínimo de curvatura del cable (más grueso, más radio),
+		// para que dobla como un conductor de verdad y el tubo no se pellizque en las esquinas.
+		const suave = redondearEsquinas(ruta.nodos, 10 + radio * 4);
 		const puntos = [
 			aEscena(ruta.de.x, ruta.de.y, ruta.de.z),
-			...ruta.nodos.map((p) => aEscena(p.x, p.y, Z_FRENTE)),
+			...suave.map((p) => aEscena(p.x, p.y, Z_FRENTE)),
 			aEscena(ruta.a.x, ruta.a.y, ruta.a.z),
 		];
-		const curva = new THREE.CatmullRomCurve3(puntos, false, 'catmullrom', 0.12);
-		anadirTuboCable(grupo, curva, Math.max(40, puntos.length * 8), radio, colorDe(conductor), conductor.id);
+		// «centripetal» evita los lazos y cúspides que salían al pasar por vértices muy juntos.
+		const curva = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
+		anadirTuboCable(grupo, curva, Math.max(64, puntos.length * 6), radio, colorDe(conductor), conductor.id);
 	}
 	return grupo;
 }

@@ -175,6 +175,12 @@ export interface Colocacion {
 	ancho: number;
 	alto: number;
 	rielId?: string;
+	/**
+	 * Desplazamiento en profundidad (mm) respecto de la placa. Sirve sobre todo para las
+	 * imágenes de referencia: negativo las manda al fondo (detrás de rieles y canaletas) y
+	 * positivo las trae al frente, para que no queden tapadas.
+	 */
+	z?: number;
 }
 
 export interface Gabinete {
