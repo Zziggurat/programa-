@@ -11,7 +11,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { EJEMPLOS, EjemploTablero } from '../ejemplo/biblioteca.js';
-import { Colocacion, Conductor, Proyecto } from '../src/modelo/tipos.js';
+import { CLASE_POR_TIPO, Colocacion, Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { crearProyecto, extremoTexto, posicionTexto } from '../src/modelo/proyecto.js';
 import { calcularPotenciales, ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
@@ -358,11 +358,25 @@ const etiquetaDe = (id: string): string => {
 
 /* ------------------------------ Catálogo ------------------------------ */
 
+/**
+ * ¿Coincide la plantilla con lo que se está buscando? Se busca por todas las palabras sueltas
+ * y contra todo lo que identifica al aparato (nombre, tipo, grupo, marca y referencia), para
+ * poder escribir «contactor 3p» o «phoenix» y encontrarlo sin saber cómo se llama en el menú.
+ */
+function coincideCatalogo(p: (typeof PLANTILLAS)[number], busqueda: string): boolean {
+	const texto = `${p.nombre} ${p.tipo} ${p.grupo} ${p.descripcion} ${p.fabricante} ${p.referencia}`.toLowerCase();
+	return busqueda.toLowerCase().split(/\s+/).filter(Boolean).every((t) => texto.includes(t));
+}
+
 function pintarCatalogo(): void {
 	const cont = $('catalogo');
+	const busqueda = (document.getElementById('buscar-catalogo') as HTMLInputElement | null)?.value ?? '';
 	cont.innerHTML = '';
 	let grupoActual = '';
+	let encontrados = 0;
 	for (const p of PLANTILLAS) {
+		if (busqueda && !coincideCatalogo(p, busqueda)) continue;
+		encontrados++;
 		if (p.grupo !== grupoActual) {
 			grupoActual = p.grupo;
 			cont.insertAdjacentHTML('beforeend', `<div class="grupo-catalogo">${p.grupo}</div>`);
@@ -374,6 +388,7 @@ function pintarCatalogo(): void {
 		btn.onclick = () => anadirDesdeCatalogo(p.id);
 		cont.appendChild(btn);
 	}
+	if (!encontrados) cont.innerHTML = `<div class="catalogo-vacio">Ningún aparato coincide con «${busqueda}».</div>`;
 }
 
 /** Busca el primer hueco libre sobre un riel para una huella ancho×alto. */
@@ -480,6 +495,56 @@ function anadirDesdeCatalogo(plantillaId: string): void {
 	extenderRielPara(col); // si el aparato quedó más allá del riel, se alarga el riel
 	actualizarTodo();
 	seleccionar(d.id);
+}
+
+/**
+ * Duplica el aparato seleccionado (Ctrl+D). En un tablero real la mitad de los aparatos se
+ * repiten —seis relés iguales, cuatro guardamotores—, y volver al catálogo cada vez es perder
+ * el tiempo. La copia va justo a la derecha del original, sobre su mismo riel, con la siguiente
+ * designación libre de su clase. NO se copian los cables: la copia nace sin conectar, que es lo
+ * que se espera de un aparato nuevo.
+ */
+function duplicarDispositivo(id: string): void {
+	const g = proyecto.gabinete;
+	const original = proyecto.dispositivos.find((d) => d.id === id);
+	const col = g?.colocaciones.find((c) => c.dispositivoId === id);
+	if (!g || !original || !col) { avisar('Selecciona un aparato colocado para duplicarlo.', 'info'); return; }
+	if (original.imagen) { avisar('Las imágenes de referencia no se duplican.', 'info'); return; }
+	capturar();
+
+	const clase = original.clase ?? CLASE_POR_TIPO[original.tipo];
+	let maximo = 0;
+	for (const d of proyecto.dispositivos) {
+		if ((d.clase ?? CLASE_POR_TIPO[d.tipo]) === clase && d.numero) maximo = Math.max(maximo, d.numero);
+	}
+	const numero = maximo + 1;
+	const copia: Dispositivo = {
+		...structuredClone(original),
+		id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`,
+		numero,
+		designacion: (original.designacion ?? '').replace(/\d+$/, '') + numero,
+	};
+	proyecto.dispositivos.push(copia);
+
+	// A la derecha del original si cabe; si no, al primer hueco libre del tablero.
+	let x = col.x + col.ancho + 2;
+	let y = col.y;
+	let rielId = col.rielId;
+	if (x + col.ancho > g.ancho || solapaCon(x, y, col.ancho, col.alto, copia.id)) {
+		const libre = xLibreCercano(x, y, col.ancho, col.alto, copia.id);
+		if (libre !== undefined && libre + col.ancho <= g.ancho) x = libre;
+		else {
+			const hueco = buscarHueco(col.ancho, col.alto);
+			if (!hueco) { avisar('No queda sitio libre en la placa para la copia.', 'error'); return; }
+			x = hueco.x; y = hueco.y; rielId = hueco.rielId;
+		}
+	}
+	const nueva = { dispositivoId: copia.id, x, y, ancho: col.ancho, alto: col.alto, rielId, z: col.z };
+	g.colocaciones.push(nueva);
+	extenderRielPara(nueva);
+	actualizarTodo();
+	seleccionar(copia.id);
+	avisar(`Duplicado: ${copia.designacion ?? copia.id}`, 'ok');
 }
 
 /** Alarga (si hace falta) el riel bajo un aparato para que quede totalmente apoyado sobre él. */
@@ -1789,6 +1854,10 @@ async function editarCota(datos: DatosCota): Promise<void> {
 }
 
 renderer.domElement.addEventListener('pointerdown', (ev) => {
+	// Al volver al tablero, el teclado vuelve con él: si el foco se había quedado en un campo
+	// (el buscador del catálogo, una medida…), los atajos dejaban de responder sin avisar.
+	const foco = document.activeElement as HTMLElement | null;
+	if (foco && /^(INPUT|SELECT|TEXTAREA)$/.test(foco.tagName)) foco.blur();
 	if (visualizacion) return; // en Visualización solo se mira: nada se selecciona ni se mueve
 	// Cablear por clic: si estamos eligiendo destino, el próximo clic sobre otro aparato
 	// lo fija como destino en el formulario (funciona en cualquier modo). Se actualiza el
@@ -2172,6 +2241,12 @@ window.addEventListener('keydown', (ev) => {
 			else eliminarEstructura(sel);
 		}
 	}
+	if (ctrl && ev.key.toLowerCase() === 'd') {
+		ev.preventDefault();
+		if (modo === 'editor' && sel?.tipo === 'dispositivo') duplicarDispositivo(sel.id);
+		else avisar('Ctrl+D duplica el aparato seleccionado (en modo Editor).', 'info');
+		return;
+	}
 	if (ev.key === 'Escape') {
 		if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); }
 		else aplicarSeleccion(undefined);
@@ -2527,6 +2602,16 @@ ajustarTamano();
 
 /* ------------------------------- Arranque ------------------------------- */
 
+// Buscador del catálogo: filtra según se escribe; Esc limpia y devuelve la lista completa.
+{
+	const buscador = $('buscar-catalogo') as HTMLInputElement;
+	buscador.oninput = () => pintarCatalogo();
+	buscador.onkeydown = (ev) => {
+		ev.stopPropagation(); // que Supr/flechas no lleguen a los atajos del tablero mientras se escribe
+		if (ev.key === 'Escape') { buscador.value = ''; pintarCatalogo(); buscador.blur(); }
+	};
+}
+
 pintarCatalogo();
 pintarPaneles();
 pintarEstructura();
@@ -2607,6 +2692,8 @@ if (new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Qué hay seleccionado ahora mismo (para distinguir a quién agarró un clic). */
 		seleccion: () => (sel ? { tipo: sel.tipo, id: sel.id } : undefined),
+		/** Selecciona un aparato por id, como si se hubiera pinchado en él. */
+		seleccionarPorId: (id: string) => seleccionar(id),
 		/** Estado de la interacción (para diagnosticar un clic que se fue por otro camino). */
 		estadoInteraccion: () => ({
 			modo,

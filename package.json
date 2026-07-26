@@ -11,7 +11,7 @@
     "editor": "vite app",
     "editor:build": "vite build app",
     "empaquetar": "vite build app && node app/empaquetar.mjs",
-    "qa": "vite build app && node qa/cables.mjs && node qa/cables-fusion.mjs && node qa/agarre.mjs && node qa/riel.mjs && node qa/riel-ejemplos-vista.mjs && node qa/general.mjs && node qa/tablero-desde-cero.mjs && node qa/estres.mjs",
+    "qa": "vite build app && node qa/cables.mjs && node qa/cables-fusion.mjs && node qa/agarre.mjs && node qa/riel.mjs && node qa/riel-ejemplos-vista.mjs && node qa/general.mjs && node qa/tablero-desde-cero.mjs && node qa/mejoras.mjs && node qa/estres.mjs",
     "qa:cables": "node qa/cables.mjs",
     "qa:fusion": "node qa/cables-fusion.mjs",
     "qa:agarre": "node qa/agarre.mjs",
@@ -19,6 +19,7 @@
     "qa:tablero": "node qa/tablero-desde-cero.mjs",
     "qa:riel": "node qa/riel.mjs",
     "qa:nuevas": "node qa/riel-ejemplos-vista.mjs",
+    "qa:mejoras": "node qa/mejoras.mjs",
     "qa:estres": "node qa/estres.mjs"
   },
   "devDependencies": {

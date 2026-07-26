@@ -74,6 +74,9 @@
 
 	/* Catálogo */
 	.grupo-catalogo { margin: 6px 0 2px; color: var(--texto-suave); font-size: 11px; }
+	#buscar-catalogo { width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 6px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 12.5px; }
+	#buscar-catalogo::placeholder { color: var(--texto-suave); }
+	.catalogo-vacio { color: var(--texto-suave); font-size: 12px; padding: 8px 2px; }
 	.item-catalogo {
 		display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
 		background: transparent; border: 1px solid transparent; border-radius: 8px;
@@ -271,7 +274,10 @@
 <aside id="panel-izq" class="panel">
 	<details open id="seccion-catalogo">
 		<summary>Catálogo — clic para añadir</summary>
-		<div class="contenido" id="catalogo"></div>
+		<div class="contenido">
+			<input id="buscar-catalogo" type="search" placeholder="Buscar aparato… (contactor, 3P, 24 V)" autocomplete="off">
+			<div id="catalogo"></div>
+		</div>
 	</details>
 	<details open>
 		<summary>Dispositivos <span id="contador-dispositivos"></span></summary>
