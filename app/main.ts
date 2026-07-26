@@ -24,7 +24,7 @@ import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
 	anclajeBorne, cajaDe, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
-	rutasDeCables, VOLTAJE_COLOR, Z_FRENTE,
+	rutasDeCables, salidasDeCable, VOLTAJE_COLOR, Z_FRENTE,
 } from './escena3d.js';
 import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
 import { distPuntoSegmento, longitudSolapada, orthogonalize } from './geometria-cables.js';
@@ -1183,15 +1183,23 @@ function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camara);
 	const impactos = raycaster.intersectObjects(escenario.raiz.children, true);
-	let cable: Seleccion | undefined;
+	// De los cables se guardan dos candidatos: el tubo que de VERDAD se ve bajo el puntero y el
+	// tubo grueso de agarre (invisible, para poder pinchar sin puntería). Gana siempre el visible;
+	// si no, el agarre del vecino robaría el clic y se seleccionaría un cable distinto del señalado.
+	let cableVisible: string | undefined;
+	let cableAgarre: string | undefined;
 	for (const i of impactos) {
 		const u = i.object.userData;
 		if (u.dispositivoId) return { tipo: 'dispositivo', id: u.dispositivoId };
 		if (u.canaletaId) return { tipo: 'canaleta', id: u.canaletaId };
 		if (u.rielId) return { tipo: 'riel', id: u.rielId };
-		if (u.conductorId && !cable) cable = { tipo: 'cable', id: u.conductorId };
+		if (u.conductorId) {
+			if (u.tuboVisible && !cableVisible) cableVisible = u.conductorId as string;
+			else if (!cableAgarre) cableAgarre = u.conductorId as string;
+		}
 	}
-	return cable; // los cables tienen la prioridad más baja
+	const cable = cableVisible ?? cableAgarre;
+	return cable ? { tipo: 'cable', id: cable } : undefined; // los cables tienen la prioridad más baja
 }
 
 /** Conductor cuyo tubo está bajo el puntero (para el resaltado al pasar el ratón). */
@@ -1201,6 +1209,10 @@ function cableBajoElPuntero(ev: MouseEvent): string | undefined {
 	raycaster.setFromCamera(puntero, camara);
 	// Recursivo: los tubos cuelgan dentro de un grupo hijo de escenario.cables.
 	const impactos = raycaster.intersectObjects(escenario.cables.children, true);
+	// PRIMERO el cable que de verdad se ve bajo el puntero; el tubo grueso de agarre (invisible)
+	// solo entra en juego si no hay ninguno, para no seleccionar un vecino que no estás señalando.
+	const visible = impactos.find((i) => i.object.userData.tuboVisible)?.object.userData.conductorId;
+	if (visible) return visible as string;
 	return impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId as string | undefined;
 }
 
@@ -1224,13 +1236,41 @@ let cableandoDesde: RefBorne | undefined;              // borne de origen mientr
 let codosCableado: { x: number; y: number }[] = [];    // codos marcados con clic durante el tendido
 let gomaCable: THREE.Line | undefined;                 // «goma elástica» del cable que sigue al cursor
 
-/** Borne (punto de conexión) bajo el puntero, si lo hay. */
-function borneBajoElPuntero(ev: MouseEvent): RefBorne | undefined {
+/**
+ * Borne (punto de conexión) bajo el puntero, con la distancia a la cámara: hace falta para
+ * decidir quién se queda el clic cuando un cable pasa justo por delante del terminal.
+ */
+function borneBajoElPunteroCon(ev: MouseEvent): { borne: RefBorne; distancia: number } | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camara);
-	const o = raycaster.intersectObjects(escenario.bornes.children, true).find((i) => i.object.userData.borneId)?.object;
-	return o ? { dispositivoId: o.userData.borneDispositivoId, borneId: o.userData.borneId } : undefined;
+	const h = raycaster.intersectObjects(escenario.bornes.children, true).find((i) => i.object.userData.borneId);
+	if (!h) return undefined;
+	return {
+		borne: { dispositivoId: h.object.userData.borneDispositivoId, borneId: h.object.userData.borneId },
+		distancia: h.distance,
+	};
+}
+
+/** Borne (punto de conexión) bajo el puntero, si lo hay. */
+function borneBajoElPuntero(ev: MouseEvent): RefBorne | undefined {
+	return borneBajoElPunteroCon(ev)?.borne;
+}
+
+/**
+ * ¿Hay un cable pasando POR DELANTE del borne que hay bajo el puntero?
+ * Los cables corren al frente del tablero y muchas veces cruzan justo por encima de un terminal.
+ * Si en ese píxel lo que se ve es el cable, el clic tiene que ser para el cable —agarrarlo— y no
+ * para empezar un cableado desde un borne que en realidad está tapado. Era una de las causas de
+ * «a veces no puedo agarrar los cables».
+ */
+function cableTapaAlBorne(ev: MouseEvent, distanciaBorne: number): boolean {
+	const r = renderer.domElement.getBoundingClientRect();
+	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+	raycaster.setFromCamera(puntero, camara);
+	const d = raycaster.intersectObjects(escenario.cables.children, true)
+		.find((i) => i.object.userData.tuboVisible)?.distance;
+	return d !== undefined && d < distanciaBorne;
 }
 
 /** Resalta el borne bajo el ratón (y el de origen si se está cableando); pone el cursor de mira. */
@@ -1503,15 +1543,15 @@ function puntoCable(ev: MouseEvent): { x: number; y: number } | undefined {
 
 /* --------------------- Puntos de quiebre de los cables (estilo Tinkercad) --------------------- */
 
-/** Nodos completos del recorrido de un cable en coordenadas de modelo: borne → puntos → borne. */
+/**
+ * Nodos completos del recorrido de un cable en coordenadas de modelo: borne → puntos → borne.
+ * Usa las MISMAS puntas en abanico que el dibujo 3D; si no, el cable que se ve y el cable con
+ * el que trabaja el ratón no coincidirían y la selección quedaría descalibrada.
+ */
 function nodosCable(c: Conductor): { x: number; y: number }[] {
-	const a = anclajeBorne(proyecto, c.de.dispositivoId, c.de.borneId);
-	const b = anclajeBorne(proyecto, c.a.dispositivoId, c.a.borneId);
-	return [
-		a ? { x: a.x, y: a.y } : undefined,
-		...(c.trazado ?? []),
-		b ? { x: b.x, y: b.y } : undefined,
-	].filter((p): p is { x: number; y: number } => !!p);
+	const p = salidasDeCable(proyecto, c);
+	if (!p) return [];
+	return [p.salidaA, ...(c.trazado ?? []), p.salidaB];
 }
 
 /** Longitud aproximada del cable (mm) según su recorrido ortogonal real (Manhattan). */
@@ -1547,10 +1587,9 @@ function insertarWaypoint(c: Conductor, x: number, y: number): number {
 function moverWaypoint(c: Conductor, idx: number, x: number, y: number): void {
 	const wps = c.trazado;
 	if (!wps || !wps[idx]) return;
-	const a = anclajeBorne(proyecto, c.de.dispositivoId, c.de.borneId);
-	const b = anclajeBorne(proyecto, c.a.dispositivoId, c.a.borneId);
-	const prev = idx > 0 ? wps[idx - 1] : (a ? { x: a.x, y: a.y } : undefined);
-	const next = idx < wps.length - 1 ? wps[idx + 1] : (b ? { x: b.x, y: b.y } : undefined);
+	const p = salidasDeCable(proyecto, c);
+	const prev = idx > 0 ? wps[idx - 1] : p?.salidaA;
+	const next = idx < wps.length - 1 ? wps[idx + 1] : p?.salidaB;
 	let nx = Math.round(x);
 	let ny = Math.round(y);
 	// Alinear en vertical/horizontal con el vecino más cercano en cada eje.
@@ -1772,10 +1811,16 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	// Cableado por clic en los bornes (modo Trabajo, clic izquierdo): clic en un borne y luego
 	// en otro crea el cable, como en un tablero real. Tiene prioridad para poder conectar.
 	if (modo === 'trabajo' && ev.button === 0) {
-		const borne = borneBajoElPuntero(ev);
-		if (borne) {
-			if (cableandoDesde) completarCableado(borne);
-			else iniciarCableado(borne);
+		const golpe = borneBajoElPunteroCon(ev);
+		// Regla única cuando un cable pasa justo por delante de un terminal: MANDA LO QUE SE VE
+		// ENCIMA. El punto del borne queda por detrás del plano de los cables, así que si en ese
+		// píxel se ve el cable, el clic es para agarrar el cable; en el resto del punto (que sigue
+		// siendo la mayor parte) el clic es para conectar. Antes la esfera se comía el clic en todo
+		// su contorno, y de ahí venía el «a veces no puedo agarrar los cables».
+		// Tendiendo un cable el borne manda siempre: hay que poder rematarlo donde sea.
+		if (golpe && (cableandoDesde || !cableTapaAlBorne(ev, golpe.distancia))) {
+			if (cableandoDesde) completarCableado(golpe.borne);
+			else iniciarCableado(golpe.borne);
 			return;
 		}
 		// Tendiendo un cable: cada clic en un punto libre marca un CODO (como en Tinkercad).
@@ -2538,7 +2583,9 @@ if (new URLSearchParams(location.search).has('qa')) {
 				raycaster.setFromCamera(puntero, camara);
 				const impactos = raycaster.intersectObjects(
 					[...escenario.cables.children, ...escenario.dispositivos.children], true,
-				).filter((h) => h.object.userData.conductorId || h.object.userData.dispositivoId);
+				).filter((h) => h.object.userData.tuboVisible || h.object.userData.dispositivoId);
+				// Solo cuenta si lo primero que se ve es el TUBO VISIBLE de este cable: el tubo
+				// grueso de agarre es invisible y no sirve para decir «aquí se ve el cable».
 				if (impactos[0]?.object.userData.conductorId === id) out.push(p);
 			}
 			return out;
@@ -2560,6 +2607,14 @@ if (new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Qué hay seleccionado ahora mismo (para distinguir a quién agarró un clic). */
 		seleccion: () => (sel ? { tipo: sel.tipo, id: sel.id } : undefined),
+		/** Estado de la interacción (para diagnosticar un clic que se fue por otro camino). */
+		estadoInteraccion: () => ({
+			modo,
+			cableando: cableandoDesde ? `${cableandoDesde.dispositivoId}.${cableandoDesde.borneId}` : undefined,
+			arrastrando,
+			tirador: !!handleArrastrado,
+			bornesVisibles: escenario.bornes.visible,
+		}),
 		/** Cuántos píxeles de pantalla equivale un milímetro del modelo en la vista actual. */
 		escalaPantalla: () => {
 			const a = aPantalla(escenario.aEscena(0, 0, 30));
@@ -2605,6 +2660,100 @@ if (new URLSearchParams(location.search).has('qa')) {
 				}
 			}
 			return { totalMm: Math.round(total), pares, cables: rutas.length };
+		},
+		/** Recorrido resuelto de cada cable (mm de modelo), tal cual se dibuja. */
+		rutas: () => rutasDeCables(proyecto).map((r) => ({ id: r.conductorId, nodos: r.nodos })),
+		/**
+		 * Punto de pantalla donde el propio programa agarraría ESE cable: se comprueba en la misma
+		 * pasada que el rayo cae en su tubo visible y que ningún borne se le pone delante. Así la
+		 * prueba pincha donde el usuario lo haría, sin depender del instante en que se calculó.
+		 */
+		puntoParaAgarrar: (id: string, muestras = 15) => {
+			const malla = escenario.cables.children
+				.flatMap((g) => g.children)
+				.find((m) => m.userData.tuboVisible && m.userData.conductorId === id) as THREE.Mesh | undefined;
+			if (!malla) return undefined;
+			const r = renderer.domElement.getBoundingClientRect();
+			const pos = malla.geometry.getAttribute('position');
+			for (let k = 1; k < muestras; k++) {
+				const i = Math.round((k * (pos.count - 1)) / muestras);
+				const mundo = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(malla.matrixWorld);
+				// El navegador entrega los clics en píxeles ENTEROS: se comprueba el punto ya
+				// redondeado, para no dar por bueno un píxel que en realidad cae en el borde del tubo.
+				const v = aPantalla(mundo);
+				const p = { x: Math.round(v.x), y: Math.round(v.y) };
+				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
+				raycaster.setFromCamera(puntero, camara);
+				const cable = raycaster.intersectObjects(escenario.cables.children, true)
+					.find((h) => h.object.userData.tuboVisible);
+				if (cable?.object.userData.conductorId !== id) continue;
+				const aparato = raycaster.intersectObjects(escenario.dispositivos.children, true)
+					.find((h) => h.object.userData.dispositivoId);
+				if (aparato && aparato.distance < cable.distance) continue; // tapado por un aparato
+				// Tampoco vale si encima hay un tirador de otra unión: ahí lo que se ve es el tirador.
+				if (raycaster.intersectObjects(escenario.handles.children, true).some((h) => h.distance < cable.distance)) continue;
+				return p;
+			}
+			return undefined;
+		},
+		/**
+		 * Píxel donde ESE borne es lo primero que se ve (ni cable ni aparato delante): el sitio
+		 * donde pincharía quien quiere conectar ahí. Devuelve undefined si está totalmente tapado.
+		 */
+		puntoParaBorne: (dispositivoId: string, borneId: string) => {
+			const esfera = escenario.bornes.children.find(
+				(m) => m.userData.borneDispositivoId === dispositivoId && m.userData.borneId === borneId,
+			);
+			if (!esfera) return undefined;
+			const r = renderer.domElement.getBoundingClientRect();
+			const centro = new THREE.Vector3().setFromMatrixPosition(esfera.matrixWorld);
+			const radio = 4.2 * (esfera.scale.x || 1);
+			// Se prueba el centro y, si un cable lo cruza, unos puntos alrededor del propio punto.
+			const alrededor: [number, number][] = [[0, 0], [0, -0.7], [0, 0.7], [-0.7, 0], [0.7, 0], [-0.5, -0.5], [0.5, 0.5]];
+			for (const [dx, dy] of alrededor) {
+				const v = aPantalla(new THREE.Vector3(centro.x + dx * radio, centro.y + dy * radio, centro.z));
+				const p = { x: Math.round(v.x), y: Math.round(v.y) };
+				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
+				raycaster.setFromCamera(puntero, camara);
+				const b = raycaster.intersectObjects(escenario.bornes.children, true).find((h) => h.object.userData.borneId);
+				if (b?.object !== esfera) continue;
+				const cable = raycaster.intersectObjects(escenario.cables.children, true)
+					.find((h) => h.object.userData.tuboVisible);
+				if (cable && cable.distance < b.distance) continue; // hay un cable por delante
+				const aparato = raycaster.intersectObjects(escenario.dispositivos.children, true)
+					.find((h) => h.object.userData.dispositivoId);
+				if (aparato && aparato.distance < b.distance) continue;
+				return p;
+			}
+			return undefined;
+		},
+		/** Todo lo que hay bajo un píxel, en orden de cercanía (para diagnosticar un clic perdido). */
+		diagnosticoPixel: (x: number, y: number) => {
+			const r = renderer.domElement.getBoundingClientRect();
+			puntero.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+			raycaster.setFromCamera(puntero, camara);
+			const tirador = raycaster.intersectObjects(escenario.handles.children, true)[0];
+			const borne = raycaster.intersectObjects(escenario.bornes.children, true).find((h) => h.object.userData.borneId);
+			const marca = [
+				...(tirador ? [`TIRADOR@${tirador.distance.toFixed(1)}`] : []),
+				...(borne ? [`BORNE:${borne.object.userData.borneDispositivoId}.${borne.object.userData.borneId}@${borne.distance.toFixed(1)}`] : []),
+			];
+			return marca.concat(raycaster.intersectObjects(escenario.raiz.children, true).slice(0, 8).map((h) => {
+				const u = h.object.userData;
+				const que = u.tuboVisible ? 'cable' : u.tuboAgarre ? 'agarre' : u.borneId ? 'borne'
+					: u.dispositivoId ? 'aparato' : u.canaletaId ? 'canaleta' : u.rielId ? 'riel'
+					: u.handle ? 'tirador' : 'otro';
+				return `${que}:${u.conductorId ?? u.borneId ?? u.dispositivoId ?? u.canaletaId ?? u.rielId ?? ''}@${h.distance.toFixed(1)}`;
+			}));
+		},
+		/** Qué cable elegiría un clic en ese píxel de pantalla (misma lógica que la selección real). */
+		cableEnPixel: (x: number, y: number) => {
+			const r = renderer.domElement.getBoundingClientRect();
+			puntero.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+			raycaster.setFromCamera(puntero, camara);
+			const impactos = raycaster.intersectObjects(escenario.cables.children, true);
+			const visto = impactos.find((i) => i.object.userData.tuboVisible)?.object.userData.conductorId;
+			return (visto ?? impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId) as string | undefined;
 		},
 		proyecto: () => proyecto,
 	};

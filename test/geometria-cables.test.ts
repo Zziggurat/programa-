@@ -6,7 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-	Banda, corredoresLibres, distPuntoSegmento, longitudSolapada, orthogonalize, Punto, rutaAutomatica,
+	Banda, carrilesDe, corredoresLibres, crearRepartidor, distPuntoSegmento, longitudSolapada,
+	orthogonalize, Punto, rutaAutomatica,
 } from '../app/geometria-cables.js';
 
 /** ¿Todos los tramos consecutivos son horizontales o verticales (nunca diagonales)? */
@@ -123,4 +124,58 @@ test('rutaAutomatica: cables en paralelo (bornes distintos) no quedan montados',
 		for (let j = i + 1; j < rutas.length; j++) solape += longitudSolapada(rutas[i], rutas[j]);
 	}
 	assert.equal(solape, 0, `los cables no deben pisarse entre sí (solape ${solape} mm)`);
+});
+
+/* ---------------- Reparto por carriles: que ningún cable quede montado sobre otro ---------------- */
+
+test('carrilesDe: los carriles salen del centro hacia los bordes y no se repiten', () => {
+	const ys = carrilesDe({ y0: 0, y1: 100 });
+	assert.ok(ys.length > 1, 'un corredor ancho tiene varios carriles');
+	assert.equal(new Set(ys).size, ys.length, 'no hay carriles repetidos');
+	// Con un número par de carriles no hay uno justo en el eje: vale el más cercano al centro.
+	const paso = Math.abs(ys[0] - ys[1]);
+	assert.ok(Math.abs(ys[0] - 50) <= paso, `el primer carril va por el centro (salió ${ys[0]})`);
+	const d = ys.map((y) => Math.abs(y - 50));
+	for (let i = 1; i < d.length; i++) assert.ok(d[i] >= d[i - 1] - 0.01, 'se van abriendo hacia los lados');
+});
+
+test('carrilesDe: un corredor estrecho da un único carril, por su centro', () => {
+	assert.deepEqual(carrilesDe({ y0: 40, y1: 54 }), [47]);
+});
+
+test('repartidor: diez cables por el mismo corredor no se pisan NUNCA', () => {
+	// Es el caso que se veía mal: muchos cables saliendo de una fila de bornes a otra.
+	const corredores = corredoresLibres([{ y0: 0, y1: 40 }, { y0: 220, y1: 260 }], 0, 260);
+	const repartir = crearRepartidor(corredores);
+	const rutas = Array.from({ length: 10 }, (_, k) => {
+		const a = { x: 20 + k * 18, y: 40 };
+		const b = { x: 300 - k * 18, y: 220 };
+		return orthogonalize([a, ...repartir(a, b), b]);
+	});
+	let solape = 0;
+	for (let i = 0; i < rutas.length; i++) {
+		for (let j = i + 1; j < rutas.length; j++) solape += longitudSolapada(rutas[i], rutas[j]);
+	}
+	assert.equal(solape, 0, `ningún cable puede ir montado sobre otro (solape ${solape} mm)`);
+});
+
+test('repartidor: cables de zonas distintas SÍ pueden compartir carril (no desperdicia el pasillo)', () => {
+	const corredores = corredoresLibres([], 100, 160);
+	const repartir = crearRepartidor(corredores);
+	const izq = repartir({ x: 0, y: 100 }, { x: 60, y: 160 });
+	const der = repartir({ x: 400, y: 100 }, { x: 460, y: 160 });
+	assert.equal(izq[0].y, der[0].y, 'si no se pisan, van a la misma altura (peinado ordenado)');
+});
+
+test('repartidor: dos cables que se pisarían acaban en alturas distintas', () => {
+	const corredores = corredoresLibres([], 100, 160);
+	const repartir = crearRepartidor(corredores);
+	const uno = repartir({ x: 0, y: 100 }, { x: 300, y: 160 });
+	const otro = repartir({ x: 20, y: 100 }, { x: 280, y: 160 });
+	assert.notEqual(uno[0].y, otro[0].y, 'no pueden compartir carril si comparten tramo');
+});
+
+test('repartidor: bornes en la misma vertical siguen sin meter codos', () => {
+	const repartir = crearRepartidor(corredoresLibres([], 0, 200));
+	assert.deepEqual(repartir({ x: 50, y: 10 }, { x: 50, y: 150 }), []);
 });

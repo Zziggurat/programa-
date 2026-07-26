@@ -82,6 +82,13 @@ for (let i = 0; i < bornes.length && !par; i++)
 	}
 must('hay un par de bornes libres para la prueba', !!par);
 
+// Se apunta al punto del borne que de verdad está despejado (si un cable le cruza por delante,
+// el clic ahí sería para el cable: manda lo que se ve encima).
+for (const b of par) {
+	const p = await qa('puntoParaBorne', b.dispositivo, b.borne);
+	if (p) { b.x = p.x; b.y = p.y; }
+}
+
 const n0 = await nConductores();
 await page.mouse.click(par[0].x, par[0].y); await page.waitForTimeout(200);
 must('tocar un borne inicia el cableado', /otro borne/i.test(await toast()));
@@ -103,6 +110,10 @@ for (let i = 0; i < bornes.length && !par2; i++)
 		par2 = [bornes[i], bornes[j]]; break;
 	}
 if (par2) {
+	for (const b of par2) {
+		const p = await qa('puntoParaBorne', b.dispositivo, b.borne);
+		if (p) { b.x = p.x; b.y = p.y; }
+	}
 	await page.mouse.click(par2[0].x, par2[0].y); await page.waitForTimeout(150);
 	const medio = { x: (par2[0].x + par2[1].x) / 2, y: (par2[0].y + par2[1].y) / 2 + 60 };
 	await page.mouse.click(medio.x, medio.y); await page.waitForTimeout(150);   // codo 1

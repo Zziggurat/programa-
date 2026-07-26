@@ -6,8 +6,8 @@
  * hacia el frente. Todo se centra en el origen para orbitar cómodo.
  */
 import * as THREE from 'three';
-import { Colocacion, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
-import { Banda, corredoresLibres, orthogonalize, redondearEsquinas, rutaAutomatica } from './geometria-cables.js';
+import { Colocacion, Conductor, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
+import { Banda, corredoresLibres, crearRepartidor, orthogonalize, redondearEsquinas } from './geometria-cables.js';
 import { construirAparato3D } from './dispositivos3d.js';
 
 export const COLOR_CABLE: Record<string, number> = {
@@ -125,7 +125,10 @@ export function construirBornes(proyecto: Proyecto, aEscena: Escenario['aEscena'
 				roughness: 0.35,
 				metalness: 0.2,
 			}));
-			m.position.copy(aEscena(pos.x, pos.y, pos.z + 4));
+			// Justo por delante del aparato pero POR DETRÁS del plano por el que corren los cables
+			// (Z_FRENTE): si sobresaliera más, la esfera taparía al cable que pasa por encima del
+			// terminal y le robaría el clic —era la causa de «a veces no puedo agarrar los cables»—.
+			m.position.copy(aEscena(pos.x, pos.y, Math.min(pos.z + 4, Z_FRENTE - 5)));
 			m.scale.setScalar(conectado ? 0.78 : 1);
 			m.userData = { borneDispositivoId: d.id, borneId: b.id, conectado };
 			m.renderOrder = 997;
@@ -555,22 +558,27 @@ function anadirTuboCable(
 		new THREE.MeshStandardMaterial({ color, roughness: 0.55 }),
 	);
 	tubo.userData.conductorId = conductorId;
+	tubo.userData.tuboVisible = true; // el que se ve: manda al seleccionar con el ratón
 	grupo.add(tubo);
-	// Tubo de agarre invisible (bastante más grueso) para poder pinchar el cable con facilidad
-	// aunque se esté viendo el tablero alejado.
+	// Tubo de agarre invisible (más grueso) para poder pinchar el cable con facilidad aunque se
+	// esté viendo el tablero alejado. Solo se usa si el puntero NO está sobre un cable visible.
 	const agarre = new THREE.Mesh(
 		new THREE.TubeGeometry(curva, segmentos, Math.max(radio + 7, 9), 6, false),
 		new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
 	);
 	agarre.userData.conductorId = conductorId;
+	agarre.userData.tuboAgarre = true;
 	grupo.add(agarre);
 }
+
+/** Punto físico exacto del que sale un cable (mm de modelo, Y abajo; z = profundidad). */
+export interface Anclaje { x: number; y: number; z: number }
 
 /** Recorrido de un cable ya resuelto: sus anclajes y la polilínea ortogonal que sigue. */
 export interface RutaCable {
 	conductorId: string;
-	de: { x: number; y: number; z: number };
-	a: { x: number; y: number; z: number };
+	de: Anclaje;
+	a: Anclaje;
 	/** Nodos del recorrido en coordenadas de modelo, ya ortogonalizados. */
 	nodos: { x: number; y: number }[];
 }
@@ -581,22 +589,72 @@ export interface RutaCable {
  * Con puntos de quiebre a mano pasa por ellos; sin puntos, se rutea por un CORREDOR LIBRE
  * (franja sin aparatos) tomando un carril propio.
  */
+/** Separación (mm) entre las puntas de dos cables que comparten el mismo borne. */
+const ABANICO_MM = 6;
+
+/**
+ * Abanico de salida en los bornes compartidos.
+ *
+ * Varios cables pueden llegar al MISMO borne (una bobina, un puente, un bornero…). Si todos
+ * salieran exactamente del mismo punto se verían FUSIONADOS en uno solo, que es irreal: en un
+ * tablero de verdad se abren en abanico junto al terminal. Esta función devuelve el desvío
+ * lateral (mm) que le toca a cada punta de cable; 0 si el borne no lo comparte con nadie.
+ *
+ * La usan por igual el dibujo 3D y la interacción del ratón, para que el cable que se ve y el
+ * cable con el que se trabaja sean exactamente el mismo (si no, la selección queda descalibrada).
+ */
+export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, borneId: string, conductorId: string) => number {
+	const enBorne = new Map<string, string[]>();
+	const anota = (clave: string, id: string) => {
+		const l = enBorne.get(clave);
+		if (l) l.push(id); else enBorne.set(clave, [id]);
+	};
+	for (const c of proyecto.conductores) {
+		anota(`${c.de.dispositivoId}:${c.de.borneId}`, c.id);
+		anota(`${c.a.dispositivoId}:${c.a.borneId}`, c.id);
+	}
+	return (dispositivoId, borneId, conductorId) => {
+		const l = enBorne.get(`${dispositivoId}:${borneId}`) ?? [];
+		if (l.length < 2) return 0;
+		return (l.indexOf(conductorId) - (l.length - 1) / 2) * ABANICO_MM;
+	};
+}
+
+/** Puntas de un cable: el borne real y el punto al que se abre para no fundirse con sus vecinos. */
+export function salidasDeCable(
+	proyecto: Proyecto,
+	conductor: Conductor,
+	abanico = abanicoDeSalida(proyecto),
+): { de: Anclaje; a: Anclaje; salidaA: { x: number; y: number }; salidaB: { x: number; y: number } } | undefined {
+	const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
+	const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
+	if (!a || !b) return undefined; // solo si falta el aparato entero (se limpia al eliminarlo)
+	return {
+		de: a,
+		a: b,
+		salidaA: { x: a.x + abanico(conductor.de.dispositivoId, conductor.de.borneId, conductor.id), y: a.y },
+		salidaB: { x: b.x + abanico(conductor.a.dispositivoId, conductor.a.borneId, conductor.id), y: b.y },
+	};
+}
+
 export function rutasDeCables(proyecto: Proyecto): RutaCable[] {
 	const corredores = corredoresLibresDe(proyecto);
+	const abanico = abanicoDeSalida(proyecto);
+	// Reparte los cables por carriles llevando la cuenta de lo ya ocupado: dos cables solo
+	// comparten altura si van por tramos del tablero que no se pisan.
+	const repartir = crearRepartidor(corredores);
 	const rutas: RutaCable[] = [];
-	let carril = 0;
+
 	for (const conductor of proyecto.conductores) {
-		const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
-		const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
-		if (!a || !b) continue; // solo si falta el aparato entero (se limpia al eliminarlo)
-		const intermedios = conductor.trazado?.length
-			? conductor.trazado
-			: rutaAutomatica({ x: a.x, y: a.y }, { x: b.x, y: b.y }, corredores, carril++);
+		const p = salidasDeCable(proyecto, conductor, abanico);
+		if (!p) continue;
+		const intermedios = conductor.trazado?.length ? conductor.trazado : repartir(p.salidaA, p.salidaB);
 		rutas.push({
 			conductorId: conductor.id,
-			de: a,
-			a: b,
-			nodos: orthogonalize([{ x: a.x, y: a.y }, ...intermedios, { x: b.x, y: b.y }]),
+			de: p.de,
+			a: p.a,
+			// El recorrido arranca en el borne y enseguida se abre a su carril propio.
+			nodos: orthogonalize([p.salidaA, ...intermedios, p.salidaB]),
 		});
 	}
 	return rutas;
@@ -715,7 +773,7 @@ export function anclajeBorne(
 	proyecto: Proyecto,
 	dispositivoId: string,
 	borneId: string,
-): { x: number; y: number; z: number } | undefined {
+): Anclaje | undefined {
 	const d = proyecto.dispositivos.find((x) => x.id === dispositivoId);
 	const col = proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === dispositivoId);
 	if (!d) return undefined;

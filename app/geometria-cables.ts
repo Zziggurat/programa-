@@ -56,6 +56,38 @@ export function corredoresLibres(ocupadas: Banda[], yMin: number, yMax: number, 
 	return libres;
 }
 
+/** Corredor más natural para ir de `a` a `b`: el que queda ENTRE los dos bornes y más centrado. */
+export function mejorCorredor(a: Punto, b: Punto, corredores: Banda[]): Banda | undefined {
+	const yMedio = (a.y + b.y) / 2;
+	const lo = Math.min(a.y, b.y);
+	const hi = Math.max(a.y, b.y);
+	let mejor: Banda | undefined;
+	let mejorCoste = Infinity;
+	for (const c of corredores) {
+		const centro = (c.y0 + c.y1) / 2;
+		const coste = Math.abs(centro - yMedio) + (centro >= lo && centro <= hi ? 0 : 1000);
+		if (coste < mejorCoste) { mejorCoste = coste; mejor = c; }
+	}
+	return mejor;
+}
+
+/**
+ * Alturas (mm) de los carriles de un corredor, ORDENADAS del centro hacia los bordes: un cable
+ * solo va por el medio del pasillo, y los siguientes se van abriendo a los lados como en un
+ * peinado de tablero real.
+ */
+export function carrilesDe(banda: Banda, paso = 7): number[] {
+	const util = Math.max(6, banda.y1 - banda.y0 - 10);
+	const n = Math.max(1, Math.min(10, Math.floor(util / paso)));
+	const centro = (banda.y0 + banda.y1) / 2;
+	if (n === 1) return [Math.round(centro)];
+	const ys: { y: number; d: number }[] = [];
+	for (let i = 0; i < n; i++) {
+		ys.push({ y: Math.round(centro - util / 2 + (i * util) / (n - 1)), d: Math.abs(i - (n - 1) / 2) });
+	}
+	return ys.sort((p, q) => p.d - q.d).map((p) => p.y);
+}
+
 /**
  * Ruta automática ortogonal entre dos bornes: sale en vertical de cada borne, recorre un
  * CORREDOR LIBRE (sin aparatos encima) y baja/sube al destino. Cada cable toma un carril
@@ -64,24 +96,45 @@ export function corredoresLibres(ocupadas: Banda[], yMin: number, yMax: number, 
  */
 export function rutaAutomatica(a: Punto, b: Punto, corredores: Banda[], carril: number): Punto[] {
 	if (Math.abs(a.x - b.x) < 2) return []; // misma vertical: tramo recto, sin codos
-	const yMedio = (a.y + b.y) / 2;
-	const lo = Math.min(a.y, b.y);
-	const hi = Math.max(a.y, b.y);
-	let mejor: Banda | undefined;
-	let mejorCoste = Infinity;
-	for (const c of corredores) {
-		const centro = (c.y0 + c.y1) / 2;
-		// Se prefiere un corredor que quede ENTRE los dos bornes (recorrido más corto y natural).
-		const coste = Math.abs(centro - yMedio) + (centro >= lo && centro <= hi ? 0 : 1000);
-		if (coste < mejorCoste) { mejorCoste = coste; mejor = c; }
+	const mejor = mejorCorredor(a, b, corredores);
+	if (!mejor) {
+		const y = Math.round((a.y + b.y) / 2);
+		return [{ x: a.x, y }, { x: b.x, y }];
 	}
-	if (!mejor) return [{ x: a.x, y: Math.round(yMedio) }, { x: b.x, y: Math.round(yMedio) }];
-	const util = Math.max(6, mejor.y1 - mejor.y0 - 10);
-	const n = Math.max(1, Math.min(10, Math.floor(util / 7)));
-	const centro = (mejor.y0 + mejor.y1) / 2;
-	const idx = ((carril % n) + n) % n;
-	const y = Math.round(n === 1 ? centro : centro - util / 2 + (idx * util) / (n - 1));
+	const ys = carrilesDe(mejor);
+	const y = ys[((carril % ys.length) + ys.length) % ys.length];
 	return [{ x: a.x, y }, { x: b.x, y }];
+}
+
+/**
+ * Repartidor de carriles: reparte los cables por el tablero de forma que NINGUNO quede montado
+ * encima de otro. A diferencia de `rutaAutomatica` (que reparte a ciegas por número de cable),
+ * este lleva la cuenta de qué trozo de cada carril está ya ocupado y le da a cada cable el
+ * primer carril libre EN SU TRAMO DE X. Dos cables solo comparten altura si van por zonas del
+ * tablero que no se pisan, que es exactamente como se peina un tablero de verdad.
+ *
+ * Devuelve una función que, para cada par de bornes, da los puntos intermedios de su ruta.
+ */
+export function crearRepartidor(corredores: Banda[], holgura = 8): (a: Punto, b: Punto) => Punto[] {
+	const ocupado = new Map<number, { x0: number; x1: number }[]>();
+	let repartidos = 0;
+	return (a, b) => {
+		if (Math.abs(a.x - b.x) < 2) return []; // misma vertical: tramo recto, sin codos
+		const corredor = mejorCorredor(a, b, corredores);
+		if (!corredor) {
+			const y = Math.round((a.y + b.y) / 2);
+			return [{ x: a.x, y }, { x: b.x, y }];
+		}
+		const tramo = { x0: Math.min(a.x, b.x) - holgura, x1: Math.max(a.x, b.x) + holgura };
+		const carriles = carrilesDe(corredor);
+		const libre = carriles.find((y) => !(ocupado.get(y) ?? []).some((u) => u.x1 > tramo.x0 && u.x0 < tramo.x1));
+		// Si el corredor está lleno se reparte por turnos: mejor repartido que todos en el mismo sitio.
+		const y = libre ?? carriles[repartidos % carriles.length];
+		repartidos++;
+		const usos = ocupado.get(y);
+		if (usos) usos.push(tramo); else ocupado.set(y, [tramo]);
+		return [{ x: a.x, y }, { x: b.x, y }];
+	};
 }
 
 /**
