@@ -319,6 +319,11 @@ function $(id: string): HTMLElement {
 
 const hexColor = (c: number): string => '#' + c.toString(16).padStart(6, '0');
 
+/** Escapa texto para meterlo en HTML sin que un nombre con < o & rompa la página. */
+function escaparHtml(t: string): string {
+	return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /** Nombre de archivo seguro a partir del nombre del proyecto. */
 function nombreArchivo(): string {
 	return proyecto.nombre.replaceAll(/[^\wáéíóúñ -]/gi, '').trim() || 'tablero';
@@ -966,7 +971,7 @@ function pintarPanelCable(id: string): void {
 		<dl>
 			<dt>Recorrido</dt><dd>${manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : '↳ directo (en L, automático)'}</dd>
 		</dl>
-		<div class="sub" style="margin-top:6px"><b>Arrastra</b> las esferas azules con el <b>clic izquierdo</b> para mover cada punto · <b>clic derecho</b> sobre el cable para crear una unión (punto nuevo) · <b>doble clic</b> en una esfera para quitarla.</div>
+		<div class="sub" style="margin-top:6px"><b>Doble clic</b> sobre el cable (botón izquierdo o derecho) crea una <b>unión</b> · <b>arrastra</b> las esferas azules con el clic izquierdo para mover cada unión · <b>doble clic</b> en una esfera la quita.</div>
 		<div class="form-cable" style="margin-top:10px">
 			<select id="cbl-seccion">${SECCIONES.map((s) => `<option value="${s}" ${s === c.seccion ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
 			<select id="cbl-color">${COLORES.map((col) => `<option ${col === c.color ? 'selected' : ''}>${col}</option>`).join('')}</select>
@@ -1377,27 +1382,6 @@ function enfocarCamaraEnCable(id: string): void {
 	const destino = escenario.aEscena(medio.x, medio.y, 0);
 	controles.target.copy(destino);
 	controles.update();
-}
-
-/**
- * Devuelve TODOS los cables a su recorrido automático (ortogonal, en carriles separados),
- * quitándoles los puntos de quiebre a mano. Útil para «enderezar» de golpe si el cableado
- * manual quedó enredado. Es deshacer-able con Ctrl+Z.
- */
-function autoEnderezarCables(): void {
-	const conManual = proyecto.conductores.filter((c) => c.trazado?.length);
-	if (conManual.length === 0) {
-		avisar('Todos los cables ya van en su recorrido automático (en L, por carriles separados).', 'info');
-		return;
-	}
-	capturar();
-	for (const c of conManual) delete c.trazado;
-	reconstruirCables();
-	construirHandles();
-	pintarPaneles();
-	pintarSeleccion();
-	const n = conManual.length;
-	avisar(`${n} ${n === 1 ? 'cable devuelto' : 'cables devueltos'} a su recorrido automático ordenado.`, 'ok');
 }
 
 /** Selección por id de dispositivo (compatibilidad con el resto del código). */
@@ -1961,7 +1945,10 @@ function anadirPin(ev: PointerEvent): boolean {
 	const d = proyecto.dispositivos.find((x) => x.id === id);
 	const col = proyecto.gabinete!.colocaciones.find((c) => c.dispositivoId === id);
 	if (!d?.imagen || !col) return false;
-	const p = puntoModelo(ev);
+	// Se proyecta sobre el plano de LA IMAGEN, no sobre la placa: si la imagen se ha mandado al
+	// fondo o traído al frente, proyectar a z=0 dejaba el punto desplazado respecto de donde se
+	// pinchó, y más cuanto más girada estuviera la cámara.
+	const p = puntoModeloEnZ(ev, (col.z ?? 0) + 10);
 	if (!p) return false;
 	const u = (p.x - col.x) / col.ancho;
 	const v = (p.y - col.y) / col.alto;
@@ -2166,19 +2153,22 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		return;
 	}
 	// --- Cable agarrado: al primer movimiento real empieza el arrastre de verdad ---
+	// Arrastrar MUEVE una unión existente; no crea ninguna. Las uniones se crean solo con doble
+	// clic, para que mover un cable un poco no llene el tablero de puntos sin querer.
 	if (pendienteCable) {
 		const pc = puntoCable(ev);
 		if (!pc) return;
 		if (Math.hypot(pc.x - pendienteCable.x, pc.y - pendienteCable.y) < 6) return; // aún es un clic
-		const c = proyecto.conductores.find((x) => x.id === pendienteCable!.id);
-		if (c) {
+		if (pendienteCable.indice >= 0) {
 			capturar();
-			// Si no se agarró por una unión existente, se crea una justo donde se pinchó.
-			const idx = pendienteCable.indice >= 0
-				? pendienteCable.indice
-				: insertarWaypoint(c, pendienteCable.x, pendienteCable.y);
-			arrastrandoCable = { id: pendienteCable.id, indice: idx };
+			arrastrandoCable = { id: pendienteCable.id, indice: pendienteCable.indice };
 			capturadoEsteArrastre = true;
+		} else {
+			// Sin unión donde se pinchó no hay nada que mover: se avisa una sola vez.
+			avisar('Haz doble clic sobre el cable para crear una unión y poder moverlo ahí.', 'info');
+			controles.enabled = true;
+			arrastrando = false;
+			renderer.domElement.style.cursor = '';
 		}
 		pendienteCable = undefined;
 	}
@@ -2253,6 +2243,10 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	}
 
 	// --- Mover ---
+	// Un CABLE no se mueve por aquí: sus uniones las lleva `arrastrandoCable`. Si se llegara a
+	// esta parte con un cable seleccionado (pasaba al pinchar un cable sin uniones y arrastrar),
+	// se buscaría un riel con el id del cable y se rompía la escena.
+	if (sel.tipo === 'cable') { arrastrando = false; controles.enabled = true; return; }
 	if (sel.tipo === 'dispositivo') {
 		const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id)!;
 		const antesX = col.x;
@@ -2281,10 +2275,11 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		can.x = Math.round((p.x - desfase.x) / 5) * 5;
 		can.y = Math.round((p.y - desfase.y) / 5) * 5;
 		reconstruirEstructuraUno(sel);
-	} else {
+	} else if (sel.tipo === 'riel') {
 		// Mover un riel ARRASTRA CONSIGO los aparatos anclados a él (como al soltar el perfil
 		// DIN en un tablero real). Si algo choca o se sale, se avisa en rojo en el momento.
-		const riel = g.rieles.find((r) => r.id === sel!.id)!;
+		const riel = g.rieles.find((r) => r.id === sel!.id);
+		if (!riel) { arrastrando = false; controles.enabled = true; return; }
 		const nx = Math.round((p.x - desfase.x) / 5) * 5;
 		const ny = Math.round((p.y - desfase.y) / 5) * 5;
 		const dx = nx - riel.x;
@@ -2369,8 +2364,30 @@ renderer.domElement.addEventListener('pointerup', () => {
 });
 
 // Doble clic sobre un punto de quiebre de un cable → se quita ese punto.
+/**
+ * Crea una unión (punto de quiebre) en el cable que hay bajo el puntero. Es la única forma de
+ * crear uniones: con DOBLE CLIC, izquierdo o derecho. Antes bastaba con arrastrar el cable, y
+ * eso llenaba el tablero de puntos sin querer al intentar solo moverlo.
+ */
+function crearUnionBajoElPuntero(ev: MouseEvent): boolean {
+	const cid = cableBajoElPuntero(ev);
+	const p = puntoCable(ev);
+	const c = cid ? proyecto.conductores.find((x) => x.id === cid) : undefined;
+	if (!c || !p) return false;
+	if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: c.id });
+	capturar();
+	insertarWaypoint(c, p.x, p.y);
+	reconstruirCables();
+	construirHandles();
+	pintarPaneles();
+	pintarSeleccion();
+	avisar('Unión creada — arrástrala para llevar el cable por donde quieras', 'ok');
+	return true;
+}
+
+// DOBLE CLIC IZQUIERDO: sobre una unión existente la quita; sobre el cable, crea una nueva.
 renderer.domElement.addEventListener('dblclick', (ev) => {
-	if (modo !== 'trabajo') return;
+	if (modo !== 'trabajo' || visualizacion || esquemaAbierto) return;
 	const handle = handleBajoElPuntero(ev);
 	if (handle?.sel.tipo === 'cable' && handle.indice !== undefined && handle.indice >= 0) {
 		const c = proyecto.conductores.find((x) => x.id === handle.sel.id);
@@ -2382,29 +2399,34 @@ renderer.domElement.addEventListener('dblclick', (ev) => {
 			construirHandles();
 			pintarPaneles();
 			pintarSeleccion();
-			avisar('Punto del cable quitado');
+			avisar('Unión quitada');
+			return;
 		}
 	}
+	crearUnionBajoElPuntero(ev);
 });
 
-// CLIC DERECHO sobre un cable = crear una unión (punto de quiebre) ahí, estilo Tinkercad.
+/**
+ * DOBLE CLIC DERECHO sobre un cable = crear una unión ahí. El navegador no manda un «dblclick»
+ * para el botón derecho, así que se cuentan a mano dos clics seguidos en el mismo sitio.
+ * Un solo clic derecho no hace nada: era demasiado fácil dejar puntos sin querer.
+ */
+let ultimoDerecho: { x: number; y: number; t: number } | undefined;
+const MS_DOBLE_CLIC = 600; // el umbral habitual de doble clic del sistema
+
 renderer.domElement.addEventListener('contextmenu', (ev) => {
 	ev.preventDefault(); // sin menú del navegador
-	if (modo !== 'trabajo') return;
+	if (modo !== 'trabajo' || visualizacion || esquemaAbierto) return;
 	if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); return; }
-	const cid = cableBajoElPuntero(ev);
-	if (!cid) return;
-	const c = proyecto.conductores.find((x) => x.id === cid);
-	const p = puntoCable(ev);
-	if (!c || !p) return;
-	if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: cid });
-	capturar();
-	insertarWaypoint(c, p.x, p.y);
-	reconstruirCables();
-	construirHandles();
-	pintarPaneles();
-	pintarSeleccion();
-	avisar('Unión creada. Arrástrala con el clic izquierdo para moverla.', 'ok');
+
+	const ahora = Date.now();
+	const seguido = ultimoDerecho
+		&& ahora - ultimoDerecho.t < MS_DOBLE_CLIC
+		&& Math.hypot(ev.clientX - ultimoDerecho.x, ev.clientY - ultimoDerecho.y) < 8;
+	ultimoDerecho = { x: ev.clientX, y: ev.clientY, t: ahora };
+	if (!seguido) return;
+	ultimoDerecho = undefined; // el par ya se ha consumido: tres clics no crean dos uniones
+	crearUnionBajoElPuntero(ev);
 });
 
 window.addEventListener('keydown', (ev) => {
@@ -2596,7 +2618,7 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 
 const AYUDA: Record<Modo, string> = {
 	editor: '🔧 EDITOR (armar) — Añade aparatos del catálogo (van sobre un riel) · arrástralos · edita caja, placa, rieles y canaletas (botón «Girar H↔V») · Duplicar/Eliminar · Supr borra · Ctrl+Z deshace',
-	trabajo: '🔌 TRABAJO (conexiones) — Cablea tocando un borne (punto naranja) y luego otro · clic izq mueve puntos del cable, clic der crea una unión · Esc cancela · DRC en vivo. La estructura está bloqueada.',
+	trabajo: '🔌 TRABAJO (conexiones) — Cablea tocando un borne (punto naranja) y luego otro · doble clic sobre un cable crea una unión y el clic izquierdo la arrastra · Esc cancela · DRC en vivo. La estructura está bloqueada.',
 };
 
 /* ------------------------------- Modo Visualización ------------------------------- */
@@ -3004,11 +3026,60 @@ $('leyenda-voltaje').innerHTML =
 	for (const t of escenario.etiquetas) t.visible = v;
 };
 
+/* ----------------- Detalle de la verificación eléctrica (chip DRC) ----------------- */
+
+/**
+ * Abre el detalle de la verificación. El chip de la barra dice CUÁNTOS hallazgos hay; aquí se
+ * ve CUÁLES son y se salta al aparato o al cable que los provoca. Antes el chip no hacía nada
+ * y la lista solo estaba en un panel lateral que en modo Trabajo casi no se mira.
+ */
+function abrirDetalleDRC(): void {
+	const cont = $('drc-detalle');
+	const errores = hallazgos.filter((h) => h.severidad === 'error').length;
+	const avisos = hallazgos.length - errores;
+	$('drc-resumen').textContent = hallazgos.length === 0
+		? 'El tablero pasa todas las reglas.'
+		: `${errores} ${errores === 1 ? 'error' : 'errores'} y ${avisos} ${avisos === 1 ? 'aviso' : 'avisos'} `
+			+ 'sobre el tablero tal como está ahora.';
+	cont.innerHTML = '';
+	if (hallazgos.length === 0) {
+		cont.innerHTML = '<li class="vacio">✔ Sin errores ni avisos</li>';
+	}
+	for (const h of hallazgos) {
+		const li = document.createElement('li');
+		const marca = document.createElement('span');
+		marca.className = 'marca';
+		marca.textContent = h.severidad === 'error' ? '⛔' : '⚠️';
+		const texto = document.createElement('div');
+		texto.innerHTML = `${escaparHtml(h.mensaje)}<span class="regla">${escaparHtml(h.regla)}</span>`;
+		li.append(marca, texto);
+		// Saltar al elemento culpable: es lo que se quiere hacer nada más leer el hallazgo.
+		const destino: Seleccion | undefined = h.dispositivoId
+			? { tipo: 'dispositivo', id: h.dispositivoId }
+			: h.conductorId ? { tipo: 'cable', id: h.conductorId } : undefined;
+		if (destino) {
+			li.className = 'clicable';
+			li.onclick = () => {
+				($('modal-drc') as HTMLElement).hidden = true;
+				if (destino.tipo === 'cable') { aplicarModo('trabajo'); enfocarCamaraEnCable(destino.id); }
+				aplicarSeleccion(destino);
+			};
+		}
+		cont.appendChild(li);
+	}
+	($('modal-drc') as HTMLElement).hidden = false;
+}
+
+($('chip-drc') as HTMLButtonElement).onclick = () => abrirDetalleDRC();
+($('btn-cerrar-drc') as HTMLButtonElement).onclick = () => { ($('modal-drc') as HTMLElement).hidden = true; };
+$('modal-drc').addEventListener('click', (e) => {
+	if (e.target === $('modal-drc')) ($('modal-drc') as HTMLElement).hidden = true;
+});
+
 /* --------------------- Ayuda, centrar vista y ejemplo --------------------- */
 
 ($('btn-centrar') as HTMLButtonElement).onclick = () => encuadrar();
 
-($('btn-ordenar-cables') as HTMLButtonElement).onclick = () => autoEnderezarCables();
 
 ($('btn-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = false; };
 ($('btn-cerrar-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = true; };
@@ -3256,6 +3327,26 @@ if (new URLSearchParams(location.search).has('qa')) {
 			fuera: h.simbolos.filter((s) => s.x < 0 || s.y < 0
 				|| s.x + s.ancho > h.anchoMm || s.y + s.alto > h.altoMm).length,
 		})),
+		/** Punto en pantalla del tirador de una unión del cable (para poder arrastrarla). */
+		puntoDeUnion: (conductorId: string, indice = 0) => {
+			const c = proyecto.conductores.find((x) => x.id === conductorId);
+			const w = c?.trazado?.[indice];
+			if (!w) return undefined;
+			const v = aPantalla(escenario.aEscena(w.x, w.y, Z_HANDLE_CABLE));
+			return { x: Math.round(v.x), y: Math.round(v.y) };
+		},
+		/** Estado de las tapas de canaleta (para comprobar que en Visualización son opacas). */
+		tapas: () => escenario.tapas.map((t) => {
+			const m = (t as THREE.Mesh).material as THREE.MeshStandardMaterial;
+			return { transparente: !!m.transparent, opacidad: m.opacity };
+		}),
+		/** Punto de pantalla dentro de una imagen de referencia, en coordenadas relativas (-0.5..0.5). */
+		puntoDeImagen: (dispositivoId: string, dx: number, dy: number) => {
+			const col = proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === dispositivoId);
+			if (!col) return undefined;
+			const v = aPantalla(escenario.aEscena(col.x + col.ancho * (0.5 + dx), col.y + col.alto * (0.5 + dy), 12));
+			return { x: Math.round(v.x), y: Math.round(v.y) };
+		},
 		/** Hallazgos del DRC en vivo (para comprobar las reglas eléctricas). */
 		hallazgos: () => hallazgos,
 		/** Fuerza un recálculo completo (tras tocar el proyecto desde la prueba). */
@@ -3263,6 +3354,7 @@ if (new URLSearchParams(location.search).has('qa')) {
 		/** Estado de la interacción (para diagnosticar un clic que se fue por otro camino). */
 		estadoInteraccion: () => ({
 			modo,
+			modoPin,
 			cableando: cableandoDesde ? `${cableandoDesde.dispositivoId}.${cableandoDesde.borneId}` : undefined,
 			arrastrando,
 			tirador: !!handleArrastrado,
@@ -3321,7 +3413,7 @@ if (new URLSearchParams(location.search).has('qa')) {
 		 * pasada que el rayo cae en su tubo visible y que ningún borne se le pone delante. Así la
 		 * prueba pincha donde el usuario lo haría, sin depender del instante en que se calculó.
 		 */
-		puntoParaAgarrar: (id: string, muestras = 15) => {
+		puntoParaAgarrar: (id: string, muestras = 15, zona?: { x0: number; x1: number; y0: number; y1: number }) => {
 			const malla = escenario.cables.children
 				.flatMap((g) => g.children)
 				.find((m) => m.userData.tuboVisible && m.userData.conductorId === id) as THREE.Mesh | undefined;
@@ -3335,6 +3427,8 @@ if (new URLSearchParams(location.search).has('qa')) {
 				// redondeado, para no dar por bueno un píxel que en realidad cae en el borde del tubo.
 				const v = aPantalla(mundo);
 				const p = { x: Math.round(v.x), y: Math.round(v.y) };
+				// Si se pide una zona (p. ej. el lienzo sin los paneles), solo valen puntos de dentro.
+				if (zona && (p.x < zona.x0 || p.x > zona.x1 || p.y < zona.y0 || p.y > zona.y1)) continue;
 				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
 				raycaster.setFromCamera(puntero, camara);
 				const cable = raycaster.intersectObjects(escenario.cables.children, true)

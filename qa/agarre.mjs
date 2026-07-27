@@ -1,7 +1,8 @@
 /**
- * QA del AGARRE de cables: comprueba que cualquier cable se puede agarrar y mover pinchando
- * en cualquier punto de su recorrido, incluso con la cámara girada (donde antes fallaba por
- * el desfase de perspectiva) y aunque el cable cruce por delante de un aparato.
+ * QA del AGARRE de cables: comprueba que CUALQUIER cable se puede señalar, seleccionar y
+ * ordenar desde cualquier punto visible de su recorrido —incluso con la cámara girada, donde
+ * antes fallaba por el desfase de perspectiva, y aunque el cable cruce por delante de un
+ * aparato—. Ordenar un cable es: doble clic para crear la unión y arrastrarla.
  *
  *   node qa/agarre.mjs
  */
@@ -51,13 +52,30 @@ async function girarCamara(dx, dy) {
  */
 async function intentarAgarrar(id) {
 	const antes = await trazadoDe(id);
-	const puntos = (await qa('puntosVisiblesDeCable', id)).filter(enZona);
-	if (puntos.length === 0) return { movido: false, sinPuntos: true };
-	const p = puntos[Math.floor(puntos.length / 2)];
+	const p = await qa('puntoParaAgarrar', id, 21, LIBRE);
+	if (!enZona(p)) return { movido: false, sinPuntos: true };
+
+	// 1) Señalarlo y pinchar tiene que SELECCIONAR ese cable y no otro.
 	await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.waitForTimeout(40);
 	const sel = await qa('seleccion');
-	if (sel?.id !== id) { await page.mouse.up(); await page.waitForTimeout(80); return { movido: false, otro: true }; }
-	for (let k = 1; k <= 5; k++) { await page.mouse.move(p.x + 9 * k, p.y + 7 * k); await page.waitForTimeout(25); }
+	await page.mouse.up(); await page.waitForTimeout(80);
+	if (sel?.tipo !== 'cable' || sel.id !== id) return { movido: false, otro: true };
+
+	// 2) Doble clic crea la unión donde se ha señalado (es como se ordena un cable ahora).
+	// Se vuelve a apuntar: seleccionar el cable redibuja la escena y el punto de antes puede
+	// haber quedado obsoleto, sobre todo con la cámara girada.
+	const p2 = (await qa('puntoParaAgarrar', id, 21, LIBRE)) ?? p;
+	await page.mouse.dblclick(p2.x, p2.y); await page.waitForTimeout(350);
+	const idx = ((await proyecto()).conductores.find((c) => c.id === id)?.trazado ?? []).length - 1;
+	if (idx < 0) return { movido: false, sinUnion: true };
+
+	// 3) Y esa unión se arrastra para llevar el cable por donde uno quiera.
+	const tirador = await qa('puntoDeUnion', id, idx);
+	if (!enZona(tirador)) return { movido: false, sinPuntos: true };
+	// Se arrastra bien lejos: un tirón corto lo devuelve el imán que alinea las uniones con sus
+	// vecinas (SNAP_ORTO), y entonces parecería que el cable no se ha podido mover.
+	await page.mouse.move(tirador.x, tirador.y); await page.mouse.down(); await page.waitForTimeout(40);
+	for (let k = 1; k <= 6; k++) { await page.mouse.move(tirador.x + 18 * k, tirador.y + 14 * k); await page.waitForTimeout(25); }
 	await page.mouse.up(); await page.waitForTimeout(200);
 	return { movido: (await trazadoDe(id)) !== antes, sinPuntos: false };
 }
@@ -87,7 +105,7 @@ console.log('\n--- 1. Agarrar un cable «directo» (sin uniones) a la primera --
 const id0 = (await proyecto()).conductores[0].id;
 must('un cable recién creado no tiene uniones', (await trazadoDe(id0)) === 'null');
 const r0 = await intentarAgarrar(id0);
-must('se agarra y se mueve sin tener que crear antes una unión', r0.movido);
+must('se agarra y se ordena sin tener que preparar nada antes', r0.movido, JSON.stringify(r0));
 
 console.log('\n--- 2. Un simple clic NO deja uniones sueltas ---');
 const id1 = (await proyecto()).conductores[3].id;

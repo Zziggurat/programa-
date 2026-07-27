@@ -67,7 +67,7 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	for (const riel of g.rieles) raiz.add(construirRiel(riel, aEscena));
 
 	const tapas: THREE.Object3D[] = [];
-	for (const can of g.canaletas) raiz.add(construirCanaleta(can, aEscena, tapas));
+	for (const can of g.canaletas) raiz.add(construirCanaleta(can, aEscena, tapas, realista));
 
 	// Prensaestopas de entrada: por ahí salen los cables hacia la red y hacia el campo.
 	raiz.add(construirEntradasCampo(proyecto, aEscena));
@@ -364,12 +364,17 @@ export function construirCanaleta(
 	can: { id: string; x: number; y: number; largo: number; orientacion: 'h' | 'v'; ancho: number; alto: number },
 	aEscena: Escenario['aEscena'],
 	tapas: THREE.Object3D[],
+	realista = false,
 ): THREE.Group {
 	const grupo = new THREE.Group();
 	const pvc = new THREE.MeshStandardMaterial({ color: 0xb0b6ba, roughness: 0.75 });
-	const pvcTapa = new THREE.MeshStandardMaterial({
-		color: 0xc2c8cc, roughness: 0.7, transparent: true, opacity: 0.4, depthWrite: false,
-	});
+	// Trabajando, la tapa es translúcida para ver por dónde va el cableado. En Visualización el
+	// tablero se ve como es de verdad: la tapa es PVC macizo y tapa lo que hay debajo.
+	const pvcTapa = realista
+		? new THREE.MeshStandardMaterial({ color: 0xc2c8cc, roughness: 0.7 })
+		: new THREE.MeshStandardMaterial({
+			color: 0xc2c8cc, roughness: 0.7, transparent: true, opacity: 0.4, depthWrite: false,
+		});
 	const esH = can.orientacion === 'h';
 	const largoX = esH ? can.largo : can.ancho;
 	const largoY = esH ? can.ancho : can.largo;

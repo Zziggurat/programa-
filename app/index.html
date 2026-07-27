@@ -29,8 +29,8 @@
 		position: fixed; top: 0; left: 0; right: 0; height: 46px; z-index: 20;
 		display: flex; align-items: center; gap: 8px; padding: 0 12px;
 		background: var(--panel); border-bottom: 1px solid var(--borde);
-		/* En pantallas estrechas la barra se aprieta en vez de desbordarse por encima del lienzo. */
-		overflow-x: auto; overflow-y: visible; scrollbar-width: thin;
+		/* Sin overflow: recortaba los menús desplegables y sacaba una barra de scroll fea.
+		   Lo que sobra se resuelve encogiendo los botones, no cortando la barra. */
 	}
 	#barra .marca { font-weight: 700; font-size: 14px; letter-spacing: .01em; }
 	#barra .marca span { color: var(--acento); }
@@ -56,7 +56,8 @@
 	.rejilla-botones { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
 	.rejilla-botones .boton { padding: 7px 4px; font-size: 12px; }
 	#panel-der .ancho-total { width: 100%; box-sizing: border-box; }
-	#chip-drc { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 12px; border: 1px solid var(--borde); background: var(--panel-2); white-space: nowrap; flex: none; }
+	#chip-drc { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 12px; border: 1px solid var(--borde); background: var(--panel-2); white-space: nowrap; flex: none; color: var(--texto); cursor: pointer; font: inherit; }
+	#chip-drc:hover { border-color: #4a5766; background: #22282f; }
 	/* Menú «Aprender»: agrupa guía, ejemplos y explicación para no llenar la barra de botones. */
 	.menu { position: relative; }
 	.menu > .lista { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60; min-width: 230px;
@@ -67,7 +68,9 @@
 		color: var(--texto); padding: 8px 10px; border-radius: 7px; font-size: 13px; }
 	.menu .lista button:hover { background: var(--panel-2); }
 	.menu .lista small { display: block; color: var(--texto-suave); font-size: 11.5px; margin-top: 1px; }
-	#barra > * { flex: none; }
+	#barra > * { flex: 0 1 auto; min-width: 0; }
+	#barra .boton { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	#modos, #chip-drc, .menu { flex: none; }
 	#chip-drc .punto { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
 	#chip-drc.con-errores .punto { background: var(--error); }
 	#chip-drc.con-avisos .punto { background: var(--aviso); }
@@ -163,6 +166,8 @@
 
 	#ayuda {
 		position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 10;
+		/* Es un rótulo informativo: NUNCA debe comerse un clic del tablero que tiene detrás. */
+		pointer-events: none;
 		color: var(--texto-suave); font-size: 12px; text-align: center;
 		background: color-mix(in srgb, var(--panel) 88%, transparent);
 		padding: 6px 14px; border-radius: 9px; border: 1px solid var(--borde);
@@ -179,6 +184,18 @@
 	#bienvenida .pasos b { color: var(--acento); }
 
 	/* Modal de ayuda */
+	#modal-drc { position: fixed; inset: 0; z-index: 46; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-drc .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 24px 28px; max-width: 720px; width: 100%; max-height: 82vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
+	#modal-drc .cerrar { position: absolute; top: 14px; right: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px; height: 30px; border-radius: 8px; }
+	#modal-drc h2 { margin: 0 0 4px; font-size: 20px; }
+	#modal-drc .pie { color: var(--texto-suave); font-size: 12.5px; margin-top: 14px; border-top: 1px solid var(--borde); padding-top: 12px; }
+	#drc-detalle { list-style: none; margin: 12px 0 0; padding: 0; }
+	#drc-detalle li { display: flex; gap: 10px; align-items: flex-start; padding: 9px 11px; border-radius: 9px; border: 1px solid var(--borde); background: var(--panel-2); margin-bottom: 7px; }
+	#drc-detalle li.clicable { cursor: pointer; }
+	#drc-detalle li.clicable:hover { border-color: #4a5766; }
+	#drc-detalle .marca { flex: none; font-size: 15px; line-height: 1.3; }
+	#drc-detalle .regla { display: block; color: var(--texto-suave); font-size: 11px; margin-top: 2px; letter-spacing: .03em; }
+	#drc-detalle .vacio { justify-content: center; color: var(--ok); }
 	#modal-ayuda { position: fixed; inset: 0; z-index: 40; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
 	#modal-ayuda .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 26px 30px; max-width: 640px; max-height: 88vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
 	#modal-ayuda h2 { margin: 0 0 16px; font-size: 20px; }
@@ -240,7 +257,8 @@
 		border: 1px solid var(--acento); border-radius: 7px; padding: 4px 9px; font-size: 12px;
 		font-weight: 600; white-space: nowrap; box-shadow: 0 4px 16px #0009; }
 	#tip-borne .estado { font-weight: 400; color: var(--texto-suave); }
-	#toast { position: fixed; bottom: 54px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--panel-2); color: var(--texto); border: 1px solid var(--borde); border-left: 3px solid var(--acento); border-radius: 10px; padding: 10px 16px; font-size: 13px; box-shadow: 0 8px 30px #0008; max-width: 460px; }
+	/* Igual que la ayuda: el aviso flotante se lee, no se pincha. */
+	#toast { pointer-events: none; position: fixed; bottom: 54px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--panel-2); color: var(--texto); border: 1px solid var(--borde); border-left: 3px solid var(--acento); border-radius: 10px; padding: 10px 16px; font-size: 13px; box-shadow: 0 8px 30px #0008; max-width: 460px; }
 	#toast.ok { border-left-color: var(--ok); }
 	#toast.error { border-left-color: var(--error); }
 
@@ -289,7 +307,7 @@
 	<button class="boton" id="btn-ver" title="Modo Visualización: ver el tablero como quedaría de verdad, con la puerta abierta y sin transparencias (no se puede editar)">👁️ Ver</button>
 	<button class="boton" id="btn-esquema" title="Esquema eléctrico (mando y potencia): el plano que se entrega al cliente y usa el electricista">📐 Esquema</button>
 	<div class="sep"></div>
-	<div id="chip-drc" title="Verificación eléctrica en vivo"><span class="punto"></span><span id="chip-drc-texto">DRC</span></div>
+	<button id="chip-drc" title="Verificación eléctrica en vivo — clic para ver el detalle"><span class="punto"></span><span id="chip-drc-texto">DRC</span></button>
 	<div class="menu" id="menu-aprender">
 		<button class="boton" id="btn-aprender" title="Guía, ejemplos y explicación del tablero abierto">❓ Aprender ▾</button>
 		<div class="lista">
@@ -352,9 +370,8 @@
 	<details open id="seccion-cables">
 		<summary>Cables <span id="contador-cables"></span></summary>
 		<div class="contenido">
-			<div class="sub" style="color:var(--texto-suave);margin-bottom:6px">Como en Tinkercad: <b>clic izquierdo</b> arrastra los puntos de un cable · <b>clic derecho</b> sobre un cable crea una unión (punto nuevo) · <b>doble clic</b> en un punto lo quita. Pasa el ratón por la lista para resaltar.</div>
+			<div class="sub" style="color:var(--texto-suave);margin-bottom:6px">Como en Tinkercad: <b>doble clic</b> sobre un cable (con el botón izquierdo o el derecho) crea una <b>unión</b> · <b>arrastra</b> la unión con el clic izquierdo para llevar el cable por ahí · <b>doble clic</b> sobre la unión la quita. Pasa el ratón por la lista para resaltar.</div>
 			<ul id="lista-cables"></ul>
-			<button class="boton" id="btn-ordenar-cables" style="width:100%;margin-top:8px" title="Devuelve todos los cables a su recorrido automático ordenado (quita los puntos a mano)">✨ Auto-ordenar cables</button>
 		</div>
 	</details>
 	<details open>
@@ -453,6 +470,16 @@
 </div>
 
 <!-- Modal de ayuda -->
+<div id="modal-drc" hidden>
+	<div class="caja-modal">
+		<button class="cerrar" id="btn-cerrar-drc" title="Cerrar">✕</button>
+		<h2>Verificación eléctrica</h2>
+		<p class="pista" id="drc-resumen"></p>
+		<ul id="drc-detalle"></ul>
+		<p class="pie">Haz clic en un hallazgo para ir al aparato o al cable que lo provoca.</p>
+	</div>
+</div>
+
 <div id="modal-ayuda" hidden>
 	<div class="caja-modal">
 		<button class="cerrar" id="btn-cerrar-ayuda" title="Cerrar">✕</button>
@@ -465,7 +492,11 @@
 		<ul class="guia">
 			<li><b>Añadir un aparato:</b> clic en el catálogo de la izquierda.</li>
 			<li><b>Mover un aparato:</b> arrástralo (se pega solo al riel más cercano).</li>
-			<li><b>Cablear:</b> selecciona un aparato → en el panel derecho elige el borne, el aparato de destino y su borne → <i>Conectar</i>. O pulsa <i>Elegir en el tablero</i> y haz clic en el otro aparato.</li>
+			<li><b>Cablear:</b> en modo Trabajo, toca un borne (punto naranja) y luego el otro. También puedes hacerlo desde el panel derecho eligiendo aparato y borne de destino.</li>
+			<li><b>Ordenar un cable:</b> <b>doble clic</b> sobre él (botón izquierdo o derecho) crea una <b>unión</b>; arrástrala con el clic izquierdo para llevar el cable por donde quieras. Otro doble clic sobre la unión la quita.</li>
+			<li><b>Ver el esquema:</b> botón <i>📐 Esquema</i> — el plano de mando y potencia, con su numeración de hilos, listo para PDF.</li>
+			<li><b>Revisar errores:</b> clic en el indicador del DRC (arriba) para ver el detalle y saltar al aparato o cable que lo provoca.</li>
+			<li><b>Varios aparatos a la vez:</b> <kbd>Shift</kbd>+clic para añadirlos a la selección; luego se mueven, alinean y borran en bloque. <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd> copia y pega, <kbd>Ctrl</kbd>+<kbd>D</kbd> duplica.</li>
 			<li><b>Ver medidas:</b> marca <i>Ver tamaños</i>; las cotas de colores muestran los cm y puedes hacer clic para cambiarlas.</li>
 			<li><b>Canaletas y rieles:</b> selecciónalos y arrástralos, o tira de las esferas de los extremos para alargarlos.</li>
 			<li><b>Imagen de referencia:</b> botón <i>🖼️ Imagen</i>, marca sus puntos y cablea sobre la foto.</li>

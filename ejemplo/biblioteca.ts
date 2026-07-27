@@ -98,7 +98,11 @@ function arranqueDirecto(): Proyecto {
 		},
 		{
 			id: 'x2', tipo: 'bornero', descripcion: 'Bornero de mando (botonera)', hojaId: 'h2',
-			bornes: [C('1'), C('2'), C('3'), C('4')],
+			// Cada borna admite DOS conductores. El enclavamiento del contactor va en paralelo con
+			// el pulsador de marcha, así que necesita su propio par de bornas PUENTEADAS a las de
+			// la botonera: es como se hace en un tablero, no metiendo tres cables en una borna.
+			bornes: [C('1'), C('2'), C('3'), C('4'), C('5'), C('6')],
+			puentes: [['2', '5'], ['3', '6']],
 		},
 	];
 	p.dispositivos = dispositivos;
@@ -130,8 +134,8 @@ function arranqueDirecto(): Proyecto {
 		cable(['x2', '2'], ['s1', '13'], 1, 'negro'),    // y de ahí al de marcha (NA)
 		cable(['s1', '14'], ['x2', '3'], 1, 'negro'),
 		cable(['x2', '3'], ['km1', 'A1'], 1, 'negro'),   // a la bobina del contactor
-		cable(['km1', '13'], ['x2', '2'], 1, 'negro'),   // ENCLAVAMIENTO: en paralelo con marcha
-		cable(['km1', '14'], ['x2', '3'], 1, 'negro'),
+		cable(['km1', '13'], ['x2', '5'], 1, 'negro'),   // ENCLAVAMIENTO: en paralelo con marcha,
+		cable(['km1', '14'], ['x2', '6'], 1, 'negro'),   // por las bornas puenteadas 5 y 6
 		cable(['km1', 'A2'], ['f2', '95'], 1, 'azul'),   // la bobina vuelve por el térmico (NC)
 		cable(['f2', '96'], ['red', 'N'], 1, 'azul'),
 	];
@@ -189,12 +193,15 @@ function bombaConBoya(): Proyecto {
 			id: 'km1', tipo: 'contactor', descripcion: 'Contactor de la bomba',
 			fabricante: 'Schneider Electric', referencia: 'LC1D09', tensionNominal: 220, hojaId: 'h1',
 			rol: { tipo: 'maestro' },
-			bornes: [L('1/L1'), L('3/L2'), L('2/T1'), L('4/T2'), C('A1'), C('A2')],
+			// Ojo: en monofásico el 2.º polo del contactor corta el NEUTRO, no otra fase. Tiparlo
+			// como fase hacía que la verificación viera una fase unida al neutro (cortocircuito).
+			bornes: [L('1/L1'), N('3/L2'), L('2/T1'), N('4/T2'), C('A1'), C('A2')],
 			puentesInternos: [['1/L1', '2/T1'], ['3/L2', '4/T2']],
 		},
 		{
 			id: 'x1', tipo: 'bornero', descripcion: 'Bornero de salida a la bomba y a la boya', hojaId: 'h1',
-			bornes: [C('1'), C('2'), C('3'), C('4'), PE()],
+			// Cada borna se tipa por lo que de verdad lleva: 1 fase, 2 neutro, 3 y 4 el mando.
+			bornes: [L('1'), N('2'), C('3'), C('4'), PE()],
 		},
 		{
 			id: 'b1', tipo: 'sensor', descripcion: 'Boya de nivel del estanque (cierra si falta agua)',

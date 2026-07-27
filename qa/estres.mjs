@@ -66,7 +66,7 @@ async function verificarInvariantes(paso, op) {
 	if (errs.length) { problemas.push(`paso ${paso} (${op}): error JS → ${errs.join(' | ')}`); errs.length = 0; }
 }
 
-const acciones = ['conectar', 'union', 'arrastrar', 'borrar', 'deshacer', 'rehacer', 'modo', 'autoordenar', 'dobleclic'];
+const acciones = ['conectar', 'union', 'arrastrar', 'borrar', 'deshacer', 'rehacer', 'modo', 'dobleclic'];
 const cuenta = {};
 for (let paso = 1; paso <= OPS; paso++) {
 	const op = elige(acciones);
@@ -97,7 +97,6 @@ for (let paso = 1; paso <= OPS; paso++) {
 			}
 		} else if (op === 'deshacer') { await page.keyboard.press('Control+z'); await page.waitForTimeout(160); }
 		else if (op === 'rehacer') { await page.keyboard.press('Control+y'); await page.waitForTimeout(160); }
-		else if (op === 'autoordenar') { await jsClick('btn-ordenar-cables'); await page.waitForTimeout(200); }
 		else if (op === 'modo') {
 			await jsClick('modo-editor'); await page.waitForTimeout(150);
 			await jsClick('modo-trabajo'); await page.waitForTimeout(200);

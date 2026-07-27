@@ -142,13 +142,19 @@ if (pc) {
 	const selTxt = await page.textContent('#panel-der');
 	must('clic izquierdo selecciona el cable', /Cable/.test(selTxt));
 	const puntos0 = ((await proyecto()).conductores.find((c) => c.id === idCable).trazado ?? []).length;
+	// Las uniones se crean con DOBLE clic (izquierdo o derecho). Un solo clic no crea nada:
+	// así mover un cable no llena el tablero de puntos sin querer.
 	await page.mouse.click(pc.x, pc.y, { button: 'right' }); await page.waitForTimeout(250);
+	must('un solo clic derecho NO crea unión',
+		((await proyecto()).conductores.find((c) => c.id === idCable).trazado ?? []).length === puntos0);
+	await page.mouse.dblclick(pc.x, pc.y); await page.waitForTimeout(350);
 	const puntos1 = ((await proyecto()).conductores.find((c) => c.id === idCable).trazado ?? []).length;
-	must('clic derecho crea una unión', puntos1 === puntos0 + 1, `${puntos0}→${puntos1}`);
+	must('doble clic crea una unión', puntos1 === puntos0 + 1, `${puntos0}→${puntos1}`);
 
 	// Arrastrar la unión recién creada: debe moverse (cambian sus coordenadas).
 	const antes = JSON.stringify((await proyecto()).conductores.find((c) => c.id === idCable).trazado);
-	const pc2 = (await qa('puntosDeCable', idCable)).find(enZonaLibre) ?? pc;
+	// Se agarra por el TIRADOR de la unión, que es lo que se arrastra ahora.
+	const pc2 = (await qa('puntoDeUnion', idCable, 0)) ?? pc;
 	await page.mouse.move(pc2.x, pc2.y); await page.mouse.down(); await page.waitForTimeout(30);
 	for (let k = 1; k <= 4; k++) { await page.mouse.move(pc2.x + 15 * k, pc2.y + 12 * k); await page.waitForTimeout(20); }
 	await page.mouse.up(); await page.waitForTimeout(250);

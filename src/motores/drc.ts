@@ -128,11 +128,19 @@ export function verificarProyecto(
 			const esclavos = proyecto.dispositivos.filter(
 				(x) => x.rol?.tipo === 'esclavo' && x.rol.maestroId === d.id,
 			);
-			if (esclavos.length === 0) {
+			// Lo que esta regla quiere cazar de verdad es una bobina que NO MANDA NADA. Si el
+			// propio aparato lleva sus contactos incorporados —los polos de potencia o los
+			// auxiliares— y hay alguno cableado, la bobina sí manda algo y no falta ningún
+			// esclavo: avisar ahí sería ruido sobre un tablero perfectamente dibujado.
+			const esBobina = (id: string) => /^A[12]$/i.test(id);
+			const mandaAlgo = d.bornes.some((b) => !esBobina(b.id)
+				&& conductoresEn(proyecto, { dispositivoId: d.id, borneId: b.id }).length > 0);
+			if (esclavos.length === 0 && !mandaAlgo) {
 				hallazgos.push({
 					regla: 'R4-maestro-sin-esclavos',
 					severidad: 'aviso',
-					mensaje: `${etiqueta(d.id)} es maestro pero no tiene contactos enlazados`,
+					mensaje: `${etiqueta(d.id)}: la bobina no manda ningún contacto `
+						+ '(ni polos cableados ni contactos enlazados)',
 					dispositivoId: d.id,
 				});
 			}
@@ -155,9 +163,23 @@ export function verificarProyecto(
 		}
 	}
 
+	/**
+	 * ¿Estas dos tensiones son en realidad el MISMO sistema visto de otra forma? En una red de
+	 * 380/220 (o 400/230) el circuito de mando cuelga entre fase y neutro, así que un aparato de
+	 * 220 V compartiendo potencial con la acometida de 380 V es lo normal, no un error. La
+	 * relación entre ambas es √3.
+	 */
+	const mismoSistema = (a: number, b: number): boolean => {
+		const [menor, mayor] = a < b ? [a, b] : [b, a];
+		if (menor <= 0) return false;
+		return Math.abs(mayor / menor - Math.sqrt(3)) < 0.06;
+	};
+
 	// R6 — Tensiones nominales distintas compartiendo potencial.
 	for (const p of potenciales.potenciales) {
-		if (p.tensiones.length > 1) {
+		const distintas = p.tensiones.filter((v, i) =>
+			p.tensiones.some((w, j) => i !== j && !mismoSistema(v, w) && v !== w));
+		if (p.tensiones.length > 1 && distintas.length > 0) {
 			hallazgos.push({
 				regla: 'R6-conflicto-tension',
 				severidad: 'aviso',

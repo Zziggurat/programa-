@@ -229,3 +229,64 @@ test('un tablero correcto no dispara ninguna regla eléctrica', () => {
 	const electricas = hs.filter((h) => /^R(9|10|11|12)-/.test(h.regla));
 	assert.deepEqual(electricas.map((h) => h.regla + ': ' + h.mensaje), []);
 });
+
+/* ------- Afinado de reglas: menos ruido, sin dejar de ver lo importante ------- */
+
+test('R6: 380 V y 220 V del MISMO sistema (fase-neutro) no son un conflicto', () => {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{ id: 'red', tipo: 'otro', designacion: '-W1', tensionNominal: 380, bornes: [{ id: 'L1', tipo: 'L' }] },
+		{ id: 'f1', tipo: 'fusible', designacion: '-F1', tensionNominal: 220, bornes: [{ id: '1', tipo: 'control' }] },
+	];
+	p.conductores = [{ id: 'c1', de: { dispositivoId: 'red', borneId: 'L1' }, a: { dispositivoId: 'f1', borneId: '1' }, seccion: 1 }];
+	assert.ok(!reglas(verificar(p)).includes('R6-conflicto-tension'),
+		'el mando a 220 V colgado de una red de 380 V es lo normal, no un error');
+});
+
+test('R6: una mezcla que SÍ es peligrosa (24 V con 220 V) se sigue avisando', () => {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{ id: 'a', tipo: 'plc', designacion: '-A1', tensionNominal: 24, bornes: [{ id: '+24', tipo: 'control' }] },
+		{ id: 'q', tipo: 'disyuntor', designacion: '-Q1', tensionNominal: 220, bornes: [{ id: '2', tipo: 'L' }] },
+	];
+	p.conductores = [{ id: 'c1', de: { dispositivoId: 'a', borneId: '+24' }, a: { dispositivoId: 'q', borneId: '2' }, seccion: 1 }];
+	assert.ok(reglas(verificar(p)).includes('R6-conflicto-tension'));
+});
+
+test('R4: un contactor con auxiliares PROPIOS ya cableados no reclama esclavos', () => {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{ id: 'km1', tipo: 'contactor', designacion: '-KM1', rol: { tipo: 'maestro' }, bornes: [
+			{ id: 'A1', tipo: 'control' }, { id: 'A2', tipo: 'control' },
+			{ id: '13', tipo: 'control' }, { id: '14', tipo: 'control' },
+		] },
+		{ id: 'x1', tipo: 'bornero', designacion: '-X1', bornes: [{ id: '1', tipo: 'control' }] },
+	];
+	p.conductores = [{ id: 'c1', de: { dispositivoId: 'km1', borneId: '13' }, a: { dispositivoId: 'x1', borneId: '1' }, seccion: 1 }];
+	assert.ok(!reglas(verificar(p)).includes('R4-maestro-sin-esclavos'));
+});
+
+test('R4: un contactor que manda por sus POLOS de potencia tampoco reclama esclavos', () => {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{ id: 'km1', tipo: 'contactor', designacion: '-KM1', rol: { tipo: 'maestro' }, bornes: [
+			{ id: 'A1', tipo: 'control' }, { id: 'A2', tipo: 'control' },
+			{ id: '1/L1', tipo: 'L' }, { id: '2/T1', tipo: 'L' },
+		] },
+		{ id: 'm1', tipo: 'motor', designacion: '-M1', bornes: [{ id: 'U', tipo: 'L' }] },
+	];
+	p.conductores = [{ id: 'c1', de: { dispositivoId: 'km1', borneId: '2/T1' }, a: { dispositivoId: 'm1', borneId: 'U' }, seccion: 2.5 }];
+	assert.ok(!reglas(verificar(p)).includes('R4-maestro-sin-esclavos'));
+});
+
+test('R4: una bobina que no manda NADA sí se avisa', () => {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{ id: 'km1', tipo: 'contactor', designacion: '-KM1', rol: { tipo: 'maestro' }, bornes: [
+			{ id: 'A1', tipo: 'control' }, { id: 'A2', tipo: 'control' },
+		] },
+		{ id: 'x1', tipo: 'bornero', designacion: '-X1', bornes: [{ id: '1', tipo: 'control' }] },
+	];
+	p.conductores = [{ id: 'c1', de: { dispositivoId: 'km1', borneId: 'A1' }, a: { dispositivoId: 'x1', borneId: '1' }, seccion: 1 }];
+	assert.ok(reglas(verificar(p)).includes('R4-maestro-sin-esclavos'));
+});
