@@ -254,7 +254,8 @@
 	/* La lista de cables solo tiene sentido en modo Trabajo (conexiones). */
 	body:not(.modo-trabajo) #seccion-cables { display: none; }
 	/* Vista de esquema: se superpone al lienzo 3D, como el modo Visualización. */
-	#panel-esquema { position: fixed; inset: 48px 0 0 0; z-index: 30; background: #11151a; display: flex; flex-direction: column; }
+	/* Justo por debajo de la barra (46 px): 2 px de más dejaban asomar el lienzo 3D. */
+	#panel-esquema { position: fixed; inset: 46px 0 0 0; z-index: 30; background: #11151a; display: flex; flex-direction: column; }
 	#esquema-barra { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--panel); border-bottom: 1px solid var(--borde); flex: none; }
 	#esquema-barra .sep { width: 1px; height: 20px; background: var(--borde); margin: 0 4px; }
 	#esq-indicador { font-size: 12.5px; min-width: 86px; text-align: center; color: var(--texto-suave); }

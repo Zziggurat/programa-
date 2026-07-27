@@ -143,3 +143,42 @@ test('ocupacionCanaleta: sin cables o sin canaleta da 0, no NaN', () => {
 	assert.equal(ocupacionCanaleta({ anchoMm: 40, altoMm: 60, secciones: [] }), 0);
 	assert.equal(ocupacionCanaleta({ anchoMm: 0, altoMm: 60, secciones: [2.5] }), 0);
 });
+
+/* ---------- Datos imposibles: nunca se propaga un número sin sentido ---------- */
+
+test('ningún cálculo devuelve NaN ni Infinity, pase lo que pase', () => {
+	const raros = [0, -1, -1e9, 1e12, NaN, Infinity, -Infinity, 1e-12];
+	for (const v of raros) {
+		assert.ok(Number.isFinite(ampacidad(v)), `ampacidad(${v}) = ${ampacidad(v)}`);
+		assert.ok(Number.isFinite(seccionPE(v)), `seccionPE(${v}) = ${seccionPE(v)}`);
+		assert.ok(Number.isFinite(areaConductorAisladoMm2(v)), `area(${v})`);
+		assert.ok(Number.isFinite(factorAgrupamiento(v)), `agrupamiento(${v})`);
+		assert.ok(Number.isFinite(ocupacionCanaleta({ anchoMm: v, altoMm: 40, secciones: [2.5, v] })), `ocupacion(${v})`);
+		for (const w of raros) {
+			const pct = caidaTensionPct({ corrienteA: v, longitudM: w, seccionMm2: 2.5, tensionV: 220 });
+			assert.ok(Number.isFinite(pct), `caida(${v}, ${w}) = ${pct}`);
+		}
+	}
+});
+
+test('una sección desconocida NO se da por protegida (se responde por el lado seguro)', () => {
+	assert.ok(!coordinacionCorrecta({ corrienteProteccionA: 10, seccionMm2: 0 }));
+	assert.ok(!coordinacionCorrecta({ corrienteProteccionA: 10, seccionMm2: NaN }));
+	assert.ok(!coordinacionCorrecta({ corrienteProteccionA: 10, seccionMm2: -2.5 }));
+});
+
+test('sin sección no hay intensidad admisible que inventar', () => {
+	assert.equal(ampacidad(0), 0);
+	assert.equal(ampacidad(-4), 0);
+	assert.equal(ampacidad(NaN), 0);
+});
+
+test('una sección enorme extrapola pero sigue siendo un número usable', () => {
+	const i = ampacidad(1e6);
+	assert.ok(Number.isFinite(i) && i > ampacidad(95), `salió ${i}`);
+});
+
+test('seccionMinima con una corriente imposible no devuelve una sección falsa', () => {
+	assert.equal(seccionMinima(NaN), undefined);
+	assert.equal(seccionMinima(Infinity), undefined);
+});

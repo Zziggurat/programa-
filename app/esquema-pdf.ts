@@ -6,7 +6,7 @@
  * se puede ampliar sin pixelarse y el texto se busca y se copia, como en un plano de verdad.
  */
 import { jsPDF } from 'jspdf';
-import { HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
+import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
 
 const TINTA: [number, number, number] = [15, 18, 22];
 const SUAVE: [number, number, number] = [120, 132, 145];
@@ -91,21 +91,13 @@ export async function exportarEsquemaPDF(hojas: HojaEsq[], proyecto: string, arc
 		if (i > 0) doc.addPage([hoja.anchoMm, hoja.altoMm], 'landscape');
 		rejilla(doc, hoja);
 
-		// Hilos y sus números.
+		// Hilos. Sus números los coloca el motor junto al resto del texto (ver más abajo).
 		doc.setDrawColor(...TINTA);
 		doc.setLineWidth(0.3);
 		for (const hilo of hoja.hilos) {
 			for (let k = 0; k < hilo.nodos.length - 1; k++) {
 				doc.line(hilo.nodos[k].x, hilo.nodos[k].y, hilo.nodos[k + 1].x, hilo.nodos[k + 1].y);
 			}
-			if (!hilo.numero) continue;
-			const m = medio(hilo.nodos);
-			doc.setFillColor(255, 255, 255);
-			doc.rect(m.x - 3, m.y - 2.4, 6, 3.6, 'F');
-			doc.setTextColor(...TINTA);
-			doc.setFontSize(7);
-			doc.setFont('helvetica', 'normal');
-			doc.text(hilo.numero, m.x, m.y + 0.6, { align: 'center' });
 		}
 
 		// Símbolos con su designación.
@@ -119,11 +111,18 @@ export async function exportarEsquemaPDF(hojas: HojaEsq[], proyecto: string, arc
 			doc.text(s.designacion, s.x - 5, s.y + s.alto / 2 + 1.2, { align: 'right' });
 		}
 
-		// Referencias cruzadas y enlaces entre hojas.
-		doc.setFontSize(7);
+		// Todo el texto suelto, ya repartido por el motor: nada puede tapar a nada.
 		doc.setFont('helvetica', 'normal');
-		doc.setTextColor(...SUAVE);
-		for (const r of hoja.referencias) doc.text(r.texto, r.p.x, r.p.y, { align: 'center' });
+		doc.setFontSize(7);
+		for (const r of hoja.referencias) {
+			if (r.tipo === 'hilo') {
+				const ancho = anchoEtiquetaMm(r.texto);
+				doc.setFillColor(255, 255, 255);
+				doc.rect(r.p.x - ancho / 2, r.p.y - 2.4, ancho, 3.6, 'F');
+			}
+			doc.setTextColor(...(r.tipo === 'hilo' ? TINTA : SUAVE));
+			doc.text(r.texto, r.p.x, r.p.y + (r.tipo === 'hilo' ? 0.6 : 0), { align: 'center' });
+		}
 
 		cajetin(doc, hoja, proyecto, hojas.length);
 	});
@@ -131,15 +130,3 @@ export async function exportarEsquemaPDF(hojas: HojaEsq[], proyecto: string, arc
 	doc.save(archivo);
 }
 
-function medio(nodos: { x: number; y: number }[]): { x: number; y: number } {
-	let mejor = nodos[0];
-	let largo = -1;
-	for (let i = 0; i < nodos.length - 1; i++) {
-		const d = Math.hypot(nodos[i + 1].x - nodos[i].x, nodos[i + 1].y - nodos[i].y);
-		if (d > largo) {
-			largo = d;
-			mejor = { x: (nodos[i].x + nodos[i + 1].x) / 2, y: (nodos[i].y + nodos[i + 1].y) / 2 };
-		}
-	}
-	return mejor;
-}

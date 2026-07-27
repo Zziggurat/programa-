@@ -11,7 +11,7 @@ import { Proyecto } from '../src/modelo/tipos.js';
 import { calcularPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores } from '../src/motores/numeracion.js';
 import {
-	anchoColumna, esPotencia, HOJA_A3, montarEsquema, repartirEnColumnas, rutaHilo, simboloDe,
+	anchoColumna, esPotencia, HOJA_A3, montarEsquema, repartirEnColumnas, rutaHilo, separarEtiquetas, simboloDe,
 } from '../src/motores/esquema.js';
 
 /** Arranque directo mínimo: automático → contactor → motor, con su mando. */
@@ -250,4 +250,75 @@ test('anchoColumna: las columnas reparten el ancho útil de la hoja', () => {
 	const a = anchoColumna(HOJA_A3, 10);
 	assert.ok(a > 30 && a < 50, `salió ${a} mm`);
 	assert.ok(Math.abs(a * 10 - (HOJA_A3.ancho - 30)) < 0.01);
+});
+
+/* ------------------- Legibilidad: nada puede tapar a nada ------------------- */
+
+test('separarEtiquetas: dos etiquetas en el mismo punto acaban separadas', () => {
+	const es = [
+		{ texto: '5 → /2.1', p: { x: 100, y: 150 } },
+		{ texto: '6 → /2.1', p: { x: 100, y: 150 } },
+	];
+	separarEtiquetas(es);
+	assert.ok(Math.abs(es[0].p.y - es[1].p.y) >= 4, `quedaron a ${Math.abs(es[0].p.y - es[1].p.y).toFixed(1)} mm`);
+});
+
+test('separarEtiquetas: si no se pisan, no se toca ninguna (el plano no se descoloca solo)', () => {
+	const es = [
+		{ texto: '1', p: { x: 50, y: 100 } },
+		{ texto: '2', p: { x: 200, y: 100 } },
+		{ texto: '3', p: { x: 50, y: 200 } },
+	];
+	const antes = es.map((e) => ({ ...e.p }));
+	separarEtiquetas(es);
+	assert.deepEqual(es.map((e) => e.p), antes);
+});
+
+test('separarEtiquetas: un montón en el mismo sitio se apilan todas sin repetir altura', () => {
+	const es = Array.from({ length: 8 }, (_, i) => ({ texto: `hilo ${i}`, p: { x: 120, y: 200 } }));
+	separarEtiquetas(es);
+	const ys = es.map((e) => Math.round(e.p.y * 10) / 10);
+	assert.equal(new Set(ys).size, ys.length, `alturas repetidas: ${ys.join(', ')}`);
+});
+
+test('separarEtiquetas: las de arriba suben y las de abajo bajan (se alejan del dibujo)', () => {
+	const arriba = [{ texto: 'a', p: { x: 100, y: 40 } }, { texto: 'b', p: { x: 100, y: 40 } }];
+	separarEtiquetas(arriba, { altoMm: 297 });
+	assert.ok(arriba[1].p.y < 40 || arriba[0].p.y < 40, 'en la mitad de arriba se apilan hacia arriba');
+
+	const abajo = [{ texto: 'a', p: { x: 100, y: 250 } }, { texto: 'b', p: { x: 100, y: 250 } }];
+	separarEtiquetas(abajo, { altoMm: 297 });
+	assert.ok(abajo[1].p.y > 250 || abajo[0].p.y > 250, 'en la mitad de abajo se apilan hacia abajo');
+});
+
+test('separarEtiquetas: una etiqueta no se queda encima de un símbolo', () => {
+	const es = [{ texto: 'PE → /2.3', p: { x: 100, y: 150 } }];
+	separarEtiquetas(es, { obstaculos: [{ x: 90, y: 145, ancho: 20, alto: 12 }] });
+	assert.ok(es[0].p.y < 145 || es[0].p.y > 157, `se quedó sobre el símbolo en y=${es[0].p.y}`);
+});
+
+test('montarEsquema: en los ejemplos, ninguna etiqueta del plano se pisa con otra', () => {
+	const p = arranqueDirecto();
+	const ancho = (t: string) => Math.max(7, t.length * 1.7);
+	for (const h of montar(p)) {
+		for (let i = 0; i < h.referencias.length; i++) {
+			for (let j = i + 1; j < h.referencias.length; j++) {
+				const a = h.referencias[i];
+				const b = h.referencias[j];
+				const seTocanEnX = Math.abs(a.p.x - b.p.x) < (ancho(a.texto) + ancho(b.texto)) / 2;
+				const seTocanEnY = Math.abs(a.p.y - b.p.y) < 3.9;
+				assert.ok(!(seTocanEnX && seTocanEnY),
+					`«${a.texto}» y «${b.texto}» se pisan en la hoja ${h.numero}`);
+			}
+		}
+	}
+});
+
+test('montarEsquema: cada hilo con número deja su etiqueta en la hoja', () => {
+	const hojas = montar(arranqueDirecto());
+	for (const h of hojas) {
+		const conNumero = h.hilos.filter((x) => x.numero).length;
+		const etiquetasDeHilo = h.referencias.filter((r) => r.tipo === 'hilo').length;
+		assert.equal(etiquetasDeHilo, conNumero, `hoja ${h.numero}: ${etiquetasDeHilo} etiquetas para ${conNumero} hilos`);
+	}
 });

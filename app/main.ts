@@ -133,6 +133,18 @@ function capturar(): void {
 	actualizarBotonesHistorial();
 }
 
+/**
+ * Deshace la última `capturar()` SIN dejar rastro en el historial: se usa cuando el propio
+ * programa rechaza una operación (p. ej. una alineación que dejaría aparatos encimados). Con
+ * `deshacer()` normal quedaría un «Rehacer» que volvería a aplicar justo lo que se rechazó.
+ */
+function revertirCaptura(): void {
+	const anterior = pila.pop();
+	if (anterior === undefined) return;
+	proyecto = JSON.parse(anterior) as Proyecto;
+	trasCambiarProyecto();
+}
+
 function deshacer(): void {
 	if (pila.length === 0) return;
 	rehacerPila.push(JSON.stringify(proyecto));
@@ -286,6 +298,9 @@ function trasCambiarProyecto(): void {
 				? proyecto.gabinete!.rieles.some((r) => r.id === sel!.id)
 				: proyecto.conductores.some((c) => c.id === sel!.id));
 	if (!existe) { sel = undefined; resaltados = []; }
+	// La selección múltiple también tiene que sanearse: al deshacer, abrir otro proyecto o
+	// empezar de cero, sus ids pueden apuntar a aparatos que ya no existen.
+	seleccionExtra = seleccionExtra.filter((id) => proyecto.dispositivos.some((d) => d.id === id));
 	recalcular();
 	montarEscenario();
 	construirHandles();
@@ -1193,6 +1208,15 @@ function moverAcompanantes(dx: number, dy: number): void {
 		if (!col) continue;
 		col.x = Math.min(Math.max(col.x + dx, 0), Math.max(0, g.ancho - col.ancho));
 		col.y = Math.min(Math.max(col.y + dy, 0), Math.max(0, g.alto - col.alto));
+		// Se re-ancla al riel al que lo ha llevado el movimiento —y se apoya en él— igual que
+		// hace el aparato principal: si no, quedaría diciendo que pertenece a un riel del que ya
+		// se ha bajado, y ese riel se lo llevaría consigo la próxima vez que se moviera.
+		const enganche = snapAriel(col.x + col.ancho / 2, col.y + col.alto / 2, col.ancho, col.alto);
+		if (enganche) {
+			col.x = Math.min(Math.max(enganche.cx - col.ancho / 2, 0), Math.max(0, g.ancho - col.ancho));
+			col.y = Math.min(Math.max(enganche.cy - col.alto / 2, 0), Math.max(0, g.alto - col.alto));
+		}
+		col.rielId = enganche?.rielId;
 		const grupo = grupoDe(id);
 		if (grupo) {
 			const c = escenario.aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
@@ -1262,7 +1286,7 @@ function alinearSeleccionados(como: Alineacion): void {
 	// Alinear no puede dejar aparatos encimados: si pasa, se deshace y se avisa.
 	const choque = cols.find((c) => solapaCon(c.x, c.y, c.ancho, c.alto, c.dispositivoId));
 	if (choque) {
-		deshacer();
+		revertirCaptura();
 		avisar('Así quedarían aparatos encimados: no se ha alineado.', 'error');
 		return;
 	}
@@ -2386,6 +2410,19 @@ renderer.domElement.addEventListener('contextmenu', (ev) => {
 window.addEventListener('keydown', (ev) => {
 	const activo = document.activeElement?.tagName;
 	if (activo === 'INPUT' || activo === 'SELECT' || activo === 'TEXTAREA') return;
+	// Con el esquema o la Visualización delante, el tablero 3D NO se ve: dejar que Supr borrase
+	// un aparato o Ctrl+V pegase otro sería editar a ciegas. Solo pasan navegar y salir.
+	if (esquemaAbierto || visualizacion) {
+		if (ev.key === 'Escape') {
+			ev.preventDefault();
+			if (esquemaAbierto) abrirEsquema(false); else aplicarVisualizacion(false);
+		} else if (esquemaAbierto && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
+			ev.preventDefault();
+			hojaActual += ev.key === 'ArrowRight' ? 1 : -1;
+			refrescarEsquema();
+		}
+		return;
+	}
 	const ctrl = ev.ctrlKey || ev.metaKey;
 	if (ctrl && ev.key.toLowerCase() === 'z' && !ev.shiftKey) { ev.preventDefault(); deshacer(); return; }
 	if (ctrl && (ev.key.toLowerCase() === 'y' || (ev.key.toLowerCase() === 'z' && ev.shiftKey))) {
@@ -2573,6 +2610,7 @@ let visualizacion = false;
  * Solo se puede girar y acercar la vista, como enseñando el tablero terminado.
  */
 function aplicarVisualizacion(activo: boolean): void {
+	if (activo && esquemaAbierto) abrirEsquema(false); // las dos capas no pueden convivir
 	visualizacion = activo;
 	document.body.classList.toggle('modo-visualizacion', activo);
 	$('btn-ver').classList.toggle('activo', activo);
@@ -2681,7 +2719,7 @@ function aplicarZoomEsquema(): void {
 	if (!hoja) return;
 	const caja = $('esquema-lienzo').getBoundingClientRect();
 	// «Ajustar» = zoom 1: la hoja entra entera con un margen cómodo.
-	const base = Math.min((caja.width - 40) / hoja.anchoMm, (caja.height - 40) / hoja.altoMm);
+	const base = Math.max(0.05, Math.min((caja.width - 40) / hoja.anchoMm, (caja.height - 40) / hoja.altoMm));
 	const escala = base * zoomEsquema;
 	const el = $('esquema-hoja');
 	el.style.width = `${hoja.anchoMm * escala}px`;
@@ -2759,7 +2797,16 @@ function pegarAparatos(): void {
 		proyecto.dispositivos.push(copia);
 		const x = Math.min(Math.max(hueco.x + a.dx, 0), Math.max(0, g.ancho - a.ancho));
 		const y = Math.min(Math.max(hueco.y + a.dy, 0), Math.max(0, g.alto - a.alto));
-		const col = { dispositivoId: copia.id, x, y, ancho: a.ancho, alto: a.alto, rielId: hueco.rielId };
+		// Cada copia se apoya en el riel que le toque por su posición, no en el del primero del
+		// grupo: si el grupo abarca dos rieles, cada aparato tiene que quedar anclado al suyo.
+		const enganche = snapAriel(x + a.ancho / 2, y + a.alto / 2, a.ancho, a.alto);
+		const col = {
+			dispositivoId: copia.id,
+			x: enganche ? Math.min(Math.max(enganche.cx - a.ancho / 2, 0), Math.max(0, g.ancho - a.ancho)) : x,
+			y: enganche ? Math.min(Math.max(enganche.cy - a.alto / 2, 0), Math.max(0, g.alto - a.alto)) : y,
+			ancho: a.ancho, alto: a.alto,
+			rielId: enganche?.rielId ?? hueco.rielId,
+		};
 		// Si cae encima de algo, se busca el hueco libre más cercano en su fila.
 		if (solapaCon(col.x, col.y, col.ancho, col.alto, copia.id)) {
 			col.x = xLibreCercano(col.x, col.y, col.ancho, col.alto, copia.id) ?? col.x;
@@ -3100,7 +3147,10 @@ function ajustarTamano(): void {
 	camara.updateProjectionMatrix();
 	renderer.setSize(r.width, r.height);
 }
-window.addEventListener('resize', ajustarTamano);
+window.addEventListener('resize', () => {
+	ajustarTamano();
+	if (esquemaAbierto) aplicarZoomEsquema(); // la hoja se reajusta al nuevo tamaño de ventana
+});
 ajustarTamano();
 
 /* ------------------------------- Arranque ------------------------------- */
@@ -3199,6 +3249,13 @@ if (new URLSearchParams(location.search).has('qa')) {
 		seleccionarPorId: (id: string) => seleccionar(id),
 		/** Añade un aparato a la selección múltiple, como haría un Shift+clic. */
 		anadirASeleccion: (id: string) => { construyendoSeleccion = true; alternarEnSeleccion(id); construyendoSeleccion = false; },
+		/** Resumen del esquema montado ahora mismo (para comprobar que no pierde aparatos). */
+		esquema: () => montarEsquema(proyecto, potenciales).map((h) => ({
+			numero: h.numero,
+			aparatos: h.simbolos.map((s) => s.dispositivoId),
+			fuera: h.simbolos.filter((s) => s.x < 0 || s.y < 0
+				|| s.x + s.ancho > h.anchoMm || s.y + s.alto > h.altoMm).length,
+		})),
 		/** Hallazgos del DRC en vivo (para comprobar las reglas eléctricas). */
 		hallazgos: () => hallazgos,
 		/** Fuerza un recálculo completo (tras tocar el proyecto desde la prueba). */

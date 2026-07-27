@@ -58,8 +58,22 @@ export interface HojaEsq {
 	columnas: number;
 	simbolos: SimboloEsq[];
 	hilos: HiloEsq[];
-	/** Referencias cruzadas: dónde está la bobina de cada contacto y viceversa. */
-	referencias: { dispositivoId: string; texto: string; p: PuntoEsq }[];
+	/**
+	 * TODO el texto suelto de la hoja: números de hilo, enlaces a otra hoja y referencias
+	 * cruzadas de bobina. Va junto a propósito: solo colocándolo de una vez se puede garantizar
+	 * que nada tape a nada. Quien dibuje se limita a pintarlo donde diga aquí.
+	 */
+	referencias: EtiquetaEsq[];
+}
+
+/** Un texto suelto ya colocado en la hoja. */
+export interface EtiquetaEsq {
+	texto: string;
+	p: PuntoEsq;
+	/** 'hilo' = número de potencial · 'enlace' = va a otra hoja · 'bobina' = referencia cruzada. */
+	tipo: 'hilo' | 'enlace' | 'bobina';
+	/** Aparato al que pertenece (si aplica), para poder resaltarlo con él. */
+	dispositivoId?: string;
 }
 
 /* ------------------------------- Medidas del papel ------------------------------- */
@@ -364,16 +378,26 @@ export function montarEsquema(
 		const numero = c.numero ?? potenciales.porConductor.get(c.id)?.id;
 		if (ha.hoja === hb.hoja) {
 			const hoja = hojas.find((x) => x.numero === ha.hoja)!;
-			hoja.hilos.push({ conductorId: c.id, numero, nodos: rutaHilo(a, b, hoja) });
+			const nodos = rutaHilo(a, b, hoja);
+			hoja.hilos.push({ conductorId: c.id, numero, nodos });
+			// El número va sobre el tramo más largo, que es donde de verdad se lee.
+			if (numero) hoja.referencias.push({ texto: numero, p: puntoMedioDelTramoMasLargo(nodos), tipo: 'hilo' });
 		} else {
-			// Enlace entre hojas: se remata cada punta con la referencia a la otra hoja.
-			for (const [pin, propia, otra] of [[a, ha, hb], [b, hb, ha]] as const) {
-				const hoja = hojas.find((x) => x.numero === propia.hoja);
+			// Enlace entre hojas: cada punta se remata con la referencia a la otra hoja. La
+			// referencia pertenece al aparato de SU hoja (no al del otro extremo) y lleva el
+			// número del hilo, que es lo que el electricista busca para seguirlo de plano a plano.
+			const extremos = [
+				{ pin: a, propia: ha, otra: hb, id: c.de.dispositivoId },
+				{ pin: b, propia: hb, otra: ha, id: c.a.dispositivoId },
+			];
+			for (const e of extremos) {
+				const hoja = hojas.find((x) => x.numero === e.propia.hoja);
 				if (!hoja) continue;
 				hoja.referencias.push({
-					dispositivoId: c.de.dispositivoId,
-					texto: `→ /${otra.hoja}.${otra.col}`,
-					p: { x: pin.x, y: pin.y + (pin.y > papel.alto / 2 ? 6 : -6) },
+					dispositivoId: e.id,
+					tipo: 'enlace',
+					texto: `${numero ? `${numero} ` : ''}→ /${e.otra.hoja}.${e.otra.col}`,
+					p: { x: e.pin.x, y: e.pin.y + (e.pin.y > papel.alto / 2 ? 6 : -6) },
 				});
 			}
 		}
@@ -390,12 +414,89 @@ export function montarEsquema(
 		if (!hoja || !simbolo) continue;
 		hoja.referencias.push({
 			dispositivoId: d.id,
+			tipo: 'bobina',
 			texto: `bobina /${maestro.hoja}.${maestro.col}`,
 			p: { x: simbolo.x + simbolo.ancho / 2, y: simbolo.y + simbolo.alto + 12 },
 		});
 	}
 
+	// Con todas las referencias ya creadas, se reparten para que ninguna tape a otra.
+	for (const hoja of hojas) {
+		separarEtiquetas(hoja.referencias, {
+			altoMm: hoja.altoMm,
+			// El símbolo y su designación (que va a la izquierda) son sitio ocupado.
+			obstaculos: hoja.simbolos.map((s) => ({ x: s.x - 24, y: s.y, ancho: s.ancho + 24, alto: s.alto })),
+		});
+	}
+
 	return hojas;
+}
+
+/** Punto medio del tramo más largo de una polilínea: donde cabe una etiqueta y se lee. */
+export function puntoMedioDelTramoMasLargo(nodos: PuntoEsq[]): PuntoEsq {
+	let mejor = { x: nodos[0]?.x ?? 0, y: nodos[0]?.y ?? 0 };
+	let largo = -1;
+	for (let i = 0; i < nodos.length - 1; i++) {
+		const d = Math.hypot(nodos[i + 1].x - nodos[i].x, nodos[i + 1].y - nodos[i].y);
+		if (d > largo) {
+			largo = d;
+			mejor = { x: (nodos[i].x + nodos[i + 1].x) / 2, y: (nodos[i].y + nodos[i + 1].y) / 2 };
+		}
+	}
+	return mejor;
+}
+
+/**
+ * Ancho aproximado (mm) que ocupa un texto de etiqueta al dibujarse. Lo usan por igual el
+ * reparto y los dibujantes: si cada uno midiera a su manera, el recuadro blanco del número
+ * no coincidiría con el hueco reservado y volverían a pisarse cosas.
+ */
+export function anchoEtiquetaMm(texto: string): number {
+	return Math.max(7, texto.length * 1.7);
+}
+
+/**
+ * Separa las etiquetas que se pisarían entre sí.
+ *
+ * Cuando de un mismo aparato salen varios hilos hacia otra hoja, todas sus referencias caen
+ * casi en el mismo punto y se dibujan una encima de otra: ilegibles. Aquí se apilan hacia
+ * fuera del dibujo, como se rotula a mano cuando no cabe todo en una línea.
+ *
+ * Se hace en una pasada aparte (y no al crearlas) porque solo se puede repartir cuando ya
+ * están todas: hasta la última no se sabe cuántas comparten sitio.
+ */
+export function separarEtiquetas(
+	etiquetas: { texto: string; p: PuntoEsq }[],
+	opciones: { paso?: number; altoMm?: number; obstaculos?: { x: number; y: number; ancho: number; alto: number }[] } = {},
+): void {
+	// Medidas tomadas del texto tal como se dibuja (2,8 mm de cuerpo): la caja real es más
+	// alta que el cuerpo por el trazo ascendente y descendente, y más ancha de lo que parece.
+	// Quedarse corto aquí deja etiquetas rozándose, que es como si no se hubieran separado.
+	const paso = opciones.paso ?? 4.4;
+	const alto = opciones.altoMm ?? HOJA_A3.alto;
+	const ancho = anchoEtiquetaMm;
+	// Los símbolos entran como sitio YA OCUPADO: una referencia encima de un símbolo es tan
+	// ilegible como una encima de otra referencia.
+	const puestas: { x0: number; x1: number; y: number }[] = [];
+	const bloques = (opciones.obstaculos ?? []).map((o) => ({
+		x0: o.x - 2, x1: o.x + o.ancho + 2, y0: o.y - 2, y1: o.y + o.alto + 2,
+	}));
+	// De arriba abajo y de izquierda a derecha: el reparto sale estable y reproducible.
+	const orden = [...etiquetas].sort((a, b) => a.p.y - b.p.y || a.p.x - b.p.x);
+	for (const e of orden) {
+		const w = ancho(e.texto);
+		// Las de la mitad de arriba se apilan hacia arriba; las de abajo, hacia abajo.
+		const sentido = e.p.y < alto / 2 ? -1 : 1;
+		for (let intento = 0; intento < 24; intento++) {
+			const x0 = e.p.x - w / 2;
+			const x1 = e.p.x + w / 2;
+			const chocaEtiqueta = puestas.some((q) => q.x1 > x0 && q.x0 < x1 && Math.abs(q.y - e.p.y) < paso - 0.4);
+			const chocaSimbolo = bloques.some((b) => b.x1 > x0 && b.x0 < x1 && b.y1 > e.p.y - 3 && b.y0 < e.p.y + 1.5);
+			if (!chocaEtiqueta && !chocaSimbolo) break;
+			e.p.y += sentido * paso;
+		}
+		puestas.push({ x0: e.p.x - w / 2, x1: e.p.x + w / 2, y: e.p.y });
+	}
 }
 
 /** Traslada un trazo local a coordenadas absolutas de la hoja. */

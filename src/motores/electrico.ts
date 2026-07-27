@@ -40,7 +40,7 @@ export const RHO_COBRE = 0.0225;
  * aguantan menos corriente (IEC 60364-5-52 tabla B.52.17). Sin agrupar (1 circuito) es 1.
  */
 export function factorAgrupamiento(circuitos: number): number {
-	if (circuitos <= 1) return 1;
+	if (!Number.isFinite(circuitos) || circuitos <= 1) return 1;
 	if (circuitos === 2) return 0.8;
 	if (circuitos === 3) return 0.7;
 	if (circuitos === 4) return 0.65;
@@ -49,19 +49,32 @@ export function factorAgrupamiento(circuitos: number): number {
 	return 0.45;
 }
 
+/**
+ * Sanea un número que viene del modelo. Estos cálculos deciden si un conductor aguanta la
+ * corriente que va a pasar por él: ante un dato imposible (vacío, negativo, NaN, infinito) se
+ * devuelve 0 y quien llama decide, en vez de propagar un número sin sentido a un informe que
+ * alguien va a usar para montar un tablero.
+ */
+function sano(v: number): number {
+	return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+/** Máxima sección de la tabla; por encima se extrapola, pero nunca hasta el infinito. */
+const SECCION_MAX = AMPACIDAD_COBRE_B1[AMPACIDAD_COBRE_B1.length - 1];
+
 /** Intensidad admisible (A) de una sección, ya corregida por agrupamiento. */
 export function ampacidad(seccionMm2: number, circuitosAgrupados = 1): number {
-	const fila = AMPACIDAD_COBRE_B1.find((f) => f.seccion >= seccionMm2 - 1e-9);
+	const s = sano(seccionMm2);
+	if (s === 0) return 0;
+	const fila = AMPACIDAD_COBRE_B1.find((f) => f.seccion >= s - 1e-9);
 	// Por encima de la tabla se extrapola con la última fila (proporcional a la sección).
-	const base = fila
-		? fila.corriente
-		: (AMPACIDAD_COBRE_B1[AMPACIDAD_COBRE_B1.length - 1].corriente * seccionMm2)
-			/ AMPACIDAD_COBRE_B1[AMPACIDAD_COBRE_B1.length - 1].seccion;
+	const base = fila ? fila.corriente : (SECCION_MAX.corriente * s) / SECCION_MAX.seccion;
 	return base * factorAgrupamiento(circuitosAgrupados);
 }
 
 /** Sección normalizada (mm²) más pequeña que admite esa corriente. undefined si se sale de tabla. */
 export function seccionMinima(corrienteA: number, circuitosAgrupados = 1): number | undefined {
+	if (!Number.isFinite(corrienteA)) return undefined;
 	const f = factorAgrupamiento(circuitosAgrupados);
 	return AMPACIDAD_COBRE_B1.find((fila) => fila.corriente * f >= corrienteA)?.seccion;
 }
@@ -78,10 +91,14 @@ export function caidaTensionPct(datos: {
 	tensionV: number;
 	trifasico?: boolean;
 }): number {
-	const { corrienteA, longitudM, seccionMm2, tensionV, trifasico } = datos;
-	if (seccionMm2 <= 0 || tensionV <= 0) return 0;
-	const k = trifasico ? Math.sqrt(3) : 2;
-	return ((k * RHO_COBRE * longitudM * corrienteA) / seccionMm2 / tensionV) * 100;
+	const corrienteA = sano(datos.corrienteA);
+	const longitudM = sano(datos.longitudM);
+	const seccionMm2 = sano(datos.seccionMm2);
+	const tensionV = sano(datos.tensionV);
+	if (!seccionMm2 || !tensionV || !corrienteA || !longitudM) return 0;
+	const k = datos.trifasico ? Math.sqrt(3) : 2;
+	const pct = ((k * RHO_COBRE * longitudM * corrienteA) / seccionMm2 / tensionV) * 100;
+	return Number.isFinite(pct) ? pct : 0;
 }
 
 /**
@@ -104,14 +121,19 @@ export function coordinacionCorrecta(datos: {
 	seccionMm2: number;
 	circuitosAgrupados?: number;
 }): boolean {
-	return datos.corrienteProteccionA <= ampacidad(datos.seccionMm2, datos.circuitosAgrupados ?? 1) + 1e-9;
+	const iz = ampacidad(datos.seccionMm2, datos.circuitosAgrupados ?? 1);
+	// Sin sección conocida no se puede afirmar que esté protegido: se responde que NO, que es
+	// el lado seguro (mejor un aviso de más que dar por bueno un circuito sin comprobar).
+	if (iz <= 0) return false;
+	return sano(datos.corrienteProteccionA) <= iz + 1e-9;
 }
 
 /** Sección de cobre (mm²) del conductor de protección (PE) que corresponde a una fase dada. */
 export function seccionPE(seccionFaseMm2: number): number {
-	if (seccionFaseMm2 <= 16) return seccionFaseMm2;
-	if (seccionFaseMm2 <= 35) return 16;
-	return Math.ceil(seccionFaseMm2 / 2);
+	const s = sano(seccionFaseMm2);
+	if (s <= 16) return s;
+	if (s <= 35) return 16;
+	return Math.ceil(s / 2);
 }
 
 /**
@@ -124,10 +146,11 @@ export function ocupacionCanaleta(datos: {
 	altoMm: number;
 	secciones: number[];
 }): number {
-	const util = datos.anchoMm * datos.altoMm;
+	const util = sano(datos.anchoMm) * sano(datos.altoMm);
 	if (util <= 0) return 0;
 	const ocupada = datos.secciones.reduce((s, mm2) => s + areaConductorAisladoMm2(mm2), 0);
-	return ocupada / util;
+	const fraccion = ocupada / util;
+	return Number.isFinite(fraccion) ? fraccion : 0;
 }
 
 /**
@@ -135,7 +158,10 @@ export function ocupacionCanaleta(datos: {
  * práctica de taller: el diámetro exterior es del orden de 2,4× el diámetro del cobre.
  */
 export function areaConductorAisladoMm2(seccionCobreMm2: number): number {
-	const dCobre = 2 * Math.sqrt(seccionCobreMm2 / Math.PI);
+	const s = sano(seccionCobreMm2);
+	if (s === 0) return 0;
+	const dCobre = 2 * Math.sqrt(s / Math.PI);
 	const dExterior = dCobre * 2.4;
-	return (Math.PI * dExterior * dExterior) / 4;
+	const area = (Math.PI * dExterior * dExterior) / 4;
+	return Number.isFinite(area) ? area : 0;
 }

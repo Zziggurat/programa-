@@ -140,3 +140,56 @@ test('rectangulo: se cierra sobre sí mismo (4 líneas que forman el contorno)',
 		assert.equal(puntos[i].y2, puntos[(i + 1) % 4].y1);
 	}
 });
+
+/* ---- Validación como la haría un CAD al abrir el archivo ---- */
+
+test('generarDXF: el archivo se parsea como pares (código, valor) sin descuadres', () => {
+	const dxf = generarDXF([
+		...rectangulo('PLACA', 0, 0, 380, 500),
+		{ capa: 'RIELES', trazo: { tipo: 'linea', x1: 10, y1: 100, x2: 370, y2: 100 } },
+		{ capa: 'APARATOS', trazo: { tipo: 'circulo', x: 100, y: 200, r: 12.5 } },
+		{ capa: 'TEXTO', trazo: { tipo: 'texto', x: 20, y: 210, texto: '-Q1', alto: 4 } },
+	], 500);
+
+	const lineas = dxf.split('\n');
+	assert.equal((lineas.length - 1) % 2, 0, 'cada código tiene que llevar su valor');
+	const pares: [number, string][] = [];
+	for (let i = 0; i + 1 < lineas.length; i += 2) {
+		assert.match(lineas[i], /^-?\d+$/, `el código de la línea ${i} no es numérico`);
+		pares.push([Number(lineas[i]), lineas[i + 1]]);
+	}
+
+	// Secciones bien abiertas y cerradas, sin anidar.
+	let prof = 0;
+	let maxProf = 0;
+	for (const [cod, val] of pares) {
+		if (cod === 0 && val === 'SECTION') { prof++; maxProf = Math.max(maxProf, prof); }
+		if (cod === 0 && val === 'ENDSEC') prof--;
+		assert.ok(prof >= 0, 'se cierra una sección que no estaba abierta');
+	}
+	assert.equal(prof, 0, 'quedan secciones sin cerrar');
+	assert.equal(maxProf, 1, 'las secciones del DXF R12 no se anidan');
+	assert.deepEqual(pares.at(-1), [0, 'EOF']);
+
+	// Toda entidad declara su capa justo después, o el CAD la mete en la capa 0.
+	for (let i = 0; i < pares.length; i++) {
+		if (pares[i][0] === 0 && ['LINE', 'CIRCLE', 'TEXT'].includes(pares[i][1])) {
+			assert.equal(pares[i + 1]?.[0], 8, `la entidad ${pares[i][1]} no declara capa`);
+		}
+	}
+	// Ninguna coordenada puede ser basura.
+	for (const [cod, val] of pares) {
+		if ([10, 11, 20, 21, 30, 31, 40].includes(cod)) {
+			assert.ok(Number.isFinite(Number(val)), `coordenada no numérica: ${cod}=${val}`);
+		}
+	}
+});
+
+test('generarDXF: nunca escribe caracteres que el DXF R12 no sepa representar', () => {
+	const dxf = generarDXF([
+		{ capa: 'TEXTO', trazo: { tipo: 'texto', x: 0, y: 0, texto: 'Ñandú «áéíóú» ±3° → protección', alto: 3 } },
+	], 100);
+	assert.ok(!/[^\x00-\x7F]/.test(dxf), 'se coló un carácter no ASCII');
+	assert.ok(!/NaN|Infinity/.test(dxf));
+	assert.match(dxf, /1\nNandu/, 'el texto se translitera, no se borra');
+});

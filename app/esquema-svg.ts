@@ -5,7 +5,7 @@
  * Se usa SVG y no Canvas a propósito: el esquema se lee con lupa, se imprime en A3 y se
  * exporta a PDF, y el SVG es nítido a cualquier tamaño y se puede volcar a papel tal cual.
  */
-import { HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
+import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
 
 /** Escapa texto para que un nombre con < o & no rompa el SVG. */
 function esc(t: string): string {
@@ -90,18 +90,11 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 		pintarRejilla(hoja, tinta, suave),
 	];
 
-	// Hilos primero: los símbolos van encima y tapan las puntas.
+	// Hilos primero: los símbolos van encima y tapan las puntas. Los números NO se colocan
+	// aquí: los coloca el motor junto con el resto del texto, para que nada tape a nada.
 	for (const hilo of hoja.hilos) {
 		const d = hilo.nodos.map((p, i) => `${i ? 'L' : 'M'}${n(p.x)} ${n(p.y)}`).join(' ');
 		partes.push(`<path d="${d}" fill="none" stroke="${tinta}" stroke-width="0.45" stroke-linejoin="round" data-conductor="${esc(hilo.conductorId)}"/>`);
-		if (hilo.numero) {
-			// El número del potencial va sobre el tramo más largo, que es donde se lee.
-			const m = tramoMasLargo(hilo.nodos);
-			partes.push(
-				`<rect x="${n(m.x - 3)}" y="${n(m.y - 2.4)}" width="6" height="3.6" rx="0.6" fill="${papel}"/>`
-				+ `<text x="${n(m.x)}" y="${n(m.y + 0.5)}" font-size="2.8" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif">${esc(hilo.numero)}</text>`,
-			);
-		}
 	}
 
 	// Puntos de unión: donde tres o más hilos coinciden se marca el nudo, como en un plano real.
@@ -123,27 +116,20 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 		);
 	}
 
+	// Todo el texto suelto, ya repartido por el motor: números de hilo, enlaces y bobinas.
 	for (const r of hoja.referencias) {
-		partes.push(`<text x="${n(r.p.x)}" y="${n(r.p.y)}" font-size="2.8" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">${esc(r.texto)}</text>`);
+		const anchoCaja = anchoEtiquetaMm(r.texto);
+		if (r.tipo === 'hilo') {
+			// El número del hilo va sobre un recuadro de papel para que el hilo no lo cruce.
+			partes.push(`<rect x="${n(r.p.x - anchoCaja / 2)}" y="${n(r.p.y - 2.4)}" width="${n(anchoCaja)}" height="3.6" rx="0.6" fill="${papel}"/>`);
+		}
+		const color = r.tipo === 'hilo' ? tinta : suave;
+		partes.push(`<text x="${n(r.p.x)}" y="${n(r.p.y + (r.tipo === 'hilo' ? 0.5 : 0))}" font-size="2.8" text-anchor="middle" fill="${color}" font-family="system-ui, sans-serif">${esc(r.texto)}</text>`);
 	}
 
 	partes.push(pintarCajetin(hoja, o, tinta, suave));
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${hoja.anchoMm} ${hoja.altoMm}" `
 		+ `width="100%" height="100%" preserveAspectRatio="xMidYMid meet">${partes.join('')}</svg>`;
-}
-
-/** Punto medio del tramo más largo de una polilínea (donde cabe la etiqueta). */
-function tramoMasLargo(nodos: { x: number; y: number }[]): { x: number; y: number } {
-	let mejor = { x: nodos[0].x, y: nodos[0].y };
-	let largo = -1;
-	for (let i = 0; i < nodos.length - 1; i++) {
-		const d = Math.hypot(nodos[i + 1].x - nodos[i].x, nodos[i + 1].y - nodos[i].y);
-		if (d > largo) {
-			largo = d;
-			mejor = { x: (nodos[i].x + nodos[i + 1].x) / 2, y: (nodos[i].y + nodos[i + 1].y) / 2 };
-		}
-	}
-	return mejor;
 }
 
 /** Puntos donde coinciden tres o más extremos de hilo: son uniones eléctricas, no cruces. */

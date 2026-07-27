@@ -33,18 +33,24 @@ export function exportarEtiquetasPDF(proyecto: Proyecto, potenciales: ResultadoP
 	doc.setTextColor(120, 132, 145);
 	doc.text('Imprimir al 100 % (sin ajustar a la página) — las etiquetas están a tamaño real', margen, margen);
 
-	for (const tira of tiras) {
-		if (y + 14 + ETIQUETA.alto > 297 - margen) { doc.addPage(); y = margen + 6; }
+	/** Cabecera de una tira. Se repite al cambiar de página: una hoja de rótulos sin saber a
+	 *  qué bornero pertenecen no sirve de nada cuando estás con la regleta delante. */
+	const cabecera = (titulo: string, continuacion = false) => {
 		doc.setFontSize(11);
 		doc.setFont('helvetica', 'bold');
 		doc.setTextColor(15, 18, 22);
-		doc.text(tira.titulo, margen, y + 4);
+		doc.text(continuacion ? `${titulo} (continuación)` : titulo, margen, y + 4);
 		y += 8;
+	};
+
+	for (const tira of tiras) {
+		if (y + 14 + ETIQUETA.alto > 297 - margen) { doc.addPage(); y = margen + 6; }
+		cabecera(tira.titulo);
 
 		tira.etiquetas.forEach((e, i) => {
 			const col = i % porFila;
 			if (col === 0 && i > 0) y += ETIQUETA.alto;
-			if (y + ETIQUETA.alto > 297 - margen) { doc.addPage(); y = margen + 6; }
+			if (y + ETIQUETA.alto > 297 - margen) { doc.addPage(); y = margen + 6; cabecera(tira.titulo, true); }
 			const x = margen + col * ETIQUETA.ancho;
 			doc.setDrawColor(190, 196, 202);
 			doc.setLineWidth(0.15);

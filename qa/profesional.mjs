@@ -111,6 +111,44 @@ must('el zoom acerca de verdad', anchoZoom > anchoAjustado, `${Math.round(anchoA
 await jsClick('esq-cerrar'); await page.waitForTimeout(400);
 must('se cierra y vuelve el tablero 3D', !(await page.isVisible('#panel-esquema')));
 
+/* ============ 2b. El plano tiene que ser LEGIBLE en los tres ejemplos ============ */
+console.log('\n--- 2b. Legibilidad del esquema (nada tapa a nada) ---');
+for (const [indice, nombre] of [[0, 'Arranque directo'], [1, 'Bomba con boya'], [2, 'Tablero de control']]) {
+	await jsClick('btn-nuevo'); await page.waitForTimeout(250);
+	if (await page.isVisible('#modal-dialogo')) { await jsClick('dialogo-ok'); await page.waitForTimeout(350); }
+	await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
+	if (await page.isVisible('#modal-ejemplos')) {
+		await page.evaluate((i) => document.querySelectorAll('.tarjeta-ejemplo button')[i].click(), indice);
+		await page.waitForTimeout(700);
+		await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+	}
+	await jsClick('btn-esquema'); await page.waitForTimeout(700);
+	const total = Number((await page.textContent('#esq-indicador')).split('/')[1]?.trim() ?? 1);
+	let solapesTotal = 0;
+	const muestras = [];
+	for (let h = 0; h < total; h++) {
+		const r = await page.evaluate(() => {
+			const svg = document.querySelector('#esquema-hoja svg');
+			if (!svg) return { n: 0, ej: [] };
+			const textos = [...svg.querySelectorAll('text')].map((t) => ({ b: t.getBBox(), s: t.textContent }));
+			let n = 0; const ej = [];
+			for (let i = 0; i < textos.length; i++) for (let j = i + 1; j < textos.length; j++) {
+				const a = textos[i].b, c = textos[j].b;
+				if (a.x < c.x + c.width && c.x < a.x + a.width && a.y < c.y + c.height && c.y < a.y + a.height) {
+					n++; if (ej.length < 4) ej.push(`«${textos[i].s}»/«${textos[j].s}»`);
+				}
+			}
+			return { n, ej };
+		});
+		solapesTotal += r.n;
+		muestras.push(...r.ej);
+		if (h < total - 1) { await jsClick('esq-siguiente'); await page.waitForTimeout(450); }
+	}
+	if (muestras.length) info(muestras.slice(0, 5).join(' · '));
+	must(`${nombre}: ningún texto del plano tapa a otro`, solapesTotal === 0, `${solapesTotal} solapes en ${total} hojas`);
+	await jsClick('esq-cerrar'); await page.waitForTimeout(300);
+}
+
 /* ============================ 3. DRC eléctrico ============================ */
 console.log('\n--- 3. DRC eléctrico (la física, no solo el dibujo) ---');
 // Se monta a propósito el error clásico: automático grande sobre cable fino.
