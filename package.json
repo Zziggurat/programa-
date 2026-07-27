@@ -11,7 +11,7 @@
     "editor": "vite app",
     "editor:build": "vite build app",
     "empaquetar": "vite build app && node app/empaquetar.mjs",
-    "qa": "vite build app && node qa/cables.mjs && node qa/cables-fusion.mjs && node qa/agarre.mjs && node qa/riel.mjs && node qa/riel-ejemplos-vista.mjs && node qa/general.mjs && node qa/tablero-desde-cero.mjs && node qa/mejoras.mjs && node qa/profesional.mjs && node qa/entregables.mjs && node qa/correcciones.mjs && node qa/estres.mjs",
+    "qa": "QA=1 vite build app && node qa/cables.mjs && node qa/cables-fusion.mjs && node qa/agarre.mjs && node qa/riel.mjs && node qa/riel-ejemplos-vista.mjs && node qa/general.mjs && node qa/tablero-desde-cero.mjs && node qa/mejoras.mjs && node qa/profesional.mjs && node qa/entregables.mjs && node qa/correcciones.mjs && node qa/estres.mjs",
     "qa:cables": "node qa/cables.mjs",
     "qa:fusion": "node qa/cables-fusion.mjs",
     "qa:agarre": "node qa/agarre.mjs",

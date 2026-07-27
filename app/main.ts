@@ -34,6 +34,9 @@ import { exportarEsquemaPDF } from './esquema-pdf.js';
 import { dxfDeEsquema, dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
 import { distPuntoSegmento, longitudSolapada, orthogonalize } from './geometria-cables.js';
 
+/** Bandera que inyecta el empaquetador: true solo en el build para las pruebas (QA=1). */
+declare const __QA__: boolean;
+
 type Modo = 'editor' | 'trabajo';
 let modo: Modo = 'editor';
 
@@ -3254,7 +3257,10 @@ renderer.setAnimationLoop(() => {
  * pruebas de regresión pueden localizar bornes y cables en pantalla sin barrer píxeles.
  * No existe para el usuario final (sin el parámetro, no se define nada).
  */
-if (new URLSearchParams(location.search).has('qa')) {
+// __QA__ lo sustituye el empaquetador: es `true` solo cuando se construye para las pruebas
+// (QA=1). En el build que se entrega vale `false`, el minificador borra TODO este bloque y la
+// aplicación no lleva dentro el andamiaje ni lo expone en `window`.
+if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 	const aPantalla = (v: THREE.Vector3): { x: number; y: number } => {
 		const r = renderer.domElement.getBoundingClientRect();
 		const p = v.clone().project(camara);

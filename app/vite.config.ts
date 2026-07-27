@@ -4,6 +4,10 @@ import { defineConfig } from 'vite';
 // autocontenido — necesario tanto para el Artifact como para el instalador offline.
 export default defineConfig({
 	base: './',
+	// La sonda de pruebas (`window.qa`) solo entra en el bundle cuando se construye con QA=1.
+	// En el build que se entrega, __QA__ es `false`, el minificador borra el bloque entero y la
+	// aplicación no lleva dentro el andamiaje de las pruebas.
+	define: { __QA__: JSON.stringify(process.env.QA === '1') },
 	build: {
 		outDir: 'dist',
 		chunkSizeWarningLimit: 4000,
