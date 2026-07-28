@@ -10,8 +10,10 @@ import { crearProyecto } from '../src/modelo/proyecto.js';
 import { Proyecto } from '../src/modelo/tipos.js';
 import { calcularPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores } from '../src/motores/numeracion.js';
+import { generarReferencias } from '../src/motores/referencias.js';
 import {
-	anchoColumna, esPotencia, HOJA_A3, montarEsquema, repartirEnColumnas, rutaHilo, separarEtiquetas, simboloDe,
+	ANCHO_MAX_SIMBOLO, anchoColumna, esBloqueFuncional, esPotencia, HOJA_A3, montarEsquema, posicionesEnEsquema,
+	repartirEnColumnas, rutaHilo, separarEtiquetas, simboloDe,
 } from '../src/motores/esquema.js';
 
 /** Arranque directo mínimo: automático → contactor → motor, con su mando. */
@@ -321,4 +323,110 @@ test('montarEsquema: cada hilo con número deja su etiqueta en la hoja', () => {
 		const etiquetasDeHilo = h.referencias.filter((r) => r.tipo === 'hilo').length;
 		assert.equal(etiquetasDeHilo, conNumero, `hoja ${h.numero}: ${etiquetasDeHilo} etiquetas para ${conNumero} hilos`);
 	}
+});
+
+/* ------------------- Bloques funcionales y posición en el plano ------------------- */
+
+/** Controlador real: caja con muchos terminales y borneras declaradas por ficha de datos. */
+function controlador(): Proyecto {
+	const p = crearProyecto('controlador');
+	p.dispositivos = [{
+		id: 'a1', tipo: 'plc', designacion: '-A1', referencia: 'PUB6438S',
+		bornes: [
+			...['24V~', '24V COM', 'GND'].map((id) => ({ id, tipo: 'control' as const })),
+			...Array.from({ length: 6 }, (_, i) => ({ id: `UI${i + 1}`, tipo: 'senal' as const })),
+			...Array.from({ length: 8 }, (_, i) => ({ id: `DO${i + 1}`, tipo: 'senal' as const })),
+		],
+		terminales: [
+			{ lado: 'izquierda', bornes: ['24V~', '24V COM', 'GND'] },
+			{ lado: 'arriba', bornes: ['UI1', 'UI2', 'UI3', 'UI4', 'UI5', 'UI6'] },
+			{ lado: 'derecha', bornes: ['DO1', 'DO2', 'DO3', 'DO4', 'DO5', 'DO6', 'DO7', 'DO8'] },
+		],
+	}];
+	return p;
+}
+
+test('un controlador se dibuja como bloque, no como un aparato de dos filas', () => {
+	const d = controlador().dispositivos[0];
+	assert.ok(esBloqueFuncional(d));
+	const s = simboloDe(d);
+	// Con el reparto en dos filas serían 8 vías × 8 mm = 64 mm: se comería la columna vecina.
+	assert.ok(s.ancho <= ANCHO_MAX_SIMBOLO, `ancho ${s.ancho} mm`);
+	assert.equal(s.pines.size, d.bornes.length, 'todos los terminales tienen pin');
+});
+
+test('el bloque respeta el agrupamiento real de las borneras del equipo', () => {
+	const d = controlador().dispositivos[0];
+	const s = simboloDe(d);
+	// Lo que en el aparato va arriba o a la izquierda, en el plano va al costado izquierdo.
+	const xIzq = s.pines.get('24V~')!.x;
+	assert.equal(s.pines.get('UI1')!.x, xIzq, 'las entradas comparten costado con la alimentación');
+	assert.ok(s.pines.get('DO1')!.x > xIzq, 'las salidas van al otro costado');
+	// Y dentro de un costado no hay dos terminales en el mismo punto.
+	const puntos = new Set([...s.pines.values()].map((p) => `${p.x.toFixed(2)}:${p.y.toFixed(2)}`));
+	assert.equal(puntos.size, s.pines.size);
+});
+
+test('el bloque rotula cada terminal: es lo que se aprieta en obra', () => {
+	const s = simboloDe(controlador().dispositivos[0]);
+	const textos = s.trazos.filter((t) => t.tipo === 'texto').map((t) => (t as { texto: string }).texto);
+	for (const id of ['24V~', 'UI1', 'UI6', 'DO8']) assert.ok(textos.includes(id), `falta el rótulo ${id}`);
+	assert.ok(textos.includes('PUB6438S'), 'el bloque lleva la referencia del equipo');
+});
+
+test('un aparato con muchos polos no se sale de su columna', () => {
+	const p = crearProyecto('ancho');
+	p.dispositivos = [{
+		id: 'q', tipo: 'disyuntor', designacion: '-Q1',
+		bornes: Array.from({ length: 12 }, (_, i) => ({ id: String(i + 1), tipo: 'L' as const })),
+	}];
+	assert.ok(simboloDe(p.dispositivos[0]).ancho <= ANCHO_MAX_SIMBOLO);
+	assert.ok(simboloDe(p.dispositivos[0]).ancho <= anchoColumna(HOJA_A3, 10));
+});
+
+test('ningún símbolo se sale del marco de la hoja, por alto que sea', () => {
+	const p = controlador();
+	// Un equipo enorme: 60 terminales por costado.
+	p.dispositivos[0].bornes = Array.from({ length: 120 }, (_, i) => ({ id: `T${i + 1}`, tipo: 'senal' as const }));
+	p.dispositivos[0].terminales = [
+		{ lado: 'arriba', bornes: p.dispositivos[0].bornes.slice(0, 60).map((b) => b.id) },
+		{ lado: 'abajo', bornes: p.dispositivos[0].bornes.slice(60).map((b) => b.id) },
+	];
+	const hojas = montarEsquema(p, calcularPotenciales(p));
+	for (const h of hojas) {
+		for (const s of h.simbolos) {
+			assert.ok(s.y >= 0 && s.y + s.alto <= h.altoMm, `${s.designacion} se sale de la hoja`);
+			assert.ok(s.x >= 0 && s.x + s.ancho <= h.anchoMm, `${s.designacion} se sale de la hoja`);
+		}
+	}
+});
+
+test('la posición que se cita es la del plano montado, no un número de cortesía', () => {
+	const p = arranqueDirecto();
+	const hojas = montarEsquema(p, calcularPotenciales(p));
+	const posiciones = posicionesEnEsquema(hojas);
+	assert.equal(posiciones.size, hojas.reduce((n, h) => n + h.simbolos.length, 0));
+	for (const h of hojas) {
+		for (const s of h.simbolos) {
+			assert.equal(posiciones.get(s.dispositivoId), `${h.numero}.${s.columna}`);
+			assert.ok(s.columna >= 1 && s.columna <= h.columnas, `columna ${s.columna} fuera de la rejilla`);
+		}
+	}
+	// Y el índice de referencias usa esa misma posición, no otra.
+	const indice = generarReferencias(p, posiciones).indice;
+	for (const e of indice) {
+		if (posiciones.has(e.dispositivoId)) assert.equal(e.posicion, posiciones.get(e.dispositivoId));
+	}
+});
+
+test('un bornero grande sigue dibujándose como bornero, no como bloque', () => {
+	const p = crearProyecto('bornero');
+	p.dispositivos = [{
+		id: 'x1', tipo: 'bornero', designacion: '-X1',
+		bornes: Array.from({ length: 20 }, (_, i) => ({ id: String(i + 1), tipo: 'control' as const })),
+	}];
+	assert.equal(esBloqueFuncional(p.dispositivos[0]), false);
+	const s = simboloDe(p.dispositivos[0]);
+	assert.ok(s.trazos.some((t) => t.tipo === 'circulo'), 'conserva la fila de círculos del bornero');
+	assert.ok(s.ancho <= ANCHO_MAX_SIMBOLO, 'y sigue cabiendo en su columna');
 });

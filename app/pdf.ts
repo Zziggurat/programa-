@@ -1,9 +1,15 @@
 /**
- * Exportación del proyecto a PDF (dossier técnico) con jsPDF.
+ * Dossier técnico del tablero en PDF (jsPDF).
  *
- * Incluye: portada con datos del gabinete, verificación DRC, LISTA DE MATERIALES
- * completa (BOM), índice de dispositivos, lista de conductores con longitudes y
- * planes de borneros. Se apoya en los motores del núcleo (src/motores).
+ * El documento describe EL TABLERO QUE HAY EN PANTALLA, no una plantilla: todo se recalcula
+ * en el momento de exportar a partir del modelo. Por eso incluye el plano de la placa a
+ * escala con los aparatos en su sitio, sus medidas reales y el recuento por familias: es lo
+ * que permite a un cliente reconocer su tablero en el papel y a un taller fabricarlo.
+ *
+ * Orden del documento:
+ *   Portada · 1 Ficha del tablero · 2 Disposición de la placa (a escala) · 3 Componentes
+ *   4 Lista de materiales · 5 Índice de aparatos · 6 Conductores · 7 Referencias cruzadas
+ *   8 Borneros · 9 Verificación eléctrica
  */
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -16,10 +22,121 @@ import { rutearConductores } from '../src/motores/ruteo.js';
 import { generarReferencias } from '../src/motores/referencias.js';
 import { generarPlanBorneros } from '../src/motores/bornes.js';
 import { generarBOM, generarListaConductores } from '../src/motores/documentacion.js';
-import { cajaDe } from './escena3d.js';
+import { fondoDe, generarFichaTablero } from '../src/motores/ficha-tablero.js';
+import { montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
+import { CONTROLADORES } from './controladores.js';
 
 const AZUL: [number, number, number] = [43, 74, 111];
 const GRIS: [number, number, number] = [90, 98, 106];
+const VERDE: [number, number, number] = [30, 130, 60];
+const ROJO: [number, number, number] = [176, 48, 48];
+
+/** #rrggbb → componentes 0-255. Los aparatos de catálogo traen su color real. */
+function rgb(hex: string | undefined, porDefecto: [number, number, number]): [number, number, number] {
+	if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return porDefecto;
+	return [
+		parseInt(hex.slice(1, 3), 16),
+		parseInt(hex.slice(3, 5), 16),
+		parseInt(hex.slice(5, 7), 16),
+	];
+}
+
+const mm = (v: number): string => `${Math.round(v)} mm`;
+const metros = (v: number): string => `${(v / 1000).toFixed(2)} m`;
+
+/**
+ * Plano de la placa de montaje A ESCALA, con canaletas, rieles y cada aparato en su sitio
+ * y con su marca. Es la parte que hace fiel al dossier: se ve el tablero, no una lista.
+ * Devuelve la escala usada (mm de papel por mm de tablero).
+ */
+function dibujarPlaca(
+	doc: jsPDF,
+	proyecto: Proyecto,
+	marco: { x: number; y: number; ancho: number; alto: number },
+): number {
+	const g = proyecto.gabinete;
+	if (!g || g.ancho <= 0 || g.alto <= 0) return 0;
+	const k = Math.min(marco.ancho / g.ancho, marco.alto / g.alto);
+	// Centrado dentro del hueco disponible.
+	const x0 = marco.x + (marco.ancho - g.ancho * k) / 2;
+	const y0 = marco.y + (marco.alto - g.alto * k) / 2;
+	const px = (v: number): number => x0 + v * k;
+	const py = (v: number): number => y0 + v * k;
+
+	// Placa de montaje.
+	doc.setFillColor(246, 247, 248);
+	doc.setDrawColor(...GRIS);
+	doc.setLineWidth(0.4);
+	doc.rect(x0, y0, g.ancho * k, g.alto * k, 'FD');
+
+	// Canaletas: banda ámbar con su tapa insinuada.
+	doc.setDrawColor(190, 150, 70);
+	doc.setFillColor(240, 219, 176);
+	for (const c of g.canaletas) {
+		const w = c.orientacion === 'v' ? c.ancho : c.largo;
+		const h = c.orientacion === 'v' ? c.largo : c.ancho;
+		doc.rect(px(c.x), py(c.y), w * k, h * k, 'FD');
+	}
+	// Rieles DIN: barra gris de 35 mm.
+	doc.setFillColor(203, 209, 214);
+	doc.setDrawColor(150, 158, 165);
+	for (const r of g.rieles) {
+		const w = r.orientacion === 'v' ? 35 : r.largo;
+		const h = r.orientacion === 'v' ? r.largo : 35;
+		doc.rect(px(r.x), py(r.y), w * k, h * k, 'FD');
+	}
+
+	// Aparatos, con su color real y su designación si cabe.
+	doc.setLineWidth(0.25);
+	for (const col of g.colocaciones) {
+		const d = proyecto.dispositivos.find((x) => x.id === col.dispositivoId);
+		if (!d) continue;
+		const [r, gg, b] = rgb(d.colorCuerpo, [120, 128, 136]);
+		doc.setFillColor(r, gg, b);
+		doc.setDrawColor(40, 46, 52);
+		doc.rect(px(col.x), py(col.y), col.ancho * k, col.alto * k, 'FD');
+		const marca = d.designacion ?? '';
+		const anchoPapel = col.ancho * k;
+		const altoPapel = col.alto * k;
+		if (!marca) continue;
+		// Tinta clara sobre cuerpo oscuro y al revés, para que la marca se lea siempre.
+		const claro = (r * 299 + gg * 587 + b * 114) / 1000 > 150;
+		doc.setTextColor(claro ? 25 : 245);
+		const cx = px(col.x) + anchoPapel / 2;
+		const cy = py(col.y) + altoPapel / 2;
+		// Un aparato estrecho (un modular de 18 mm) no admite el rótulo en horizontal: se gira,
+		// que es exactamente lo que se hace en un plano de montaje real.
+		const largoTexto = marca.length * 0.62;
+		if (anchoPapel >= largoTexto * 3.2 && altoPapel > 3) {
+			doc.setFontSize(Math.min(6, Math.max(3.6, anchoPapel * 0.3)));
+			doc.text(marca, cx, cy + 1, { align: 'center', maxWidth: anchoPapel - 1 });
+		} else if (altoPapel >= largoTexto * 3.2 && anchoPapel > 3) {
+			doc.setFontSize(Math.min(6, Math.max(3.6, altoPapel * 0.3)));
+			doc.text(marca, cx + 1, cy, { align: 'center', angle: 90 });
+		}
+		// Si no cabe de ninguna de las dos formas, el aparato queda sin rotular en el plano y
+		// se localiza por la tabla de posiciones: mejor eso que un texto ilegible encima.
+	}
+
+	// Cotas exteriores de la placa, en cm, como se pide una placa al taller.
+	doc.setDrawColor(...AZUL);
+	doc.setTextColor(...AZUL);
+	doc.setFontSize(7.5);
+	doc.setLineWidth(0.3);
+	const yc = y0 + g.alto * k + 6;
+	doc.line(x0, yc, x0 + g.ancho * k, yc);
+	doc.line(x0, yc - 1.5, x0, yc + 1.5);
+	doc.line(x0 + g.ancho * k, yc - 1.5, x0 + g.ancho * k, yc + 1.5);
+	doc.text(mm(g.ancho), x0 + (g.ancho * k) / 2, yc - 1.6, { align: 'center' });
+	const xc = x0 + g.ancho * k + 6;
+	doc.line(xc, y0, xc, y0 + g.alto * k);
+	doc.line(xc - 1.5, y0, xc + 1.5, y0);
+	doc.line(xc - 1.5, y0 + g.alto * k, xc + 1.5, y0 + g.alto * k);
+	doc.text(mm(g.alto), xc + 1.5, y0 + (g.alto * k) / 2, { angle: 90, align: 'center' });
+
+	doc.setTextColor(0);
+	return k;
+}
 
 /** Genera y descarga el dossier técnico del proyecto en PDF. */
 export function exportarPDF(proyecto: Proyecto): void {
@@ -32,17 +149,18 @@ export function exportarPDF(proyecto: Proyecto): void {
 		longitudesMm: new Map(ruteo.rutas.map((r) => [r.conductorId, r.longitudMm])),
 		canaletas: ruteo.ocupaciones,
 	});
-	const referencias = generarReferencias(proyecto);
+	const hojasEsquema = montarEsquema(proyecto, potenciales);
+	const referencias = generarReferencias(proyecto, posicionesEnEsquema(hojasEsquema));
 	const bom = generarBOM(proyecto);
 	const conductores = generarListaConductores(proyecto, ruteo);
 	const planes = generarPlanBorneros(proyecto, potenciales);
+	const ficha = generarFichaTablero(proyecto, ruteo);
 
 	const doc = new jsPDF({ unit: 'mm', format: 'a4' });
 	const anchoPag = doc.internal.pageSize.getWidth();
+	const altoPag = doc.internal.pageSize.getHeight();
 	const fecha = new Date().toLocaleDateString('es-CL', { year: 'numeric', month: 'long', day: 'numeric' });
 
-	// Numeración de página y pie, común a todas las páginas al final.
-	const secciones: string[] = [];
 	let y = 0;
 
 	const cabecera = (titulo: string): void => {
@@ -63,7 +181,6 @@ export function exportarPDF(proyecto: Proyecto): void {
 		doc.setLineWidth(0.5);
 		doc.line(12, 30, anchoPag - 12, 30);
 		y = 38;
-		secciones.push(titulo);
 	};
 
 	const tabla = (cabeceras: string[], filas: (string | number)[][], anchos?: Record<number, number>): void => {
@@ -82,53 +199,201 @@ export function exportarPDF(proyecto: Proyecto): void {
 		y = (doc.lastAutoTable?.finalY ?? y) + 8;
 	};
 
-	/* ---------------------------- Portada ---------------------------- */
-	doc.setFillColor(...AZUL);
-	doc.rect(0, 0, anchoPag, 70, 'F');
-	doc.setTextColor(255);
-	doc.setFont('helvetica', 'bold');
-	doc.setFontSize(26);
-	doc.text('Dossier técnico', 20, 38);
-	doc.setFontSize(16);
-	doc.setFont('helvetica', 'normal');
-	doc.text(proyecto.nombre, 20, 50);
-	doc.setFontSize(10);
-	doc.text('Generado por TableroStudio · ' + fecha, 20, 60);
-
-	doc.setTextColor(0);
-	const g = proyecto.gabinete;
-	const caja = g ? cajaDe(g) : undefined;
-	const internos = proyecto.dispositivos.filter((d) => !d.campo && !d.imagen);
 	const errores = hallazgos.filter((h) => h.severidad === 'error').length;
 	const avisos = hallazgos.length - errores;
-	const totalCable = ruteo.rutas.reduce((s, r) => s + r.longitudMm, 0);
 
-	y = 88;
+	/* ---------------------------- Portada ---------------------------- */
+	doc.setFillColor(...AZUL);
+	doc.rect(0, 0, anchoPag, 62, 'F');
+	doc.setTextColor(255);
 	doc.setFont('helvetica', 'bold');
-	doc.setFontSize(12);
-	doc.text('Resumen del proyecto', 20, y);
-	y += 4;
-	const resumen: [string, string][] = [
-		['Aparatos (dentro del gabinete)', String(internos.length)],
-		['Conductores', String(proyecto.conductores.length)],
-		['Longitud total de cable', `${(totalCable / 1000).toFixed(1)} m`],
+	doc.setFontSize(24);
+	doc.text('Dossier técnico', 20, 32);
+	doc.setFontSize(15);
+	doc.setFont('helvetica', 'normal');
+	doc.text(proyecto.nombre, 20, 44);
+	doc.setFontSize(9.5);
+	doc.text(`Generado por TableroStudio · ${fecha}`, 20, 54);
+
+	// Tarjetas con las cifras que definen el tablero: es lo que se mira primero.
+	doc.setTextColor(0);
+	const tarjetas: [string, string][] = [
+		['Aparatos', String(ficha.aparatos.total)],
+		['Conexiones', String(ficha.conductores.total)],
+		['Caja (an × al × f)', ficha.caja ? `${Math.round(ficha.caja.ancho)} × ${Math.round(ficha.caja.alto)} × ${mm(ficha.caja.profundidad)}` : '—'],
+		['Placa de montaje', ficha.placa ? `${Math.round(ficha.placa.ancho)} × ${mm(ficha.placa.alto)}` : '—'],
+		['Cable total', metros(ficha.conductores.longitudTotalMm)],
+		['Verificación', errores ? `${errores} error${errores > 1 ? 'es' : ''}` : (avisos ? `${avisos} aviso${avisos > 1 ? 's' : ''}` : 'Conforme')],
+	];
+	const anchoTarjeta = (anchoPag - 40 - 2 * 6) / 3;
+	tarjetas.forEach(([titulo, valor], i) => {
+		const cx = 20 + (i % 3) * (anchoTarjeta + 6);
+		const cy = 72 + Math.floor(i / 3) * 26;
+		doc.setFillColor(244, 246, 248);
+		doc.setDrawColor(220, 225, 230);
+		doc.roundedRect(cx, cy, anchoTarjeta, 21, 2, 2, 'FD');
+		doc.setFontSize(7.5);
+		doc.setTextColor(...GRIS);
+		doc.text(titulo.toUpperCase(), cx + 4, cy + 6.5);
+		doc.setFontSize(11);
+		doc.setFont('helvetica', 'bold');
+		const esVerificacion = titulo === 'Verificación';
+		doc.setTextColor(...(esVerificacion ? (errores ? ROJO : VERDE) : [20, 24, 28] as [number, number, number]));
+		doc.text(valor, cx + 4, cy + 15, { maxWidth: anchoTarjeta - 8 });
+		doc.setFont('helvetica', 'normal');
+	});
+
+	// Vista del tablero en la propia portada: el cliente reconoce su tablero de un vistazo.
+	doc.setTextColor(...GRIS);
+	doc.setFontSize(9);
+	doc.text('Disposición de la placa de montaje', 20, 132);
+	doc.setTextColor(0);
+	const escalaPortada = dibujarPlaca(doc, proyecto, { x: 20, y: 138, ancho: anchoPag - 46, alto: 118 });
+	doc.setFontSize(7.5);
+	doc.setTextColor(...GRIS);
+	doc.text(
+		escalaPortada
+			? `Escala aproximada 1:${Math.round(1 / escalaPortada)} · medidas en milímetros`
+			: 'El proyecto todavía no tiene gabinete definido.',
+		20, altoPag - 22,
+	);
+	doc.setTextColor(0);
+
+	/* --------------------- 1. Ficha del tablero --------------------- */
+	doc.addPage();
+	cabecera('1. Ficha del tablero');
+	// Si el proyecto no declara la caja, la ficha la deduce de la placa: hay que decirlo, no
+	// dar por buena una medida supuesta en un papel que se usa para pedir el armario.
+	const cajaTexto = ficha.caja
+		? `${mm(ficha.caja.ancho)} × ${mm(ficha.caja.alto)} × ${mm(ficha.caja.profundidad)}`
+			+ (ficha.caja.estimada ? ' (estimada: placa + margen estándar)' : '')
+		: '—';
+	const filasFicha: [string, string][] = [
+		['Caja eléctrica (an × al × fondo)', cajaTexto],
+		['Placa de montaje (an × al)', ficha.placa ? `${mm(ficha.placa.ancho)} × ${mm(ficha.placa.alto)}` : '—'],
+		['Ocupación de la placa', `${ficha.ocupacionPlacaPct} %`],
+		['Riel DIN', `${ficha.rieles.cantidad} tramo${ficha.rieles.cantidad === 1 ? '' : 's'} · ${metros(ficha.rieles.largoTotalMm)} en total`],
+		['Canaleta', `${ficha.canaletas.cantidad} tramo${ficha.canaletas.cantidad === 1 ? '' : 's'} · ${metros(ficha.canaletas.largoTotalMm)} en total`],
+		['Llenado máximo de canaleta', ficha.canaletas.cantidad ? `${ficha.canaletas.llenadoMaxPct} % del máximo admisible` : '—'],
+		['Aparatos en la placa', String(ficha.aparatos.enPlaca)],
+		['Aparatos de campo (fuera del tablero)', String(ficha.aparatos.deCampo)],
+		['Conductores', String(ficha.conductores.total)],
+		['Longitud total de cable', metros(ficha.conductores.longitudTotalMm)],
+		['Tensiones de trabajo', ficha.tensiones.length ? ficha.tensiones.map((v) => `${v} V`).join(' · ') : '—'],
+		['Fondo libre tras el aparato más profundo', ficha.holguraFondoMm !== undefined ? mm(ficha.holguraFondoMm) : '—'],
 		['Referencias de material distintas', String(bom.length)],
-		['Caja eléctrica', caja ? `${(caja.ancho / 10).toFixed(0)} × ${(caja.alto / 10).toFixed(0)} × ${(caja.profundidad / 10).toFixed(0)} cm` : '—'],
-		['Placa de montaje', g ? `${(g.ancho / 10).toFixed(0)} × ${(g.alto / 10).toFixed(0)} cm` : '—'],
 		['Verificación eléctrica (DRC)', errores ? `${errores} errores · ${avisos} avisos` : (avisos ? `${avisos} avisos` : 'Sin hallazgos')],
 	];
 	autoTable(doc, {
 		startY: y,
-		body: resumen,
+		body: filasFicha,
 		theme: 'plain',
-		bodyStyles: { fontSize: 10 },
-		columnStyles: { 0: { fontStyle: 'bold', cellWidth: 90, textColor: GRIS }, 1: { cellWidth: 80 } },
-		margin: { left: 20, right: 20 },
+		bodyStyles: { fontSize: 9.5 },
+		columnStyles: { 0: { fontStyle: 'bold', cellWidth: 92, textColor: GRIS }, 1: { cellWidth: 80 } },
+		margin: { left: 12, right: 12 },
 	});
+	// @ts-expect-error autotable añade lastAutoTable
+	y = (doc.lastAutoTable?.finalY ?? y) + 10;
 
-	/* --------------------- 1. Lista de materiales --------------------- */
+	doc.setFont('helvetica', 'bold');
+	doc.setFontSize(11);
+	doc.text('Componentes por familia', 12, y);
+	doc.setFont('helvetica', 'normal');
+	y += 4;
+	tabla(['Familia', 'Cantidad', 'Marcado de los aparatos'],
+		ficha.aparatos.porFamilia.map((f) => [f.familia, f.cantidad, f.designaciones.join(', ')]),
+		{ 0: 34, 1: 20 });
+
+	// Honestidad con el cliente: si algún equipo lleva medidas estimadas y no de hoja de datos,
+	// el dossier lo dice. Un fondo mal supuesto es un tablero que no cierra.
+	const nominales = proyecto.dispositivos.filter((d) =>
+		CONTROLADORES.some((f) => f.referencia === d.referencia && f.medidas === 'nominal'));
+	if (nominales.length > 0) {
+		doc.setFontSize(8.5);
+		doc.setTextColor(...ROJO);
+		doc.text('Medidas por confirmar', 12, y);
+		doc.setTextColor(...GRIS);
+		doc.text(
+			`Las dimensiones de ${nominales.map((d) => `${d.designacion} (${d.referencia})`).join(', ')} son `
+			+ 'estimaciones de su familia de producto. Contrástalas con la hoja de datos del fabricante antes de fabricar.',
+			12, y + 4.5, { maxWidth: anchoPag - 24 },
+		);
+		doc.setTextColor(0);
+		y += 16;
+	}
+
+	if (ficha.conductores.porSeccion.length > 0) {
+		doc.setFont('helvetica', 'bold');
+		doc.setFontSize(11);
+		doc.text('Cable por sección', 12, y);
+		doc.setFont('helvetica', 'normal');
+		y += 4;
+		tabla(['Sección', 'Conductores', 'Longitud'],
+			ficha.conductores.porSeccion.map((s) => [
+				s.seccion !== undefined ? `${s.seccion} mm²` : 'sin definir',
+				s.cantidad,
+				// Los conductores que no pasan por canaleta (los que van a campo) no tienen
+				// recorrido calculado: se dice, en vez de sumarles cero y falsear el metraje.
+				s.conRuta === 0
+					? 'sin recorrido calculado'
+					: `${metros(s.longitudMm)}${s.conRuta < s.cantidad ? ` (${s.cantidad - s.conRuta} sin rutear)` : ''}`,
+			]), { 0: 32, 1: 30 });
+	}
+
+	/* --------------- 2. Disposición de la placa (a escala) --------------- */
 	doc.addPage();
-	cabecera('1. Lista de materiales (BOM)');
+	cabecera('2. Disposición de la placa');
+	// La altura del hueco deja sitio bajo el dibujo para la cota, la leyenda y el pie.
+	const escala = dibujarPlaca(doc, proyecto, { x: 12, y: 38, ancho: anchoPag - 32, alto: 142 });
+	y = 194;
+	// Leyenda: sin ella el plano se lee mal, sobre todo quien no armó el tablero.
+	const leyenda: [string, [number, number, number], [number, number, number]][] = [
+		['Canaleta', [240, 219, 176], [190, 150, 70]],
+		['Riel DIN', [203, 209, 214], [150, 158, 165]],
+		['Aparato', [120, 128, 136], [40, 46, 52]],
+	];
+	let lx = 12;
+	doc.setFontSize(8);
+	for (const [texto, relleno, borde] of leyenda) {
+		doc.setFillColor(...relleno);
+		doc.setDrawColor(...borde);
+		doc.setLineWidth(0.3);
+		doc.rect(lx, y - 3, 6, 3.4, 'FD');
+		doc.setTextColor(...GRIS);
+		doc.text(texto, lx + 8, y);
+		lx += 8 + doc.getTextWidth(texto) + 8;
+	}
+	y += 7;
+	doc.setFontSize(8);
+	doc.setTextColor(...GRIS);
+	doc.text(escala
+		? `Vista frontal de la placa de montaje. Escala aproximada 1:${Math.round(1 / escala)}. Medidas en milímetros desde la esquina superior izquierda.`
+		: 'El proyecto todavía no tiene gabinete definido.', 12, y);
+	doc.setTextColor(0);
+	y += 7;
+	const colocaciones = proyecto.gabinete?.colocaciones ?? [];
+	if (colocaciones.length > 0) {
+		tabla(['Marcado', 'Aparato', 'Posición x · y', 'Huella (an × al)', 'Fondo'],
+			colocaciones
+				.map((c) => {
+					const d = proyecto.dispositivos.find((x) => x.id === c.dispositivoId);
+					return { c, d };
+				})
+				.filter((e): e is { c: typeof colocaciones[number]; d: NonNullable<typeof e.d> } => !!e.d)
+				.sort((a, b) => (a.d.designacion ?? '').localeCompare(b.d.designacion ?? '', undefined, { numeric: true }))
+				.map(({ c, d }) => [
+					d.designacion ?? d.id,
+					d.descripcion ?? d.tipo,
+					`${Math.round(c.x)} · ${Math.round(c.y)} mm`,
+					`${Math.round(c.ancho)} × ${Math.round(c.alto)} mm`,
+					mm(fondoDe(d)),
+				]),
+			{ 0: 22, 2: 30, 3: 32, 4: 18 });
+	}
+
+	/* --------------------- 3. Lista de materiales --------------------- */
+	doc.addPage();
+	cabecera('3. Lista de materiales (BOM)');
 	if (bom.length === 0) {
 		doc.setFontSize(10);
 		doc.text('El proyecto no tiene aparatos.', 12, y);
@@ -143,40 +408,46 @@ export function exportarPDF(proyecto: Proyecto): void {
 			{ 0: 8, 1: 12, 3: 30, 4: 30 });
 	}
 
-	/* --------------------- 2. Índice de dispositivos --------------------- */
+	/* --------------------- 4. Índice de aparatos --------------------- */
 	doc.addPage();
-	cabecera('2. Índice de dispositivos');
-	tabla(['Designación', 'Descripción', 'Tensión', 'Posición esquema'],
+	cabecera('4. Índice de aparatos');
+	tabla(['Marcado', 'Descripción', 'Tensión', 'In / Ib', 'En el esquema'],
 		referencias.indice.map((e) => {
 			const d = proyecto.dispositivos.find((x) => x.id === e.dispositivoId);
-			return [e.designacion, e.descripcion || '—', d?.tensionNominal ? `${d.tensionNominal} V` : '—', e.posicion];
-		}), { 0: 28, 2: 22, 3: 30 });
+			return [
+				e.designacion,
+				e.descripcion || '—',
+				d?.tensionNominal ? `${d.tensionNominal} V` : '—',
+				d?.corrienteNominal ? `${d.corrienteNominal} A` : '—',
+				e.posicion,
+			];
+		}), { 0: 24, 2: 20, 3: 20, 4: 26 });
 
-	/* --------------------- 3. Lista de conductores --------------------- */
+	/* --------------------- 5. Lista de conductores --------------------- */
 	doc.addPage();
-	cabecera('3. Lista de conductores');
+	cabecera('5. Lista de conductores');
 	if (conductores.length === 0) {
 		doc.setFontSize(10);
 		doc.text('El proyecto no tiene conductores.', 12, y);
 	} else {
 		tabla(['Nº', 'Desde', 'Hacia', 'Sección', 'Color', 'Longitud'],
 			conductores.map((c) => [c.numero, c.de, c.a, c.seccion || '—', c.color || '—',
-				c.longitudMm ? `${(c.longitudMm / 1000).toFixed(2)} m` : '—']),
+				c.longitudMm ? metros(c.longitudMm) : '—']),
 			{ 0: 14, 3: 20, 5: 22 });
 	}
 
-	/* --------------------- 4. Referencias cruzadas --------------------- */
+	/* --------------------- 6. Referencias cruzadas --------------------- */
 	if (referencias.cruzadas.length > 0) {
 		doc.addPage();
-		cabecera('4. Referencias cruzadas');
+		cabecera('6. Referencias cruzadas');
 		const filas = referencias.cruzadas.flatMap((x) =>
 			x.contactos.length === 0
 				? [[x.designacion, x.posicion, '(sin contactos)', '', '']]
 				: x.contactos.map((c) => [x.designacion, x.posicion, c.designacion, c.contacto, c.posicion]));
-		tabla(['Maestro', 'Posición', 'Contacto', 'Tipo', 'Posición'], filas);
+		tabla(['Maestro', 'Hoja.col', 'Contacto', 'Tipo', 'Hoja.col'], filas);
 	}
 
-	/* --------------------- 5. Planes de borneros --------------------- */
+	/* --------------------- 7. Planes de borneros --------------------- */
 	for (const plan of planes) {
 		doc.addPage();
 		cabecera(`Bornero ${plan.designacion}`);
@@ -185,12 +456,12 @@ export function exportarPDF(proyecto: Proyecto): void {
 				f.numeroConductor || '—', f.puenteCon.join(', ') || '—']));
 	}
 
-	/* --------------------- 6. Verificación DRC --------------------- */
+	/* --------------------- 8. Verificación DRC --------------------- */
 	doc.addPage();
 	cabecera('Verificación eléctrica (DRC)');
 	if (hallazgos.length === 0) {
 		doc.setFontSize(11);
-		doc.setTextColor(30, 130, 60);
+		doc.setTextColor(...VERDE);
 		doc.text('Sin errores ni avisos. El tablero pasa todas las reglas.', 12, y);
 		doc.setTextColor(0);
 	} else {
@@ -206,7 +477,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 		doc.setFontSize(8);
 		doc.setTextColor(...GRIS);
 		doc.text(`Página ${i} de ${paginas}`, anchoPag - 12, 290, { align: 'right' });
-		doc.text('TableroStudio — dossier técnico', 12, 290);
+		doc.text(`${proyecto.nombre} — dossier técnico`, 12, 290);
 	}
 
 	const nombre = proyecto.nombre.replace(/[^\wáéíóúñ -]/gi, '').trim() || 'tablero';

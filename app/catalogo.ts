@@ -3,9 +3,10 @@
  * Cada plantilla define el aparato eléctrico completo (bornes con su naturaleza,
  * tensión, referencia comercial) y su huella física en mm.
  */
-import { Borne, Dispositivo, LetraClase, Proyecto, Rol, TipoDispositivo, CLASE_POR_TIPO } from '../src/modelo/tipos.js';
+import { BloqueTerminales, Borne, Dispositivo, LetraClase, Proyecto, Rol, TipoDispositivo, CLASE_POR_TIPO } from '../src/modelo/tipos.js';
 import { aplicarPlantilla } from '../src/motores/numeracion.js';
 import { opcionesDe } from '../src/modelo/proyecto.js';
+import { bornesDeControlador, CONTROLADORES, FichaControlador, notaMedidas } from './controladores.js';
 
 export interface PlantillaAparato {
 	id: string;
@@ -29,6 +30,14 @@ export interface PlantillaAparato {
 	/** Color del chip en el catálogo (coincide con el cuerpo 3D). */
 	color: string;
 	grupo: 'Protección' | 'Maniobra' | 'Control' | 'Alimentación' | 'Conexión';
+	/** Fondo real del aparato en mm (equipos de catálogo con ficha de datos). */
+	profundidad?: number;
+	/** Borneras reales del equipo (controladores): dónde está cada terminal. */
+	terminales?: BloqueTerminales[];
+	/** Rasgos del frente que dibuja el modelo 3D (pantalla, LEDs, puertos). */
+	rasgosFrente?: Dispositivo['rasgosFrente'];
+	/** Nota de fiabilidad de las medidas, si el aparato viene de una ficha de datos. */
+	nota?: string;
 }
 
 const L = (id: string): Borne => ({ id, tipo: 'L' });
@@ -245,6 +254,34 @@ export const PLANTILLAS: PlantillaAparato[] = [
 	},
 ];
 
+/**
+ * Controladores reales (BMS/HVAC) descritos por ficha de datos. No se modela cada uno a
+ * mano: la ficha aporta huella, fondo y borneras con los rótulos del fabricante, y el
+ * constructor 3D genérico hace el resto.
+ */
+export function plantillaDeControlador(f: FichaControlador): PlantillaAparato {
+	return {
+		id: `ctrl-${f.id}`,
+		nombre: f.nombre,
+		tipo: 'plc',
+		grupo: 'Control',
+		descripcion: `${f.descripcion} · ${f.entradasSalidas}`,
+		fabricante: f.fabricante,
+		referencia: f.referencia,
+		tensionNominal: f.tension,
+		ancho: f.ancho,
+		alto: f.alto,
+		profundidad: f.profundidad,
+		color: f.color,
+		bornes: bornesDeControlador(f),
+		terminales: f.bloques.map((b) => ({ ...b, bornes: [...b.bornes] })),
+		rasgosFrente: { ...f.frente },
+		nota: notaMedidas(f),
+	};
+}
+
+for (const ficha of CONTROLADORES) PLANTILLAS.push(plantillaDeControlador(ficha));
+
 /** Orden en que se muestran los grupos: el recorrido natural de la corriente por el tablero. */
 const ORDEN_GRUPOS: PlantillaAparato['grupo'][] = ['Protección', 'Maniobra', 'Alimentación', 'Control', 'Conexión'];
 PLANTILLAS.sort((a, b) => ORDEN_GRUPOS.indexOf(a.grupo) - ORDEN_GRUPOS.indexOf(b.grupo));
@@ -274,6 +311,10 @@ export function crearDesdePlantilla(plantilla: PlantillaAparato, proyecto: Proye
 		tensionNominal: plantilla.tensionNominal,
 		corrienteNominal: plantilla.corrienteNominal,
 		polos: plantilla.polos,
+		profundidad: plantilla.profundidad,
+		colorCuerpo: plantilla.color,
+		terminales: plantilla.terminales?.map((b) => ({ ...b, bornes: [...b.bornes] })),
+		rasgosFrente: plantilla.rasgosFrente ? { ...plantilla.rasgosFrente } : undefined,
 		bornes: plantilla.bornes.map((b) => ({ ...b })),
 		puentesInternos: plantilla.puentesInternos?.map(([a, b]) => [a, b] as [string, string]),
 		rol: plantilla.rol ? { ...plantilla.rol } : undefined,

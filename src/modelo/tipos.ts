@@ -62,6 +62,35 @@ export interface Borne {
 	v?: number;
 }
 
+/** Borde del aparato por el que asoma una bornera. */
+export type LadoAparato = 'arriba' | 'abajo' | 'izquierda' | 'derecha';
+
+/**
+ * Bornera física de un aparato: un bloque de terminales situado en un borde concreto.
+ *
+ * Es lo que permite describir un equipo REAL (un controlador, un módulo de E/S) sin
+ * modelarlo a mano: basta declarar dónde están sus borneras y qué bornes lleva cada una,
+ * con los rótulos serigrafiados del fabricante. Con eso el modelo 3D dibuja los conectores
+ * en su sitio y el cable sale exactamente del terminal que toca.
+ */
+export interface BloqueTerminales {
+	/** Rótulo serigrafiado del bloque, p. ej. "UI1-UI8" o "24 VAC". */
+	rotulo?: string;
+	lado: LadoAparato;
+	/** Ids de bornes en su orden real: de izquierda a derecha, o de arriba abajo en los lados. */
+	bornes: string[];
+	/** Distancia (mm) del eje de la fila al borde. Por defecto 6. */
+	margen?: number;
+	/** Fracción del lado (0..1) donde empieza el bloque; permite varios bloques en un borde. */
+	desde?: number;
+	/** Fracción del lado (0..1) donde termina. Por defecto 1. */
+	hasta?: number;
+	/** Color del conector (los fabricantes los codifican por función). */
+	color?: string;
+	/** True si la bornera es enchufable/extraíble (se dibuja como conector saliente). */
+	extraible?: boolean;
+}
+
 /** Rol lógico para referencias cruzadas (equivalente a Master/Slave de QElectroTech). */
 export type Rol =
 	| { tipo: 'maestro' }
@@ -110,6 +139,18 @@ export interface Dispositivo {
 	/** Posición en la hoja, en coordenadas de rejilla (columna/fila continuas). */
 	posicion?: Posicion;
 	bornes: Borne[];
+	/**
+	 * Disposición física real de las borneras. Si está presente, manda sobre el reparto
+	 * automático en dos filas: cada borne se ancla en el bloque y la posición que declara
+	 * su ficha de datos (así el cable sale del terminal correcto de un equipo real).
+	 */
+	terminales?: BloqueTerminales[];
+	/** Fondo del aparato en mm (dato de catálogo). Si falta, lo estima el modelo 3D. */
+	profundidad?: number;
+	/** Color real del cuerpo (#rrggbb). Si falta, se usa el color por tipo de aparato. */
+	colorCuerpo?: string;
+	/** Rasgos visibles del frente del equipo (los dibuja el modelo 3D tal cual). */
+	rasgosFrente?: { display?: boolean; leds?: number; puertosIP?: number; puertosRS485?: number };
 	/** Pares de bornes unidos internamente (paso directo), p. ej. entrada/salida de una borna. */
 	puentesInternos?: [string, string][];
 	/** Grupos de bornas puenteadas de un bornero, por id de borne. */

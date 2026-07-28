@@ -7,6 +7,8 @@
  */
 import * as THREE from 'three';
 import { Colocacion, Conductor, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
+import { cajaDeGabinete } from '../src/modelo/proyecto.js';
+import { posicionesDeTerminales } from '../src/motores/terminales.js';
 import { Banda, corredoresLibres, crearRepartidor, orthogonalize, redondearEsquinas } from './geometria-cables.js';
 import { construirAparato3D } from './dispositivos3d.js';
 
@@ -252,11 +254,7 @@ export function construirCotas(proyecto: Proyecto, aEscena: Escenario['aEscena']
 
 /** Dimensiones efectivas de la caja envolvente (si no están definidas, placa + margen). */
 export function cajaDe(g: Gabinete): { ancho: number; alto: number; profundidad: number } {
-	return {
-		ancho: Math.max(g.caja?.ancho ?? g.ancho + 60, g.ancho + 10),
-		alto: Math.max(g.caja?.alto ?? g.alto + 60, g.alto + 10),
-		profundidad: g.caja?.profundidad ?? 160,
-	};
+	return cajaDeGabinete(g); // la medida la decide el modelo, no el dibujo
 }
 
 /**
@@ -792,6 +790,12 @@ export function anclajeBorne(
 			return { x: col.x + b.u * col.ancho, y: col.y + b.v * col.alto, z: 10 };
 		}
 		return { x: col.x + col.ancho / 2, y: col.y + col.alto / 2, z: 10 };
+	}
+	// Aparato con borneras declaradas (controladores reales): el cable sale del terminal
+	// que dice su ficha de datos, no de un reparto genérico en dos filas.
+	if (d.terminales?.length) {
+		const p = posicionesDeTerminales(d, col.ancho, col.alto).get(borneId);
+		if (p) return { x: col.x + p.dx, y: col.y + p.dy, z: 46 };
 	}
 	const idx = d.bornes.findIndex((b) => b.id === borneId);
 	if (idx < 0) return { x: col.x + col.ancho / 2, y: col.y + col.alto / 2, z: 44 };

@@ -12,7 +12,7 @@ export interface RefContacto {
 	dispositivoId: string;
 	designacion: string;
 	contacto: 'NA' | 'NC' | 'potencia';
-	posicion: string; // "2.B3"
+	posicion: string; // «hoja.columna» del esquema montado, p. ej. "2.4"
 }
 
 export interface ReferenciaCruzada {
@@ -38,8 +38,18 @@ export interface ResultadoReferencias {
 	indice: EntradaIndice[];
 }
 
-export function generarReferencias(proyecto: Proyecto): ResultadoReferencias {
+/**
+ * @param posiciones Dónde quedó dibujado cada aparato en el esquema montado
+ *   («hoja.columna», de `posicionesEnEsquema`). Es lo que hace que el índice apunte de
+ *   verdad al plano; sin él se cae a la posición lógica guardada en el dispositivo, que
+ *   solo sirve mientras no se ha montado ninguna hoja.
+ */
+export function generarReferencias(
+	proyecto: Proyecto,
+	posiciones?: Map<string, string>,
+): ResultadoReferencias {
 	const etiqueta = (d: Dispositivo) => d.designacion ?? d.id;
+	const donde = (d: Dispositivo): string => posiciones?.get(d.id) ?? posicionTexto(proyecto, d);
 
 	const cruzadas: ReferenciaCruzada[] = [];
 	const maestroDeEsclavo = new Map<string, { designacion: string; posicion: string }>();
@@ -52,19 +62,19 @@ export function generarReferencias(proyecto: Proyecto): ResultadoReferencias {
 				dispositivoId: d.id,
 				designacion: etiqueta(d),
 				contacto: d.rol!.tipo === 'esclavo' ? d.rol!.contacto : 'NA',
-				posicion: posicionTexto(proyecto, d),
+				posicion: donde(d),
 			}))
 			.sort((a, b) => a.posicion.localeCompare(b.posicion));
 		cruzadas.push({
 			maestroId: maestro.id,
 			designacion: etiqueta(maestro),
-			posicion: posicionTexto(proyecto, maestro),
+			posicion: donde(maestro),
 			contactos,
 		});
 		for (const c of contactos) {
 			maestroDeEsclavo.set(c.dispositivoId, {
 				designacion: etiqueta(maestro),
-				posicion: posicionTexto(proyecto, maestro),
+				posicion: donde(maestro),
 			});
 		}
 	}
@@ -74,7 +84,7 @@ export function generarReferencias(proyecto: Proyecto): ResultadoReferencias {
 			dispositivoId: d.id,
 			designacion: etiqueta(d),
 			descripcion: d.descripcion ?? '',
-			posicion: posicionTexto(proyecto, d),
+			posicion: donde(d),
 		}))
 		.sort((a, b) => a.designacion.localeCompare(b.designacion, undefined, { numeric: true }));
 

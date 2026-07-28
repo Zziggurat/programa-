@@ -68,7 +68,9 @@ export function verificarProyecto(
 		for (const b of d.bornes) {
 			const n = conductoresEn(proyecto, { dispositivoId: d.id, borneId: b.id }).length;
 			conexiones += n;
-			const obligatorio = b.obligatorio ?? b.tipo === 'PE';
+			// La tierra la cubre R11 con su propio mensaje: aquí se ignora para no dar dos
+			// hallazgos por el mismo fallo y llenar la lista de duplicados.
+			const obligatorio = !!b.obligatorio && b.tipo !== 'PE';
 			if (obligatorio && n === 0) {
 				hallazgos.push({
 					regla: 'R2-borne-sin-conectar',

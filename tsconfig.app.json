@@ -1,0 +1,17 @@
+{
+	"//": "Comprobación de tipos del editor (app/). El tsconfig principal solo compila el núcleo a dist/; sin esto, app/ solo lo veía esbuild, que NO comprueba tipos.",
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"types": ["node"],
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"allowImportingTsExtensions": true
+	},
+	"include": ["app", "src", "ejemplo", "test"],
+	"exclude": ["node_modules", "dist", "app/dist", "dist-final"]
+}

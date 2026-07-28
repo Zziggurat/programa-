@@ -184,10 +184,16 @@
 	#bienvenida .pasos b { color: var(--acento); }
 
 	/* Modal de ayuda */
-	#modal-drc { position: fixed; inset: 0; z-index: 46; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
-	#modal-drc .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 24px 28px; max-width: 720px; width: 100%; max-height: 82vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
-	#modal-drc .cerrar { position: absolute; top: 14px; right: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px; height: 30px; border-radius: 8px; }
-	#modal-drc h2 { margin: 0 0 4px; font-size: 20px; }
+	#modal-drc, #modal-controlador { position: fixed; inset: 0; z-index: 46; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-drc .caja-modal, #modal-controlador .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 24px 28px; max-width: 720px; width: 100%; max-height: 82vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
+	#modal-drc .cerrar, #modal-controlador .cerrar { position: absolute; top: 14px; right: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px; height: 30px; border-radius: 8px; }
+	#modal-drc h2, #modal-controlador h2 { margin: 0 0 4px; font-size: 20px; }
+	.rejilla-ctrl { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; }
+	.rejilla-ctrl label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--texto-suave); }
+	.rejilla-ctrl input { padding: 7px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 13px; }
+	#modal-controlador code { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 5px; padding: 1px 5px; }
+	#modal-controlador .sub, #modal-ejemplos .sub { color: var(--texto-suave); font-size: 12.5px; margin: 2px 0 12px; }
+	#ctrl-aviso { color: #ff9d9d; margin-top: 12px; }
 	#modal-drc .pie { color: var(--texto-suave); font-size: 12.5px; margin-top: 14px; border-top: 1px solid var(--borde); padding-top: 12px; }
 	#drc-detalle { list-style: none; margin: 12px 0 0; padding: 0; }
 	#drc-detalle li { display: flex; gap: 10px; align-items: flex-start; padding: 9px 11px; border-radius: 9px; border: 1px solid var(--borde); background: var(--panel-2); margin-bottom: 7px; }
@@ -361,6 +367,7 @@
 		<div class="contenido">
 			<input id="buscar-catalogo" type="search" placeholder="Buscar aparato… (contactor, 3P, 24 V)" autocomplete="off">
 			<div id="catalogo"></div>
+			<button class="boton" id="btn-controlador-medida" style="width:100%;margin-top:8px">🧩 Controlador a medida…</button>
 		</div>
 	</details>
 	<details open>
@@ -469,6 +476,40 @@
 	</div>
 </div>
 
+<!-- Controlador a medida: cualquier equipo que no esté en el catálogo, descrito por sus datos -->
+<div id="modal-controlador" hidden>
+	<div class="caja-modal">
+		<button class="cerrar" id="btn-cerrar-controlador" title="Cerrar">✕</button>
+		<h2>Controlador a medida</h2>
+		<p class="sub" style="margin-top:-6px">Ningún catálogo tiene todos los equipos del mercado. Copia
+		aquí los datos de la hoja del fabricante y el programa lo dibuja en 3D con sus borneras en su sitio,
+		listo para cablear.</p>
+		<div class="rejilla-ctrl">
+			<label>Fabricante<input id="ctrl-fabricante" type="text" placeholder="Honeywell"></label>
+			<label>Modelo / referencia<input id="ctrl-referencia" type="text" placeholder="PUB6438S"></label>
+			<label>Descripción<input id="ctrl-descripcion" type="text" placeholder="Controlador unitario BACnet"></label>
+			<label>Tensión (V)<input id="ctrl-tension" type="number" value="24" min="0" step="1"></label>
+			<label>Ancho (mm)<input id="ctrl-ancho" type="number" value="140" min="10" step="1"></label>
+			<label>Alto (mm)<input id="ctrl-alto" type="number" value="110" min="10" step="1"></label>
+			<label>Fondo (mm)<input id="ctrl-fondo" type="number" value="60" min="5" step="1"></label>
+		</div>
+		<h3 style="margin:16px 0 4px;font-size:14px">Borneras</h3>
+		<p class="sub" style="margin-top:0">Escribe los rótulos separados por comas o espacios. Puedes abreviar
+		un rango: <code>UI1-8</code> se convierte en UI1, UI2 … UI8.</p>
+		<div class="rejilla-ctrl">
+			<label>Borde superior<input id="ctrl-arriba" type="text" placeholder="UI1-8, COM"></label>
+			<label>Borde inferior<input id="ctrl-abajo" type="text" placeholder="DO1-6, DOC"></label>
+			<label>Borde izquierdo<input id="ctrl-izquierda" type="text" placeholder="24V~, 24V COM, GND"></label>
+			<label>Borde derecho<input id="ctrl-derecha" type="text" placeholder="MS/TP+, MS/TP-, SHLD"></label>
+		</div>
+		<p class="pista" id="ctrl-aviso" hidden></p>
+		<div class="botonera" style="justify-content:flex-end;margin-top:16px">
+			<button class="boton" id="btn-cancelar-controlador">Cancelar</button>
+			<button class="boton primario" id="btn-crear-controlador">Colocar en la placa</button>
+		</div>
+	</div>
+</div>
+
 <!-- Modal de ayuda -->
 <div id="modal-drc" hidden>
 	<div class="caja-modal">
@@ -499,6 +540,8 @@
 			<li><b>Varios aparatos a la vez:</b> <kbd>Shift</kbd>+clic para añadirlos a la selección; luego se mueven, alinean y borran en bloque. <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd> copia y pega, <kbd>Ctrl</kbd>+<kbd>D</kbd> duplica.</li>
 			<li><b>Ver medidas:</b> marca <i>Ver tamaños</i>; las cotas de colores muestran los cm y puedes hacer clic para cambiarlas.</li>
 			<li><b>Canaletas y rieles:</b> selecciónalos y arrástralos, o tira de las esferas de los extremos para alargarlos.</li>
+			<li><b>Controladores reales:</b> busca en el catálogo por marca o por modelo (Honeywell, Siemens, Schneider, JCI) y quedan colocados con su huella y sus borneras de verdad, listos para cablear terminal a terminal.</li>
+			<li><b>Un controlador que no está:</b> botón <i>🧩 Controlador a medida</i> — copia de la hoja del fabricante sus medidas y los terminales de cada borde (puedes abreviar <code>UI1-8</code>) y el programa lo dibuja en 3D.</li>
 			<li><b>Imagen de referencia:</b> botón <i>🖼️ Imagen</i>, marca sus puntos y cablea sobre la foto.</li>
 			<li><b>Deshacer / Rehacer:</b> <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd>. <b>Eliminar:</b> <kbd>Supr</kbd>. <b>Centrar vista:</b> botón 🏠.</li>
 		</ul>

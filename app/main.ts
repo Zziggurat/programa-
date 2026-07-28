@@ -11,8 +11,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { EJEMPLOS, EjemploTablero } from '../ejemplo/biblioteca.js';
-import { CLASE_POR_TIPO, Colocacion, Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
-import { crearProyecto, extremoTexto, posicionTexto } from '../src/modelo/proyecto.js';
+import { BloqueTerminales, CLASE_POR_TIPO, Colocacion, Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
+import { crearProyecto, extremoTexto } from '../src/modelo/proyecto.js';
 import { calcularPotenciales, ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
 import { verificarProyecto, Hallazgo } from '../src/motores/drc.js';
@@ -26,9 +26,11 @@ import {
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	rutasDeCables, salidasDeCable, VOLTAJE_COLOR, Z_FRENTE,
 } from './escena3d.js';
-import { PLANTILLAS, crearDesdePlantilla } from './catalogo.js';
+import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
+import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
+import { huellaMinima, leerRotulos } from '../src/motores/terminales.js';
 import { avisar, confirmar, descargar, pedirTexto, responderDialogo } from './dialogos.js';
-import { HojaEsq, montarEsquema } from '../src/motores/esquema.js';
+import { HojaEsq, montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
 import { hojaASvg } from './esquema-svg.js';
 import { exportarEsquemaPDF } from './esquema-pdf.js';
 import { dxfDeEsquema, dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
@@ -98,6 +100,8 @@ let proyecto: Proyecto = cargarInicial();
 let hallazgos: Hallazgo[] = [];
 let ruteo: ResultadoRuteo;
 let potenciales: ResultadoPotenciales;
+/** Posición «hoja.columna» de cada aparato en el esquema montado (la que se cita en el plano). */
+let posicionesEsquema = new Map<string, string>();
 let coloreaVoltaje = false; // "Colorear por voltaje" en el panel Vista
 
 function recalcular(): void {
@@ -110,6 +114,10 @@ function recalcular(): void {
 		longitudesMm: new Map(proyecto.conductores.map((c) => [c.id, longitudCableMm(c)])),
 		canaletas: ruteo.ocupaciones,
 	});
+	// Dónde cae cada aparato en el esquema montado. Se calcula aquí, con el resto de la verdad
+	// del proyecto, para que el panel, el índice y el dossier citen SIEMPRE la posición real
+	// del plano y no una numeración de cortesía.
+	posicionesEsquema = posicionesEnEsquema(montarEsquema(proyecto, potenciales));
 	const sync = sincronizarEsquemaGabinete(proyecto);
 	for (const [a, b] of sync.solapes) {
 		hallazgos.push({ regla: 'S1-solape', severidad: 'error', mensaje: `${a} y ${b} se solapan en la placa` });
@@ -364,7 +372,9 @@ function pintarCatalogo(): void {
 		}
 		const btn = document.createElement('button');
 		btn.className = 'item-catalogo';
-		btn.title = `${p.descripcion}\n${p.fabricante} ${p.referencia} · ${p.ancho}×${p.alto} mm`;
+		const fondo = p.profundidad ? `×${p.profundidad}` : '';
+		btn.title = `${p.descripcion}\n${p.fabricante} ${p.referencia} · ${p.ancho}×${p.alto}${fondo} mm`
+			+ (p.nota ? `\n${p.nota}` : '');
 		btn.innerHTML = `<span class="chip-color" style="background:${p.color}"></span><span class="nombre">${p.nombre}</span><span class="mas">＋</span>`;
 		btn.onclick = () => anadirDesdeCatalogo(p.id);
 		cont.appendChild(btn);
@@ -451,7 +461,12 @@ function snapAriel(cx: number, cy: number, ancho: number, alto: number):
 }
 
 function anadirDesdeCatalogo(plantillaId: string): void {
-	const plantilla = PLANTILLAS.find((p) => p.id === plantillaId)!;
+	const plantilla = PLANTILLAS.find((p) => p.id === plantillaId);
+	if (plantilla) colocarPlantilla(plantilla);
+}
+
+/** Crea el aparato de una plantilla y lo coloca en el primer hueco libre de un riel. */
+function colocarPlantilla(plantilla: PlantillaAparato): void {
 	const hueco = buscarHueco(plantilla.ancho, plantilla.alto);
 	if (!hueco) {
 		avisar('Añade primero un riel DIN (panel «Gabinete y estructura» → + Riel)', 'error');
@@ -776,7 +791,7 @@ function pintarSeleccion(): void {
 			${esImagen ? '' : `<dt>Referencia</dt><dd>${d.fabricante ?? '—'} ${d.referencia ?? ''}</dd>`}
 			${col ? `<dt>Posición en placa</dt><dd>x ${Math.round(col.x)} mm · y ${Math.round(col.y)} mm · ${col.ancho}×${col.alto} mm</dd>` : ''}
 			${d.tensionNominal !== undefined ? `<dt>Tensión</dt><dd><span class="chip-volt" style="background:${hexColor(colorVoltaje(d.tensionNominal))}">${d.tensionNominal} V</span></dd>` : ''}
-			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${posicionTexto(proyecto, d)}</dd>`}
+			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${posicionesEsquema.get(d.id) ?? '—'}</dd>`}
 		</dl>
 		${bloqueTension}
 		${bloquePines}
@@ -2480,7 +2495,10 @@ window.addEventListener('keydown', (ev) => {
 		return;
 	}
 	if (ev.key === 'Escape') {
-		if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); }
+		// Escape cierra primero lo que esté abierto encima: es lo que espera cualquiera.
+		const abiertos = ['modal-controlador', 'modal-drc'].filter((id) => !($(id) as HTMLElement).hidden);
+		if (abiertos.length) { for (const id of abiertos) ($(id) as HTMLElement).hidden = true; }
+		else if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); }
 		else aplicarSeleccion(undefined);
 	}
 });
@@ -2599,7 +2617,7 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 		proyecto,
 		potenciales,
 		hallazgos,
-		referencias: generarReferencias(proyecto),
+		referencias: generarReferencias(proyecto, posicionesEsquema),
 		planesBorneros: generarPlanBorneros(proyecto, potenciales),
 		ruteo,
 		sincronizacion: sincronizarEsquemaGabinete(proyecto),
@@ -3079,6 +3097,97 @@ $('modal-drc').addEventListener('click', (e) => {
 	if (e.target === $('modal-drc')) ($('modal-drc') as HTMLElement).hidden = true;
 });
 
+/* ------------------------- Controlador a medida ------------------------- */
+
+/**
+ * Ningún catálogo tiene todos los controladores del mercado. Aquí se describe uno
+ * cualquiera con los datos de su hoja: huella, fondo y qué bornera va en cada borde.
+ * Con eso el mismo constructor 3D que dibuja los equipos del catálogo lo dibuja también,
+ * con sus terminales en su sitio y listos para cablear.
+ */
+function abrirControladorAMedida(): void {
+	($('ctrl-aviso') as HTMLElement).hidden = true;
+	($('modal-controlador') as HTMLElement).hidden = false;
+	setTimeout(() => ($('ctrl-fabricante') as HTMLInputElement).focus(), 0);
+}
+
+function cerrarControladorAMedida(): void {
+	($('modal-controlador') as HTMLElement).hidden = true;
+}
+
+function crearControladorAMedida(): void {
+	const texto = (id: string): string => ($(id) as HTMLInputElement).value.trim();
+	const numero = (id: string, min: number): number => {
+		const v = Math.round(Number(($(id) as HTMLInputElement).value));
+		return Number.isFinite(v) && v >= min ? v : min;
+	};
+	const fallar = (mensaje: string): void => {
+		const aviso = $('ctrl-aviso') as HTMLElement;
+		aviso.textContent = mensaje;
+		aviso.hidden = false;
+	};
+
+	const referencia = texto('ctrl-referencia');
+	if (!referencia) { fallar('Escribe al menos el modelo o la referencia del equipo.'); return; }
+
+	const LADOS: { id: string; lado: BloqueTerminales['lado']; rotulo: string; color: string }[] = [
+		{ id: 'ctrl-arriba', lado: 'arriba', rotulo: 'Borde superior', color: '#3f8f4f' },
+		{ id: 'ctrl-abajo', lado: 'abajo', rotulo: 'Borde inferior', color: '#c98b18' },
+		{ id: 'ctrl-izquierda', lado: 'izquierda', rotulo: 'Borde izquierdo', color: '#c0392b' },
+		{ id: 'ctrl-derecha', lado: 'derecha', rotulo: 'Borde derecho', color: '#2f7fb8' },
+	];
+	const bloques: BloqueTerminales[] = [];
+	const usados = new Set<string>();
+	for (const l of LADOS) {
+		const rotulos = leerRotulos(texto(l.id)).filter((r) => !usados.has(r));
+		if (rotulos.length === 0) continue;
+		for (const r of rotulos) usados.add(r);
+		bloques.push({ rotulo: l.rotulo, lado: l.lado, bornes: rotulos, color: l.color, extraible: true });
+	}
+	if (bloques.length === 0) { fallar('Escribe los terminales de al menos un borde.'); return; }
+
+	const ancho = numero('ctrl-ancho', 10);
+	const alto = numero('ctrl-alto', 10);
+	// Si la huella no da para los terminales quedarían montados unos sobre otros: se agranda
+	// lo justo y se avisa, en vez de dibujar algo que no se puede cablear.
+	const minimo = huellaMinima({ id: '', tipo: 'plc', bornes: [], terminales: bloques }, 5);
+	const anchoFinal = Math.max(ancho, minimo.ancho);
+	const altoFinal = Math.max(alto, minimo.alto);
+
+	const plantilla: PlantillaAparato = {
+		id: `ctrl-medida-${Date.now().toString(36)}`,
+		nombre: `${texto('ctrl-fabricante')} ${referencia}`.trim(),
+		tipo: 'plc',
+		grupo: 'Control',
+		descripcion: texto('ctrl-descripcion') || `Controlador ${referencia}`,
+		fabricante: texto('ctrl-fabricante') || 'Sin marca',
+		referencia,
+		tensionNominal: numero('ctrl-tension', 0) || undefined,
+		ancho: anchoFinal,
+		alto: altoFinal,
+		profundidad: numero('ctrl-fondo', 5),
+		color: '#3a4247',
+		bornes: bloques.flatMap((b) => b.bornes.map((id: string) => ({ id, tipo: naturalezaTerminal(id) }))),
+		terminales: bloques,
+		rasgosFrente: { leds: 4, puertosIP: 1 },
+	};
+
+	cerrarControladorAMedida();
+	colocarPlantilla(plantilla);
+	const agrandado = anchoFinal !== ancho || altoFinal !== alto;
+	avisar(agrandado
+		? `${referencia} colocado · la huella se agrandó a ${anchoFinal}×${altoFinal} mm para que quepan sus ${plantilla.bornes.length} terminales`
+		: `${referencia} colocado con sus ${plantilla.bornes.length} terminales`, 'ok');
+}
+
+($('btn-controlador-medida') as HTMLButtonElement).onclick = () => abrirControladorAMedida();
+($('btn-cerrar-controlador') as HTMLButtonElement).onclick = () => cerrarControladorAMedida();
+($('btn-cancelar-controlador') as HTMLButtonElement).onclick = () => cerrarControladorAMedida();
+($('btn-crear-controlador') as HTMLButtonElement).onclick = () => crearControladorAMedida();
+$('modal-controlador').addEventListener('click', (e) => {
+	if (e.target === $('modal-controlador')) cerrarControladorAMedida();
+});
+
 /* --------------------- Ayuda, centrar vista y ejemplo --------------------- */
 
 ($('btn-centrar') as HTMLButtonElement).onclick = () => encuadrar();
@@ -3507,6 +3616,15 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			const impactos = raycaster.intersectObjects(escenario.cables.children, true);
 			const visto = impactos.find((i) => i.object.userData.tuboVisible)?.object.userData.conductorId;
 			return (visto ?? impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId) as string | undefined;
+		},
+		/** Punto de anclaje (mm de modelo) de un borne, tal cual lo usa el cableado. */
+		anclaje: (dispositivoId: string, borneId: string) => anclajeBorne(proyecto, dispositivoId, borneId),
+		/** Referencias de los controladores del catálogo (equipos reales con ficha de datos). */
+		controladores: () => CONTROLADORES.map((c) => c.referencia),
+		/** Tiende un cable entre dos bornes sin pasar por el ratón (para probar el cableado). */
+		conectar: (deId: string, deBorne: string, aId: string, aBorne: string) => {
+			iniciarCableado({ dispositivoId: deId, borneId: deBorne });
+			completarCableado({ dispositivoId: aId, borneId: aBorne });
 		},
 		proyecto: () => proyecto,
 	};

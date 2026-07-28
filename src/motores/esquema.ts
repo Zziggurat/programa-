@@ -31,6 +31,8 @@ export type Trazo =
 export interface SimboloEsq {
 	dispositivoId: string;
 	designacion: string;
+	/** Columna de la rejilla (desde 1): es la coordenada con la que se cita en el plano. */
+	columna: number;
 	/** Esquina superior izquierda del símbolo, en mm de papel. */
 	x: number;
 	y: number;
@@ -93,26 +95,125 @@ export function anchoColumna(hoja = HOJA_A3, columnas = 10): number {
 
 /* --------------------------------- Símbolos --------------------------------- */
 
+/** Ancho máximo de un símbolo: por encima de esto invadiría la columna vecina. */
+export const ANCHO_MAX_SIMBOLO = 30;
+/** Alto máximo de un bloque funcional, para que quepa entre las barras de la hoja. */
+export const ALTO_MAX_BLOQUE = 170;
+/** Banda (mm) que ocupa la marca del borne por fuera del símbolo, arriba y abajo. */
+export const MARCA_BORNE = 3.5;
+
+/**
+ * ¿Se dibuja como BLOQUE funcional (rectángulo con los terminales rotulados a los lados)?
+ *
+ * Es el convenio para controladores, autómatas y variadores: no tienen un símbolo de contacto,
+ * tienen decenas de terminales con nombre. Dibujarlos como un aparato de dos filas daría un
+ * símbolo de 130 mm en una columna de 39: ilegible e inútil.
+ */
+export function esBloqueFuncional(d: Dispositivo): boolean {
+	// Un bornero SIEMPRE se dibuja como bornero, por muchas bornas que tenga: su símbolo
+	// (la fila de círculos) es lo que le dice al electricista que ahí se corta el cable.
+	if (d.tipo === 'bornero') return false;
+	return !!d.terminales?.length || d.tipo === 'plc' || d.tipo === 'variador' || d.bornes.length > 12;
+}
+
+/**
+ * Bloque funcional: rectángulo con la mitad de los terminales a la izquierda y la otra mitad
+ * a la derecha, cada uno con su rótulo real. Si el aparato declara sus borneras físicas, se
+ * respeta ese agrupamiento (lo que va arriba/izquierda en el equipo, va a la izquierda aquí),
+ * de modo que el esquema y el aparato de verdad se leen igual.
+ */
+function bloqueFuncional(d: Dispositivo): { ancho: number; alto: number; trazos: Trazo[]; pines: Map<string, PuntoEsq> } {
+	const pines = new Map<string, PuntoEsq>();
+	const trazos: Trazo[] = [];
+
+	let izquierda: string[];
+	let derecha: string[];
+	if (d.terminales?.length) {
+		const aIzquierda = new Set<string>();
+		for (const b of d.terminales) {
+			if (b.lado === 'arriba' || b.lado === 'izquierda') for (const id of b.bornes) aIzquierda.add(id);
+		}
+		izquierda = d.bornes.filter((b) => aIzquierda.has(b.id)).map((b) => b.id);
+		derecha = d.bornes.filter((b) => !aIzquierda.has(b.id)).map((b) => b.id);
+	} else {
+		const mitad = Math.ceil(d.bornes.length / 2);
+		izquierda = d.bornes.slice(0, mitad).map((b) => b.id);
+		derecha = d.bornes.slice(mitad).map((b) => b.id);
+	}
+
+	const porLado = Math.max(1, izquierda.length, derecha.length);
+	const paso = Math.min(4.5, (ALTO_MAX_BLOQUE - 8) / porLado);
+	// El bloque se ensancha lo que pidan sus rótulos (2,2 mm de cuerpo ≈ 1,3 mm por letra),
+	// para que los de un costado no se metan en los del otro. Nunca más que una columna.
+	const masLargo = (ids: string[]) => Math.max(0, ...ids.map((id) => id.length)) * 1.3;
+	const ancho = Math.min(ANCHO_MAX_SIMBOLO, Math.max(18, masLargo(izquierda) + masLargo(derecha) + 5));
+	const alto = Math.max(20, porLado * paso + 8);
+
+	// Contorno del bloque.
+	const x0 = -ancho / 2;
+	const x1 = ancho / 2;
+	const y0 = -alto / 2;
+	const y1 = alto / 2;
+	trazos.push({ tipo: 'linea', a: { x: x0, y: y0 }, b: { x: x1, y: y0 } });
+	trazos.push({ tipo: 'linea', a: { x: x1, y: y0 }, b: { x: x1, y: y1 } });
+	trazos.push({ tipo: 'linea', a: { x: x1, y: y1 }, b: { x: x0, y: y1 } });
+	trazos.push({ tipo: 'linea', a: { x: x0, y: y1 }, b: { x: x0, y: y0 } });
+
+	/** Terminales de un costado: pin sobre el borde, guía hacia fuera y rótulo por dentro. */
+	const costado = (ids: string[], lado: -1 | 1): void => {
+		const x = lado < 0 ? x0 : x1;
+		const alturaUtil = ids.length * paso;
+		ids.forEach((id, i) => {
+			const y = -alturaUtil / 2 + (i + 0.5) * paso;
+			pines.set(id, { x, y });
+			trazos.push({ tipo: 'linea', a: { x, y }, b: { x: x + lado * 4, y } });
+			trazos.push({
+				tipo: 'texto', p: { x: x - lado * 1.6, y: y + 0.9 },
+				texto: id, tam: 2.2, anclaje: lado < 0 ? 'izq' : 'der',
+			});
+		});
+	};
+	costado(izquierda, -1);
+	costado(derecha, 1);
+
+	// Referencia comercial dentro del bloque: identifica el equipo sin salir del plano.
+	if (d.referencia) {
+		trazos.push({ tipo: 'texto', p: { x: 0, y: y0 - 2 }, texto: d.referencia, tam: 2.6, anclaje: 'centro' });
+	}
+	return { ancho, alto, trazos, pines };
+}
+
 /**
  * Dibuja el símbolo IEC de un aparato, centrado en (0,0) y mirando hacia abajo (entrada
  * arriba, salida abajo), que es como se leen los esquemas de mando y potencia.
  * Devuelve los trazos en coordenadas locales y los pines por nombre de borne.
  */
 export function simboloDe(d: Dispositivo): { ancho: number; alto: number; trazos: Trazo[]; pines: Map<string, PuntoEsq> } {
+	if (esBloqueFuncional(d)) return bloqueFuncional(d);
+
 	const pines = new Map<string, PuntoEsq>();
 	const trazos: Trazo[] = [];
 	const entradas = d.bornes.filter((_, i) => i % 2 === 0);
 	const salidas = d.bornes.filter((_, i) => i % 2 === 1);
 	const vias = Math.max(1, Math.min(entradas.length, Math.max(salidas.length, 1)));
-	const ancho = Math.max(10, vias * 8);
+	// El ancho se limita al de una columna: un símbolo más ancho invade la columna vecina y
+	// el esquema deja de leerse. Con muchos polos se aprieta el paso entre pines, no el papel.
+	const ancho = Math.max(10, Math.min(vias * 8, ANCHO_MAX_SIMBOLO));
 	const alto = 20;
 
-	/** Coloca los pines de una fila repartidos a lo ancho del símbolo. */
+	/** Coloca los pines de una fila repartidos a lo ancho del símbolo, con su marca de borne. */
 	const repartir = (lista: typeof entradas, y: number) => {
+		const arriba = y < 0;
 		lista.forEach((b, i) => {
 			const x = lista.length === 1 ? 0 : -ancho / 2 + (i * ancho) / (lista.length - 1);
 			pines.set(b.id, { x, y });
-			trazos.push({ tipo: 'linea', a: { x, y }, b: { x, y: y > 0 ? y - 4 : y + 4 } });
+			trazos.push({ tipo: 'linea', a: { x, y }, b: { x, y: arriba ? y + 4 : y - 4 } });
+			// Marca del borne junto al pin: es lo que el electricista busca para apretar el hilo
+			// en el terminal correcto (1/2, A1/A2, 13/14…).
+			trazos.push({
+				tipo: 'texto', p: { x: x + 1, y: arriba ? y - 1.2 : y + 3 },
+				texto: b.id, tam: 2.2, anclaje: 'izq',
+			});
 		});
 	};
 	repartir(entradas, -alto / 2);
@@ -337,9 +438,15 @@ export function montarEsquema(
 				// Centro del símbolo: en su columna, a media altura de la zona de circuito.
 				const cx = MARGEN.izq + paso * (col + 0.5);
 				// Cuanto más «lejos» está el aparato de la alimentación, más abajo se dibuja.
-				const cy = nivelMax === 0
+				const cyIdeal = nivelMax === 0
 					? (yArriba + yAbajo) / 2
 					: yArriba + ((porNivel.get(d.id) ?? 1) / nivelMax) * (yAbajo - yArriba);
+				// Un símbolo alto (un bloque de controlador) no puede salirse del marco ni pisar
+				// las barras de alimentación y retorno: se ciñe a la franja de circuito.
+				const mitad = s.alto / 2;
+				const techo = MARGEN.arriba + BARRA_ARRIBA + mitad;
+				const suelo = papel.alto - MARGEN.abajo - BARRA_ABAJO - mitad;
+				const cy = suelo >= techo ? Math.min(Math.max(cyIdeal, techo), suelo) : (techo + suelo) / 2;
 				const pines = new Map<string, PuntoEsq>();
 				for (const [id, p] of s.pines) {
 					const abs = { x: cx + p.x, y: cy + p.y };
@@ -349,6 +456,7 @@ export function montarEsquema(
 				simbolos.push({
 					dispositivoId: d.id,
 					designacion: d.designacion ?? d.id,
+					columna: col + 1,
 					x: cx - s.ancho / 2, y: cy - s.alto / 2, ancho: s.ancho, alto: s.alto,
 					trazos: s.trazos.map((t) => desplazar(t, cx, cy)),
 					pines,
@@ -424,12 +532,30 @@ export function montarEsquema(
 	for (const hoja of hojas) {
 		separarEtiquetas(hoja.referencias, {
 			altoMm: hoja.altoMm,
-			// El símbolo y su designación (que va a la izquierda) son sitio ocupado.
-			obstaculos: hoja.simbolos.map((s) => ({ x: s.x - 24, y: s.y, ancho: s.ancho + 24, alto: s.alto })),
+			// Sitio ocupado: el símbolo, su designación (que va a la izquierda) y la banda de
+			// marcas de borne que asoma por arriba y por abajo de él. Sin contar esa banda, el
+			// número del hilo caería justo encima del rótulo del terminal.
+			obstaculos: hoja.simbolos.map((s) => ({
+				x: s.x - 24, y: s.y - MARCA_BORNE, ancho: s.ancho + 24, alto: s.alto + 2 * MARCA_BORNE,
+			})),
 		});
 	}
 
 	return hojas;
+}
+
+/**
+ * Dónde quedó dibujado cada aparato, en la notación con la que se cita un esquema:
+ * «hoja.columna» (p. ej. «2.4»). Es la ÚNICA posición válida para el índice, las
+ * referencias cruzadas y el dossier: la que sale del montaje real de las hojas, no una
+ * numeración inventada al añadir el aparato.
+ */
+export function posicionesEnEsquema(hojas: HojaEsq[]): Map<string, string> {
+	const posiciones = new Map<string, string>();
+	for (const h of hojas) {
+		for (const s of h.simbolos) posiciones.set(s.dispositivoId, `${h.numero}.${s.columna}`);
+	}
+	return posiciones;
 }
 
 /** Punto medio del tramo más largo de una polilínea: donde cabe una etiqueta y se lee. */

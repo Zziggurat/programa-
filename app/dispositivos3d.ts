@@ -8,7 +8,8 @@
  * individuales en los borneros, etc.
  */
 import * as THREE from 'three';
-import { Colocacion, Dispositivo } from '../src/modelo/tipos.js';
+import { BloqueTerminales, Colocacion, Dispositivo } from '../src/modelo/tipos.js';
+import { MARGEN_BORNERA, pasoDelBloque, PosicionTerminal, posicionesDeTerminales } from '../src/motores/terminales.js';
 
 const M = {
 	metal: (color = 0xb9bec2) => new THREE.MeshStandardMaterial({ color, metalness: 0.85, roughness: 0.35 }),
@@ -260,6 +261,137 @@ function fusibleModelo(g: THREE.Group, w: number, h: number, color: number): num
 	return prof * 0.72;
 }
 
+/* ---------------------- Controladores con borneras reales ---------------------- */
+
+/**
+ * Bornera declarada en la ficha de datos: el conector (extraíble o fijo) con un tornillo
+ * por terminal, colocado exactamente donde el motor de terminales dice que está. Es la
+ * misma geometría que usa el anclaje de los cables, así que dibujo y cableado coinciden.
+ */
+function bloqueTerminales3D(
+	g: THREE.Group,
+	posiciones: Map<string, PosicionTerminal>,
+	bloque: BloqueTerminales,
+	w: number,
+	h: number,
+	prof: number,
+): void {
+	const puntos = bloque.bornes
+		.map((id) => posiciones.get(id))
+		.filter((p): p is NonNullable<typeof p> => !!p && p.bloque === bloque);
+	if (puntos.length === 0) return;
+
+	const horizontal = bloque.lado === 'arriba' || bloque.lado === 'abajo';
+	const paso = Math.max(3.2, pasoDelBloque(bloque, w, h));
+	const colorConector = new THREE.Color(bloque.color ?? '#4a5158').getHex();
+	const cuerpo = M.plastico(colorConector, 0.5);
+	const tornillo = M.metal(0xcfd4d8);
+	// El conector extraíble sobresale 3 mm de la cara (es la pieza que se saca tirando);
+	// el fijo queda enrasado con ella.
+	const altoConector = bloque.extraible ? 13 : 9;
+	const zBase = prof - altoConector + (bloque.extraible ? 3 : 0);
+
+	// Zócalo continuo del conector, del largo que ocupa el bloque.
+	const primero = puntos[0];
+	const ultimo = puntos[puntos.length - 1];
+	const cx = (primero.dx + ultimo.dx) / 2 - w / 2;
+	const cy = h / 2 - (primero.dy + ultimo.dy) / 2;
+	const largo = Math.abs(horizontal ? ultimo.dx - primero.dx : ultimo.dy - primero.dy) + paso;
+	g.add(caja(
+		horizontal ? largo : Math.min(11, MARGEN_BORNERA * 2),
+		horizontal ? Math.min(11, MARGEN_BORNERA * 2) : largo,
+		altoConector,
+		cuerpo, cx, cy, zBase + altoConector / 2,
+	));
+
+	for (const p of puntos) {
+		const x = p.dx - w / 2;
+		const y = h / 2 - p.dy;
+		// Alojamiento del hilo + tornillo con su ranura.
+		g.add(caja(
+			horizontal ? Math.min(paso - 1, 8) : 6,
+			horizontal ? 6 : Math.min(paso - 1, 8),
+			1.6, M.oscuro(), x, y, zBase + altoConector + 0.2,
+		));
+		g.add(cilindro(Math.min(1.9, paso * 0.3), 1.6, tornillo, x, y, zBase + altoConector + 0.9));
+	}
+
+	// Rótulo serigrafiado del bloque, sobre la cara, junto al conector.
+	if (bloque.rotulo) {
+		const largoRotulo = Math.min(largo, horizontal ? w * 0.9 : h * 0.9);
+		const et = etiquetaImpresa(bloque.rotulo, largoRotulo, Math.max(4, largoRotulo * 0.09), '#20262b', '#c9d2d8');
+		const retiro = MARGEN_BORNERA + 7;
+		et.position.set(
+			horizontal ? cx : bloque.lado === 'izquierda' ? cx + retiro : cx - retiro,
+			horizontal ? (bloque.lado === 'arriba' ? cy - retiro : cy + retiro) : cy,
+			prof + 0.2, // por delante de la cara, no dentro de ella
+		);
+		if (!horizontal) et.rotation.z = Math.PI / 2;
+		g.add(et);
+	}
+}
+
+/**
+ * Controlador de automatización descrito por su ficha de datos: caja del fondo real,
+ * borneras en su sitio y los rasgos del frente (display, LEDs de estado, puertos de red).
+ * Un solo constructor sirve para cualquier fabricante y modelo.
+ */
+function controlador(g: THREE.Group, d: Dispositivo, w: number, h: number, color: number, ref: string): number {
+	const prof = d.profundidad ?? 55;
+	// Cuerpo hasta la cara frontal (z = prof) y tapa central rehundida, como la carcasa
+	// de un controlador real: los conectores asoman por el reborde que queda alrededor.
+	g.add(caja(w, h, prof, M.plastico(color), 0, 0, prof / 2));
+	g.add(caja(
+		Math.max(10, w - 2 * MARGEN_BORNERA - 10), Math.max(10, h - 2 * MARGEN_BORNERA - 10), 1.4,
+		M.plastico(0x22282d, 0.65), 0, 0, prof - 0.5,
+	));
+
+	// Las posiciones se calculan UNA vez y las comparten todas las borneras del aparato.
+	const posiciones = posicionesDeTerminales(d, w, h);
+	for (const bloque of d.terminales ?? []) bloqueTerminales3D(g, posiciones, bloque, w, h, prof);
+
+	const util = Math.min(w, h) - 2 * MARGEN_BORNERA - 10;
+	// Marca y modelo impresos en la cara: es como se identifica el equipo en obra.
+	const et = etiquetaImpresa(
+		`${d.fabricante ?? ''} ${ref}`.trim(),
+		Math.min(w * 0.55, 70), Math.max(5, Math.min(w * 0.55, 70) * 0.14),
+		'#20262b', '#dfe6ea',
+	);
+	et.position.set(0, util * 0.16, prof + 0.9);
+	g.add(et);
+
+	const rasgos = d.rasgosFrente ?? {};
+
+	// Pantalla de servicio, cuando el equipo la lleva.
+	if (rasgos.display) {
+		g.add(caja(
+			Math.min(w * 0.42, 48), Math.min(h * 0.26, 28), 1.2,
+			M.plastico(0x0d2b20, 0.3), 0, -util * 0.02, prof + 0.6,
+		));
+	}
+
+	// LEDs de estado (encendidos los primeros, como un equipo alimentado y comunicando).
+	const leds = Math.min(10, rasgos.leds ?? 4);
+	for (let i = 0; i < leds; i++) {
+		const encendido = i < Math.ceil(leds / 2);
+		const led = new THREE.MeshStandardMaterial({
+			color: encendido ? 0x21d07a : 0x2a3138,
+			emissive: encendido ? 0x21d07a : 0x000000,
+			emissiveIntensity: encendido ? 0.85 : 0,
+			roughness: 0.3,
+		});
+		g.add(caja(2.4, 1.6, 1, led, -util * 0.3 + i * 5, rasgos.display ? -util * 0.3 : -util * 0.05, prof + 0.9));
+	}
+
+	// Puertos RJ-45 rehundidos en la cara: solo los que el equipo tiene de verdad.
+	const puertos = (rasgos.puertosIP ?? 0) + (rasgos.puertosRS485 ?? 0);
+	const puerto = M.plastico(0x14181b, 0.7);
+	for (let i = 0; i < Math.min(4, puertos); i++) {
+		g.add(caja(13, 11, 3, puerto, util * 0.12 + i * 15, -util * 0.3, prof - 0.6));
+	}
+	return prof;
+}
+
 function generico(g: THREE.Group, w: number, h: number, color: number): number {
 	const prof = 55;
 	g.add(caja(w, h, prof, M.plastico(color), 0, 0, prof / 2));
@@ -357,12 +489,25 @@ export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: TH
 	const g = new THREE.Group();
 	const w = col.ancho;
 	const h = col.alto;
-	const color = COLOR_TIPO[d.tipo] ?? COLOR_TIPO.otro;
+	const color = d.colorCuerpo
+		? new THREE.Color(d.colorCuerpo).getHex()
+		: COLOR_TIPO[d.tipo] ?? COLOR_TIPO.otro;
 	const ref = d.referencia ?? d.tipo;
 
 	if (d.imagen) {
 		const profundidad = imagenReferencia(g, d, w, h);
 		g.traverse((o) => { o.userData.dispositivoId = d.id; });
+		return { grupo: g, profundidad };
+	}
+
+	// Aparato descrito por su ficha de datos (controladores reales): un único constructor
+	// genérico lo dibuja con su huella, su fondo y sus borneras de verdad.
+	if (d.terminales?.length) {
+		const profundidad = controlador(g, d, w, h, color, ref);
+		g.traverse((o) => {
+			o.userData.dispositivoId = d.id;
+			if (o instanceof THREE.Mesh) { o.castShadow = true; o.receiveShadow = true; }
+		});
 		return { grupo: g, profundidad };
 	}
 

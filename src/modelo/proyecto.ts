@@ -2,7 +2,7 @@
  * Utilidades de consulta y construcción sobre el modelo de proyecto.
  */
 import {
-	Borne, Conductor, Dispositivo, Hoja, OPCIONES_POR_DEFECTO,
+	Borne, Conductor, Dispositivo, Gabinete, Hoja, OPCIONES_POR_DEFECTO,
 	OpcionesProyecto, Proyecto, RefBorne,
 } from './tipos.js';
 
@@ -20,6 +20,26 @@ export function crearProyecto(nombre: string, opciones?: OpcionesProyecto): Proy
 
 export function opcionesDe(proyecto: Proyecto): Required<OpcionesProyecto> {
 	return { ...OPCIONES_POR_DEFECTO, ...(proyecto.opciones ?? {}) };
+}
+
+/**
+ * Caja envolvente del gabinete. Si el proyecto no la declara se ESTIMA a partir de la placa
+ * (margen estándar de 30 mm por lado y 160 mm de fondo), y se dice que es una estimación:
+ * dar por bueno un fondo supuesto es lo que hace que un tablero no cierre. Nunca puede ser
+ * más pequeña que su propia placa.
+ *
+ * Vive aquí, en el modelo, porque la usan por igual el dibujo 3D y la ficha del tablero: si
+ * cada uno la calculara a su manera, el plano y el papel dirían medidas distintas.
+ */
+export function cajaDeGabinete(g: Gabinete): {
+	ancho: number; alto: number; profundidad: number; estimada: boolean;
+} {
+	return {
+		ancho: Math.max(g.caja?.ancho ?? g.ancho + 60, g.ancho + 10),
+		alto: Math.max(g.caja?.alto ?? g.alto + 60, g.alto + 10),
+		profundidad: g.caja?.profundidad ?? 160,
+		estimada: !g.caja,
+	};
 }
 
 export function dispositivo(proyecto: Proyecto, id: string): Dispositivo {

@@ -14,12 +14,14 @@ ocho motores independientes y testeados:
 |---|---|---|
 | Potenciales | `src/motores/potenciales.ts` | Clases de equivalencia de bornes conectados (union-find): la base de todo lo demás |
 | Numeración IEC | `src/motores/numeracion.ts` | Designaciones IEC 81346 (`=función+ubicación-K1`) con plantillas, secuencias y congelamiento; numeración de conductores por potencial |
-| Referencias cruzadas | `src/motores/referencias.ts` | Bobina ↔ contactos con posición `hoja.FilaColumna`, índice de dispositivos |
-| DRC | `src/motores/drc.ts` | 8 reglas de detección de errores eléctricos: cortocircuitos, bornes sin conectar, designaciones duplicadas, exceso de conductores por borne, conflictos de tensión, esclavos huérfanos… |
+| Referencias cruzadas | `src/motores/referencias.ts` | Bobina ↔ contactos con la posición `hoja.columna` que sale del esquema realmente montado, índice de dispositivos |
+| DRC | `src/motores/drc.ts` | 11 reglas de detección de errores eléctricos: cortocircuitos, designaciones duplicadas, exceso de conductores por borne, conflictos de tensión, esclavos huérfanos, coordinación protección↔sección, caída de tensión, puesta a tierra, llenado de canaleta… |
 | Listas de bornes | `src/motores/bornes.ts` | Plan de bornero de taller: borna, lado interno/externo, puentes, número de conductor |
 | Ruteo de cables | `src/motores/ruteo.ts` | Ruteo automático por canaletas (Dijkstra sobre el grafo de ductos), longitudes reales en mm con reserva, ocupación de canaletas |
 | Sincronización | `src/motores/sincronizacion.ts` | Esquema ↔ placa de montaje: faltantes, sobrantes, solapes, fuera de placa |
 | Documentación | `src/motores/documentacion.ts` | BOM, lista de conductores, planes de borneros, informe HTML completo, exportación CSV |
+| Terminales | `src/motores/terminales.ts` | Geometría de las borneras declaradas por ficha de datos: es la única fuente de verdad que comparten el modelo 3D y el anclaje de los cables |
+| Ficha del tablero | `src/motores/ficha-tablero.ts` | Las cifras del conjunto: recuento de aparatos por familia, medidas de caja y placa, metros de riel y canaleta, cable por sección, ocupación de la placa |
 
 ## Cómo ver y probar el programa
 
@@ -60,6 +62,8 @@ Además de los tests del núcleo, hay tres suites que manejan el editor 3D de ve
 | Suite | Qué verifica |
 |---|---|
 | `npm run qa:cables` | Cero cables fantasma, cablear por clic, codos, uniones, arrastre, Supr y deshacer |
+| `node qa/controladores.mjs` | Los doce controladores reales del catálogo y el diálogo «a medida»: huella, borneras en su sitio y cableado por terminal |
+| `node qa/dossier.mjs` | Que el PDF describa el tablero que hay en pantalla, y que cambie cuando el tablero cambia |
 | `npm run qa:agarre` | Que **todo** cable visible se pueda agarrar y mover, desde varios ángulos de cámara |
 | `npm run qa:general` | Empezar de cero, catálogo, anclaje a riel, modos, DRC, guardar, dossier y PDF |
 | `npm run qa:tablero` | Monta un tablero completo desde cero y mide el amontonamiento del cableado |
@@ -167,6 +171,32 @@ El proyecto de ejemplo (`ejemplo/tablero-ejemplo.ts`) modela un tablero de contr
 acometida 220 V → interruptor automático → transformador 220/24 V → fusible → controlador,
 relé comandado por el PLC, borneros de fuerza y control, sensor y electroválvula en campo,
 y un gabinete de 400×600 mm con rieles DIN y canaletas.
+
+## Controladores reales
+
+Un catálogo no puede tener todos los controladores del mercado, y mucho menos modelados en
+3D uno a uno. Aquí se modela la **clase** y cada equipo se describe con una **ficha de
+datos** (`app/controladores.ts`): huella y fondo en mm, y qué bornera va en cada borde con
+los rótulos serigrafiados del fabricante. Un único constructor 3D genérico dibuja cualquiera
+de ellos, y el motor de terminales garantiza que el cable salga del terminal correcto.
+
+Añadir un modelo nuevo son ~20 líneas de datos, no trabajo 3D. Vienen los doce equipos más
+usados en automatización de edificios:
+
+| Fabricante | Modelos |
+|---|---|
+| Honeywell | Spyder PUB6438S · CIPer Model 30 · ComfortPoint Open CP-SPC |
+| Schneider Electric | SpaceLogic AS-P · SpaceLogic MP-C 18A · SE8350 |
+| Siemens | Desigo PXC4.E16 · PXC5.E24 · DXR2.E18 |
+| Johnson Controls | Metasys FEC2611 · FAC3611 · IOM3731 |
+
+Cada ficha declara si sus medidas salen de la **hoja de datos del fabricante** o son
+**nominales** (estimadas de su familia). El catálogo lo dice al pasar el ratón y el dossier
+en PDF lo advierte por escrito: una medida supuesta es un tablero que no cierra.
+
+Para un equipo que no esté en la lista, el botón **🧩 Controlador a medida** pide sus
+medidas y los terminales de cada borde (admite rangos abreviados: `UI1-8` → UI1…UI8) y lo
+dibuja igual, con sus borneras y listo para cablear.
 
 ## Diseño
 
