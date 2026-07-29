@@ -11,8 +11,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { EJEMPLOS, EjemploTablero } from '../ejemplo/biblioteca.js';
-import { BloqueTerminales, CLASE_POR_TIPO, Colocacion, Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
-import { crearProyecto, extremoTexto } from '../src/modelo/proyecto.js';
+import { BloqueTerminales, CLASE_POR_TIPO, Colocacion, Conductor, Dispositivo, OpcionesProyecto, Proyecto } from '../src/modelo/tipos.js';
+import { crearProyecto, extremoTexto, opcionesDe } from '../src/modelo/proyecto.js';
+import { ArchivoInvalido, cargarProyecto } from '../src/modelo/cargar.js';
 import { calcularPotenciales, ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
 import { verificarProyecto, Hallazgo } from '../src/motores/drc.js';
@@ -24,11 +25,12 @@ import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
 	anclajeBorne, cajaDe, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
-	rutasDeCables, salidasDeCable, VOLTAJE_COLOR, Z_FRENTE,
+	liberar, rutasDeCables, salidasDeCable, vaciar, VOLTAJE_COLOR, Z_FRENTE,
 } from './escena3d.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
 import { huellaMinima, leerRotulos } from '../src/motores/terminales.js';
+import { calcularBalanceTermico } from '../src/motores/termico.js';
 import { avisar, confirmar, descargar, pedirTexto, responderDialogo } from './dialogos.js';
 import { HojaEsq, montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
 import { hojaASvg } from './esquema-svg.js';
@@ -85,10 +87,7 @@ function proyectoNuevo(): Proyecto {
 function cargarInicial(): Proyecto {
 	try {
 		const guardado = localStorage.getItem(CLAVE_AUTOSAVE);
-		if (guardado) {
-			const p = JSON.parse(guardado);
-			if (p && p.formato === 'tablero-studio' && p.gabinete) return p as Proyecto;
-		}
+		if (guardado) return cargarProyecto(guardado).proyecto;
 	} catch { /* sin localStorage (p. ej. artifact con storage bloqueado) */ }
 	// Primera vez (sin proyecto guardado): placa vacía con la tarjeta de bienvenida.
 	// El tablero de ejemplo se carga a demanda con el botón «Ver un tablero de ejemplo».
@@ -125,10 +124,68 @@ function recalcular(): void {
 	for (const id of sync.faltanEnGabinete) {
 		hallazgos.push({ regla: 'S2-falta-colocar', severidad: 'aviso', mensaje: `${id} no está colocado en el gabinete` });
 	}
+	autoguardar();
+}
+
+/* --------------------------- Guardado automático --------------------------- */
+
+/**
+ * Estado del guardado. Antes el fallo se tragaba en silencio: si `localStorage` se llenaba
+ * —un tablero grande más las plantillas propias caben de sobra en los ~5 MB de cupo— el
+ * usuario seguía trabajando convencido de que estaba a salvo, y al cerrar lo perdía todo.
+ * Ahora se dice, y además queda constancia de si hay cambios sin volcar a un archivo.
+ */
+type EstadoGuardado = 'guardado' | 'sucio' | 'fallo';
+let estadoGuardado: EstadoGuardado = 'guardado';
+/** True desde el primer cambio hasta que se descarga el proyecto como archivo. */
+let hayCambiosSinExportar = false;
+
+function pintarEstadoGuardado(motivo?: string): void {
+	const e = $('estado-guardado');
+	e.classList.toggle('sucio', estadoGuardado === 'sucio');
+	e.classList.toggle('fallo', estadoGuardado === 'fallo');
+	// Textos cortos y de largo parecido: este chip vive en la barra de herramientas y si crece
+	// al cambiar de estado empuja a los botones fuera de la pantalla. El detalle va en el tooltip.
+	e.textContent = estadoGuardado === 'fallo' ? 'Sin guardar'
+		: estadoGuardado === 'sucio' ? 'Sin descargar' : 'Guardado';
+	e.title = estadoGuardado === 'fallo'
+		? `No se pudo guardar en el navegador${motivo ? ` (${motivo})` : ''}. `
+			+ 'Descarga el proyecto con Archivo → Guardar para no perderlo.'
+		: estadoGuardado === 'sucio'
+			? 'Guardado en este navegador. Descárgalo con Archivo → Guardar para tener copia.'
+			: 'El trabajo está guardado en este navegador.';
+}
+
+function autoguardar(): void {
 	try {
 		localStorage.setItem(CLAVE_AUTOSAVE, JSON.stringify(proyecto));
-	} catch { /* sin persistencia disponible */ }
+		if (estadoGuardado === 'fallo') avisar('El guardado automático volvió a funcionar.', 'ok');
+		estadoGuardado = hayCambiosSinExportar ? 'sucio' : 'guardado';
+		pintarEstadoGuardado();
+	} catch (e) {
+		const yaAvisado = estadoGuardado === 'fallo';
+		estadoGuardado = 'fallo';
+		pintarEstadoGuardado((e as Error)?.name);
+		// Se avisa una sola vez por racha: repetirlo en cada cambio sería insoportable.
+		if (!yaAvisado) {
+			avisar('No se puede guardar en este navegador. Descarga el proyecto con Archivo → Guardar.', 'error');
+		}
+	}
 }
+
+/** Marca que hay trabajo que todavía no se ha descargado como archivo. */
+function marcarSucio(): void {
+	hayCambiosSinExportar = true;
+	if (estadoGuardado !== 'fallo') { estadoGuardado = 'sucio'; pintarEstadoGuardado(); }
+}
+
+// Cerrar la pestaña con trabajo sin descargar pide confirmación al navegador.
+window.addEventListener('beforeunload', (ev) => {
+	if (!hayCambiosSinExportar && estadoGuardado !== 'fallo') return;
+	ev.preventDefault();
+	ev.returnValue = '';
+});
+
 recalcular();
 
 /* ------------------------- Historial (deshacer/rehacer) ------------------------- */
@@ -138,6 +195,7 @@ const rehacerPila: string[] = [];
 
 /** Guarda el estado ACTUAL antes de una mutación, para poder deshacerla. */
 function capturar(): void {
+	marcarSucio(); // hay trabajo nuevo que todavía no está en ningún archivo
 	pila.push(JSON.stringify(proyecto));
 	if (pila.length > 60) pila.shift();
 	rehacerPila.length = 0;
@@ -230,17 +288,55 @@ escena.add(suelo);
 let escenario: Escenario = construirEscenario(proyecto);
 escena.add(escenario.raiz);
 
+/** Queda por encuadrar porque cuando se pidió el lienzo aún no tenía tamaño. */
+let encuadrePendiente = false;
+
+/**
+ * Encuadra el tablero entero, centrado en lo que el usuario VE de verdad.
+ *
+ * Dos cosas que antes no se tenían en cuenta y dejaban el tablero descuadrado nada más
+ * abrirlo: la distancia se sacaba de una fórmula a ojo en vez del campo de visión de la
+ * cámara (con una caja alta se salía por arriba), y los paneles laterales tapan el lienzo
+ * —que ocupa todo el ancho y va por debajo—, así que el centro de la pantalla no es el
+ * centro de lo que se ve. Se corrige apuntando a un punto desplazado.
+ */
 function encuadrar(): void {
 	const g = proyecto.gabinete!;
-	const distancia = Math.max(g.ancho * 1.7, g.alto * 1.4, 780);
-	camara.position.set(g.ancho * 0.5, g.alto * 0.1, distancia);
-	controles.target.set(0, 0, 0);
+	const caja = cajaDe(g);
+	const anchoMundo = Math.max(caja.ancho, g.ancho) * 1.14;   // 14 % de aire alrededor
+	const altoMundo = Math.max(caja.alto, g.alto) * 1.14;
+
+	const lienzo = renderer.domElement;
+	// Al arrancar, el lienzo puede no tener tamaño todavía. Encuadrar con una altura de 1 px
+	// mandaba la cámara a tomar viento; se deja para cuando el lienzo ya mide algo.
+	if (lienzo.clientHeight < 40 || lienzo.clientWidth < 40) { encuadrePendiente = true; return; }
+	const alto = lienzo.clientHeight;
+	const tapaIzq = $('panel-izq').getBoundingClientRect().width;
+	const panelDer = $('panel-der');
+	const tapaDer = panelDer.style.display === 'none' ? 0 : panelDer.getBoundingClientRect().width;
+	const anchoVisible = Math.max(260, lienzo.clientWidth - tapaIzq - tapaDer);
+
+	const fovV = (camara.fov * Math.PI) / 180;
+	const fovH = 2 * Math.atan(Math.tan(fovV / 2) * (anchoVisible / alto));
+	const distancia = Math.max(
+		altoMundo / 2 / Math.tan(fovV / 2),
+		anchoMundo / 2 / Math.tan(fovH / 2),
+		420,
+	);
+
+	// Cuánto hay que correr la mirada para que el tablero caiga en el hueco libre.
+	const mundoPorPixel = (2 * distancia * Math.tan(fovV / 2)) / alto;
+	const desvio = ((tapaIzq - tapaDer) / 2) * mundoPorPixel;
+
+	controles.target.set(-desvio, 0, 0);
+	camara.position.set(-desvio, 0, distancia);
+	controles.update();
 	suelo.position.y = -(g.alto / 2 + 42);
+	encuadrePendiente = false;
 }
-encuadrar();
 
 function reconstruirCables(): void {
-	escenario.cables.clear();
+	vaciar(escenario.cables);
 	// Coloreado por voltaje: cada cable toma el color del nivel de tensión de su potencial.
 	let voltajeMap: Map<string, number | undefined> | undefined;
 	if (coloreaVoltaje && potenciales) {
@@ -258,7 +354,7 @@ function reconstruirCables(): void {
 }
 
 function reconstruirCotas(): void {
-	escenario.cotas.clear();
+	vaciar(escenario.cotas);
 	escenario.cotas.add(construirCotas(proyecto, escenario.aEscena));
 	escenario.cotas.visible = ($('ver-cotas') as HTMLInputElement).checked;
 }
@@ -267,7 +363,7 @@ function reconstruirCotas(): void {
  *  Las esferas se cuelgan DIRECTAMENTE del grupo (sin envolverlas en otro) para poder
  *  recorrerlas de forma plana al resaltarlas. */
 function reconstruirBornes(): void {
-	escenario.bornes.clear();
+	vaciar(escenario.bornes);
 	const esferas = [...construirBornes(proyecto, escenario.aEscena).children];
 	if (esferas.length) escenario.bornes.add(...esferas); // add() sin argumentos da error en three
 	escenario.bornes.visible = modo === 'trabajo';
@@ -276,6 +372,7 @@ function reconstruirBornes(): void {
 /** Desmonta y vuelve a construir todo el gabinete. */
 function montarEscenario(): void {
 	escena.remove(escenario.raiz);
+	liberar(escenario.raiz); // sin esto, cada reconstrucción deja el tablero entero en la GPU
 	escenario = construirEscenario(proyecto, visualizacion);
 	escena.add(escenario.raiz);
 	reconstruirCables();
@@ -297,6 +394,25 @@ function actualizarTodo(): void {
 	pintarPaneles();
 	pintarSeleccion();
 	refrescarEsquema(); // si el esquema está abierto, se redibuja: es la misma verdad, otra vista
+}
+
+/**
+ * Actualiza tras un cambio que NO toca la geometría de los aparatos ya montados: añadir uno,
+ * borrarlo o cablear. Se rehacen cables, bornes y cotas —baratos y sí cambian— y los demás
+ * aparatos se quedan donde están.
+ *
+ * Importa de verdad: rehacer el tablero entero cuesta ~1,2 ms por aparato, así que en un
+ * tablero de 150 cada clic se llevaba casi dos décimas de segundo antes siquiera de dibujar.
+ * Quien mueva la ESTRUCTURA (caja, placa, rieles, canaletas) sigue usando `actualizarTodo()`.
+ */
+function actualizarConservandoAparatos(): void {
+	recalcular();
+	reconstruirCables();
+	reconstruirBornes();
+	reconstruirCotas();
+	pintarPaneles();
+	pintarSeleccion();
+	refrescarEsquema();
 }
 
 /** Tras reemplazar el objeto `proyecto` (deshacer/rehacer/abrir/nuevo). */
@@ -488,8 +604,12 @@ function colocarPlantilla(plantilla: PlantillaAparato): void {
 		rielId: hueco.rielId as string | undefined,
 	};
 	proyecto.gabinete!.colocaciones.push(col);
-	extenderRielPara(col); // si el aparato quedó más allá del riel, se alarga el riel
-	actualizarTodo();
+	const rielTocado = extenderRielPara(col); // si quedó más allá del riel, se alarga el riel
+	// Solo se monta el aparato NUEVO (y el riel si hubo que alargarlo): los que ya estaban
+	// puestos no se tocan. Antes se rehacía el tablero entero por cada aparato añadido.
+	reconstruirDispositivoUno(d.id);
+	if (rielTocado) reconstruirEstructuraUno({ tipo: 'riel', id: rielTocado });
+	actualizarConservandoAparatos();
 	seleccionar(d.id);
 }
 
@@ -537,14 +657,17 @@ function duplicarDispositivo(id: string): void {
 	}
 	const nueva = { dispositivoId: copia.id, x, y, ancho: col.ancho, alto: col.alto, rielId, z: col.z };
 	g.colocaciones.push(nueva);
-	extenderRielPara(nueva);
-	actualizarTodo();
+	const rielCopia = extenderRielPara(nueva);
+	reconstruirDispositivoUno(copia.id);
+	if (rielCopia) reconstruirEstructuraUno({ tipo: 'riel', id: rielCopia });
+	actualizarConservandoAparatos();
 	seleccionar(copia.id);
 	avisar(`Duplicado: ${copia.designacion ?? copia.id}`, 'ok');
 }
 
 /** Alarga (si hace falta) el riel bajo un aparato para que quede totalmente apoyado sobre él. */
-function extenderRielPara(col: { x: number; y: number; ancho: number; alto: number }): void {
+/** Alarga el riel bajo el aparato si hace falta. Devuelve el id del riel tocado, o undefined. */
+function extenderRielPara(col: { x: number; y: number; ancho: number; alto: number }): string | undefined {
 	const g = proyecto.gabinete!;
 	const cx = col.x + col.ancho / 2;
 	const cy = col.y + col.alto / 2;
@@ -552,7 +675,7 @@ function extenderRielPara(col: { x: number; y: number; ancho: number; alto: numb
 	const riel = g.rieles.find((r) => r.orientacion === 'v'
 		? Math.abs(cx - (r.x + SNAP_RIEL)) < UMBRAL_SNAP
 		: Math.abs(cy - (r.y + SNAP_RIEL)) < UMBRAL_SNAP);
-	if (!riel) return;
+	if (!riel) return undefined;
 	if (riel.orientacion === 'v') {
 		if (col.y < riel.y) { riel.largo += riel.y - col.y; riel.y = col.y; }
 		riel.largo = Math.max(riel.largo, col.y + col.alto - riel.y + 5);
@@ -560,6 +683,7 @@ function extenderRielPara(col: { x: number; y: number; ancho: number; alto: numb
 		if (col.x < riel.x) { riel.largo += riel.x - col.x; riel.x = col.x; }
 		riel.largo = Math.max(riel.largo, col.x + col.ancho - riel.x + 5);
 	}
+	return riel.id;
 }
 
 async function eliminarDispositivo(id: string): Promise<void> {
@@ -572,8 +696,10 @@ async function eliminarDispositivo(id: string): Promise<void> {
 	);
 	const g = proyecto.gabinete!;
 	g.colocaciones = g.colocaciones.filter((c) => c.dispositivoId !== id);
+	const grupo = grupoDe(id);
+	if (grupo) { escenario.dispositivos.remove(grupo); liberar(grupo); }
 	seleccionar(undefined);
-	actualizarTodo();
+	actualizarConservandoAparatos();
 	avisar(`${nombre} eliminado · Ctrl+Z para deshacer`);
 }
 
@@ -625,12 +751,53 @@ function pintarPaneles(): void {
 		: `${nc} ${nc === 1 ? 'conductor' : 'conductores'} · ~${(total / 1000).toFixed(1)} m de cable`;
 
 	pintarListaCables();
+	pintarBalanceTermico();
 
 	// Estado vacío de bienvenida (solo si la placa no tiene aparatos y no se ha descartado).
 	const aparatos = proyecto.dispositivos.filter((d) => !d.campo && !d.imagen).length;
 	($('bienvenida') as HTMLElement).hidden = aparatos > 0 || bienvenidaDescartada;
 }
 let bienvenidaDescartada = false;
+
+/**
+ * Balance térmico en el panel: la temperatura interior estimada y qué hay que hacer con ella.
+ *
+ * Verlo mientras se diseña —y no al exportar el dossier— es lo que evita descubrir que el
+ * armario necesita climatizador cuando ya está pedido.
+ */
+const TITULO_TERMICO: Record<string, string> = {
+	holgado: 'Refrigeración natural suficiente',
+	justo: 'Al límite de la refrigeración natural',
+	ventilacion: 'Necesita ventilación forzada',
+	climatizacion: 'Necesita climatización',
+};
+
+function pintarBalanceTermico(): void {
+	const b = calcularBalanceTermico(proyecto);
+	const veredicto = $('termico-veredicto');
+	const detalle = $('termico-detalle');
+	if (!b) {
+		veredicto.className = 'veredicto-termico';
+		veredicto.innerHTML = '<b>Sin gabinete</b><span class="porque">Define la caja para calcular el balance.</span>';
+		detalle.textContent = '';
+		return;
+	}
+	veredicto.className = `veredicto-termico ${b.veredicto}`;
+	veredicto.innerHTML = `<b>${b.temperaturaInteriorC} °C — ${TITULO_TERMICO[b.veredicto]}</b>`
+		+ `<span class="porque">${b.recomendacion}</span>`;
+	const pctDeclarada = Math.round(b.fraccionDeclarada * 100);
+	const filas = [
+		`Disipación dentro del armario: <b>${b.disipacionW} W</b> (${pctDeclarada} % de datos de fabricante)`,
+		`Superficie efectiva: <b>${b.superficieM2.toFixed(2)} m²</b> · montaje ${b.montaje}`,
+		`Ambiente ${b.temperaturaAmbienteC} °C + salto <b>${b.saltoTermicoK} K</b>`,
+	];
+	if (b.principales.length > 0) {
+		// El marcado lo escribe el usuario: se escapa antes de meterlo en el HTML del panel.
+		filas.push(`Lo que más calienta: ${b.principales
+			.map((p) => `${escaparHtml(p.designacion)} (${p.watts} W)`).join(', ')}`);
+	}
+	detalle.innerHTML = filas.join('<br>');
+}
 
 /** Lista de todos los cables del panel (modo Trabajo): clic para seleccionar/ordenar. */
 function pintarListaCables(): void {
@@ -768,13 +935,32 @@ function pintarSeleccion(): void {
 			<select id="cable-color" class="ancho-total" title="Color del conductor">${COLORES.map((c) => `<option ${c === 'negro' ? 'selected' : ''}>${c}</option>`).join('')}</select>
 			<button class="boton primario ancho-total" id="btn-conectar" disabled>Conectar</button>
 		</div>`;
-	// Tensión de trabajo (solo Editor, aparatos que llevan corriente): niveles usuales en Chile.
+	// Ficha del aparato: TODO editable. El catálogo es un punto de partida, no una verdad:
+	// en cuanto se usa un aparato «parecido» porque el propio no está, los datos que van al
+	// PDF del cliente son falsos si no se pueden corregir aquí.
+	const num = (v: number | undefined) => (v === undefined ? '' : String(v));
 	const bloqueTension = esEditor && !esImagen ? `
-		<h2>⚡ Tensión de trabajo</h2>
-		<select id="dev-tension" class="ancho-total" style="width:100%">
-			${['', '12', '24', '110', '220', '380', '400'].map((v) =>
-				`<option value="${v}" ${String(d.tensionNominal ?? '') === v ? 'selected' : ''}>${v === '' ? '— sin definir —' : v + ' V'}</option>`).join('')}
-		</select>` : '';
+		<h2>⚡ Ficha del aparato</h2>
+		<div class="ficha-aparato">
+			<label>Marcado<input id="dev-designacion" type="text" value="${escaparHtml(d.designacion ?? '')}" placeholder="-K1"></label>
+			<label>Tensión
+				<select id="dev-tension">
+					${['', '12', '24', '110', '220', '380', '400'].map((v) =>
+						`<option value="${v}" ${String(d.tensionNominal ?? '') === v ? 'selected' : ''}>${v === '' ? '—' : v + ' V'}</option>`).join('')}
+				</select></label>
+			<label class="ancho-2">Descripción<input id="dev-descripcion" type="text" value="${escaparHtml(d.descripcion ?? '')}" placeholder="Contactor tripolar 9 A"></label>
+			<label>Fabricante<input id="dev-fabricante" type="text" value="${escaparHtml(d.fabricante ?? '')}" placeholder="Schneider"></label>
+			<label>Referencia<input id="dev-referencia" type="text" value="${escaparHtml(d.referencia ?? '')}" placeholder="LC1D09B7"></label>
+			<label>In / Ib (A)<input id="dev-corriente" type="number" step="0.1" min="0" value="${num(d.corrienteNominal)}" placeholder="9"></label>
+			<label>Polos<input id="dev-polos" type="number" step="1" min="1" max="4" value="${num(d.polos)}" placeholder="3"></label>
+			${col ? `<label>Ancho (mm)<input id="dev-ancho" type="number" step="1" min="5" value="${Math.round(col.ancho)}"></label>
+			<label>Alto (mm)<input id="dev-alto" type="number" step="1" min="5" value="${Math.round(col.alto)}"></label>` : ''}
+			<label>Fondo (mm)<input id="dev-fondo" type="number" step="1" min="5" value="${num(d.profundidad)}" placeholder="auto"></label>
+			<label>Poder de corte<input id="dev-icu" type="number" step="0.5" min="0" value="${num(d.poderCorteKA)}" placeholder="kA"></label>
+			<label>Disipación<input id="dev-disipacion" type="number" step="0.5" min="0" value="${num(d.disipacionW)}" placeholder="W"></label>
+		</div>
+		<p class="pista">Los datos del catálogo son un punto de partida: corrígelos con la hoja del
+		fabricante y el dossier saldrá con lo que de verdad lleva el tablero.</p>` : '';
 	const bloqueAcciones = esEditor ? `
 		<h2>Acciones</h2>
 		<div class="botonera">
@@ -861,17 +1047,92 @@ function pintarSeleccion(): void {
 		};
 	}
 
-	// Tensión de trabajo (solo Editor).
-	(panel.querySelector('#dev-tension') as HTMLSelectElement | null)?.addEventListener('change', (e) => {
-		capturar();
-		const v = (e.target as HTMLSelectElement).value;
-		d.tensionNominal = v === '' ? undefined : Number(v);
-		recalcular();
-		reconstruirDispositivoUno(d.id); // actualizar la chapa de tensión sobre el aparato
-		reconstruirCables();
-		pintarPaneles();
-		pintarSeleccion();
-	});
+	/* --- Ficha del aparato: cada campo se guarda al salir de él (solo Editor) --- */
+	{
+		const numeroDe = (v: string): number | undefined => {
+			const n = Number(v);
+			return v.trim() === '' || !Number.isFinite(n) || n < 0 ? undefined : n;
+		};
+		/**
+		 * Aplica un cambio de la ficha: captura para deshacer y rehace lo justo.
+		 *
+		 * `pintarSeleccion()` reescribe el panel entero, así que se lleva por delante el campo
+		 * que el usuario acaba de enfocar al tabular. Se anota cuál era y se le devuelve el
+		 * foco: rellenar la ficha campo a campo con el tabulador tiene que funcionar.
+		 */
+		const aplicar = (cambio: () => void, rehacerModelo = false) => {
+			const enfocado = (document.activeElement as HTMLElement | null)?.id;
+			capturar();
+			cambio();
+			recalcular();
+			if (rehacerModelo) reconstruirDispositivoUno(d.id);
+			reconstruirCables();
+			reconstruirBornes();
+			pintarPaneles();
+			pintarSeleccion();
+			if (enfocado) {
+				const vuelto = document.getElementById(enfocado) as HTMLInputElement | null;
+				// El cursor al final, para poder seguir escribiendo donde se estaba.
+				vuelto?.focus();
+				if (vuelto instanceof HTMLInputElement && vuelto.type === 'text') {
+					vuelto.setSelectionRange(vuelto.value.length, vuelto.value.length);
+				}
+			}
+		};
+		const texto = (id: string, poner: (v: string) => void, rehacer = false) => {
+			const campo = panel.querySelector(`#${id}`) as HTMLInputElement | null;
+			if (campo) campo.onchange = () => aplicar(() => poner(campo.value.trim()), rehacer);
+		};
+		const numero = (id: string, poner: (v: number | undefined) => void, rehacer = false) => {
+			const campo = panel.querySelector(`#${id}`) as HTMLInputElement | null;
+			if (campo) campo.onchange = () => aplicar(() => poner(numeroDe(campo.value)), rehacer);
+		};
+
+		texto('dev-designacion', (v) => {
+			// Marcado a mano: se congela para que una renumeración masiva no lo pise.
+			d.designacion = v || undefined;
+			d.congelado = !!v;
+		}, true);
+		texto('dev-descripcion', (v) => { d.descripcion = v || undefined; });
+		texto('dev-fabricante', (v) => { d.fabricante = v || undefined; });
+		texto('dev-referencia', (v) => { d.referencia = v || undefined; }, true);
+		numero('dev-corriente', (v) => { d.corrienteNominal = v; });
+		numero('dev-polos', (v) => { d.polos = v === undefined ? undefined : Math.min(4, Math.max(1, Math.round(v))); });
+		numero('dev-fondo', (v) => { d.profundidad = v; }, true);
+		numero('dev-icu', (v) => { d.poderCorteKA = v; });
+		numero('dev-disipacion', (v) => { d.disipacionW = v; });
+
+		(panel.querySelector('#dev-tension') as HTMLSelectElement | null)?.addEventListener('change', (e) => {
+			const v = (e.target as HTMLSelectElement).value;
+			aplicar(() => { d.tensionNominal = v === '' ? undefined : Number(v); }, true);
+		});
+
+		// Medidas de la huella: se rechaza el cambio si dejaría el aparato encima de otro.
+		for (const [id, dim] of [['dev-ancho', 'ancho'], ['dev-alto', 'alto']] as const) {
+			const campo = panel.querySelector(`#${id}`) as HTMLInputElement | null;
+			if (!campo || !col) continue;
+			campo.onchange = () => {
+				const v = numeroDe(campo.value);
+				if (v === undefined || v < 5) { pintarSeleccion(); return; }
+				const antes = col[dim];
+				capturar();
+				col[dim] = Math.round(v);
+				if (solapaCon(col.x, col.y, col.ancho, col.alto, d.id)) {
+					col[dim] = antes;
+					revertirCaptura();
+					avisar('Con esa medida se encimaría con otro aparato.', 'error');
+					return;
+				}
+				recalcular();
+				reconstruirDispositivoUno(d.id);
+				reconstruirCables();
+				reconstruirBornes();
+				reconstruirCotas();
+				pintarPaneles();
+				pintarSeleccion();
+			};
+		}
+	}
 
 	// Acciones de edición (solo en modo Editor).
 	(panel.querySelector('#btn-eliminar') as HTMLButtonElement | null)?.addEventListener('click', () => eliminarDispositivo(d.id));
@@ -1511,7 +1772,18 @@ function resaltarHoverBorne(b: RefBorne | undefined): void {
 			&& m.userData.borneDispositivoId === cableandoDesde.dispositivoId && m.userData.borneId === cableandoDesde.borneId;
 		const esHover = b && m.userData.borneDispositivoId === b.dispositivoId && m.userData.borneId === b.borneId;
 		const base = m.userData.conectado ? 0x6f7c89 : 0xffb63a; // color de reposo según esté cableado
-		m.scale.setScalar(esOrigen ? 1.7 : esHover ? 1.5 : (m.userData.conectado ? 0.78 : 1));
+		// El hover NO cambia el tamaño, y esto no es un capricho estético.
+		//
+		// El terminal crecía a 1,5 al pasarle el ratón por encima (0,78 → 1,5 si ya estaba
+		// cableado: casi el doble de radio). Esa esfera hinchada adelantaba al cable que en reposo
+		// pasaba por delante de ella, y entonces el clic conectaba en vez de agarrar el cable. Y se
+		// realimentaba: al crecer, el borne quedaba bajo el puntero y ya no soltaba el foco.
+		//
+		// Lo que hay bajo el cursor no puede cambiar por el hecho de que el cursor esté ahí. El
+		// realce se hace con color y brillo, que ya se ven de sobra y no tocan la geometría. El
+		// borne de ORIGEN sí crece: mientras se tiende un cable el borne manda siempre sobre el
+		// cable (así se puede rematar el tendido donde sea), así que ahí no hay ambigüedad ninguna.
+		m.scale.setScalar(esOrigen ? 1.7 : (m.userData.conectado ? 0.78 : 1));
 		m.material.color.setHex(esOrigen ? 0x35c46a : esHover ? 0xffe08a : base);
 		m.material.emissiveIntensity = esOrigen || esHover ? 2 : 1;
 	}
@@ -1656,7 +1928,7 @@ function etiquetaSprite(texto: string, posicion: THREE.Vector3, colorFondo: stri
 
 /** Construye los tiradores del elemento seleccionado (estructura en Editor, cable en Trabajo). */
 function construirHandles(): void {
-	escenario.handles.clear();
+	vaciar(escenario.handles);
 	if (!sel) return;
 	const g = proyecto.gabinete!;
 	const esfera = (p: THREE.Vector3, datos: DatosHandle, color = 0x4da3ff): void => {
@@ -1932,7 +2204,7 @@ function reconstruirEstructuraUno(s: Seleccion): void {
 	const g = proyecto.gabinete!;
 	const clave = s.tipo === 'canaleta' ? 'canaletaId' : 'rielId';
 	for (const hijo of [...escenario.raiz.children]) {
-		if (hijo.userData[clave] === s.id) escenario.raiz.remove(hijo);
+		if (hijo.userData[clave] === s.id) { escenario.raiz.remove(hijo); liberar(hijo); }
 	}
 	if (s.tipo === 'canaleta') {
 		const can = g.canaletas.find((c) => c.id === s.id);
@@ -2496,7 +2768,7 @@ window.addEventListener('keydown', (ev) => {
 	}
 	if (ev.key === 'Escape') {
 		// Escape cierra primero lo que esté abierto encima: es lo que espera cualquiera.
-		const abiertos = ['modal-controlador', 'modal-drc'].filter((id) => !($(id) as HTMLElement).hidden);
+		const abiertos = ['modal-proyecto', 'modal-controlador', 'modal-drc'].filter((id) => !($(id) as HTMLElement).hidden);
 		if (abiertos.length) { for (const id of abiertos) ($(id) as HTMLElement).hidden = true; }
 		else if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); }
 		else aplicarSeleccion(undefined);
@@ -2506,7 +2778,7 @@ window.addEventListener('keydown', (ev) => {
 /** Reconstruye en la escena solo el aparato indicado (para arrastre/resize fluido). */
 function reconstruirDispositivoUno(id: string): void {
 	const viejo = grupoDe(id);
-	if (viejo) escenario.dispositivos.remove(viejo);
+	if (viejo) { escenario.dispositivos.remove(viejo); liberar(viejo); }
 	const col = proyecto.gabinete!.colocaciones.find((c) => c.dispositivoId === id);
 	const d = proyecto.dispositivos.find((x) => x.id === id);
 	if (col && d) {
@@ -2552,6 +2824,10 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 		JSON.stringify(proyecto, null, '\t'),
 		'application/json',
 	);
+	// Ya hay copia en un archivo del usuario: se puede cerrar la pestaña sin miedo.
+	hayCambiosSinExportar = false;
+	if (estadoGuardado !== 'fallo') { estadoGuardado = 'guardado'; pintarEstadoGuardado(); }
+	avisar('Proyecto descargado', 'ok');
 };
 
 // Imagen de referencia: se importa como dispositivo con imagen (data URL) y colocación.
@@ -2596,17 +2872,21 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 	const archivo = (e.target as HTMLInputElement).files?.[0];
 	if (!archivo) return;
 	try {
-		const p = JSON.parse(await archivo.text());
-		if (!p || p.formato !== 'tablero-studio' || !p.gabinete) throw new Error('formato');
+		const { proyecto: abierto, arreglos } = cargarProyecto(await archivo.text());
 		capturar();
-		proyecto = p as Proyecto;
+		proyecto = abierto;
 		seleccionar(undefined);
 		actualizarTodo();
 		pintarEstructura();
 		encuadrar();
-		avisar('Proyecto abierto correctamente', 'ok');
-	} catch {
-		avisar('El archivo no es un proyecto de TableroStudio válido.', 'error');
+		// Si hubo que sanear algo, se dice: callarlo es dejar que el usuario descubra
+		// más tarde que le faltan cables sin saber por qué.
+		avisar(arreglos.length
+			? `Proyecto abierto. Se corrigió: ${arreglos.join(', ')}.`
+			: 'Proyecto abierto correctamente', arreglos.length ? 'info' : 'ok');
+	} catch (e) {
+		avisar(e instanceof ArchivoInvalido ? e.message
+			: 'No se pudo leer el archivo de proyecto.', 'error');
 	}
 	(e.target as HTMLInputElement).value = '';
 };
@@ -2740,6 +3020,7 @@ function refrescarEsquema(): void {
 	const hoja = hojasEsquema[hojaActual];
 	$('esquema-hoja').innerHTML = hojaASvg(hoja, {
 		proyecto: proyecto.nombre,
+		datos: proyecto.datos,
 		totalHojas: hojasEsquema.length,
 		resaltado: sel?.tipo === 'dispositivo' ? sel.id : undefined,
 	});
@@ -2956,27 +3237,24 @@ function pintarPlantillasPropias(): string {
 	avisar(`Hoja ${hoja.numero} del esquema exportada a DXF`, 'ok');
 };
 
-// Menú «Aprender»: un solo botón en la barra en vez de tres sueltos.
-{
-	const menu = $('menu-aprender');
-	($('btn-aprender') as HTMLButtonElement).onclick = (ev) => {
+/**
+ * Menús desplegables de la barra. Agrupar en menús es lo que permite que los botones
+ * quepan con su rótulo en un portátil en vez de quedarse en «N…», «G…».
+ */
+for (const [idMenu, idBoton] of [
+	['menu-archivo', 'btn-archivo'],
+	['menu-aprender', 'btn-aprender'],
+	['menu-exportar', 'btn-exportar'],
+] as const) {
+	const menu = $(idMenu);
+	($(idBoton) as HTMLButtonElement).onclick = (ev) => {
 		ev.stopPropagation();
-		menu.classList.toggle('abierto');
+		const abierto = menu.classList.contains('abierto');
+		// Abrir uno cierra los demás: nunca hay dos listas tapando el tablero a la vez.
+		for (const m of document.querySelectorAll('#barra .menu')) m.classList.remove('abierto');
+		menu.classList.toggle('abierto', !abierto);
 	};
-	// Un clic fuera, o elegir una opción, lo cierra: nunca se queda tapando el tablero.
-	document.addEventListener('click', () => menu.classList.remove('abierto'));
-	for (const b of menu.querySelectorAll('.lista button')) {
-		b.addEventListener('click', () => menu.classList.remove('abierto'));
-	}
-}
-
-// Menú «Entregar»: dossier, rótulos y DXF juntos, que es lo que se manda al cliente.
-{
-	const menu = $('menu-exportar');
-	($('btn-exportar') as HTMLButtonElement).onclick = (ev) => {
-		ev.stopPropagation();
-		menu.classList.toggle('abierto');
-	};
+	// Un clic fuera, o elegir una opción, lo cierra.
 	document.addEventListener('click', () => menu.classList.remove('abierto'));
 	for (const b of menu.querySelectorAll('.lista button')) {
 		b.addEventListener('click', () => menu.classList.remove('abierto'));
@@ -2998,7 +3276,7 @@ function pintarPlantillasPropias(): string {
 	const antes = btn.textContent;
 	btn.textContent = 'Generando…';
 	try {
-		await exportarEsquemaPDF(hojasEsquema, proyecto.nombre, `${nombreArchivo()}-esquema.pdf`);
+		await exportarEsquemaPDF(hojasEsquema, proyecto.nombre, `${nombreArchivo()}-esquema.pdf`, proyecto.datos ?? {});
 		avisar(`Esquema exportado (${hojasEsquema.length} hoja${hojasEsquema.length > 1 ? 's' : ''})`, 'ok');
 	} catch (e) {
 		avisar(`No se pudo exportar el esquema: ${(e as Error).message}`, 'error');
@@ -3014,7 +3292,7 @@ function pintarPlantillasPropias(): string {
 	// Se descarga en tinta negra sobre papel blanco: es lo que se imprime y se archiva.
 	descargar(
 		`${nombreArchivo()}-esquema-${hoja.numero}.svg`,
-		hojaASvg(hoja, { proyecto: proyecto.nombre, totalHojas: hojasEsquema.length }),
+		hojaASvg(hoja, { proyecto: proyecto.nombre, datos: proyecto.datos, totalHojas: hojasEsquema.length }),
 		'image/svg+xml',
 	);
 	avisar(`Hoja ${hoja.numero} descargada en SVG`, 'ok');
@@ -3095,6 +3373,76 @@ function abrirDetalleDRC(): void {
 ($('btn-cerrar-drc') as HTMLButtonElement).onclick = () => { ($('modal-drc') as HTMLElement).hidden = true; };
 $('modal-drc').addEventListener('click', (e) => {
 	if (e.target === $('modal-drc')) ($('modal-drc') as HTMLElement).hidden = true;
+});
+
+/* ------------------------- Datos del proyecto ------------------------- */
+
+/**
+ * Cliente, obra, proyectista y revisión — más los dos datos de instalación de los que
+ * depende que el programa pueda verificar el tablero: la Icc presunta (poder de corte) y
+ * la temperatura ambiente (balance térmico).
+ */
+function abrirDatosProyecto(): void {
+	const d = proyecto.datos ?? {};
+	const o = opcionesDe(proyecto);
+	const poner = (id: string, v: string) => { ($(id) as HTMLInputElement).value = v; };
+	poner('pr-cliente', d.cliente ?? '');
+	poner('pr-obra', d.obra ?? '');
+	poner('pr-proyectista', d.proyectista ?? '');
+	poner('pr-revision', d.revision ?? '');
+	poner('pr-fecha', d.fecha ?? new Date().toISOString().slice(0, 10));
+	poner('pr-fabricante', d.fabricante ?? '');
+	poner('pr-icc', o.iccPresuntaKA ? String(o.iccPresuntaKA) : '');
+	poner('pr-ambiente', String(o.temperaturaAmbienteC));
+	poner('pr-inominal', o.corrienteAsignadaA ? String(o.corrienteAsignadaA) : '');
+	poner('pr-frecuencia', String(o.frecuenciaHz));
+	poner('pr-ip', o.gradoIP);
+	($('pr-montaje') as HTMLSelectElement).value = o.montajeGabinete;
+	($('pr-neutro') as HTMLSelectElement).value = o.regimenNeutro;
+	($('pr-notas') as HTMLTextAreaElement).value = d.notas ?? '';
+	($('modal-proyecto') as HTMLElement).hidden = false;
+	setTimeout(() => ($('pr-cliente') as HTMLInputElement).focus(), 0);
+}
+
+function guardarDatosProyecto(): void {
+	const texto = (id: string) => ($(id) as HTMLInputElement).value.trim() || undefined;
+	const numero = (id: string) => {
+		const v = Number(($(id) as HTMLInputElement).value);
+		return Number.isFinite(v) && v >= 0 ? v : undefined;
+	};
+	capturar();
+	proyecto.datos = {
+		cliente: texto('pr-cliente'),
+		obra: texto('pr-obra'),
+		proyectista: texto('pr-proyectista'),
+		revision: texto('pr-revision'),
+		fecha: texto('pr-fecha'),
+		fabricante: texto('pr-fabricante'),
+		notas: ($('pr-notas') as HTMLTextAreaElement).value.trim() || undefined,
+	};
+	proyecto.opciones = {
+		...(proyecto.opciones ?? {}),
+		iccPresuntaKA: numero('pr-icc') ?? 0,
+		temperaturaAmbienteC: numero('pr-ambiente') ?? 35,
+		corrienteAsignadaA: numero('pr-inominal') ?? 0,
+		frecuenciaHz: numero('pr-frecuencia') || 50,
+		gradoIP: ($('pr-ip') as HTMLInputElement).value.trim(),
+		montajeGabinete: ($('pr-montaje') as HTMLSelectElement).value as OpcionesProyecto['montajeGabinete'],
+		regimenNeutro: ($('pr-neutro') as HTMLSelectElement).value as OpcionesProyecto['regimenNeutro'],
+	};
+	($('modal-proyecto') as HTMLElement).hidden = true;
+	recalcular();      // la Icc cambia el DRC al instante
+	pintarPaneles();
+	refrescarEsquema();
+	avisar('Datos del proyecto guardados', 'ok');
+}
+
+($('btn-datos-proyecto') as HTMLButtonElement).onclick = () => abrirDatosProyecto();
+($('btn-cerrar-proyecto') as HTMLButtonElement).onclick = () => { ($('modal-proyecto') as HTMLElement).hidden = true; };
+($('btn-cancelar-proyecto') as HTMLButtonElement).onclick = () => { ($('modal-proyecto') as HTMLElement).hidden = true; };
+($('btn-guardar-proyecto') as HTMLButtonElement).onclick = () => guardarDatosProyecto();
+$('modal-proyecto').addEventListener('click', (e) => {
+	if (e.target === $('modal-proyecto')) ($('modal-proyecto') as HTMLElement).hidden = true;
 });
 
 /* ------------------------- Controlador a medida ------------------------- */
@@ -3313,6 +3661,7 @@ for (const id of ['modal-ejemplos', 'modal-explicacion']) {
 	bienvenidaDescartada = true;
 	aplicarModo('editor');
 	($('bienvenida') as HTMLElement).hidden = true;
+	encuadrar();
 	avisar('Placa en blanco. Haz clic en un aparato del catálogo (izquierda) para colocarlo.', 'ok');
 };
 
@@ -3332,9 +3681,11 @@ function ajustarTamano(): void {
 }
 window.addEventListener('resize', () => {
 	ajustarTamano();
+	if (encuadrePendiente) encuadrar();
 	if (esquemaAbierto) aplicarZoomEsquema(); // la hoja se reajusta al nuevo tamaño de ventana
 });
 ajustarTamano();
+encuadrar(); // ahora que el lienzo ya mide, el encuadre sale bien
 
 /* ------------------------------- Arranque ------------------------------- */
 
@@ -3528,7 +3879,9 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 * pasada que el rayo cae en su tubo visible y que ningún borne se le pone delante. Así la
 		 * prueba pincha donde el usuario lo haría, sin depender del instante en que se calculó.
 		 */
-		puntoParaAgarrar: (id: string, muestras = 15, zona?: { x0: number; x1: number; y0: number; y1: number }) => {
+		// Se muestrea generoso: descartar los cruces deja fuera bastantes puntos, y hace falta
+		// recorrer el cable entero para encontrar un tramo suyo y solo suyo.
+		puntoParaAgarrar: (id: string, muestras = 31, zona?: { x0: number; x1: number; y0: number; y1: number }) => {
 			const malla = escenario.cables.children
 				.flatMap((g) => g.children)
 				.find((m) => m.userData.tuboVisible && m.userData.conductorId === id) as THREE.Mesh | undefined;
@@ -3546,14 +3899,27 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				if (zona && (p.x < zona.x0 || p.x > zona.x1 || p.y < zona.y0 || p.y > zona.y1)) continue;
 				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
 				raycaster.setFromCamera(puntero, camara);
-				const cable = raycaster.intersectObjects(escenario.cables.children, true)
-					.find((h) => h.object.userData.tuboVisible);
+				const impactosCable = raycaster.intersectObjects(escenario.cables.children, true);
+				const cable = impactosCable.find((h) => h.object.userData.tuboVisible);
 				if (cable?.object.userData.conductorId !== id) continue;
+				// Y que no sea un CRUCE: si otro cable pasa prácticamente a la misma profundidad,
+				// ese píxel no pertenece a ninguno de los dos en particular. Ahí ni el programa ni
+				// el usuario pueden decir cuál se está señalando, así que no vale como punto de
+				// agarre y se prueba el siguiente. Un electricista tampoco pincha en el cruce.
+				const otroPegado = impactosCable.some((h) => h.object.userData.conductorId !== id
+					&& Math.abs(h.distance - cable.distance) < 8);
+				if (otroPegado) continue;
 				const aparato = raycaster.intersectObjects(escenario.dispositivos.children, true)
 					.find((h) => h.object.userData.dispositivoId);
 				if (aparato && aparato.distance < cable.distance) continue; // tapado por un aparato
 				// Tampoco vale si encima hay un tirador de otra unión: ahí lo que se ve es el tirador.
 				if (raycaster.intersectObjects(escenario.handles.children, true).some((h) => h.distance < cable.distance)) continue;
+				// Ni si delante hay un BORNE: ahí el programa entiende —bien— que quieres conectar,
+				// no agarrar el cable, y así lo dice `cableTapaAlBorne`. Es la comprobación simétrica
+				// de la que hace `puntoParaBorne` con los cables; faltaba aquí, y por eso la prueba
+				// pinchaba en un terminal creyendo que pinchaba en un cable.
+				if (raycaster.intersectObjects(escenario.bornes.children, true)
+					.some((h) => h.object.userData.borneId && h.distance < cable.distance)) continue;
 				return p;
 			}
 			return undefined;
@@ -3617,6 +3983,24 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			const visto = impactos.find((i) => i.object.userData.tuboVisible)?.object.userData.conductorId;
 			return (visto ?? impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId) as string | undefined;
 		},
+		/** Coste en ms de añadir N aparatos del catálogo (solo JS, sin dibujado). */
+		medirAnadir: (plantillaId: string, veces: number) => {
+			const t = performance.now();
+			for (let i = 0; i < veces; i++) anadirDesdeCatalogo(plantillaId);
+			return Math.round((performance.now() - t) / veces);
+		},
+		/** Dónde cae en pantalla un punto del modelo (para comprobar el encuadre). */
+		puntoEnPantalla: (x: number, y: number, z = 0) => aPantalla(escenario.aEscena(x, y, z)),
+		/**
+		 * Posición y objetivo de la cámara. Los controles llevan amortiguación, así que después
+		 * de soltar el ratón la cámara SIGUE moviéndose sola unos cuantos fotogramas. Una prueba
+		 * que calcule un píxel y pinche ahí sin esperar a que se pare estaría apuntando a una
+		 * escena y pinchando en otra: con esto puede esperar a que se quede quieta.
+		 */
+		camara: () => ({
+			x: camara.position.x, y: camara.position.y, z: camara.position.z,
+			tx: controles.target.x, ty: controles.target.y, tz: controles.target.z,
+		}),
 		/** Punto de anclaje (mm de modelo) de un borne, tal cual lo usa el cableado. */
 		anclaje: (dispositivoId: string, borneId: string) => anclajeBorne(proyecto, dispositivoId, borneId),
 		/** Referencias de los controladores del catálogo (equipos reales con ficha de datos). */

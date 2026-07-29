@@ -10,6 +10,7 @@ import { crearProyecto } from '../src/modelo/proyecto.js';
 
 export function tableroEjemplo(): Proyecto {
 	const p = crearProyecto('Tablero de control — ejemplo');
+	p.opciones = { iccPresuntaKA: 6, temperaturaAmbienteC: 35, montajeGabinete: 'mural' };
 
 	p.hojas = [
 		{ id: 'h1', numero: 1, titulo: 'Alimentación 220 V / 24 V' },
@@ -35,6 +36,7 @@ export function tableroEjemplo(): Proyecto {
 		{
 			id: 'q1', tipo: 'disyuntor', descripcion: 'Interruptor automático 2P 6 A',
 			fabricante: 'Schneider Electric', referencia: 'iC60N 2P C6', tensionNominal: 220,
+			poderCorteKA: 6, disipacionW: 2.5,
 			hojaId: 'h1', posicion: { x: 2, y: 0 },
 			bornes: [
 				{ id: '1', tipo: 'L', obligatorio: true }, { id: '2', tipo: 'L', obligatorio: true },

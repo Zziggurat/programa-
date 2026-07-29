@@ -5,9 +5,10 @@
  * y el resultado del motor de potenciales.
  */
 import { Proyecto } from '../modelo/tipos.js';
-import { conductoresEn, dispositivo } from '../modelo/proyecto.js';
+import { conductoresEn, dispositivo, opcionesDe } from '../modelo/proyecto.js';
 import { ResultadoPotenciales } from './potenciales.js';
 import { ampacidad, caidaTensionPct, CAIDA_MAX_PCT, seccionMinima } from './electrico.js';
+import { calcularBalanceTermico } from './termico.js';
 
 export type Severidad = 'error' | 'aviso';
 
@@ -307,6 +308,73 @@ export function verificarProyecto(
 			severidad: 'aviso',
 			mensaje: `La canaleta ${c.canaletaId} va al ${Math.round(c.ocupacion * 100)} % del llenado `
 				+ 'recomendado: usa una más ancha o reparte los conductores.',
+		});
+	}
+
+	// R13 — Poder de corte contra la corriente de cortocircuito presunta.
+	//
+	// Es la comprobación que más pesa de todas: un automático cuyo poder de corte (Icu/Icn) no
+	// llega a la Icc del punto donde está instalado NO interrumpe la falta, se destruye — con
+	// arco, proyección de material y el circuito sin cortar. Un inspector lo mira antes que
+	// nada, y ninguna otra regla de este motor sustituye a esta.
+	// La Icc presunta es la de la ACOMETIDA. Un fusible del circuito de mando, detrás de un
+	// transformador o de una fuente, no ve ni de lejos esa corriente: compararlo contra ella
+	// daría una alarma falsa, y una alarma falsa es lo que hace que se dejen de mirar todas.
+	// Se comprueban por tanto las protecciones que trabajan a la tensión más alta del tablero,
+	// que son las que están del lado de la red.
+	const icc = opcionesDe(proyecto).iccPresuntaKA;
+	const tensiones = aparatos.map((d) => d.tensionNominal ?? 0);
+	const tensionMaxima = tensiones.length ? Math.max(...tensiones) : 0;
+	// Con holgura: 380, 400 y 415 V son la misma red y tienen que contar todas como lado de red.
+	// Lo que se quiere dejar fuera es el salto de verdad (400 → 24 V), no el redondeo del catálogo.
+	const umbralRed = tensionMaxima * 0.8;
+	const protecciones = aparatos.filter((d) => ES_PROTECCION.has(d.tipo)
+		&& (d.tensionNominal === undefined || d.tensionNominal >= umbralRed));
+	if (icc > 0) {
+		for (const d of protecciones) {
+			if (d.poderCorteKA === undefined) {
+				hallazgos.push({
+					regla: 'R13-sin-poder-de-corte',
+					severidad: 'aviso',
+					mensaje: `${etiqueta(d.id)}: falta el poder de corte (Icu/Icn). Sin él no se puede `
+						+ `comprobar que aguante los ${icc} kA de la acometida.`,
+					dispositivoId: d.id,
+				});
+			} else if (d.poderCorteKA < icc) {
+				hallazgos.push({
+					regla: 'R13-poder-de-corte-insuficiente',
+					severidad: 'error',
+					mensaje: `${etiqueta(d.id)}: poder de corte ${d.poderCorteKA} kA frente a `
+						+ `${icc} kA presuntos. No cortaría la falta: hace falta un aparato de más `
+						+ 'poder de corte o una protección aguas arriba que lo respalde.',
+					dispositivoId: d.id,
+				});
+			}
+		}
+	} else if (protecciones.length > 0) {
+		hallazgos.push({
+			regla: 'R13-icc-sin-declarar',
+			severidad: 'aviso',
+			mensaje: 'Falta la corriente de cortocircuito presunta de la acometida (Archivo → Datos '
+				+ 'del proyecto). Sin ella no se puede verificar el poder de corte de las protecciones.',
+		});
+	}
+
+	// R14 — Calentamiento del armario. Un tablero que se pasa de temperatura dispara antes de
+	// tiempo, limita los variadores y envejece la electrónica. Sale como AVISO y no como error
+	// porque es una estimación de proyecto (IEC 60890), no un ensayo: la decisión de poner
+	// rejilla, ventilador o climatizador es del proyectista, pero tiene que verla aquí.
+	const balance = calcularBalanceTermico(proyecto);
+	if (balance && (balance.veredicto === 'ventilacion' || balance.veredicto === 'climatizacion')) {
+		const afinable = balance.fraccionDeclarada < 0.5
+			? ' La mayor parte de la disipación es estimada: declara la de catálogo en la ficha de cada aparato para afinar el cálculo.'
+			: '';
+		hallazgos.push({
+			regla: 'R14-calentamiento',
+			severidad: 'aviso',
+			mensaje: `El armario alcanzaría unos ${balance.temperaturaInteriorC} °C dentro `
+				+ `(${balance.disipacionW} W sobre ${balance.superficieM2.toFixed(2)} m² con `
+				+ `${balance.temperaturaAmbienteC} °C de ambiente). ${balance.recomendacion}${afinable}`,
 		});
 	}
 

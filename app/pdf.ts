@@ -24,6 +24,8 @@ import { generarPlanBorneros } from '../src/motores/bornes.js';
 import { generarBOM, generarListaConductores } from '../src/motores/documentacion.js';
 import { fondoDe, generarFichaTablero } from '../src/motores/ficha-tablero.js';
 import { montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
+import { calcularBalanceTermico } from '../src/motores/termico.js';
+import { opcionesDe } from '../src/modelo/proyecto.js';
 import { CONTROLADORES } from './controladores.js';
 
 const AZUL: [number, number, number] = [43, 74, 111];
@@ -155,6 +157,9 @@ export function exportarPDF(proyecto: Proyecto): void {
 	const conductores = generarListaConductores(proyecto, ruteo);
 	const planes = generarPlanBorneros(proyecto, potenciales);
 	const ficha = generarFichaTablero(proyecto, ruteo);
+	const termico = calcularBalanceTermico(proyecto);
+	const datos = proyecto.datos ?? {};
+	const opciones = opcionesDe(proyecto);
 
 	const doc = new jsPDF({ unit: 'mm', format: 'a4' });
 	const anchoPag = doc.internal.pageSize.getWidth();
@@ -212,8 +217,16 @@ export function exportarPDF(proyecto: Proyecto): void {
 	doc.setFontSize(15);
 	doc.setFont('helvetica', 'normal');
 	doc.text(proyecto.nombre, 20, 44);
-	doc.setFontSize(9.5);
-	doc.text(`Generado por TableroStudio · ${fecha}`, 20, 54);
+	doc.setFontSize(10);
+	const lineaCliente = [datos.cliente, datos.obra].filter(Boolean).join(' · ');
+	if (lineaCliente) doc.text(lineaCliente, 20, 53, { maxWidth: anchoPag - 40 });
+	doc.setFontSize(9);
+	const pie = [
+		datos.proyectista ? `Proyectista: ${datos.proyectista}` : '',
+		datos.revision ? `Revisión ${datos.revision}` : '',
+		datos.fecha || fecha,
+	].filter(Boolean).join('  ·  ');
+	doc.text(pie, 20, lineaCliente ? 59 : 54);
 
 	// Tarjetas con las cifras que definen el tablero: es lo que se mira primero.
 	doc.setTextColor(0);
@@ -282,6 +295,10 @@ export function exportarPDF(proyecto: Proyecto): void {
 		['Tensiones de trabajo', ficha.tensiones.length ? ficha.tensiones.map((v) => `${v} V`).join(' · ') : '—'],
 		['Fondo libre tras el aparato más profundo', ficha.holguraFondoMm !== undefined ? mm(ficha.holguraFondoMm) : '—'],
 		['Referencias de material distintas', String(bom.length)],
+		['Icc presunta en la acometida', opciones.iccPresuntaKA ? `${opciones.iccPresuntaKA} kA` : 'sin declarar'],
+		['Temperatura ambiente de proyecto', `${opciones.temperaturaAmbienteC} °C`],
+		['Potencia disipada en el interior', termico ? `${termico.disipacionW} W` : '—'],
+		['Temperatura interior estimada', termico ? `${termico.temperaturaInteriorC} °C (+${termico.saltoTermicoK} K)` : '—'],
 		['Verificación eléctrica (DRC)', errores ? `${errores} errores · ${avisos} avisos` : (avisos ? `${avisos} avisos` : 'Sin hallazgos')],
 	];
 	autoTable(doc, {
@@ -447,7 +464,93 @@ export function exportarPDF(proyecto: Proyecto): void {
 		tabla(['Maestro', 'Hoja.col', 'Contacto', 'Tipo', 'Hoja.col'], filas);
 	}
 
-	/* --------------------- 7. Planes de borneros --------------------- */
+	/* --------------------- 7. Balance térmico --------------------- */
+	if (termico) {
+		doc.addPage();
+		cabecera('7. Balance térmico del gabinete');
+		const MONTAJES: Record<string, string> = {
+			mural: 'adosado a pared (cara trasera sin disipar)',
+			exento: 'exento (disipa por todas las caras)',
+			empotrado: 'empotrado entre otros armarios (solo frente y techo)',
+		};
+		autoTable(doc, {
+			startY: y,
+			body: [
+				['Instalación supuesta', MONTAJES[termico.montaje]],
+				['Superficie efectiva de disipación', `${termico.superficieM2.toFixed(2)} m²`],
+				['Potencia disipada en el interior', `${termico.disipacionW} W`],
+				['Densidad de disipación', `${(termico.superficieM2 > 0 ? termico.disipacionW / termico.superficieM2 : 0).toFixed(0)} W/m²`],
+				['Temperatura ambiente de proyecto', `${termico.temperaturaAmbienteC} °C`],
+				['Salto térmico estimado', `+${termico.saltoTermicoK} K`],
+				['Temperatura interior estimada', `${termico.temperaturaInteriorC} °C`],
+			] as [string, string][],
+			theme: 'plain',
+			bodyStyles: { fontSize: 9.5 },
+			columnStyles: { 0: { fontStyle: 'bold', cellWidth: 92, textColor: GRIS }, 1: { cellWidth: 88 } },
+			margin: { left: 12, right: 12 },
+		});
+		// @ts-expect-error autotable añade lastAutoTable
+		y = (doc.lastAutoTable?.finalY ?? y) + 8;
+
+		// El veredicto va en un banner del color de su gravedad: es la línea que decide si el
+		// armario se pide con rejilla, con ventilador o con climatizador.
+		const colorVeredicto: [number, number, number] =
+			termico.veredicto === 'holgado' ? VERDE
+				: termico.veredicto === 'justo' ? [176, 132, 30]
+					: termico.veredicto === 'ventilacion' ? [190, 100, 30] : ROJO;
+		const TITULO_VEREDICTO: Record<string, string> = {
+			holgado: 'Refrigeración natural suficiente',
+			justo: 'Al límite de la refrigeración natural',
+			ventilacion: 'Requiere ventilación forzada',
+			climatizacion: 'Requiere climatización',
+		};
+		doc.setFillColor(...colorVeredicto);
+		doc.rect(12, y, anchoPag - 24, 1.6, 'F');
+		doc.setFillColor(248, 249, 250);
+		doc.setDrawColor(226, 230, 234);
+		doc.rect(12, y + 1.6, anchoPag - 24, 20, 'FD');
+		doc.setFont('helvetica', 'bold');
+		doc.setFontSize(10.5);
+		doc.setTextColor(...colorVeredicto);
+		doc.text(TITULO_VEREDICTO[termico.veredicto], 16, y + 8.5);
+		doc.setFont('helvetica', 'normal');
+		doc.setFontSize(9);
+		doc.setTextColor(...GRIS);
+		doc.text(termico.recomendacion, 16, y + 14.5, { maxWidth: anchoPag - 32 });
+		doc.setTextColor(0);
+		y += 30;
+
+		if (termico.principales.length > 0) {
+			doc.setFont('helvetica', 'bold');
+			doc.setFontSize(11);
+			doc.text('Aparatos que más calientan', 12, y);
+			doc.setFont('helvetica', 'normal');
+			y += 4;
+			tabla(['Aparato', 'Disipación', 'Origen del dato'],
+				termico.principales.map((p) => [
+					p.designacion,
+					`${p.watts} W`,
+					p.estimado ? 'estimada por tipo de aparato' : 'declarada en la ficha del aparato',
+				]), { 0: 50, 1: 28 });
+		}
+
+		// Un cálculo de proyecto no es un ensayo: decirlo evita que el papel se use como
+		// certificado. Y si casi toda la disipación es estimada, el número vale lo que valen
+		// las estimaciones — el cliente tiene que saberlo.
+		const pctDeclarada = Math.round(termico.fraccionDeclarada * 100);
+		doc.setFontSize(8);
+		doc.setTextColor(...GRIS);
+		doc.text(
+			`Estimación por el método simplificado de IEC 60890. ${pctDeclarada} % de la potencia disipada procede de `
+			+ 'datos declarados en la ficha de los aparatos; el resto son valores típicos por tipo. Para una verificación '
+			+ 'formal del calentamiento (IEC 61439-1, apartado 10.10) hay que introducir la disipación de catálogo de cada '
+			+ 'aparato o realizar el ensayo.',
+			12, y, { maxWidth: anchoPag - 24 },
+		);
+		doc.setTextColor(0);
+	}
+
+	/* --------------------- 8. Planes de borneros --------------------- */
 	for (const plan of planes) {
 		doc.addPage();
 		cabecera(`Bornero ${plan.designacion}`);
@@ -456,7 +559,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 				f.numeroConductor || '—', f.puenteCon.join(', ') || '—']));
 	}
 
-	/* --------------------- 8. Verificación DRC --------------------- */
+	/* --------------------- 9. Verificación DRC --------------------- */
 	doc.addPage();
 	cabecera('Verificación eléctrica (DRC)');
 	if (hallazgos.length === 0) {
@@ -469,6 +572,109 @@ export function exportarPDF(proyecto: Proyecto): void {
 			hallazgos.map((h) => [h.severidad === 'error' ? 'ERROR' : 'aviso', h.regla, h.mensaje]),
 			{ 0: 22, 1: 42 });
 	}
+
+	/* ------------- Anexo A · Placa de características IEC 61439 ------------- */
+	doc.addPage();
+	cabecera('Anexo A · Placa de características');
+	doc.setFontSize(9);
+	doc.setTextColor(...GRIS);
+	doc.text(
+		'IEC 61439-1 apartado 6 exige que todo conjunto lleve una placa de características indeleble y visible con el '
+		+ 'montaje terminado. Esta es la placa del tablero con lo que declara el proyecto; los campos marcados «a declarar» '
+		+ 'los completa el fabricante del conjunto antes de la entrega.',
+		12, y, { maxWidth: anchoPag - 24 },
+	);
+	doc.setTextColor(0);
+	y += 16;
+
+	const SIN = 'a declarar';
+	const tensionMax = ficha.tensiones.length ? Math.max(...ficha.tensiones) : undefined;
+	// Ui y Uimp no se inventan: se toma el escalón normalizado inmediatamente por encima de la
+	// tensión de empleo, que es lo que hace un proyectista, y se marca como valor propuesto.
+	const ui = tensionMax === undefined ? undefined : tensionMax <= 250 ? 500 : tensionMax <= 500 ? 690 : 1000;
+	const uimp = tensionMax === undefined ? undefined : tensionMax <= 250 ? 4 : 6;
+	const camposPlaca: [string, string][] = [
+		['Fabricante del conjunto', datos.fabricante || SIN],
+		['Designación de tipo', proyecto.nombre],
+		['Número de serie / identificación', SIN],
+		['Fecha de fabricación', SIN],
+		['Norma de referencia', 'IEC 61439-2'],
+		['Tensión asignada de empleo  Ue', tensionMax !== undefined ? `${tensionMax} V` : SIN],
+		['Tensión asignada de aislamiento  Ui', ui !== undefined ? `${ui} V (propuesto)` : SIN],
+		['Tensión soportada a impulsos  Uimp', uimp !== undefined ? `${uimp} kV (propuesto)` : SIN],
+		['Frecuencia asignada', `${opciones.frecuenciaHz} Hz`],
+		['Corriente asignada del conjunto  InA', opciones.corrienteAsignadaA ? `${opciones.corrienteAsignadaA} A` : SIN],
+		['Corriente de cortocircuito presunta  Icp', opciones.iccPresuntaKA ? `${opciones.iccPresuntaKA} kA` : SIN],
+		['Factor de diversidad  RDF', SIN],
+		['Grado de protección', opciones.gradoIP || SIN],
+		['Régimen de neutro', opciones.regimenNeutro || SIN],
+		['Uso previsto', 'Interior'],
+		['Temperatura ambiente de proyecto', `${opciones.temperaturaAmbienteC} °C`],
+		['Temperatura interior estimada', termico ? `${termico.temperaturaInteriorC} °C` : SIN],
+		['Dimensiones (an × al × f)', ficha.caja ? `${mm(ficha.caja.ancho)} × ${mm(ficha.caja.alto)} × ${mm(ficha.caja.profundidad)}` : SIN],
+		['Masa', SIN],
+		['Forma de separación interna', SIN],
+	];
+
+	// La placa se dibuja a tamaño de impresión para poderla recortar y pegar en la puerta.
+	const placaX = 12;
+	const placaAncho = anchoPag - 24;
+	const altoFila = 6.6;
+	const altoPlaca = 20 + camposPlaca.length * altoFila + 8;
+	doc.setDrawColor(...AZUL);
+	doc.setLineWidth(0.8);
+	doc.rect(placaX, y, placaAncho, altoPlaca);
+	doc.setFillColor(...AZUL);
+	doc.rect(placaX, y, placaAncho, 13, 'F');
+	doc.setTextColor(255);
+	doc.setFont('helvetica', 'bold');
+	doc.setFontSize(11);
+	doc.text('CONJUNTO DE APARAMENTA DE BAJA TENSIÓN', placaX + 5, y + 6);
+	doc.setFont('helvetica', 'normal');
+	doc.setFontSize(8);
+	doc.text('IEC 61439-1 / IEC 61439-2', placaX + 5, y + 10.6);
+	doc.setTextColor(0);
+
+	let fy = y + 19;
+	doc.setFontSize(8.5);
+	for (const [campo, valor] of camposPlaca) {
+		const pendiente = valor === SIN;
+		doc.setTextColor(...GRIS);
+		doc.text(campo, placaX + 5, fy);
+		const finCampo = placaX + 7 + doc.getTextWidth(campo);
+		doc.setFont('helvetica', pendiente ? 'italic' : 'bold');
+		doc.setTextColor(...(pendiente ? ROJO : [20, 24, 28] as [number, number, number]));
+		// El ancho se mide con la MISMA tipografía con la que se dibuja, o el filete se solapa.
+		const inicioValor = placaX + placaAncho - 8 - doc.getTextWidth(valor);
+		doc.text(valor, placaX + placaAncho - 5, fy, { align: 'right' });
+		doc.setFont('helvetica', 'normal');
+		// Filete entre campo y valor: se lee la fila sin perder el renglón.
+		if (inicioValor > finCampo + 3) {
+			doc.setDrawColor(228, 232, 236);
+			doc.setLineWidth(0.2);
+			doc.line(finCampo, fy - 1.1, inicioValor, fy - 1.1);
+		}
+		fy += altoFila;
+	}
+	doc.setTextColor(0);
+	y += altoPlaca + 8;
+
+	const pendientes = camposPlaca.filter(([, v]) => v === SIN).length;
+	doc.setFontSize(8);
+	doc.setTextColor(...(pendientes ? ROJO : VERDE));
+	doc.text(
+		pendientes
+			? `Quedan ${pendientes} campos por declarar antes de que la placa sea válida.`
+			: 'Todos los campos de la placa están declarados.',
+		12, y,
+	);
+	doc.setTextColor(...GRIS);
+	doc.text(
+		'Los valores marcados «propuesto» salen de la tensión de empleo del proyecto y hay que confirmarlos contra la '
+		+ 'coordinación de aislamiento real. Esta placa no sustituye a la verificación de diseño de IEC 61439-1 capítulo 10.',
+		12, y + 5, { maxWidth: anchoPag - 24 },
+	);
+	doc.setTextColor(0);
 
 	/* --------------------- Pie de página en todas --------------------- */
 	const paginas = doc.getNumberOfPages();

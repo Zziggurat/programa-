@@ -36,6 +36,8 @@ export interface OpcionesEsquema {
 	papel?: string;
 	/** Datos del cajetín (rótulo) de la esquina inferior derecha. */
 	proyecto?: string;
+	/** Cliente, obra, proyectista y revisión: lo que hace seguible un plano en obra. */
+	datos?: { cliente?: string; obra?: string; proyectista?: string; revision?: string; fecha?: string };
 	totalHojas?: number;
 	/** Resalta un aparato (el seleccionado en el resto del programa). */
 	resaltado?: string;
@@ -62,22 +64,50 @@ function pintarRejilla(hoja: HojaEsq, tinta: string, suave: string): string {
 	return partes.join('');
 }
 
-/** Cajetín inferior derecho con el nombre del proyecto, el título de la hoja y su número. */
+/**
+ * Cajetín inferior derecho. Un cajetín profesional no lleva solo el título: lleva quién es
+ * el cliente, qué obra es, quién lo dibujó, en qué revisión va y de qué fecha es. Sin eso
+ * no se puede seguir un plano en obra ni saber si el que tienes en la mano es el vigente.
+ */
 function pintarCajetin(hoja: HojaEsq, o: OpcionesEsquema, tinta: string, suave: string): string {
-	const ancho = 120;
-	const alto = 24;
+	const ancho = 180;
+	const alto = 26;
 	const x = hoja.anchoMm - MARGEN.der - ancho;
-	const y = hoja.altoMm - MARGEN.abajo + 3;
+	const y = hoja.altoMm - MARGEN.abajo + 1;
+	const d = o.datos ?? {};
+	const col2 = x + 96;   // segunda columna del cajetín
+	const col3 = x + ancho - 34;
+	const campo = (cx: number, cy: number, rotulo: string, valor: string, ancho: number) => [
+		`<text x="${n(cx)}" y="${n(cy)}" font-size="2.3" fill="${suave}" font-family="system-ui, sans-serif">${esc(rotulo)}</text>`,
+		`<text x="${n(cx)}" y="${n(cy + 4)}" font-size="3.2" fill="${tinta}" font-family="system-ui, sans-serif">`
+			+ `${esc(recortar(valor || '—', ancho))}</text>`,
+	].join('');
 	return [
 		`<rect x="${n(x)}" y="${n(y)}" width="${ancho}" height="${alto}" fill="none" stroke="${tinta}" stroke-width="0.5"/>`,
 		`<line x1="${n(x)}" y1="${n(y + 9)}" x2="${n(x + ancho)}" y2="${n(y + 9)}" stroke="${tinta}" stroke-width="0.3"/>`,
-		`<line x1="${n(x + ancho - 30)}" y1="${n(y + 9)}" x2="${n(x + ancho - 30)}" y2="${n(y + alto)}" stroke="${tinta}" stroke-width="0.3"/>`,
-		`<text x="${n(x + 3)}" y="${n(y + 6.2)}" font-size="4" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${esc(o.proyecto ?? 'TableroStudio')}</text>`,
-		`<text x="${n(x + 3)}" y="${n(y + 16)}" font-size="3.4" fill="${tinta}" font-family="system-ui, sans-serif">${esc(hoja.titulo)}</text>`,
-		`<text x="${n(x + 3)}" y="${n(y + 21)}" font-size="2.6" fill="${suave}" font-family="system-ui, sans-serif">Esquema según IEC 60617</text>`,
-		`<text x="${n(x + ancho - 15)}" y="${n(y + 15)}" font-size="3" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">Hoja</text>`,
-		`<text x="${n(x + ancho - 15)}" y="${n(y + 21)}" font-size="4.5" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${hoja.numero}${o.totalHojas ? ` / ${o.totalHojas}` : ''}</text>`,
+		`<line x1="${n(x)}" y1="${n(y + 17.5)}" x2="${n(x + ancho)}" y2="${n(y + 17.5)}" stroke="${tinta}" stroke-width="0.3"/>`,
+		`<line x1="${n(col2)}" y1="${n(y + 9)}" x2="${n(col2)}" y2="${n(y + alto)}" stroke="${tinta}" stroke-width="0.3"/>`,
+		`<line x1="${n(col3)}" y1="${n(y)}" x2="${n(col3)}" y2="${n(y + alto)}" stroke="${tinta}" stroke-width="0.3"/>`,
+		// Franja superior: proyecto y nº de hoja.
+		`<text x="${n(x + 3)}" y="${n(y + 6.3)}" font-size="4" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${esc(recortar(o.proyecto ?? 'TableroStudio', 44))}</text>`,
+		`<text x="${n(col3 + 17)}" y="${n(y + 3.4)}" font-size="2.3" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">HOJA</text>`,
+		`<text x="${n(col3 + 17)}" y="${n(y + 8.6)}" font-size="4.6" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${hoja.numero}${o.totalHojas ? ` / ${o.totalHojas}` : ''}</text>`,
+		campo(x + 3, y + 12.4, 'CLIENTE', d.cliente ?? '', 40),
+		campo(col2 + 3, y + 12.4, 'OBRA', d.obra ?? '', 34),
+		campo(x + 3, y + 21, 'DIBUJÓ', d.proyectista ?? '', 40),
+		campo(col2 + 3, y + 21, 'FECHA', d.fecha ?? '', 34),
+		`<text x="${n(col3 + 17)}" y="${n(y + 15.5)}" font-size="2.3" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">REV.</text>`,
+		`<text x="${n(col3 + 17)}" y="${n(y + 21)}" font-size="4.6" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${esc(d.revision || '—')}</text>`,
+		// La nota de normas va FUERA de la casilla, a la izquierda del cajetín. Dentro caía justo
+		// encima de los valores de DIBUJÓ y FECHA (la tercera franja ya está ocupada por ellos) y
+		// tapaba el nombre del proyectista, que es de lo poco que nadie puede permitirse no leer.
+		`<text x="${n(MARGEN.izq)}" y="${n(y + alto - 1.2)}" font-size="2.4" fill="${suave}" font-family="system-ui, sans-serif">Símbolos IEC 60617 · Conjunto según IEC 61439-1/-2</text>`,
 	].join('');
+}
+
+/** Recorta un texto para que no se salga de su casilla del cajetín. */
+function recortar(t: string, maxCaracteres: number): string {
+	return t.length <= maxCaracteres ? t : `${t.slice(0, maxCaracteres - 1)}…`;
 }
 
 /** Dibuja una hoja completa y devuelve el SVG como texto. */

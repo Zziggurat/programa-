@@ -8,20 +8,22 @@ totalmente personalizable.
 ## Qué hace ya (núcleo v0.1)
 
 El núcleo es una librería TypeScript **sin interfaz gráfica**, con un modelo de datos JSON y
-ocho motores independientes y testeados:
+once motores independientes y testeados:
 
 | Motor | Archivo | Qué resuelve |
 |---|---|---|
 | Potenciales | `src/motores/potenciales.ts` | Clases de equivalencia de bornes conectados (union-find): la base de todo lo demás |
 | Numeración IEC | `src/motores/numeracion.ts` | Designaciones IEC 81346 (`=función+ubicación-K1`) con plantillas, secuencias y congelamiento; numeración de conductores por potencial |
 | Referencias cruzadas | `src/motores/referencias.ts` | Bobina ↔ contactos con la posición `hoja.columna` que sale del esquema realmente montado, índice de dispositivos |
-| DRC | `src/motores/drc.ts` | 11 reglas de detección de errores eléctricos: cortocircuitos, designaciones duplicadas, exceso de conductores por borne, conflictos de tensión, esclavos huérfanos, coordinación protección↔sección, caída de tensión, puesta a tierra, llenado de canaleta… |
+| DRC | `src/motores/drc.ts` | 14 reglas de detección de errores eléctricos: cortocircuitos, designaciones duplicadas, exceso de conductores por borne, conflictos de tensión, esclavos huérfanos, coordinación protección↔sección, caída de tensión, puesta a tierra, llenado de canaleta, **poder de corte frente a la Icc presunta**, **calentamiento del armario**… |
 | Listas de bornes | `src/motores/bornes.ts` | Plan de bornero de taller: borna, lado interno/externo, puentes, número de conductor |
 | Ruteo de cables | `src/motores/ruteo.ts` | Ruteo automático por canaletas (Dijkstra sobre el grafo de ductos), longitudes reales en mm con reserva, ocupación de canaletas |
 | Sincronización | `src/motores/sincronizacion.ts` | Esquema ↔ placa de montaje: faltantes, sobrantes, solapes, fuera de placa |
 | Documentación | `src/motores/documentacion.ts` | BOM, lista de conductores, planes de borneros, informe HTML completo, exportación CSV |
 | Terminales | `src/motores/terminales.ts` | Geometría de las borneras declaradas por ficha de datos: es la única fuente de verdad que comparten el modelo 3D y el anclaje de los cables |
 | Ficha del tablero | `src/motores/ficha-tablero.ts` | Las cifras del conjunto: recuento de aparatos por familia, medidas de caja y placa, metros de riel y canaleta, cable por sección, ocupación de la placa |
+| Balance térmico | `src/motores/termico.ts` | Temperatura interior del armario por el método simplificado de IEC 60890: disipación de cada aparato, superficie efectiva según el montaje y veredicto (natural / rejilla / ventilador / climatizador) |
+| Apertura de archivo | `src/modelo/cargar.ts` | Validación real del proyecto que se abre, reparación de lo recuperable (cables huérfanos, colocaciones fantasma) y punto de enganche para migrar formatos antiguos |
 
 ## Cómo ver y probar el programa
 
@@ -56,8 +58,8 @@ npm run ejemplo # genera la documentación de un tablero real en ejemplo/salida/
 
 ### Pruebas automáticas del editor (`qa/`)
 
-Además de los tests del núcleo, hay tres suites que manejan el editor 3D de verdad
-(con un navegador) y comprueban lo que ve el usuario:
+Además de los tests del núcleo, hay varias suites que manejan el editor 3D de verdad
+(con un navegador) y comprueban lo que ve el usuario. `npm run qa` las encadena todas:
 
 | Suite | Qué verifica |
 |---|---|
@@ -70,9 +72,13 @@ Además de los tests del núcleo, hay tres suites que manejan el editor 3D de ve
 | `npm run qa:riel` | El riel arrastra sus aparatos, y si chocan vuelve todo a su sitio |
 | `npm run qa:nuevas` | Biblioteca de ejemplos con su explicación y modo Visualización |
 | `npm run qa:estres` | Decenas de operaciones al azar verificando los invariantes tras cada una |
+| `npm run qa:empaquetado` | **El archivo que se entrega**: abre `dist-final/TableroStudio.html` con `file://`, sin servidor, y comprueba que arranca, que se puede trabajar y que salen el dossier y el proyecto guardado |
 
 Se apoyan en una sonda que solo existe abriendo la página con `?qa=1`; en el uso normal
-del programa no se define nada.
+del programa no se define nada. La única que no la usa es `qa:empaquetado`: el build que se
+entrega borra la sonda a propósito, así que esa suite comprueba todo por el DOM — exactamente
+lo que ve el usuario. Va aparte de `npm run qa` porque reconstruye la aplicación en modo
+entrega, sin el andamiaje de las pruebas.
 
 ### Editor 3D (`app/`)
 
@@ -220,6 +226,16 @@ dibuja igual, con sus borneras y listo para cablear.
    (XML, licencia libre) a SVG/JSON para no dibujar nada desde cero.
 4. **v0.4 — Cables multiconductor y mangueras**: agrupar conductores de campo en cables
    `W`, calcular longitudes al campo con puntos de paso.
-5. **v0.5 — Exportaciones**: PDF del dossier completo, DXF del gabinete
-   (en `sources/createdxf.cpp` de QET hay una referencia de cómo escribir DXF a mano).
-6. **v1.0 — Empaquetado** como aplicación de escritorio (Tauri/Electron).
+5. ~~v0.5 — Exportaciones~~ ✔ dossier PDF fiel al tablero (con plano de la placa a escala,
+   balance térmico y placa de características IEC 61439), esquema en PDF/SVG con cajetín,
+   rótulos de bornes y DXF de placa y esquema.
+6. **v1.0 — Empaquetado** como aplicación de escritorio (Tauri/Electron). El archivo único
+   `dist-final/TableroStudio.html` ya funciona sin servidor ni internet, y lo verifica
+   `npm run qa:empaquetado`.
+
+### Deuda técnica conocida
+
+- `app/main.ts` pasa de las 3.900 líneas y concentra escena, interacción, paneles y diálogos.
+  Partirlo en módulos no cambia nada de lo que se entrega —el empaquetado es un único archivo
+  con `inlineDynamicImports`, así que dividir no reduce el bundle— pero sí el coste de tocarlo.
+  Pendiente de hacer con la batería de QA en verde como red, no a última hora antes de entregar.

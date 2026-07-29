@@ -37,12 +37,32 @@ const LIBRE = { x0: 320, x1: 966, y0: 60, y1: 782 };
 const enZona = (p) => p && p.x > LIBRE.x0 && p.x < LIBRE.x1 && p.y > LIBRE.y0 && p.y < LIBRE.y1;
 const trazadoDe = async (id) => JSON.stringify((await proyecto()).conductores.find((c) => c.id === id)?.trazado ?? null);
 
+/**
+ * Espera a que la cámara deje de moverse.
+ *
+ * Los controles llevan amortiguación: al soltar el ratón la cámara sigue frenando sola durante
+ * unos cuantos fotogramas. Si la prueba calcula el píxel de un cable y pincha ahí sin esperar,
+ * está apuntando a una escena y pinchando en otra, y un cable fino se le escapa por un píxel.
+ */
+async function esperarCamaraQuieta(maximoMs = 6000) {
+	let antes = await qa('camara');
+	const hasta = Date.now() + maximoMs;
+	while (Date.now() < hasta) {
+		await page.waitForTimeout(120);
+		const ahora = await qa('camara');
+		const quieta = Object.keys(ahora).every((k) => Math.abs(ahora[k] - antes[k]) < 0.02);
+		if (quieta) return;
+		antes = ahora;
+	}
+}
+
 /** Gira la cámara arrastrando con el botón izquierdo sobre una zona vacía del lienzo. */
 async function girarCamara(dx, dy) {
 	const x = LIBRE.x1 - 30, y = LIBRE.y0 + 30; // esquina superior derecha del lienzo: sin aparatos
 	await page.mouse.move(x, y); await page.mouse.down(); await page.waitForTimeout(30);
 	for (let k = 1; k <= 5; k++) { await page.mouse.move(x + (dx * k) / 5, y + (dy * k) / 5); await page.waitForTimeout(25); }
-	await page.mouse.up(); await page.waitForTimeout(250);
+	await page.mouse.up();
+	await esperarCamaraQuieta();
 }
 
 /**
@@ -52,7 +72,7 @@ async function girarCamara(dx, dy) {
  */
 async function intentarAgarrar(id) {
 	const antes = await trazadoDe(id);
-	const p = await qa('puntoParaAgarrar', id, 21, LIBRE);
+	const p = await qa('puntoParaAgarrar', id, 31, LIBRE);
 	if (!enZona(p)) return { movido: false, sinPuntos: true };
 
 	// 1) Señalarlo y pinchar tiene que SELECCIONAR ese cable y no otro.
@@ -64,7 +84,7 @@ async function intentarAgarrar(id) {
 	// 2) Doble clic crea la unión donde se ha señalado (es como se ordena un cable ahora).
 	// Se vuelve a apuntar: seleccionar el cable redibuja la escena y el punto de antes puede
 	// haber quedado obsoleto, sobre todo con la cámara girada.
-	const p2 = (await qa('puntoParaAgarrar', id, 21, LIBRE)) ?? p;
+	const p2 = (await qa('puntoParaAgarrar', id, 31, LIBRE)) ?? p;
 	await page.mouse.dblclick(p2.x, p2.y); await page.waitForTimeout(350);
 	const idx = ((await proyecto()).conductores.find((c) => c.id === id)?.trazado ?? []).length - 1;
 	if (idx < 0) return { movido: false, sinUnion: true };
@@ -86,6 +106,7 @@ async function tableroLimpio() {
 	await cargarEjemplo();
 	await jsClick('modo-trabajo'); await page.waitForTimeout(300);
 	await jsClick('btn-centrar'); await page.waitForTimeout(400);
+	await esperarCamaraQuieta();   // centrar también deja la cámara frenando
 }
 
 /** Carga el tablero de control de la biblioteca (el que usan estas comprobaciones). */

@@ -30,13 +30,34 @@
 		display: flex; align-items: center; gap: 8px; padding: 0 12px;
 		background: var(--panel); border-bottom: 1px solid var(--borde);
 		/* Sin overflow: recortaba los menús desplegables y sacaba una barra de scroll fea.
-		   Lo que sobra se resuelve encogiendo los botones, no cortando la barra. */
+		   Y sin encoger los botones: encogerlos los dejaba en «N…», «G…», ilegibles en un
+		   portátil. Lo que cede es el nombre del proyecto (un campo de texto aguanta bien
+		   ser estrecho) y, si aún no cabe, los rótulos de los botones dejan paso al icono. */
 	}
 	#barra .marca { font-weight: 700; font-size: 14px; letter-spacing: .01em; }
 	#barra .marca span { color: var(--acento); }
+	/* Estado del guardado: el usuario tiene que poder saber de un vistazo si su trabajo
+	   está a salvo. En silencio es como se pierde una tarde entera. */
+	/* El chip cambia de texto según el estado, así que cambia de ancho y puede desbordar la
+	   barra. Se le deja ceder y recortar antes que empujar a las herramientas fuera de la
+	   pantalla: el punto de color y el tooltip siguen diciendo lo que pasa. */
+	#estado-guardado {
+		font-size: 11.5px; color: var(--texto-suave); white-space: nowrap;
+		display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px;
+		border-radius: 999px; border: 1px solid transparent;
+		overflow: hidden; text-overflow: ellipsis;
+	}
+	/* Más específico que `#barra > *`, que va más abajo y si no lo dejaría en `flex: 0 0 auto`. */
+	#barra #estado-guardado { flex: 0 1 auto; min-width: 0; }
+	#estado-guardado::before { content: '●'; font-size: 8px; color: var(--ok); }
+	#estado-guardado.sucio::before { color: var(--aviso); }
+	#estado-guardado.fallo { color: var(--error); border-color: #6b3232; background: #2a1c1c; }
+	#estado-guardado.fallo::before { color: var(--error); }
 	#nombre-proyecto {
 		background: transparent; border: 1px solid transparent; border-radius: 7px;
-		color: var(--texto); padding: 5px 8px; width: 300px;
+		color: var(--texto); padding: 5px 8px;
+		/* El ÚNICO elemento elástico de la barra: absorbe el sobrante y se encoge primero. */
+		flex: 1 1 260px; min-width: 90px; max-width: 340px;
 	}
 	#nombre-proyecto:hover, #nombre-proyecto:focus { border-color: var(--borde); background: var(--panel-2); outline: none; }
 	#barra .sep { flex: 1; }
@@ -56,6 +77,15 @@
 	.rejilla-botones { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
 	.rejilla-botones .boton { padding: 7px 4px; font-size: 12px; }
 	#panel-der .ancho-total { width: 100%; box-sizing: border-box; }
+	/* Ficha del aparato: dos columnas de campos cortos, que es como se lee una placa. */
+	.ficha-aparato { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 8px; margin-bottom: 4px; }
+	.ficha-aparato label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--texto-suave); }
+	.ficha-aparato label.ancho-2 { grid-column: 1 / -1; }
+	.ficha-aparato input, .ficha-aparato select {
+		background: var(--panel-2); border: 1px solid var(--borde); border-radius: 7px;
+		color: var(--texto); padding: 5px 7px; font-size: 12.5px; width: 100%; box-sizing: border-box;
+	}
+	.ficha-aparato input:focus, .ficha-aparato select:focus { outline: none; border-color: var(--acento); }
 	#chip-drc { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 12px; border: 1px solid var(--borde); background: var(--panel-2); white-space: nowrap; flex: none; color: var(--texto); cursor: pointer; font: inherit; }
 	#chip-drc:hover { border-color: #4a5766; background: #22282f; }
 	/* Menú «Aprender»: agrupa guía, ejemplos y explicación para no llenar la barra de botones. */
@@ -68,12 +98,46 @@
 		color: var(--texto); padding: 8px 10px; border-radius: 7px; font-size: 13px; }
 	.menu .lista button:hover { background: var(--panel-2); }
 	.menu .lista small { display: block; color: var(--texto-suave); font-size: 11.5px; margin-top: 1px; }
-	#barra > * { flex: 0 1 auto; min-width: 0; }
-	#barra .boton { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	/* Nada de la barra se encoge salvo el nombre del proyecto: un botón encogido se
+	   convierte en puntos suspensivos y deja de decir qué hace. */
+	#barra > * { flex: 0 0 auto; }
+	#barra .boton { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+	#barra .boton.icono { padding: 6px 9px; }
+	#barra .empuje { flex: 1 1 0; min-width: 8px; }
 	#modos, #chip-drc, .menu { flex: none; }
+	/* En pantallas justas los botones se quedan en su icono; el tooltip y la etiqueta
+	   accesible siguen diciendo lo que son.
+	   El corte son 1745 px y no un número redondo: medido, la barra con TODOS los rótulos
+	   necesita 1741 px. Con el corte en 1500 había una franja de 1501 a 1740 —donde caen
+	   1536, 1600 y 1680, anchos de portátil de lo más común— en la que los rótulos aparecían
+	   pero no cabían, y la barra desbordaba. Lo comprueba `qa/correcciones.mjs` a varios anchos. */
+	@media (max-width: 1745px) { #barra .rotulo-boton { display: none; } }
+	/* Más justo todavía: se aprieta el espaciado y el nombre del proyecto cede casi todo. */
+	@media (max-width: 1330px) {
+		#barra { gap: 5px; padding: 0 8px; }
+		#barra .boton { padding: 6px 9px; }
+		#nombre-proyecto { flex: 1 1 90px; max-width: 190px; }
+		#estado-guardado { padding: 3px 6px; }
+	}
+	/* Pantallas pequeñas: la marca y el estado dejan sitio a las herramientas. */
+	@media (max-width: 1120px) {
+		#barra .marca span, #estado-guardado { display: none; }
+	}
 	#chip-drc .punto { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
 	#chip-drc.con-errores .punto { background: var(--error); }
 	#chip-drc.con-avisos .punto { background: var(--aviso); }
+
+	/* Veredicto térmico: el color dice de un vistazo si el armario se pide con rejilla o con clima */
+	.veredicto-termico { border-left: 3px solid var(--ok); padding: 7px 10px; border-radius: 0 8px 8px 0;
+		background: var(--panel-2); margin-bottom: 9px; line-height: 1.45; }
+	.veredicto-termico b { display: block; margin-bottom: 2px; color: var(--ok); }
+	.veredicto-termico .porque { color: var(--texto-suave); font-size: 12.5px; }
+	.veredicto-termico.justo { border-left-color: var(--aviso); }
+	.veredicto-termico.justo b { color: var(--aviso); }
+	.veredicto-termico.ventilacion { border-left-color: #e08a3c; }
+	.veredicto-termico.ventilacion b { color: #e08a3c; }
+	.veredicto-termico.climatizacion { border-left-color: var(--error); }
+	.veredicto-termico.climatizacion b { color: var(--error); }
 
 	/* ---- Paneles ---- */
 	.panel {
@@ -184,15 +248,15 @@
 	#bienvenida .pasos b { color: var(--acento); }
 
 	/* Modal de ayuda */
-	#modal-drc, #modal-controlador { position: fixed; inset: 0; z-index: 46; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
-	#modal-drc .caja-modal, #modal-controlador .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 24px 28px; max-width: 720px; width: 100%; max-height: 82vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
-	#modal-drc .cerrar, #modal-controlador .cerrar { position: absolute; top: 14px; right: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px; height: 30px; border-radius: 8px; }
-	#modal-drc h2, #modal-controlador h2 { margin: 0 0 4px; font-size: 20px; }
+	#modal-drc, #modal-controlador, #modal-proyecto { position: fixed; inset: 0; z-index: 46; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-drc .caja-modal, #modal-controlador .caja-modal, #modal-proyecto .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 24px 28px; max-width: 720px; width: 100%; max-height: 82vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
+	#modal-drc .cerrar, #modal-controlador .cerrar, #modal-proyecto .cerrar { position: absolute; top: 14px; right: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px; height: 30px; border-radius: 8px; }
+	#modal-drc h2, #modal-controlador h2, #modal-proyecto h2 { margin: 0 0 4px; font-size: 20px; }
 	.rejilla-ctrl { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; }
 	.rejilla-ctrl label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--texto-suave); }
-	.rejilla-ctrl input { padding: 7px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 13px; }
+	.rejilla-ctrl input, .rejilla-ctrl select { padding: 7px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 13px; }
 	#modal-controlador code { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 5px; padding: 1px 5px; }
-	#modal-controlador .sub, #modal-ejemplos .sub { color: var(--texto-suave); font-size: 12.5px; margin: 2px 0 12px; }
+	#modal-controlador .sub, #modal-proyecto .sub, #modal-ejemplos .sub { color: var(--texto-suave); font-size: 12.5px; margin: 2px 0 12px; }
 	#ctrl-aviso { color: #ff9d9d; margin-top: 12px; }
 	#modal-drc .pie { color: var(--texto-suave); font-size: 12.5px; margin-top: 14px; border-top: 1px solid var(--borde); padding-top: 12px; }
 	#drc-detalle { list-style: none; margin: 12px 0 0; padding: 0; }
@@ -303,42 +367,53 @@
 <header id="barra">
 	<div class="marca">⚡ Tablero<span>Studio</span></div>
 	<input id="nombre-proyecto" title="Nombre del proyecto">
+	<span id="estado-guardado" title="Estado del guardado automático">Guardado</span>
 	<div id="modos" title="Editor: armar y modificar la caja. Trabajo: solo cablear y verificar (nada se mueve).">
 		<button id="modo-editor" class="activo">🔧 Editor</button>
 		<button id="modo-trabajo">🔌 Trabajo</button>
 	</div>
-	<button class="boton" id="btn-deshacer" title="Deshacer (Ctrl+Z)">↶</button>
-	<button class="boton" id="btn-rehacer" title="Rehacer (Ctrl+Y)">↷</button>
-	<button class="boton" id="btn-centrar" title="Centrar la vista (si te pierdes girando la cámara)">🏠 Centrar</button>
-	<button class="boton" id="btn-ver" title="Modo Visualización: ver el tablero como quedaría de verdad, con la puerta abierta y sin transparencias (no se puede editar)">👁️ Ver</button>
-	<button class="boton" id="btn-esquema" title="Esquema eléctrico (mando y potencia): el plano que se entrega al cliente y usa el electricista">📐 Esquema</button>
+	<button class="boton icono" id="btn-deshacer" aria-label="Deshacer" title="Deshacer (Ctrl+Z)">↶</button>
+	<button class="boton icono" id="btn-rehacer" aria-label="Rehacer" title="Rehacer (Ctrl+Y)">↷</button>
+	<div class="sep"></div>
+	<button class="boton" id="btn-centrar" aria-label="Centrar la vista" title="Centrar la vista (si te pierdes girando la cámara)">🏠<span class="rotulo-boton">Centrar</span></button>
+	<button class="boton" id="btn-ver" aria-label="Modo Visualización" title="Modo Visualización: ver el tablero como quedaría de verdad, con la puerta abierta y sin transparencias (no se puede editar)">👁️<span class="rotulo-boton">Ver</span></button>
+	<button class="boton" id="btn-esquema" aria-label="Esquema eléctrico" title="Esquema eléctrico (mando y potencia): el plano que se entrega al cliente y usa el electricista">📐<span class="rotulo-boton">Esquema</span></button>
+	<button class="boton" id="btn-imagen" aria-label="Añadir imagen de referencia" title="Añadir una imagen (foto de gabinete, controlador, motor…) como referencia visual para cablear sobre ella">🖼️<span class="rotulo-boton">Imagen</span></button>
+	<input type="file" id="archivo-imagen" accept="image/*" hidden>
 	<div class="sep"></div>
 	<button id="chip-drc" title="Verificación eléctrica en vivo — clic para ver el detalle"><span class="punto"></span><span id="chip-drc-texto">DRC</span></button>
+
+	<div class="empuje"></div>
+
+	<div class="menu" id="menu-archivo">
+		<button class="boton" id="btn-archivo" aria-label="Archivo" title="Nuevo, abrir, guardar y plantillas">📁<span class="rotulo-boton">Archivo</span> ▾</button>
+		<div class="lista">
+			<button id="btn-nuevo">🆕 Nuevo tablero<small>Vaciar la placa y empezar de cero</small></button>
+			<button id="btn-abrir">📂 Abrir proyecto…<small>Un archivo .tablero.json guardado antes</small></button>
+			<button id="btn-guardar">💾 Guardar proyecto<small>Descarga el archivo a tu equipo</small></button>
+			<button id="btn-plantilla">📐 Guardar como plantilla<small>Reutilizar este tablero en el próximo trabajo</small></button>
+			<button id="btn-datos-proyecto">📇 Datos del proyecto…<small>Cliente, obra, proyectista y revisión</small></button>
+		</div>
+	</div>
+	<input type="file" id="archivo-abrir" accept=".json" hidden>
 	<div class="menu" id="menu-aprender">
-		<button class="boton" id="btn-aprender" title="Guía, ejemplos y explicación del tablero abierto">❓ Aprender ▾</button>
+		<button class="boton" id="btn-aprender" aria-label="Aprender" title="Guía, ejemplos y explicación del tablero abierto">❓<span class="rotulo-boton">Aprender</span> ▾</button>
 		<div class="lista">
 			<button id="btn-ayuda">❓ Guía rápida<small>Cómo se usa el programa, paso a paso</small></button>
 			<button id="btn-ejemplos">📚 Tableros de ejemplo<small>Montajes reales explicados para estudiar</small></button>
 			<button id="btn-explicacion" hidden>📖 Cómo funciona este tablero<small>Qué hace el tablero que tienes abierto</small></button>
 		</div>
 	</div>
-	<button class="boton" id="btn-imagen" title="Añadir una imagen (foto de gabinete, controlador, motor…) como referencia visual para cablear sobre ella">🖼️ Imagen</button>
-	<input type="file" id="archivo-imagen" accept="image/*" hidden>
-	<button class="boton" id="btn-nuevo" title="Vaciar la placa y empezar de cero">Nuevo</button>
-	<button class="boton" id="btn-abrir" title="Abrir un proyecto .tablero.json">Abrir…</button>
-	<input type="file" id="archivo-abrir" accept=".json" hidden>
-	<button class="boton" id="btn-guardar" title="Descargar el proyecto como archivo">Guardar</button>
 	<div class="menu" id="menu-exportar">
-		<button class="boton" id="btn-exportar" title="Entregables: dossier, rótulos y DXF">📤 Entregar ▾</button>
+		<button class="boton" id="btn-exportar" aria-label="Entregar" title="Entregables: dossier, rótulos y DXF">📤<span class="rotulo-boton">Entregar</span> ▾</button>
 		<div class="lista">
 			<button id="btn-dossier">📋 Dossier HTML<small>Materiales, cables, borneros y verificación</small></button>
-			<button id="btn-plantilla">💾 Guardar como plantilla<small>Reutilizar este tablero en el próximo trabajo</small></button>
 			<button id="btn-etiquetas">🏷️ Rótulos de bornes (PDF)<small>Tiras a tamaño real para la impresora</small></button>
 			<button id="btn-dxf-placa">📐 Placa de montaje (DXF)<small>Para AutoCAD, LibreCAD, QCAD…</small></button>
 			<button id="btn-dxf-esquema">📐 Esquema (DXF)<small>La hoja de esquema abierta, en CAD</small></button>
 		</div>
 	</div>
-	<button class="boton primario" id="btn-pdf" title="Exportar a PDF con la lista de materiales y toda la documentación">📄 Exportar PDF</button>
+	<button class="boton primario" id="btn-pdf" aria-label="Exportar el dossier a PDF" title="Exportar a PDF con la lista de materiales y toda la documentación">📄<span class="rotulo-boton">Exportar</span> PDF</button>
 </header>
 
 <div id="escena"></div>
@@ -389,6 +464,16 @@
 		<summary>Cableado</summary>
 		<div class="contenido">
 			<div id="resumen-cables" style="color:var(--texto-suave)"></div>
+		</div>
+	</details>
+	<details id="seccion-termico">
+		<summary>Balance térmico</summary>
+		<div class="contenido">
+			<div id="termico-veredicto" class="veredicto-termico"></div>
+			<div id="termico-detalle" style="color:var(--texto-suave);line-height:1.6"></div>
+			<div class="sub" style="color:var(--texto-suave);margin-top:8px">Estimación por el método
+			simplificado de IEC 60890. Declara la disipación real de cada aparato en su ficha para
+			afinarla, y el montaje del armario en Archivo → Datos del proyecto.</div>
 		</div>
 	</details>
 	<details id="seccion-estructura">
@@ -476,6 +561,54 @@
 	</div>
 </div>
 
+<!-- Datos del proyecto: lo que lleva el cajetín del plano y la portada del dossier -->
+<div id="modal-proyecto" hidden>
+	<div class="caja-modal">
+		<button class="cerrar" id="btn-cerrar-proyecto" title="Cerrar">✕</button>
+		<h2>Datos del proyecto</h2>
+		<p class="sub" style="margin-top:-6px">Salen en el cajetín de cada hoja del esquema y en la
+		portada del dossier. Un plano sin cliente ni revisión no se puede seguir en obra.</p>
+		<div class="rejilla-ctrl">
+			<label>Cliente<input id="pr-cliente" type="text" placeholder="Minera Los Andes S.A."></label>
+			<label>Obra / instalación<input id="pr-obra" type="text" placeholder="Planta de bombeo n.º 2"></label>
+			<label>Proyectista<input id="pr-proyectista" type="text" placeholder="Quien firma el plano"></label>
+			<label>Revisión<input id="pr-revision" type="text" placeholder="A"></label>
+			<label>Fecha<input id="pr-fecha" type="date"></label>
+			<label>Fabricante del conjunto<input id="pr-fabricante" type="text" placeholder="Quien arma el tablero"></label>
+		</div>
+		<h3 style="margin:16px 0 4px;font-size:14px">Datos de la instalación</h3>
+		<p class="sub" style="margin-top:0">De estos depende que el programa pueda verificar el tablero:
+		sin la Icc no se comprueba el poder de corte, y sin el montaje no sale el balance térmico.</p>
+		<div class="rejilla-ctrl">
+			<label>Icc presunta en la acometida (kA)<input id="pr-icc" type="number" step="0.5" min="0" placeholder="10"></label>
+			<label>Temperatura ambiente (°C)<input id="pr-ambiente" type="number" step="1" min="-20" max="60" placeholder="35"></label>
+			<label>Montaje del armario<select id="pr-montaje">
+				<option value="mural">Adosado a pared</option>
+				<option value="exento">Exento (libre por todas las caras)</option>
+				<option value="empotrado">Empotrado entre otros armarios</option>
+			</select></label>
+			<label>Corriente asignada InA (A)<input id="pr-inominal" type="number" step="1" min="0" placeholder="63"></label>
+			<label>Frecuencia (Hz)<input id="pr-frecuencia" type="number" step="1" min="0" placeholder="50"></label>
+			<label>Grado de protección<input id="pr-ip" type="text" placeholder="IP54"></label>
+			<label>Régimen de neutro<select id="pr-neutro">
+				<option value="">Sin declarar</option>
+				<option value="TN-S">TN-S</option>
+				<option value="TN-C">TN-C</option>
+				<option value="TN-C-S">TN-C-S</option>
+				<option value="TT">TT</option>
+				<option value="IT">IT</option>
+			</select></label>
+		</div>
+		<label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--texto-suave);margin-top:12px">Notas para el dossier
+			<textarea id="pr-notas" rows="3" placeholder="Alcance, condiciones de suministro, observaciones…"
+				style="background:var(--panel-2);border:1px solid var(--borde);border-radius:8px;color:var(--texto);padding:7px 9px;font:inherit;resize:vertical"></textarea></label>
+		<div class="botonera" style="justify-content:flex-end;margin-top:16px">
+			<button class="boton" id="btn-cancelar-proyecto">Cancelar</button>
+			<button class="boton primario" id="btn-guardar-proyecto">Guardar datos</button>
+		</div>
+	</div>
+</div>
+
 <!-- Controlador a medida: cualquier equipo que no esté en el catálogo, descrito por sus datos -->
 <div id="modal-controlador" hidden>
 	<div class="caja-modal">
@@ -543,6 +676,9 @@
 			<li><b>Controladores reales:</b> busca en el catálogo por marca o por modelo (Honeywell, Siemens, Schneider, JCI) y quedan colocados con su huella y sus borneras de verdad, listos para cablear terminal a terminal.</li>
 			<li><b>Un controlador que no está:</b> botón <i>🧩 Controlador a medida</i> — copia de la hoja del fabricante sus medidas y los terminales de cada borde (puedes abreviar <code>UI1-8</code>) y el programa lo dibuja en 3D.</li>
 			<li><b>Imagen de referencia:</b> botón <i>🖼️ Imagen</i>, marca sus puntos y cablea sobre la foto.</li>
+			<li><b>Corregir los datos de un aparato:</b> selecciónalo en modo Editor y edita su ficha en el panel derecho: marcado, referencia, In, polos, medidas, <b>poder de corte</b> y <b>disipación</b>. Lo que escribas ahí es lo que sale en el dossier del cliente.</li>
+			<li><b>Datos del proyecto:</b> <i>Archivo → Datos del proyecto</i> — cliente, obra, proyectista y revisión (van al cajetín del esquema y a la portada del dossier), más la <b>Icc presunta</b>, la temperatura ambiente y el montaje del armario, de los que dependen la verificación del poder de corte y el balance térmico.</li>
+			<li><b>Balance térmico:</b> el panel derecho estima la temperatura interior del armario (IEC 60890) y dice si necesita rejilla, ventilador o climatizador antes de que lo pidas.</li>
 			<li><b>Deshacer / Rehacer:</b> <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd>. <b>Eliminar:</b> <kbd>Supr</kbd>. <b>Centrar vista:</b> botón 🏠.</li>
 		</ul>
 		<p class="pie">El semáforo <b>DRC</b> de arriba revisa el tablero en vivo: verde = todo bien, naranja = avisos, rojo = errores. Haz clic en un aviso para ir al aparato.</p>

@@ -139,11 +139,32 @@ if (errados.length) info('errados: ' + errados.slice(0, 6).join(', '));
 must('apuntar a un cable selecciona ESE cable', aciertos === probados, `${aciertos}/${probados}`);
 
 /* ---- Y el clic de verdad (ratón real) también, incluso con la cámara girada ---- */
+
+/**
+ * Espera a que la cámara deje de moverse DE VERDAD.
+ *
+ * La órbita lleva amortiguación: al soltar el ratón la cámara sigue frenando sola. Esperar un
+ * tiempo fijo no basta — en una máquina lenta cada fotograma tarda mucho más y la cámara todavía
+ * se está moviendo. Si la prueba calcula el píxel donde se ve un cable y pincha ahí mientras
+ * tanto, apunta a una escena y pincha en otra, y un tubo fino se le escapa por un píxel.
+ */
+async function esperarCamaraQuieta(maximoMs = 6000) {
+	let antes = await qa('camara');
+	const hasta = Date.now() + maximoMs;
+	while (Date.now() < hasta) {
+		await page.waitForTimeout(120);
+		const ahora = await qa('camara');
+		if (Object.keys(ahora).every((k) => Math.abs(ahora[k] - antes[k]) < 0.02)) return;
+		antes = ahora;
+	}
+}
+
 async function girarCamara(dx, dy) {
 	const x = LIBRE.x1 - 30, y = LIBRE.y0 + 30;
 	await page.mouse.move(x, y); await page.mouse.down(); await page.waitForTimeout(30);
 	for (let k = 1; k <= 5; k++) { await page.mouse.move(x + (dx * k) / 5, y + (dy * k) / 5); await page.waitForTimeout(25); }
-	await page.mouse.up(); await page.waitForTimeout(600); // la órbita tiene inercia: dejar que se asiente
+	await page.mouse.up();
+	await esperarCamaraQuieta();
 }
 
 for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la derecha'], [-90, -60, 'girado a la izquierda y arriba']]) {
@@ -152,6 +173,10 @@ for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la der
 	let ok = 0; let total = 0;
 	const mal = [];
 	for (const r of lista) {
+		// Esc antes de cada intento: si un clic anterior arrancó un cableado sin querer, TODOS los
+		// clics siguientes se los come el tendido y saldrían como fallo en cascada, tapando cuál
+		// fue el que falló de verdad. Cada cable se prueba desde un estado limpio.
+		await page.keyboard.press('Escape'); await page.waitForTimeout(60);
 		// El propio programa dice dónde se ve ese cable; ahí es donde pincharía el usuario.
 		let p = await qa('puntoParaAgarrar', r.id);
 		if (!enZona(p)) continue;

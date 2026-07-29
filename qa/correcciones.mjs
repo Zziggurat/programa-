@@ -58,6 +58,29 @@ info(`alto ${Math.round(barra.alto)} px · overflow-x: ${barra.overflow}`);
 must('la barra NO crea barra de scroll', !barra.scroll);
 must('la barra no recorta a sus hijos', barra.overflow === 'visible');
 
+// La barra tiene que aguantar en TODOS los estados del chip de guardado y a varios anchos.
+// El chip cambia de texto («Guardado» / «Sin descargar» / «Sin guardar») y por tanto de ancho:
+// medirla solo recién cargada, con el texto más corto, deja pasar el desbordamiento real.
+for (const w of [1280, 1366, 1400, 1440, 1536, 1600, 1680, 1745, 1800, 1920]) {
+	await page.setViewportSize({ width: w, height: 900 });
+	await page.waitForTimeout(200);
+	for (const clase of ['', 'sucio', 'fallo']) {
+		const m = await page.evaluate((c) => {
+			const chip = document.getElementById('estado-guardado');
+			const antes = { clase: chip.className, texto: chip.textContent };
+			chip.className = c;
+			chip.textContent = c === 'fallo' ? 'Sin guardar' : c === 'sucio' ? 'Sin descargar' : 'Guardado';
+			const b = document.getElementById('barra');
+			const r = { scroll: b.scrollWidth > b.clientWidth + 1, texto: chip.textContent };
+			chip.className = antes.clase; chip.textContent = antes.texto;
+			return r;
+		}, clase);
+		must(`la barra aguanta a ${w} px con «${m.texto}»`, !m.scroll);
+	}
+}
+await page.setViewportSize({ width: 1400, height: 900 });
+await page.waitForTimeout(250);
+
 for (const [boton, menu] of [['btn-aprender', 'menu-aprender'], ['btn-exportar', 'menu-exportar']]) {
 	await jsClick(boton); await page.waitForTimeout(250);
 	const caja = await page.evaluate((m) => {

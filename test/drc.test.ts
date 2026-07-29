@@ -290,3 +290,102 @@ test('R4: una bobina que no manda NADA sí se avisa', () => {
 	p.conductores = [{ id: 'c1', de: { dispositivoId: 'km1', borneId: 'A1' }, a: { dispositivoId: 'x1', borneId: '1' }, seccion: 1 }];
 	assert.ok(reglas(verificar(p)).includes('R4-maestro-sin-esclavos'));
 });
+
+test('R13: sin Icc declarada se avisa de que no se puede verificar el poder de corte', () => {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{ id: 'q1', tipo: 'disyuntor', designacion: '-Q1', poderCorteKA: 6, bornes: [] },
+	];
+	assert.ok(reglas(verificar(p)).includes('R13-icc-sin-declarar'));
+});
+
+test('R13: un aparato con poder de corte por debajo de la Icc es un ERROR', () => {
+	const p = crearProyecto('t');
+	p.opciones = { iccPresuntaKA: 10 };
+	p.dispositivos = [
+		{ id: 'q1', tipo: 'disyuntor', designacion: '-Q1', poderCorteKA: 6, bornes: [] },
+	];
+	const h = verificar(p).filter((x) => x.regla === 'R13-poder-de-corte-insuficiente');
+	assert.equal(h.length, 1);
+	assert.equal(h[0].severidad, 'error');
+	assert.equal(h[0].dispositivoId, 'q1');
+});
+
+test('R13: con poder de corte suficiente no se dice nada', () => {
+	const p = crearProyecto('t');
+	p.opciones = { iccPresuntaKA: 10 };
+	p.dispositivos = [
+		{ id: 'q1', tipo: 'disyuntor', designacion: '-Q1', poderCorteKA: 15, bornes: [] },
+	];
+	assert.ok(!reglas(verificar(p)).some((r) => r.startsWith('R13')));
+});
+
+test('R13: una protección sin poder de corte declarado se avisa, no se da por buena', () => {
+	const p = crearProyecto('t');
+	p.opciones = { iccPresuntaKA: 10 };
+	p.dispositivos = [
+		{ id: 'q1', tipo: 'disyuntor', designacion: '-Q1', bornes: [] },
+	];
+	const h = verificar(p).filter((x) => x.regla === 'R13-sin-poder-de-corte');
+	assert.equal(h.length, 1);
+	assert.equal(h[0].severidad, 'aviso');
+});
+
+test('R13: lo que no es una protección no entra en la regla', () => {
+	const p = crearProyecto('t');
+	p.opciones = { iccPresuntaKA: 10 };
+	p.dispositivos = [
+		{ id: 'k1', tipo: 'contactor', designacion: '-KM1', bornes: [] },
+	];
+	assert.ok(!reglas(verificar(p)).some((r) => r.startsWith('R13')));
+});
+
+test('R14: un armario que se calienta de más sale como aviso, no como error', () => {
+	const p = crearProyecto('t');
+	p.gabinete = { ancho: 400, alto: 500, rieles: [], canaletas: [], colocaciones: [] };
+	p.dispositivos = [{ id: 'v1', tipo: 'variador', designacion: '-T1', disipacionW: 600, bornes: [] }];
+	p.gabinete.colocaciones = [{ dispositivoId: 'v1', x: 20, y: 20, ancho: 120, alto: 200 }];
+	const h = verificar(p).filter((x) => x.regla === 'R14-calentamiento');
+	assert.equal(h.length, 1);
+	assert.equal(h[0].severidad, 'aviso');
+	assert.match(h[0].mensaje, /°C/);
+});
+
+test('R14: un armario fresco no dice nada del calentamiento', () => {
+	const p = crearProyecto('t');
+	p.gabinete = { ancho: 800, alto: 1200, rieles: [], canaletas: [], colocaciones: [] };
+	p.dispositivos = [{ id: 'q1', tipo: 'disyuntor', designacion: '-Q1', disipacionW: 2, bornes: [] }];
+	p.gabinete.colocaciones = [{ dispositivoId: 'q1', x: 20, y: 20, ancho: 18, alto: 85 }];
+	assert.ok(!reglas(verificar(p)).includes('R14-calentamiento'));
+});
+
+test('R13: un fusible del circuito de mando no se compara contra la Icc de la acometida', () => {
+	const p = crearProyecto('t');
+	p.opciones = { iccPresuntaKA: 10 };
+	p.dispositivos = [
+		{ id: 'q1', tipo: 'disyuntor', designacion: '-Q1', tensionNominal: 400, poderCorteKA: 15, bornes: [] },
+		// Detrás del transformador: aquí no hay 10 kA ni de lejos.
+		{ id: 'f1', tipo: 'fusible', designacion: '-F1', tensionNominal: 24, bornes: [] },
+	];
+	const r = verificar(p).filter((h) => h.regla.startsWith('R13'));
+	assert.deepEqual(r.map((h) => h.dispositivoId), []);
+});
+
+test('R13: una protección de red sin tensión declarada sí se comprueba', () => {
+	const p = crearProyecto('t');
+	p.opciones = { iccPresuntaKA: 10 };
+	p.dispositivos = [{ id: 'q1', tipo: 'disyuntor', designacion: '-Q1', bornes: [] }];
+	assert.ok(reglas(verificar(p)).includes('R13-sin-poder-de-corte'));
+});
+
+test('R13: 380 y 400 V son la misma red y las dos protecciones se comprueban', () => {
+	const p = crearProyecto('t');
+	p.opciones = { iccPresuntaKA: 10 };
+	p.dispositivos = [
+		{ id: 'q1', tipo: 'disyuntor', designacion: '-Q1', tensionNominal: 400, poderCorteKA: 6, bornes: [] },
+		{ id: 'q2', tipo: 'guardamotor', designacion: '-Q2', tensionNominal: 380, poderCorteKA: 6, bornes: [] },
+	];
+	const ids = verificar(p).filter((h) => h.regla === 'R13-poder-de-corte-insuficiente')
+		.map((h) => h.dispositivoId).sort();
+	assert.deepEqual(ids, ['q1', 'q2']);
+});

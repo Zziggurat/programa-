@@ -126,6 +126,14 @@ export interface Dispositivo {
 	corrienteNominal?: number;
 	/** Nº de polos de la protección o del consumo (1, 2, 3 o 4). Trifásico = 3 o más. */
 	polos?: number;
+	/**
+	 * Poder de corte de una protección, en kA (Icu/Icn de la hoja del fabricante). Es lo que
+	 * decide si el aparato aguanta el cortocircuito del sitio donde se instala: un automático
+	 * de 6 kA en una acometida de 10 kA no corta, se destruye.
+	 */
+	poderCorteKA?: number;
+	/** Potencia disipada en servicio, en W. Sirve para el balance térmico del gabinete. */
+	disipacionW?: number;
 	/** True si el aparato está fuera del gabinete (campo): motores, sensores, etc. */
 	campo?: boolean;
 	/**
@@ -245,7 +253,52 @@ export interface Gabinete {
 
 /* --------------------------------- Proyecto --------------------------------- */
 
+/**
+ * Datos administrativos del proyecto: los que llevan el cajetín del plano y la portada del
+ * dossier. Sin ellos el entregable sale anónimo, y un plano sin cliente ni revisión no se
+ * puede seguir en obra.
+ */
+export interface DatosProyecto {
+	cliente?: string;
+	obra?: string;
+	proyectista?: string;
+	/**
+	 * Fabricante del conjunto: quien lo arma y firma. IEC 61439-1 §6.1 lo exige en la placa de
+	 * características junto con la designación de tipo; un tablero sin fabricante identificable
+	 * no es un conjunto conforme, es una caja con aparatos dentro.
+	 */
+	fabricante?: string;
+	/** Índice de revisión, p. ej. "A", "B", "0"… */
+	revision?: string;
+	/** Fecha del documento, en ISO (aaaa-mm-dd). */
+	fecha?: string;
+	/** Nota libre que sale en el dossier (condiciones, alcance…). */
+	notas?: string;
+}
+
 export interface OpcionesProyecto {
+	/**
+	 * Corriente de cortocircuito presunta en la acometida, en kA. Es el dato del que depende
+	 * si las protecciones elegidas aguantan: un automático con poder de corte menor que esto
+	 * no interrumpe la falta, se destruye. Lo da la compañía o el cálculo de la instalación.
+	 */
+	iccPresuntaKA?: number;
+	/** Temperatura ambiente de proyecto (°C), para el balance térmico del gabinete. */
+	temperaturaAmbienteC?: number;
+	/**
+	 * Cómo queda instalado el armario. Decide cuántas caras disipan de verdad y por tanto la
+	 * temperatura interior: el mismo tablero adosado a una pared o encajado entre otros dos no
+	 * se calienta igual.
+	 */
+	montajeGabinete?: 'mural' | 'exento' | 'empotrado';
+	/** Grado de protección de la envolvente (IEC 60529), p. ej. "IP54". Vacío = sin declarar. */
+	gradoIP?: string;
+	/** Régimen de neutro de la instalación aguas arriba. Vacío = sin declarar. */
+	regimenNeutro?: '' | 'TN-S' | 'TN-C' | 'TN-C-S' | 'TT' | 'IT';
+	/** Frecuencia asignada (Hz). */
+	frecuenciaHz?: number;
+	/** Corriente asignada del conjunto InA (A). 0 = sin declarar. */
+	corrienteAsignadaA?: number;
 	/**
 	 * Plantilla de designación IEC 81346. Variables: {funcion} {ubicacion} {clase} {n}.
 	 * Los bloques entre corchetes se omiten si su variable está vacía.
@@ -265,6 +318,8 @@ export interface Proyecto {
 	formato: 'tablero-studio';
 	version: 1;
 	nombre: string;
+	/** Cliente, obra, proyectista y revisión (cajetín del plano y portada del dossier). */
+	datos?: DatosProyecto;
 	hojas: Hoja[];
 	dispositivos: Dispositivo[];
 	conductores: Conductor[];
@@ -278,4 +333,14 @@ export const OPCIONES_POR_DEFECTO: Required<OpcionesProyecto> = {
 	reservaCable: 0.15,
 	extraPorConexionMm: 100,
 	ocupacionMaxCanaleta: 0.45,
+	// 0 = no declarada: sin este dato no se puede comprobar el poder de corte, y el DRC lo dice.
+	iccPresuntaKA: 0,
+	temperaturaAmbienteC: 35,
+	montajeGabinete: 'mural',
+	// Vacío en vez de un valor cómodo: la placa de características prefiere decir «a declarar»
+	// antes que afirmar un IP o un régimen de neutro que nadie ha comprobado.
+	gradoIP: '',
+	regimenNeutro: '',
+	frecuenciaHz: 50,
+	corrienteAsignadaA: 0,
 };

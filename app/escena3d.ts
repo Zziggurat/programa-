@@ -37,6 +37,41 @@ export function colorVoltaje(v?: number): number {
 	return v !== undefined && VOLTAJE_COLOR[v] !== undefined ? VOLTAJE_COLOR[v] : 0x8a929a;
 }
 
+/**
+ * Libera la memoria de VÍDEO de un objeto y de todo lo que cuelga de él.
+ *
+ * three.js NO libera nada al quitar un objeto de la escena: la geometría, los materiales y
+ * las texturas se quedan en la tarjeta gráfica hasta que se llama a `dispose()`. Como este
+ * editor rehace trozos de la escena continuamente (cada aparato movido, cada cable, cada
+ * cota), sin esto una sesión de trabajo va dejando copias enteras del tablero en memoria
+ * hasta que el navegador se ahoga.
+ *
+ * Es seguro llamarlo sobre cualquier subárbol del escenario porque aquí ningún material ni
+ * geometría se comparte entre objetos: todos se crean dentro de la función que los usa.
+ */
+export function liberar(raiz: THREE.Object3D | undefined): void {
+	if (!raiz) return;
+	raiz.traverse((o) => {
+		const conGeometria = o as Partial<THREE.Mesh>;
+		conGeometria.geometry?.dispose();
+		const material = (o as Partial<THREE.Mesh>).material;
+		for (const m of Array.isArray(material) ? material : material ? [material] : []) {
+			// Las texturas cuelgan del material como propiedades (map, alphaMap…): hay que
+			// soltarlas a mano, porque `Material.dispose()` no las toca.
+			for (const valor of Object.values(m as unknown as Record<string, unknown>)) {
+				if (valor && (valor as THREE.Texture).isTexture) (valor as THREE.Texture).dispose();
+			}
+			m.dispose();
+		}
+	});
+}
+
+/** Vacía un grupo liberando de verdad lo que había dentro (equivale a `.clear()` sin fuga). */
+export function vaciar(grupo: THREE.Object3D): void {
+	for (const hijo of [...grupo.children]) liberar(hijo);
+	grupo.clear();
+}
+
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 
 export interface Escenario {

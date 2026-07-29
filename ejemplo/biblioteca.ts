@@ -47,6 +47,10 @@ const cable = (
 function arranqueDirecto(): Proyecto {
 	n = 0;
 	const p = crearProyecto('Arranque directo de motor 380 V');
+	// Un ejemplo tiene que ser ejemplar también en lo que no se dibuja: sin la Icc de la
+	// acometida el programa no puede comprobar el poder de corte de las protecciones, y sin
+	// saber cómo va montado el armario no sale el balance térmico.
+	p.opciones = { iccPresuntaKA: 6, temperaturaAmbienteC: 35, montajeGabinete: 'mural' };
 	p.hojas = [
 		{ id: 'h1', numero: 1, titulo: 'Fuerza 380 V' },
 		{ id: 'h2', numero: 2, titulo: 'Mando 220 V' },
@@ -60,6 +64,7 @@ function arranqueDirecto(): Proyecto {
 		{
 			id: 'q1', tipo: 'guardamotor', descripcion: 'Guardamotor 2.5–4 A (protege el motor)',
 			fabricante: 'Schneider Electric', referencia: 'GV2ME08', tensionNominal: 380, hojaId: 'h1',
+			poderCorteKA: 100, disipacionW: 4.5,
 			bornes: [L('1'), L('2'), L('3'), L('4'), L('5'), L('6')],
 			puentesInternos: [['1', '2'], ['3', '4'], ['5', '6']],
 		},
@@ -170,6 +175,7 @@ function arranqueDirecto(): Proyecto {
 function bombaConBoya(): Proyecto {
 	n = 0;
 	const p = crearProyecto('Bomba de agua con boya de nivel');
+	p.opciones = { iccPresuntaKA: 6, temperaturaAmbienteC: 35, montajeGabinete: 'mural' };
 	p.hojas = [{ id: 'h1', numero: 1, titulo: 'Fuerza y mando 220 V' }];
 
 	p.dispositivos = [
@@ -180,12 +186,16 @@ function bombaConBoya(): Proyecto {
 		{
 			id: 'q1', tipo: 'diferencial', descripcion: 'Diferencial 2P 25 A 30 mA (protege a las personas)',
 			fabricante: 'Schneider Electric', referencia: 'iID', tensionNominal: 220, hojaId: 'h1',
+			// Un diferencial puro no corta cortocircuitos por sí solo: 6 kA es su corriente
+			// condicional respaldada por el automático que lleva detrás.
+			poderCorteKA: 6, disipacionW: 2,
 			bornes: [L('1'), N('3'), L('2'), N('4')],
 			puentesInternos: [['1', '2'], ['3', '4']],
 		},
 		{
 			id: 'q2', tipo: 'disyuntor', descripcion: 'Automático 2P C10 (protege el cable y la bomba)',
 			fabricante: 'Schneider Electric', referencia: 'iC60N', tensionNominal: 220, hojaId: 'h1',
+			poderCorteKA: 6, disipacionW: 2.5,
 			bornes: [L('1'), N('3'), L('2'), N('4')],
 			puentesInternos: [['1', '2'], ['3', '4']],
 		},

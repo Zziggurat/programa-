@@ -53,37 +53,74 @@ function rejilla(doc: jsPDF, hoja: HojaEsq): void {
 	}
 }
 
-function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number): void {
-	const ancho = 120;
-	const alto = 24;
+export interface DatosCajetin {
+	cliente?: string; obra?: string; proyectista?: string; revision?: string; fecha?: string;
+}
+
+/** Cajetín con los datos que hacen seguible un plano en obra (mismo diseño que en pantalla). */
+function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number, d: DatosCajetin = {}): void {
+	const ancho = 180;
+	const alto = 26;
 	const x = hoja.anchoMm - MARGEN.der - ancho;
-	const y = hoja.altoMm - MARGEN.abajo + 3;
+	const y = hoja.altoMm - MARGEN.abajo + 1;
+	const col2 = x + 96;
+	const col3 = x + ancho - 34;
 	doc.setDrawColor(...TINTA);
 	doc.setLineWidth(0.35);
 	doc.rect(x, y, ancho, alto);
 	doc.setLineWidth(0.2);
 	doc.line(x, y + 9, x + ancho, y + 9);
-	doc.line(x + ancho - 30, y + 9, x + ancho - 30, y + alto);
-	doc.setTextColor(...TINTA);
+	doc.line(x, y + 17.5, x + ancho, y + 17.5);
+	doc.line(col2, y + 9, col2, y + alto);
+	doc.line(col3, y, col3, y + alto);
+
+	const campo = (cx: number, cy: number, rotulo: string, valor: string, max: number) => {
+		doc.setFontSize(5.4);
+		doc.setTextColor(...SUAVE);
+		doc.setFont('helvetica', 'normal');
+		doc.text(rotulo, cx, cy);
+		doc.setFontSize(7.6);
+		doc.setTextColor(...TINTA);
+		doc.text(valor || '—', cx, cy + 4, { maxWidth: max });
+	};
+
 	doc.setFontSize(10);
 	doc.setFont('helvetica', 'bold');
-	doc.text(proyecto, x + 3, y + 6.2);
-	doc.setFontSize(8.5);
+	doc.setTextColor(...TINTA);
+	doc.text(proyecto, x + 3, y + 6.3, { maxWidth: col3 - x - 6 });
+	doc.setFontSize(5.4);
 	doc.setFont('helvetica', 'normal');
-	doc.text(hoja.titulo, x + 3, y + 16);
-	doc.setFontSize(6.5);
 	doc.setTextColor(...SUAVE);
-	doc.text('Esquema según IEC 60617', x + 3, y + 21);
-	doc.setFontSize(7.5);
-	doc.text('Hoja', x + ancho - 15, y + 15, { align: 'center' });
+	doc.text('HOJA', col3 + 17, y + 3.4, { align: 'center' });
 	doc.setFontSize(11);
 	doc.setFont('helvetica', 'bold');
 	doc.setTextColor(...TINTA);
-	doc.text(`${hoja.numero} / ${total}`, x + ancho - 15, y + 21, { align: 'center' });
+	doc.text(`${hoja.numero} / ${total}`, col3 + 17, y + 8.6, { align: 'center' });
+
+	doc.setFont('helvetica', 'normal');
+	campo(x + 3, y + 12.4, 'CLIENTE', d.cliente ?? '', 88);
+	campo(col2 + 3, y + 12.4, 'OBRA', d.obra ?? '', 74);
+	campo(x + 3, y + 21, 'DIBUJÓ', d.proyectista ?? '', 88);
+	campo(col2 + 3, y + 21, 'FECHA', d.fecha ?? '', 74);
+	doc.setFontSize(5.4);
+	doc.setTextColor(...SUAVE);
+	doc.text('REV.', col3 + 17, y + 15.5, { align: 'center' });
+	doc.setFontSize(11);
+	doc.setFont('helvetica', 'bold');
+	doc.setTextColor(...TINTA);
+	doc.text(d.revision || '—', col3 + 17, y + 21, { align: 'center' });
+	doc.setFontSize(5.4);
+	doc.setFont('helvetica', 'normal');
+	doc.setTextColor(...SUAVE);
+	// Fuera de la casilla, a la izquierda del cajetín: dentro caía encima de los valores de
+	// DIBUJÓ y FECHA, que ocupan esa misma franja.
+	doc.text('Símbolos IEC 60617 · Conjunto según IEC 61439-1/-2', MARGEN.izq, y + alto - 1.4);
 }
 
 /** Genera el PDF con todas las hojas y lo descarga. */
-export async function exportarEsquemaPDF(hojas: HojaEsq[], proyecto: string, archivo: string): Promise<void> {
+export async function exportarEsquemaPDF(
+	hojas: HojaEsq[], proyecto: string, archivo: string, datos: DatosCajetin = {},
+): Promise<void> {
 	if (hojas.length === 0) throw new Error('el esquema no tiene hojas');
 	const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [hojas[0].anchoMm, hojas[0].altoMm] });
 
@@ -124,7 +161,7 @@ export async function exportarEsquemaPDF(hojas: HojaEsq[], proyecto: string, arc
 			doc.text(r.texto, r.p.x, r.p.y + (r.tipo === 'hilo' ? 0.6 : 0), { align: 'center' });
 		}
 
-		cajetin(doc, hoja, proyecto, hojas.length);
+		cajetin(doc, hoja, proyecto, hojas.length, datos);
 	});
 
 	doc.save(archivo);

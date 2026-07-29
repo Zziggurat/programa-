@@ -25,6 +25,7 @@
     "qa:correcciones": "node qa/correcciones.mjs",
     "qa:estres-pro": "node qa/estres-profesional.mjs",
     "qa:estres": "node qa/estres.mjs",
+    "qa:empaquetado": "npm run empaquetar && node qa/empaquetado.mjs",
     "check": "tsc --noEmit -p tsconfig.app.json"
   },
   "devDependencies": {
