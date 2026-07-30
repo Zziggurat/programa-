@@ -37,7 +37,7 @@ const qa = (fn, ...a) => page.evaluate(([f, args]) => window.qa[f](...args), [fn
 const proyecto = () => qa('proyecto');
 const nConductores = async () => (await proyecto()).conductores.length;
 const toast = async () => (await page.isVisible('#toast')) ? (await page.textContent('#toast')) : '';
-const cursor = () => page.evaluate(() => getComputedStyle(document.querySelector('canvas')).cursor);
+const cursor = () => page.evaluate(() => getComputedStyle(document.querySelector('#escena canvas')).cursor);
 
 /** Carga el tablero de control de la biblioteca (el que usan estas comprobaciones). */
 async function cargarEjemplo() {

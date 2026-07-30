@@ -3173,6 +3173,18 @@ function aplicarEnergizado(activo: boolean): void {
 	}
 }
 
+/* La segunda herramienta se carga solo cuando se abre: son 240 KB de planta y un visor entero
+   que quien solo diseña tableros no tiene por qué pagar al arrancar. */
+($('btn-planta') as HTMLButtonElement).onclick = async () => {
+	try {
+		const { abrirMundo, cerrarMundo } = await import('./mundo-ui.js');
+		($('mundo-salir') as HTMLButtonElement).onclick = () => cerrarMundo();
+		abrirMundo();
+	} catch (e) {
+		avisar(`No se pudo abrir el visor de la planta: ${(e as Error).message}`, 'error');
+	}
+};
+
 ($('btn-energizar') as HTMLButtonElement).onclick = () => aplicarEnergizado(!energizado);
 ($('btn-sim-reposo') as HTMLButtonElement).onclick = () => {
 	estadoSim = {};
@@ -3939,18 +3951,33 @@ function ajustarTamano(): void {
 	renderer.setSize(r.width, r.height);
 }
 /**
- * Decide si los botones de la barra pueden llevar su rótulo, MIDIENDO si caben.
+ * Aprieta la barra de herramientas hasta que quepa, MIDIENDO en cada paso.
  *
- * Antes esto era un `@media (max-width: …)` con un número medido a mano, y duró exactamente hasta
- * el siguiente botón que añadí: la barra volvió a desbordar. El ancho que hace falta depende de
- * cuántas herramientas haya, de la longitud del nombre del proyecto y del texto del chip de
- * guardado, así que el único número fiable es el que dice el navegador. Se prueba con rótulos y,
- * si no cabe, se quitan.
+ * Historia de esto, que explica por qué está así: primero era un `@media (max-width: 1500px)`
+ * puesto a ojo, y desbordaba entre 1501 y 1740. Lo cambié por un `1745px` medido a mano, y duró
+ * hasta el siguiente botón. Lo cambié por una medición con un solo nivel —rótulos sí o no— y duró
+ * hasta el botón de la planta: a 1366 px ya no caben ni los iconos.
+ *
+ * La lección es que el ancho necesario depende de cuántas herramientas haya, del nombre del
+ * proyecto y del texto del chip de guardado, así que CUALQUIER constante aquí caduca. Lo que no
+ * caduca es preguntarle al navegador. Se prueban los niveles de arriba abajo y se para en el
+ * primero que quepa; si ninguno cabe, se queda el más apretado, que es lo mejor disponible.
  */
 export function ajustarRotulosBarra(): void {
+	// Los niveles van DENTRO de la función y no en una constante de módulo, y no es un capricho:
+	// esta función se llama desde `pintarEstadoGuardado()`, que corre durante el arranque, y una
+	// constante declarada más abajo en el archivo daría un «no se puede acceder a X antes de
+	// inicializar» en tiempo de ejecución que TypeScript compila sin quejarse. Me pasó exactamente
+	// eso al escribir esto. Es el mismo riesgo que hace que partir este archivo en módulos sea
+	// peligroso mientras el nivel superior siga siendo un guion de arranque.
+	const NIVELES = ['compacta', 'apretada', 'minima'];
 	const barra = $('barra');
-	barra.classList.remove('compacta');
-	if (barra.scrollWidth > barra.clientWidth + 1) barra.classList.add('compacta');
+	barra.classList.remove(...NIVELES);
+	if (barra.scrollWidth <= barra.clientWidth + 1) return;
+	for (const nivel of NIVELES) {
+		barra.classList.add(nivel);
+		if (barra.scrollWidth <= barra.clientWidth + 1) return;
+	}
 }
 
 window.addEventListener('resize', () => {

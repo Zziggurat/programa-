@@ -61,7 +61,7 @@ must('la barra no recorta a sus hijos', barra.overflow === 'visible');
 // La barra tiene que aguantar en TODOS los estados del chip de guardado y a varios anchos.
 // El chip cambia de texto («Guardado» / «Sin descargar» / «Sin guardar») y por tanto de ancho:
 // medirla solo recién cargada, con el texto más corto, deja pasar el desbordamiento real.
-for (const w of [1280, 1366, 1400, 1440, 1536, 1600, 1680, 1745, 1800, 1920]) {
+for (const w of [1024, 1152, 1280, 1366, 1440, 1536, 1600, 1745, 1800, 1920]) {
 	await page.setViewportSize({ width: w, height: 900 });
 	await page.waitForTimeout(200);
 	for (const clase of ['', 'sucio', 'fallo']) {
@@ -189,7 +189,7 @@ if (enZona(p4)) {
 	// el ida y vuelta del control remoto del navegador tarda ~700 ms entre clic y clic —más que
 	// cualquier persona— y eso, no el programa, es lo que rompería la prueba.
 	await page.evaluate(([x, y]) => {
-		const lienzo = document.querySelector('canvas');
+		const lienzo = document.querySelector('#escena canvas');
 		for (let i = 0; i < 2; i++) {
 			lienzo.dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true }));
 		}

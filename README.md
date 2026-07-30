@@ -74,6 +74,7 @@ Además de los tests del núcleo, hay varias suites que manejan el editor 3D de 
 | `npm run qa:nuevas` | Biblioteca de ejemplos con su explicación y modo Visualización |
 | `npm run qa:estres` | Decenas de operaciones al azar verificando los invariantes tras cada una |
 | `npm run qa:energizar` | El modo Energizar: pulsar un pulsador arranca el motor, el enclavamiento lo sostiene al soltar, el paro lo tira y no vuelve solo |
+| `npm run qa:planta` | La segunda herramienta: el visor 3D de la cubierta se abre aparte del editor, los datos salen del plano, se consultan los puntos del BMS de una máquina y se recorre a pie |
 | `npm run qa:empaquetado` | **El archivo que se entrega**: abre `dist-final/TableroStudio.html` con `file://`, sin servidor, y comprueba que arranca, que se puede trabajar y que salen el dossier y el proyecto guardado |
 
 Se apoyan en una sonda que solo existe abriendo la página con `?qa=1`; en el uso normal
@@ -81,6 +82,34 @@ del programa no se define nada. La única que no la usa es `qa:empaquetado`: el 
 entrega borra la sonda a propósito, así que esa suite comprueba todo por el DOM — exactamente
 lo que ve el usuario. Va aparte de `npm run qa` porque reconstruye la aplicación en modo
 entrega, sin el andamiaje de las pruebas.
+
+### Visor 3D de la planta (`app/mundo.ts`) — la segunda herramienta
+
+TableroStudio son **dos herramientas separadas en el mismo programa**, y a propósito: no comparten
+escena, ni cámara, ni estado. Un tablero se diseña y se simula; una planta se recorre y se
+consulta. Se entra con el botón **🏗️ Planta 3D**.
+
+El visor monta la cubierta del aeropuerto tal como sale del plano del proyectista: **96 UMAs**,
+**33 extractores**, y los recorridos de inyección, extracción, cañerías de agua, bandeja y bus LON.
+Al pinchar una máquina se ve su **lista de puntos de control del BMS** —qué válvulas de agua fría y
+caliente tiene, qué sondas de temperatura, su estado de funcionamiento— con el controlador que la
+gobierna (un Honeywell `XL50`) y si sus señales van cableadas en el tablero. Dos vistas: general
+desde arriba, y a pie en primera persona con WASD.
+
+**Honestidad sobre lo que se ve:** el DWG no trae **ninguna** cota Z en las capas de clima, así que
+las alturas de conductos y máquinas son reglas de proyecto, no medidas. El visor lo dice y no deja
+de decirlo, porque quien lo mire va a tomar decisiones con lo que ve. El recorrido en planta sí es
+el del plano.
+
+El plano se procesa **una vez, fuera de la aplicación**, con `herramientas/extraer-planta.py`: los
+21 MB de DWG se convierten a DXF (164 MB, 331.000 entidades) y de ahí sale un JSON de 240 KB con lo
+que hace falta. Un navegador no abre 164 MB; este JSON sí.
+
+```bash
+dwg2dxf -o Cubierta.dxf Cubierta.dwg          # LibreDWG, o «Guardar como» de AutoCAD
+pip install ezdxf
+npm run extraer-planta Cubierta.dxf datos/cubierta.json
+```
 
 ### Editor 3D (`app/`)
 

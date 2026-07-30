@@ -105,27 +105,68 @@
 	#barra .boton.icono { padding: 6px 9px; }
 	#barra .empuje { flex: 1 1 0; min-width: 8px; }
 	#modos, #chip-drc, .menu { flex: none; }
-	/* En pantallas justas los botones se quedan en su icono; el tooltip y la etiqueta
-	   accesible siguen diciendo lo que son.
-	   El corte NO es un ancho fijo: `ajustarRotulosBarra()` mide si los rótulos caben y pone
-	   `.compacta` si no. Un número a mano ya falló dos veces —cada botón nuevo lo invalida— y
-	   además el ancho necesario depende del nombre del proyecto y del texto del chip de guardado.
-	   Lo comprueba `qa/correcciones.mjs` en diez anchos y con los tres estados del chip. */
+	/* Compactación PROGRESIVA de la barra, aplicada midiendo por `ajustarRotulosBarra()`.
+	   No hay ningún ancho fijo aquí a propósito: tres intentos con números a mano caducaron, uno
+	   por cada botón que añadí después. Los niveles se ponen en orden hasta que la barra quepa. */
 	#barra.compacta .rotulo-boton { display: none; }
-	/* Más justo todavía: se aprieta el espaciado y el nombre del proyecto cede casi todo. */
-	@media (max-width: 1330px) {
-		#barra { gap: 5px; padding: 0 8px; }
-		#barra .boton { padding: 6px 9px; }
-		#nombre-proyecto { flex: 1 1 90px; max-width: 190px; }
-		#estado-guardado { padding: 3px 6px; }
-	}
-	/* Pantallas pequeñas: la marca y el estado dejan sitio a las herramientas. */
-	@media (max-width: 1120px) {
-		#barra .marca span, #estado-guardado { display: none; }
-	}
-	#chip-drc .punto { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
-	#chip-drc.con-errores .punto { background: var(--error); }
-	#chip-drc.con-avisos .punto { background: var(--aviso); }
+	#barra.apretada { gap: 5px; padding: 0 8px; }
+	#barra.apretada .boton { padding: 6px 9px; }
+	#barra.apretada #nombre-proyecto { flex: 1 1 90px; max-width: 170px; }
+	#barra.apretada #estado-guardado { padding: 3px 6px; }
+	#barra.minima .marca span, #barra.minima #estado-guardado, #barra.minima .sep { display: none; }
+	#barra.minima { gap: 3px; padding: 0 6px; }
+	#barra.minima .boton { padding: 5px 7px; }
+	#barra.minima #nombre-proyecto { max-width: 120px; }
+
+	/* ---- Segunda herramienta: visor 3D de la planta ---- */
+	#mundo { position: fixed; inset: 0; z-index: 70; background: #0c1015; }
+	#mundo-lienzo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+	#mundo-barra { position: absolute; top: 0; left: 0; right: 0; height: 46px; display: flex;
+		align-items: center; gap: 10px; padding: 0 12px; background: #12171cE6;
+		border-bottom: 1px solid var(--borde); backdrop-filter: blur(6px); }
+	#mundo-barra .marca { font-size: 14px; color: var(--texto); white-space: nowrap; }
+	#mundo-titulo { color: var(--texto-suave); font-size: 12.5px; white-space: nowrap;
+		overflow: hidden; text-overflow: ellipsis; }
+	#mundo-barra .empuje { flex: 1 1 0; }
+	#mundo-vistas { display: flex; background: var(--panel-2); border: 1px solid var(--borde);
+		border-radius: 9px; overflow: hidden; flex: none; }
+	#mundo-vistas button { background: none; border: none; color: var(--texto-suave);
+		padding: 7px 12px; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+	#mundo-vistas button.activo { background: #1d4ed8; color: #fff; }
+	#mundo-panel { position: absolute; top: 58px; right: 12px; width: 330px; max-height: calc(100vh - 76px);
+		overflow-y: auto; background: #12171cF2; border: 1px solid var(--borde); border-radius: 12px;
+		padding: 14px 16px; backdrop-filter: blur(6px); }
+	#mundo-panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+		color: var(--texto-suave); margin: 16px 0 7px; }
+	#mundo-resumen { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+	#mundo-resumen div { background: var(--panel-2); border-radius: 8px; padding: 7px 9px; }
+	#mundo-resumen .cifra { font-size: 17px; font-weight: 700; color: var(--texto); }
+	#mundo-resumen .rotulo { font-size: 10.5px; color: var(--texto-suave); text-transform: uppercase;
+		letter-spacing: .04em; }
+	.mundo-fila-sis { display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+		color: var(--texto-suave); padding: 3px 0; }
+	.mundo-fila-sis .tira { width: 16px; height: 4px; border-radius: 2px; flex: none; }
+	#mundo-aviso { font-size: 11.5px; line-height: 1.5; color: var(--aviso); background: #2a2418;
+		border-radius: 8px; padding: 8px 10px; margin: 14px 0 0; }
+	#mundo-ficha { margin-top: 14px; }
+	#mundo-ficha .vacio { color: var(--texto-suave); font-size: 12.5px; }
+	#mundo-ficha .tag { font-size: 18px; font-weight: 700; color: var(--texto); }
+	#mundo-ficha .meta { color: var(--texto-suave); font-size: 12px; margin: 3px 0 10px; }
+	#mundo-ficha .ctrl { display: inline-block; font-family: ui-monospace, monospace; font-size: 12px;
+		background: #1c2a3a; color: #7cc0ff; border-radius: 6px; padding: 3px 8px; margin-bottom: 4px; }
+	#mundo-ficha .en-tablero { display: inline-block; font-size: 11.5px; background: #14401f;
+		color: #74d68a; border-radius: 6px; padding: 3px 8px; margin: 0 0 8px 5px; }
+	.punto-bms { display: grid; grid-template-columns: 46px 1fr; gap: 8px; align-items: baseline;
+		padding: 5px 0; border-top: 1px solid var(--borde); }
+	.punto-bms .sigla { font-family: ui-monospace, monospace; font-weight: 700; font-size: 12.5px;
+		color: #ffb63a; }
+	.punto-bms .que { font-size: 12.5px; color: var(--texto); line-height: 1.35; }
+	.punto-bms .clase { font-size: 11px; color: var(--texto-suave); }
+	#mundo-ayuda-paseo { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+		background: #12171cE6; border: 1px solid var(--borde); border-radius: 999px;
+		padding: 8px 18px; font-size: 12.5px; color: var(--texto-suave); white-space: nowrap; }
+	#mundo-ayuda-paseo b { color: var(--texto); }
+	@media (max-width: 900px) { #mundo-panel { display: none; } }
 
 	/* Modo Energizar */
 	#btn-energizar.activo { background: #7a5c00; border-color: #d9a400; color: #fff2cc; }
@@ -440,6 +481,7 @@
 			<button id="btn-dxf-esquema">📐 Esquema (DXF)<small>La hoja de esquema abierta, en CAD</small></button>
 		</div>
 	</div>
+	<button class="boton" id="btn-planta" aria-label="Abrir el visor 3D de la planta" title="Visor 3D de la planta: recorrer la cubierta del aeropuerto con sus UMAs, conductos y puntos de control del BMS">🏗️<span class="rotulo-boton">Planta 3D</span></button>
 	<button class="boton" id="btn-energizar" aria-label="Energizar el tablero y simularlo" title="Dar tensión al tablero y verlo funcionar: pulsa los pulsadores, abre las protecciones y mira qué se enciende">⚡<span class="rotulo-boton">Energizar</span></button>
 	<button class="boton primario" id="btn-pdf" aria-label="Exportar el dossier a PDF" title="Exportar a PDF con la lista de materiales y toda la documentación">📄<span class="rotulo-boton">Exportar</span> PDF</button>
 </header>
@@ -695,6 +737,34 @@
 	</div>
 </div>
 
+<!-- ============ SEGUNDA HERRAMIENTA: visor 3D de la planta ============
+     Ocupa la pantalla entera y no comparte nada con el editor de tableros: son dos programas
+     en la misma ventana. -->
+<div id="mundo" hidden>
+	<canvas id="mundo-lienzo"></canvas>
+	<header id="mundo-barra">
+		<span class="marca">🏗️ <b>Planta 3D</b></span>
+		<span id="mundo-titulo"></span>
+		<div class="empuje"></div>
+		<div id="mundo-vistas">
+			<button id="mundo-sims" class="activo" title="Vista general desde arriba, como en Los Sims">🏙️ Vista general</button>
+			<button id="mundo-paseo" title="Recorrerla a pie: WASD para andar, arrastra para mirar, Shift para correr">🚶 Pasear</button>
+		</div>
+		<button class="boton" id="mundo-centrar" title="Volver a ver la planta entera">🏠</button>
+		<button class="boton peligro" id="mundo-salir" title="Volver al editor de tableros">✕ Salir</button>
+	</header>
+	<div id="mundo-panel">
+		<div id="mundo-resumen"></div>
+		<div id="mundo-ficha"></div>
+		<h3>Sistemas</h3>
+		<div id="mundo-leyenda"></div>
+		<p id="mundo-aviso"></p>
+	</div>
+	<div id="mundo-ayuda-paseo" hidden>
+		<b>W A S D</b> andar · <b>Shift</b> correr · <b>arrastra</b> para mirar · <b>clic</b> en una máquina para su ficha
+	</div>
+</div>
+
 <div id="modal-ayuda" hidden>
 	<div class="caja-modal">
 		<button class="cerrar" id="btn-cerrar-ayuda" title="Cerrar">✕</button>
@@ -717,6 +787,7 @@
 			<li><b>Controladores reales:</b> busca en el catálogo por marca o por modelo (Honeywell, Siemens, Schneider, JCI) y quedan colocados con su huella y sus borneras de verdad, listos para cablear terminal a terminal.</li>
 			<li><b>Un controlador que no está:</b> botón <i>🧩 Controlador a medida</i> — copia de la hoja del fabricante sus medidas y los terminales de cada borde (puedes abreviar <code>UI1-8</code>) y el programa lo dibuja en 3D.</li>
 			<li><b>Imagen de referencia:</b> botón <i>🖼️ Imagen</i>, marca sus puntos y cablea sobre la foto.</li>
+			<li><b>🏗️ Planta 3D (la otra herramienta):</b> botón <i>🏗️ Planta 3D</i>. Es un programa aparte dentro del mismo: la cubierta del aeropuerto con sus <b>96 UMAs</b> y sus 33 extractores, los conductos de inyección y extracción, las cañerías de agua, la bandeja y el bus LON. Pincha una máquina y verás <b>su lista de puntos de control del BMS</b> con el controlador que la gobierna. Dos vistas: general desde arriba, y a pie con <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>. Ojo: las alturas son de proyecto, no del plano — el visor te lo recuerda.</li>
 			<li><b>⚡ Dar energía y ver el tablero funcionar:</b> botón <i>⚡ Energizar</i>. El tablero se
 			pone en tensión: los cables con corriente se <b>iluminan</b>, y haciendo clic sobre los
 			aparatos los accionas — un <b>pulsador</b> se pulsa, un <b>sensor</b> o una <b>boya</b> se

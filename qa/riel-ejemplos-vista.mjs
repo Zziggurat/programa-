@@ -84,7 +84,7 @@ must('se esconde el panel de la izquierda', !(await visible('#panel-izq')));
 must('se esconde el panel de la derecha', !(await visible('#panel-der')));
 must('se esconde el conmutador de modos', !(await visible('#modos')));
 // En Visualización un clic no debe seleccionar ni mover nada.
-const box = await page.locator('canvas').boundingBox();
+const box = await page.locator('#escena canvas').boundingBox();
 await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.45); await page.waitForTimeout(250);
 must('un clic no selecciona nada (solo se mira)', (await qa('seleccion')) === undefined || (await qa('seleccion')) === null);
 const proyVis = JSON.stringify(await proyecto());
