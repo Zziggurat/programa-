@@ -107,11 +107,11 @@
 	#modos, #chip-drc, .menu { flex: none; }
 	/* En pantallas justas los botones se quedan en su icono; el tooltip y la etiqueta
 	   accesible siguen diciendo lo que son.
-	   El corte son 1745 px y no un número redondo: medido, la barra con TODOS los rótulos
-	   necesita 1741 px. Con el corte en 1500 había una franja de 1501 a 1740 —donde caen
-	   1536, 1600 y 1680, anchos de portátil de lo más común— en la que los rótulos aparecían
-	   pero no cabían, y la barra desbordaba. Lo comprueba `qa/correcciones.mjs` a varios anchos. */
-	@media (max-width: 1745px) { #barra .rotulo-boton { display: none; } }
+	   El corte NO es un ancho fijo: `ajustarRotulosBarra()` mide si los rótulos caben y pone
+	   `.compacta` si no. Un número a mano ya falló dos veces —cada botón nuevo lo invalida— y
+	   además el ancho necesario depende del nombre del proyecto y del texto del chip de guardado.
+	   Lo comprueba `qa/correcciones.mjs` en diez anchos y con los tres estados del chip. */
+	#barra.compacta .rotulo-boton { display: none; }
 	/* Más justo todavía: se aprieta el espaciado y el nombre del proyecto cede casi todo. */
 	@media (max-width: 1330px) {
 		#barra { gap: 5px; padding: 0 8px; }
@@ -126,6 +126,33 @@
 	#chip-drc .punto { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
 	#chip-drc.con-errores .punto { background: var(--error); }
 	#chip-drc.con-avisos .punto { background: var(--aviso); }
+
+	/* Modo Energizar */
+	#btn-energizar.activo { background: #7a5c00; border-color: #d9a400; color: #fff2cc; }
+	body.modo-simulacion #escena { box-shadow: inset 0 0 0 2px #d9a40055; }
+	.fila-sim { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px;
+		background: var(--panel-2); margin-bottom: 4px; font-size: 12.5px; cursor: pointer; }
+	.fila-sim:hover { background: #22282f; }
+	.fila-sim .punto-sim { width: 9px; height: 9px; border-radius: 50%; background: #ffd54f;
+		box-shadow: 0 0 7px #ffd54f; flex: none; }
+	.fila-sim .des-sim { font-weight: 600; color: var(--texto); }
+	.fila-sim .que-sim { color: var(--texto-suave); }
+	#sim-avisos .aviso-sim { font-size: 12.5px; line-height: 1.5; color: var(--aviso);
+		background: #2a2418; border-radius: 8px; padding: 8px 10px; margin-top: 6px; }
+	#sim-funcionando .nada-sim { color: var(--texto-suave); font-size: 12.5px; }
+
+	/* «¿Cómo se conecta?»: la chuleta de cableado de cada aparato, plegada en la ficha */
+	.como-conectar { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 10px;
+		padding: 8px 11px; margin: 10px 0; }
+	.como-conectar > summary { cursor: pointer; font-size: 13px; font-weight: 600; color: #7cc0ff; }
+	.como-conectar[open] > summary { margin-bottom: 7px; }
+	.resumen-conexion { margin: 0 0 8px; font-size: 12.5px; line-height: 1.5; color: var(--texto); }
+	.bornes-conexion { list-style: none; margin: 0; padding: 0; }
+	.bornes-conexion li { font-size: 12.5px; line-height: 1.45; color: var(--texto-suave);
+		padding: 3px 0 3px 9px; border-left: 2px solid var(--borde); margin-bottom: 3px; }
+	.bornes-conexion b { color: #ffb63a; font-family: ui-monospace, monospace; margin-right: 5px; }
+	.cuidado-conexion { margin: 8px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--aviso);
+		background: #2a2418; border-radius: 7px; padding: 7px 9px; }
 
 	/* Veredicto térmico: el color dice de un vistazo si el armario se pide con rejilla o con clima */
 	.veredicto-termico { border-left: 3px solid var(--ok); padding: 7px 10px; border-radius: 0 8px 8px 0;
@@ -413,6 +440,7 @@
 			<button id="btn-dxf-esquema">📐 Esquema (DXF)<small>La hoja de esquema abierta, en CAD</small></button>
 		</div>
 	</div>
+	<button class="boton" id="btn-energizar" aria-label="Energizar el tablero y simularlo" title="Dar tensión al tablero y verlo funcionar: pulsa los pulsadores, abre las protecciones y mira qué se enciende">⚡<span class="rotulo-boton">Energizar</span></button>
 	<button class="boton primario" id="btn-pdf" aria-label="Exportar el dossier a PDF" title="Exportar a PDF con la lista de materiales y toda la documentación">📄<span class="rotulo-boton">Exportar</span> PDF</button>
 </header>
 
@@ -464,6 +492,19 @@
 		<summary>Cableado</summary>
 		<div class="contenido">
 			<div id="resumen-cables" style="color:var(--texto-suave)"></div>
+		</div>
+	</details>
+	<details id="seccion-simulacion" open hidden>
+		<summary>⚡ Tablero energizado</summary>
+		<div class="contenido">
+			<div class="sub" style="color:var(--texto-suave);margin-bottom:8px">Haz clic en un
+			<b>pulsador</b> para pulsarlo, en un <b>sensor</b> o una <b>boya</b> para activarlo, y en una
+			<b>protección</b> para abrirla o cerrarla. Los cables con tensión se iluminan.</div>
+			<div id="sim-funcionando"></div>
+			<div id="sim-avisos"></div>
+			<div class="botonera" style="margin-top:10px">
+				<button class="boton" id="btn-sim-reposo" title="Soltar todos los pulsadores y rearmar todo">↺ Volver al reposo</button>
+			</div>
 		</div>
 	</details>
 	<details id="seccion-termico">
@@ -676,6 +717,14 @@
 			<li><b>Controladores reales:</b> busca en el catálogo por marca o por modelo (Honeywell, Siemens, Schneider, JCI) y quedan colocados con su huella y sus borneras de verdad, listos para cablear terminal a terminal.</li>
 			<li><b>Un controlador que no está:</b> botón <i>🧩 Controlador a medida</i> — copia de la hoja del fabricante sus medidas y los terminales de cada borde (puedes abreviar <code>UI1-8</code>) y el programa lo dibuja en 3D.</li>
 			<li><b>Imagen de referencia:</b> botón <i>🖼️ Imagen</i>, marca sus puntos y cablea sobre la foto.</li>
+			<li><b>⚡ Dar energía y ver el tablero funcionar:</b> botón <i>⚡ Energizar</i>. El tablero se
+			pone en tensión: los cables con corriente se <b>iluminan</b>, y haciendo clic sobre los
+			aparatos los accionas — un <b>pulsador</b> se pulsa, un <b>sensor</b> o una <b>boya</b> se
+			activan, una <b>protección</b> se abre o se cierra, y un <b>relé térmico</b> se dispara para
+			comprobar que el mando cae como debe. El panel derecho lista lo que está funcionando.
+			Prueba el ejemplo del arranque directo: pulsa MARCHA, suéltala y verás que el motor
+			<b>sigue girando</b> — eso es el enclavamiento del contactor sosteniéndose por su propio
+			contacto auxiliar.</li>
 			<li><b>Corregir los datos de un aparato:</b> selecciónalo en modo Editor y edita su ficha en el panel derecho: marcado, referencia, In, polos, medidas, <b>poder de corte</b> y <b>disipación</b>. Lo que escribas ahí es lo que sale en el dossier del cliente.</li>
 			<li><b>Datos del proyecto:</b> <i>Archivo → Datos del proyecto</i> — cliente, obra, proyectista y revisión (van al cajetín del esquema y a la portada del dossier), más la <b>Icc presunta</b>, la temperatura ambiente y el montaje del armario, de los que dependen la verificación del poder de corte y el balance térmico.</li>
 			<li><b>Balance térmico:</b> el panel derecho estima la temperatura interior del armario (IEC 60890) y dice si necesita rejilla, ventilador o climatizador antes de que lo pidas.</li>

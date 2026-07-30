@@ -31,6 +31,8 @@ import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
 import { huellaMinima, leerRotulos } from '../src/motores/terminales.js';
 import { calcularBalanceTermico } from '../src/motores/termico.js';
+import { EstadoTablero, ResultadoSimulacion, simular } from '../src/motores/simulacion.js';
+import { comoSeConecta } from './como-se-conecta.js';
 import { avisar, confirmar, descargar, pedirTexto, responderDialogo } from './dialogos.js';
 import { HojaEsq, montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
 import { hojaASvg } from './esquema-svg.js';
@@ -103,6 +105,15 @@ let potenciales: ResultadoPotenciales;
 let posicionesEsquema = new Map<string, string>();
 let coloreaVoltaje = false; // "Colorear por voltaje" en el panel Vista
 
+/* Modo Energizar. Se declara aquí arriba, con el resto del estado, y no junto a sus funciones más
+   abajo: el repintado de la escena consulta `energizado`, y si esa variable se declarara después
+   de la primera construcción del escenario tendríamos un «no se puede acceder antes de
+   inicializar» en tiempo de ejecución que TypeScript no ve. */
+let energizado = false;
+let estadoSim: EstadoTablero = {};
+let activosPrevios = new Set<string>();
+let ultimaSim: ResultadoSimulacion | undefined;
+
 function recalcular(): void {
 	potenciales = calcularPotenciales(proyecto);
 	numerarConductores(proyecto, potenciales);
@@ -148,6 +159,9 @@ function pintarEstadoGuardado(motivo?: string): void {
 	// al cambiar de estado empuja a los botones fuera de la pantalla. El detalle va en el tooltip.
 	e.textContent = estadoGuardado === 'fallo' ? 'Sin guardar'
 		: estadoGuardado === 'sucio' ? 'Sin descargar' : 'Guardado';
+	// El texto del chip cambia de ancho, así que puede ser justo lo que haga que los rótulos de
+	// los botones dejen de caber.
+	ajustarRotulosBarra();
 	e.title = estadoGuardado === 'fallo'
 		? `No se pudo guardar en el navegador${motivo ? ` (${motivo})` : ''}. `
 			+ 'Descarga el proyecto con Archivo → Guardar para no perderlo.'
@@ -394,6 +408,7 @@ function actualizarTodo(): void {
 	pintarPaneles();
 	pintarSeleccion();
 	refrescarEsquema(); // si el esquema está abierto, se redibuja: es la misma verdad, otra vista
+	recalcularSimulacion(); // rehacer la escena borra el brillo: se vuelve a pintar lo que está vivo
 }
 
 /**
@@ -413,6 +428,7 @@ function actualizarConservandoAparatos(): void {
 	pintarPaneles();
 	pintarSeleccion();
 	refrescarEsquema();
+	recalcularSimulacion();
 }
 
 /** Tras reemplazar el objeto `proyecto` (deshacer/rehacer/abrir/nuevo). */
@@ -965,6 +981,7 @@ function pintarSeleccion(): void {
 			<label>Referencia<input id="dev-referencia" type="text" value="${escaparHtml(d.referencia ?? '')}" placeholder="LC1D09B7"></label>
 			<label>In / Ib (A)<input id="dev-corriente" type="number" step="0.1" min="0" value="${num(d.corrienteNominal)}" placeholder="9"></label>
 			<label>Polos<input id="dev-polos" type="number" step="1" min="1" max="4" value="${num(d.polos)}" placeholder="3"></label>
+			${d.tipo === 'bornero' ? `<label>Nº de bornas<input id="dev-bornas" type="number" step="1" min="1" max="60" value="${d.bornes.length}"></label>` : ''}
 			${col ? `<label>Ancho (mm)<input id="dev-ancho" type="number" step="1" min="5" value="${Math.round(col.ancho)}"></label>
 			<label>Alto (mm)<input id="dev-alto" type="number" step="1" min="5" value="${Math.round(col.alto)}"></label>` : ''}
 			<label>Fondo (mm)<input id="dev-fondo" type="number" step="1" min="5" value="${num(d.profundidad)}" placeholder="auto"></label>
@@ -990,6 +1007,18 @@ function pintarSeleccion(): void {
 		como estimación.</p>` : ''}
 		<p class="pista">Los datos del catálogo son un punto de partida: corrígelos con la hoja del
 		fabricante y el dossier saldrá con lo que de verdad lleva el tablero.</p>` : '';
+	// «¿Y esto cómo se conecta?» — la duda literal de quien probó el programa. Va plegado para no
+	// estorbar a quien ya lo sabe, y se abre de un clic para quien no.
+	const ayuda = esImagen ? undefined : comoSeConecta(d);
+	const bloqueComoSeConecta = ayuda ? `
+		<details class="como-conectar">
+			<summary>🔌 ¿Cómo se conecta?</summary>
+			<p class="resumen-conexion">${escaparHtml(ayuda.resumen)}</p>
+			<ul class="bornes-conexion">
+				${ayuda.bornes.map((b) => `<li><b>${escaparHtml(b.borne)}</b> ${escaparHtml(b.papel)}</li>`).join('')}
+			</ul>
+			${ayuda.cuidado ? `<p class="cuidado-conexion">⚠️ ${escaparHtml(ayuda.cuidado)}</p>` : ''}
+		</details>` : '';
 	const bloqueAcciones = esEditor ? `
 		<h2>Acciones</h2>
 		<div class="botonera">
@@ -1008,6 +1037,7 @@ function pintarSeleccion(): void {
 			${d.tensionNominal !== undefined ? `<dt>Tensión</dt><dd><span class="chip-volt" style="background:${hexColor(colorVoltaje(d.tensionNominal))}">${d.tensionNominal} V</span></dd>` : ''}
 			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${posicionesEsquema.get(d.id) ?? '—'}</dd>`}
 		</dl>
+		${bloqueComoSeConecta}
 		${bloqueTension}
 		${bloquePines}
 		${bloqueDRC}
@@ -1133,6 +1163,39 @@ function pintarSeleccion(): void {
 		numero('dev-icu', (v) => { d.poderCorteKA = v; d.poderCorteEstimado = undefined; });
 		numero('dev-disipacion', (v) => { d.disipacionW = v; d.disipacionEstimada = undefined; });
 		numero('dev-sensibilidad', (v) => { d.sensibilidadMA = v; });
+		// Nº de bornas de un bornero. Quitar bornas se lleva por delante los cables conectados a
+		// ellas, así que se avisa y se borran de verdad: dejarlos apuntando a una borna que ya no
+		// existe es exactamente el «cable huérfano» que el validador de archivos tiene que limpiar.
+		numero('dev-bornas', (v) => {
+			if (v === undefined || v < 1) return;
+			const cuantas = Math.min(60, Math.round(v));
+			const antes = d.bornes.length;
+			if (cuantas === antes) return;
+			if (cuantas > antes) {
+				const esPE = d.bornes[0]?.tipo === 'PE';
+				for (let i = antes; i < cuantas; i++) {
+					d.bornes.push(esPE ? { id: `PE${i + 1}`, tipo: 'PE' } : { id: String(i + 1), tipo: 'control' });
+				}
+			} else {
+				const quitadas = d.bornes.slice(cuantas).map((b) => b.id);
+				d.bornes = d.bornes.slice(0, cuantas);
+				const sueltos = proyecto.conductores.filter((c) =>
+					(c.de.dispositivoId === d.id && quitadas.includes(c.de.borneId))
+					|| (c.a.dispositivoId === d.id && quitadas.includes(c.a.borneId)));
+				if (sueltos.length) {
+					proyecto.conductores = proyecto.conductores.filter((c) => !sueltos.includes(c));
+					avisar(`Se quitaron ${sueltos.length} cable(s) que iban a las bornas eliminadas.`, 'info');
+				}
+				d.puentes = d.puentes?.map((g) => g.filter((b) => !quitadas.includes(b))).filter((g) => g.length > 1);
+				d.puentesInternos = d.puentesInternos?.filter(([a, b]) => !quitadas.includes(a) && !quitadas.includes(b));
+			}
+			// La huella crece o se encoge con las bornas: 7 mm por borna es el paso de una UT 4.
+			if (col) {
+				const ancho = Math.max(8, Math.round(cuantas * 7.2));
+				if (!solapaCon(col.x, col.y, ancho, col.alto, d.id)) col.ancho = ancho;
+				else avisar('Las bornas cambiaron, pero no cabía ensanchar el bloque sin encimarse.', 'info');
+			}
+		}, true);
 		texto('dev-regulacion', (v) => {
 			// Se acepta «6-10», «6–10» o «6 a 10»: el usuario escribe lo que ve en el aparato.
 			const n = v.split(/[-–a]/).map((x) => Number(x.trim())).filter((x) => Number.isFinite(x) && x > 0);
@@ -2362,6 +2425,17 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		return;
 	}
 
+	// Con el tablero ENERGIZADO, un clic sobre un aparato lo acciona: pulsa el pulsador, abre la
+	// protección, dispara el térmico. Tiene prioridad sobre todo lo demás porque en ese modo no se
+	// está editando el tablero, se está probando.
+	if (energizado && ev.button === 0) {
+		const clic = elementoBajoElPuntero(ev);
+		if (clic?.tipo === 'dispositivo' && accionarEnSimulacion(clic.id)) {
+			seleccionar(clic.id);
+			return;
+		}
+	}
+
 	// Cableado por clic en los bornes (modo Trabajo, clic izquierdo): clic en un borne y luego
 	// en otro crea el cable, como en un tablero real. Tiene prioridad para poder conectar.
 	if (modo === 'trabajo' && ev.button === 0) {
@@ -2965,6 +3039,146 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 const AYUDA: Record<Modo, string> = {
 	editor: '🔧 EDITOR (armar) — Añade aparatos del catálogo (van sobre un riel) · arrástralos · edita caja, placa, rieles y canaletas (botón «Girar H↔V») · Duplicar/Eliminar · Supr borra · Ctrl+Z deshace',
 	trabajo: '🔌 TRABAJO (conexiones) — Cablea tocando un borne (punto naranja) y luego otro · doble clic sobre un cable crea una unión y el clic izquierdo la arrastra · Esc cancela · DRC en vivo. La estructura está bloqueada.',
+};
+
+/* ------------------------------- Modo Energizar ------------------------------- */
+
+/**
+ * Dar tensión al tablero y verlo funcionar. Es la petición literal de quien lo probó: «no sé cómo
+ * dar play para energizar y ver los circuitos funcionando».
+ *
+ * `estadoSim` guarda la posición de cada mando (pulsado, abierto, disparado) y `activosPrevios` la
+ * MEMORIA del circuito: qué bobinas estaban metidas. Esa memoria es la que hace que un
+ * enclavamiento se sostenga al soltar el pulsador de marcha en vez de caerse.
+ */
+function recalcularSimulacion(): void {
+	if (!energizado) return;
+	ultimaSim = simular(proyecto, estadoSim, activosPrevios);
+	activosPrevios = ultimaSim.activos;
+	pintarSimulacion();
+}
+
+/** Enciende lo que está vivo: cables con tensión y aparatos funcionando. */
+function pintarSimulacion(): void {
+	const r = ultimaSim;
+	escenario.cables.traverse((o) => {
+		if (!(o instanceof THREE.Mesh) || !(o.material instanceof THREE.MeshStandardMaterial)) return;
+		const id = o.userData.conductorId as string | undefined;
+		if (!id) return;
+		const vivo = energizado && r?.conductoresVivos.has(id);
+		o.material.emissive.setHex(vivo ? 0xffc83d : 0x000000);
+		o.material.emissiveIntensity = vivo ? 0.85 : 0;
+	});
+	for (const grupo of escenario.dispositivos.children) {
+		const id = grupo.userData.dispositivoId as string | undefined;
+		if (!id) continue;
+		const activo = energizado && r?.activos.has(id);
+		grupo.traverse((o) => {
+			if (!(o instanceof THREE.Mesh) || !(o.material instanceof THREE.MeshStandardMaterial)) return;
+			// Se guarda el brillo de fábrica para poder devolverlo al desenergizar: hay aparatos que
+			// ya venían con emisivo propio (la pantalla de un controlador, un LED).
+			if (o.userData.emisivoOriginal === undefined) o.userData.emisivoOriginal = o.material.emissiveIntensity;
+			o.material.emissive.setHex(activo ? 0xffd54f : 0x000000);
+			o.material.emissiveIntensity = activo ? 0.5 : (o.userData.emisivoOriginal as number);
+		});
+	}
+	pintarPanelSimulacion();
+}
+
+function pintarPanelSimulacion(): void {
+	const cont = $('sim-funcionando');
+	const avisos = $('sim-avisos');
+	const r = ultimaSim;
+	cont.innerHTML = '';
+	avisos.innerHTML = '';
+	if (!r) return;
+	if (r.funcionando.length === 0) cont.innerHTML = '<div class="nada-sim">Nada está funcionando todavía.</div>';
+	for (const f of r.funcionando) {
+		const fila = document.createElement('div');
+		fila.className = 'fila-sim';
+		fila.innerHTML = `<span class="punto-sim"></span><span class="des-sim">${escaparHtml(f.designacion)}</span>`
+			+ `<span class="que-sim">${escaparHtml(f.que)}</span>`;
+		fila.onclick = () => seleccionar(f.dispositivoId);
+		cont.appendChild(fila);
+	}
+	const textos = [...r.avisos];
+	if (r.oscila) {
+		textos.push('El circuito no se estabiliza: hay un lazo que se enciende y se apaga solo (un relé '
+			+ 'alimentando su propia bobina a través de su contacto NC, por ejemplo).');
+	}
+	for (const a of textos) {
+		const div = document.createElement('div');
+		div.className = 'aviso-sim';
+		div.textContent = a;
+		avisos.appendChild(div);
+	}
+}
+
+/**
+ * Un clic sobre un aparato con el tablero energizado lo ACCIONA en vez de seleccionarlo para
+ * editar. Devuelve true si ha accionado algo, para que el clic no siga su camino normal.
+ */
+function accionarEnSimulacion(dispositivoId: string): boolean {
+	const d = proyecto.dispositivos.find((x) => x.id === dispositivoId);
+	if (!d) return false;
+	const st = { ...(estadoSim[d.id] ?? {}) };
+	switch (d.tipo) {
+		case 'pulsador':
+		case 'selector':
+		case 'sensor':
+			st.activo = !st.activo;
+			avisar(`${d.designacion ?? d.id}: ${st.activo ? 'accionado' : 'en reposo'}`, 'info');
+			break;
+		case 'disyuntor':
+		case 'diferencial':
+		case 'guardamotor':
+		case 'seccionador':
+		case 'fusible':
+			// Si había disparado, el clic lo rearma; si estaba cerrado, lo abre.
+			if (st.disparado) { st.disparado = false; st.cerrado = true; }
+			else st.cerrado = st.cerrado === false;
+			avisar(`${d.designacion ?? d.id}: ${st.cerrado === false ? 'abierto' : 'cerrado'}`, 'info');
+			break;
+		case 'rele':
+			// Un térmico se dispara a mano para comprobar que el mando cae como debe.
+			if (d.bornes.some((b) => b.id === '95')) {
+				st.disparado = !st.disparado;
+				avisar(`${d.designacion ?? d.id}: ${st.disparado ? 'DISPARADO' : 'rearmado'}`,
+					st.disparado ? 'error' : 'ok');
+				break;
+			}
+			return false;
+		default:
+			return false;
+	}
+	estadoSim[d.id] = st;
+	recalcularSimulacion();
+	return true;
+}
+
+function aplicarEnergizado(activo: boolean): void {
+	energizado = activo;
+	document.body.classList.toggle('modo-simulacion', activo);
+	$('btn-energizar').classList.toggle('activo', activo);
+	($('seccion-simulacion') as HTMLElement).hidden = !activo;
+	if (activo) {
+		($('seccion-simulacion') as HTMLDetailsElement).open = true;
+		activosPrevios = new Set();
+		recalcularSimulacion();
+		avisar('Tablero energizado. Haz clic en un pulsador para accionarlo.', 'ok');
+	} else {
+		ultimaSim = undefined;
+		pintarSimulacion();
+		avisar('Tablero sin tensión.', 'info');
+	}
+}
+
+($('btn-energizar') as HTMLButtonElement).onclick = () => aplicarEnergizado(!energizado);
+($('btn-sim-reposo') as HTMLButtonElement).onclick = () => {
+	estadoSim = {};
+	activosPrevios = new Set();
+	recalcularSimulacion();
+	avisar('Todo en reposo: pulsadores soltados y protecciones rearmadas.', 'ok');
 };
 
 /* ------------------------------- Modo Visualización ------------------------------- */
@@ -3724,12 +3938,29 @@ function ajustarTamano(): void {
 	camara.updateProjectionMatrix();
 	renderer.setSize(r.width, r.height);
 }
+/**
+ * Decide si los botones de la barra pueden llevar su rótulo, MIDIENDO si caben.
+ *
+ * Antes esto era un `@media (max-width: …)` con un número medido a mano, y duró exactamente hasta
+ * el siguiente botón que añadí: la barra volvió a desbordar. El ancho que hace falta depende de
+ * cuántas herramientas haya, de la longitud del nombre del proyecto y del texto del chip de
+ * guardado, así que el único número fiable es el que dice el navegador. Se prueba con rótulos y,
+ * si no cabe, se quitan.
+ */
+export function ajustarRotulosBarra(): void {
+	const barra = $('barra');
+	barra.classList.remove('compacta');
+	if (barra.scrollWidth > barra.clientWidth + 1) barra.classList.add('compacta');
+}
+
 window.addEventListener('resize', () => {
 	ajustarTamano();
+	ajustarRotulosBarra();
 	if (encuadrePendiente) encuadrar();
 	if (esquemaAbierto) aplicarZoomEsquema(); // la hoja se reajusta al nuevo tamaño de ventana
 });
 ajustarTamano();
+ajustarRotulosBarra();
 encuadrar(); // ahora que el lienzo ya mide, el encuadre sale bien
 
 /* ------------------------------- Arranque ------------------------------- */
@@ -4036,6 +4267,31 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Dónde cae en pantalla un punto del modelo (para comprobar el encuadre). */
 		puntoEnPantalla: (x: number, y: number, z = 0) => aPantalla(escenario.aEscena(x, y, z)),
+		/** Resumen de la simulación en curso (modo Energizar). */
+		simulacion: () => ({
+			energizado,
+			conductoresVivos: ultimaSim?.conductoresVivos.size ?? 0,
+			bornesVivos: ultimaSim?.vivos.size ?? 0,
+			activos: [...(ultimaSim?.activos ?? [])],
+			funcionando: ultimaSim?.funcionando ?? [],
+			avisos: ultimaSim?.avisos ?? [],
+			oscila: ultimaSim?.oscila ?? false,
+		}),
+		/** Recalcula si los rótulos de la barra caben (lo hace la app al cambiar tamaño o estado). */
+		ajustarBarra: () => ajustarRotulosBarra(),
+		/** Estado de los mandos que el usuario ha accionado. */
+		estadoSim: () => Object.entries(estadoSim).map(([id, st]) => ({ id, ...st })),
+		/** Acciona un aparato como si se hubiera pinchado en él con el tablero energizado. */
+		accionar: (id: string) => accionarEnSimulacion(id),
+		/** Cuántos tubos de cable están de verdad ILUMINADOS en la escena (lo que se ve). */
+		cablesEncendidos: () => {
+			let n = 0;
+			escenario.cables.traverse((o) => {
+				const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+				if (m?.isMaterial && (o as THREE.Mesh).userData.tuboVisible && m.emissiveIntensity > 0.1) n++;
+			});
+			return n;
+		},
 		/**
 		 * Posición y objetivo de la cámara. Los controles llevan amortiguación, así que después
 		 * de soltar el ratón la cámara SIGUE moviéndose sola unos cuantos fotogramas. Una prueba

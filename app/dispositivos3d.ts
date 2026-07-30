@@ -176,7 +176,9 @@ function transformador(g: THREE.Group, w: number, h: number): number {
 
 function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 	const prof = 48;
-	const n = Math.max(2, d.bornes.length);
+	// Una borna suelta es un caso legítimo y muy común (un puente, una reserva, un PE aislado):
+	// con un mínimo de 2 se dibujaban dos bloques donde el usuario había puesto uno.
+	const n = Math.max(1, d.bornes.length);
 	const paso = w / n;
 	for (let i = 0; i < n; i++) {
 		const b = d.bornes[i];

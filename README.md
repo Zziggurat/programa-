@@ -8,7 +8,7 @@ totalmente personalizable.
 ## Qué hace ya (núcleo v0.1)
 
 El núcleo es una librería TypeScript **sin interfaz gráfica**, con un modelo de datos JSON y
-once motores independientes y testeados:
+doce motores independientes y testeados:
 
 | Motor | Archivo | Qué resuelve |
 |---|---|---|
@@ -22,6 +22,7 @@ once motores independientes y testeados:
 | Documentación | `src/motores/documentacion.ts` | BOM, lista de conductores, planes de borneros, informe HTML completo, exportación CSV |
 | Terminales | `src/motores/terminales.ts` | Geometría de las borneras declaradas por ficha de datos: es la única fuente de verdad que comparten el modelo 3D y el anclaje de los cables |
 | Ficha del tablero | `src/motores/ficha-tablero.ts` | Las cifras del conjunto: recuento de aparatos por familia, medidas de caja y placa, metros de riel y canaleta, cable por sección, ocupación de la placa |
+| Simulación | `src/motores/simulacion.ts` | Energizar el tablero y verlo funcionar: contactos según el estado de cada mando, propagación de la tensión y iteración a punto fijo para que el enclavamiento de un contactor se sostenga |
 | Balance térmico | `src/motores/termico.ts` | Temperatura interior del armario por el método simplificado de IEC 60890: disipación de cada aparato, superficie efectiva según el montaje y veredicto (natural / rejilla / ventilador / climatizador) |
 | Apertura de archivo | `src/modelo/cargar.ts` | Validación real del proyecto que se abre, reparación de lo recuperable (cables huérfanos, colocaciones fantasma) y punto de enganche para migrar formatos antiguos |
 
@@ -72,6 +73,7 @@ Además de los tests del núcleo, hay varias suites que manejan el editor 3D de 
 | `npm run qa:riel` | El riel arrastra sus aparatos, y si chocan vuelve todo a su sitio |
 | `npm run qa:nuevas` | Biblioteca de ejemplos con su explicación y modo Visualización |
 | `npm run qa:estres` | Decenas de operaciones al azar verificando los invariantes tras cada una |
+| `npm run qa:energizar` | El modo Energizar: pulsar un pulsador arranca el motor, el enclavamiento lo sostiene al soltar, el paro lo tira y no vuelve solo |
 | `npm run qa:empaquetado` | **El archivo que se entrega**: abre `dist-final/TableroStudio.html` con `file://`, sin servidor, y comprueba que arranca, que se puede trabajar y que salen el dossier y el proyecto guardado |
 
 Se apoyan en una sonda que solo existe abriendo la página con `?qa=1`; en el uso normal

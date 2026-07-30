@@ -156,6 +156,33 @@ const PLANTILLAS_BASE: PlantillaAparato[] = [
 		referencia: 'TRF-220-24-72VA', ancho: 90, alto: 80, color: '#86673f',
 		bornes: [L('P1'), N('P2'), C('S1'), C('S2')],
 	},
+	// Bornas sueltas y en grupos pequeños. Un tablero real lleva muchas: un puente, una reserva,
+	// un PE aislado, dos bornas para una señal. Antes solo había bloques de 4 en adelante y no
+	// había forma de poner una sola.
+	{
+		id: 'borna-1', nombre: 'Borna suelta 4 mm²', tipo: 'bornero', grupo: 'Conexión',
+		descripcion: 'Una borna de paso de 4 mm² (puente, reserva o señal suelta)',
+		fabricante: 'Phoenix Contact', referencia: 'UT 4', ancho: 8, alto: 56, color: '#9aa0a6',
+		bornes: [C('1')],
+	},
+	{
+		id: 'borna-2', nombre: 'Bornas 2 × 4 mm²', tipo: 'bornero', grupo: 'Conexión',
+		descripcion: 'Dos bornas de paso de 4 mm² (una señal de ida y vuelta)',
+		fabricante: 'Phoenix Contact', referencia: 'UT 4', ancho: 15, alto: 56, color: '#9aa0a6',
+		bornes: [C('1'), C('2')],
+	},
+	{
+		id: 'borna-4', nombre: 'Bornas 4 × 4 mm²', tipo: 'bornero', grupo: 'Conexión',
+		descripcion: 'Cuatro bornas de paso de 4 mm²', fabricante: 'Phoenix Contact',
+		referencia: 'UT 4', ancho: 29, alto: 56, color: '#9aa0a6',
+		bornes: [C('1'), C('2'), C('3'), C('4')],
+	},
+	{
+		id: 'borna-pe-1', nombre: 'Borna de tierra suelta', tipo: 'bornero', grupo: 'Conexión',
+		descripcion: 'Una borna de puesta a tierra (verde/amarillo), unida al riel',
+		fabricante: 'Phoenix Contact', referencia: 'USLKG 5', ancho: 9, alto: 56, color: '#7cb342',
+		bornes: [{ id: 'PE', tipo: 'PE' }],
+	},
 	{
 		id: 'bornero-8', nombre: 'Bornero 8 bornas 4 mm²', tipo: 'bornero', grupo: 'Conexión',
 		descripcion: 'Bornero de paso 8 × UT 4 + tierra', fabricante: 'Phoenix Contact',
@@ -343,6 +370,10 @@ const FICHA_ELECTRICA: Record<string, Partial<PlantillaAparato>> = {
 	'trafo-220-24': { corrienteNominal: 0.33, polos: 1, disipacionW: 11, datosElectricos: 'tipico' },
 
 	/* ---------- Conexión ---------- */
+	'borna-1': { disipacionW: 0.1, datosElectricos: 'tipico' },
+	'borna-2': { disipacionW: 0.1, datosElectricos: 'tipico' },
+	'borna-4': { disipacionW: 0.2, datosElectricos: 'tipico' },
+	'borna-pe-1': { disipacionW: 0, datosElectricos: 'tipico' },
 	'bornero-8': { disipacionW: 0.5, datosElectricos: 'tipico' },
 	'bornero-12': { disipacionW: 0.6, datosElectricos: 'tipico' },
 	'bornero-seccionable': { disipacionW: 0.4, datosElectricos: 'tipico' },

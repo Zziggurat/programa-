@@ -70,6 +70,9 @@ for (const w of [1280, 1366, 1400, 1440, 1536, 1600, 1680, 1745, 1800, 1920]) {
 			const antes = { clase: chip.className, texto: chip.textContent };
 			chip.className = c;
 			chip.textContent = c === 'fallo' ? 'Sin guardar' : c === 'sucio' ? 'Sin descargar' : 'Guardado';
+			// La app remide los rótulos cuando cambia el estado; la prueba hace lo mismo para medir
+			// la barra como queda de verdad y no a mitad de ajuste.
+			window.qa.ajustarBarra();
 			const b = document.getElementById('barra');
 			const r = { scroll: b.scrollWidth > b.clientWidth + 1, texto: chip.textContent };
 			chip.className = antes.clase; chip.textContent = antes.texto;
