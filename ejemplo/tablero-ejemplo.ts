@@ -36,7 +36,7 @@ export function tableroEjemplo(): Proyecto {
 		{
 			id: 'q1', tipo: 'disyuntor', descripcion: 'Interruptor automático 2P 6 A',
 			fabricante: 'Schneider Electric', referencia: 'iC60N 2P C6', tensionNominal: 220,
-			poderCorteKA: 6, disipacionW: 2.5,
+			poderCorteKA: 6, disipacionW: 2.5, poderCorteEstimado: true, disipacionEstimada: true,
 			hojaId: 'h1', posicion: { x: 2, y: 0 },
 			bornes: [
 				{ id: '1', tipo: 'L', obligatorio: true }, { id: '2', tipo: 'L', obligatorio: true },

@@ -6,7 +6,7 @@
 import { BloqueTerminales, Borne, Dispositivo, LetraClase, Proyecto, Rol, TipoDispositivo, CLASE_POR_TIPO } from '../src/modelo/tipos.js';
 import { aplicarPlantilla } from '../src/motores/numeracion.js';
 import { opcionesDe } from '../src/modelo/proyecto.js';
-import { bornesDeControlador, CONTROLADORES, FichaControlador, notaMedidas } from './controladores.js';
+import { bornesDeControlador, CONTROLADORES, disipacionDeControlador, FichaControlador, notaMedidas } from './controladores.js';
 
 export interface PlantillaAparato {
 	id: string;
@@ -21,6 +21,30 @@ export interface PlantillaAparato {
 	corrienteNominal?: number;
 	/** Nº de polos (1, 2, 3 o 4). A partir de 3 el circuito se calcula como trifásico. */
 	polos?: number;
+	/* --- Ficha eléctrica. Es lo que hace que el DRC verifique de verdad en vez de estimar. --- */
+	/** Poder de corte Icu/Icn en kA. Valor habitual de la familia: confírmalo en la hoja. */
+	poderCorteKA?: number;
+	/** Curva de disparo (B/C/D/K/Z) o clase de fusible (gG/aM). */
+	curvaDisparo?: Dispositivo['curvaDisparo'];
+	/** Sensibilidad de un diferencial en mA. */
+	sensibilidadMA?: number;
+	/** Clase de un diferencial (AC/A/F/B). */
+	claseDiferencial?: Dispositivo['claseDiferencial'];
+	/** Rango de regulación de un guardamotor o relé térmico, en A. */
+	rangoRegulacionA?: [number, number];
+	/** Disipación en servicio (W). Siempre entra al proyecto marcada como ESTIMACIÓN. */
+	disipacionW?: number;
+	/**
+	 * De dónde salen calibre, polos, curva y sensibilidad:
+	 *  - `referencia`: van codificados en la propia referencia comercial («iC60N 2P C16» es,
+	 *    sin lugar a discusión, 16 A curva C a 2 polos). Son fiables.
+	 *  - `tipico`: valores corrientes de ese tipo de aparato, para no dejar el hueco en blanco.
+	 *
+	 * El poder de corte y la disipación NO entran aquí: esos dos siempre llegan al proyecto
+	 * marcados como estimación, porque no salen de la referencia sino de la hoja de datos, y esa
+	 * no la tiene el programa. El dossier lo dice y el usuario los corrige en la ficha del aparato.
+	 */
+	datosElectricos?: 'referencia' | 'tipico';
 	/** Huella sobre la placa, en mm. */
 	ancho: number;
 	alto: number;
@@ -45,7 +69,9 @@ const N = (id: string): Borne => ({ id, tipo: 'N' });
 const C = (id: string): Borne => ({ id, tipo: 'control' });
 const S = (id: string): Borne => ({ id, tipo: 'senal' });
 
-export const PLANTILLAS: PlantillaAparato[] = [
+/** Aparatos del catálogo con su geometría y sus borneras. La ficha eléctrica se les añade
+ *  más abajo, al construir `PLANTILLAS`. */
+const PLANTILLAS_BASE: PlantillaAparato[] = [
 	{
 		id: 'disyuntor-1p', nombre: 'Disyuntor 1P C10', tipo: 'disyuntor', grupo: 'Protección',
 		descripcion: 'Interruptor automático 1P C10', fabricante: 'Schneider Electric',
@@ -255,6 +281,96 @@ export const PLANTILLAS: PlantillaAparato[] = [
 ];
 
 /**
+ * Ficha eléctrica de cada aparato del catálogo, en una sola tabla para poder auditarla de un
+ * vistazo. Va aparte de la plantilla a propósito: la geometría y las borneras de arriba están
+ * comprobadas contra el aparato real, y no quiero mezclarlas con datos de otra procedencia.
+ *
+ * DE DÓNDE SALE CADA COSA, que es lo que de verdad importa aquí:
+ *
+ *  - `corrienteNominal`, `polos`, `curvaDisparo`, `sensibilidadMA`, `rangoRegulacionA`: van
+ *    codificados en la referencia comercial. «iC60N 2P C16» es 16 A curva C a dos polos y no
+ *    admite discusión; «GV2ME08» es el 2,5–4 A de la serie. Son fiables — `datosElectricos:
+ *    'referencia'`.
+ *
+ *  - `poderCorteKA` y `disipacionW`: NO salen de la referencia, salen de la hoja de datos, y esa
+ *    no la tiene el programa. Son los valores CORRIENTES de cada familia, del orden de magnitud
+ *    correcto, y entran al proyecto marcados como estimación (`poderCorteEstimado`,
+ *    `disipacionEstimada`). El balance térmico y el dossier lo dicen, y el DRC lo repite en su
+ *    mensaje. Sirven para que el cálculo no arranque en cero y para tener el hueco relleno con
+ *    algo sensato que corregir, NO para certificar nada.
+ *
+ * Si vas a firmar un tablero, sustituye esos dos por los de la hoja del fabricante en la ficha
+ * de cada aparato: en cuanto lo hagas, el dossier deja de marcarlos como estimados.
+ */
+const FICHA_ELECTRICA: Record<string, Partial<PlantillaAparato>> = {
+	/* ---------- Protección ---------- */
+	// Los iC60N llevan marcado Icn 6000 A (EN 60898); la curva y el calibre van en la referencia.
+	'disyuntor-1p': { poderCorteKA: 6, curvaDisparo: 'C', disipacionW: 1.6, datosElectricos: 'referencia' },
+	'disyuntor-2p': { poderCorteKA: 6, curvaDisparo: 'C', disipacionW: 2.2, datosElectricos: 'referencia' },
+	'disyuntor-2p-16': { poderCorteKA: 6, curvaDisparo: 'C', disipacionW: 4.4, datosElectricos: 'referencia' },
+	'disyuntor-3p': { poderCorteKA: 6, curvaDisparo: 'C', disipacionW: 7, datosElectricos: 'referencia' },
+	// Un diferencial puro no corta cortocircuitos por sí solo: los 6 kA son su corriente
+	// CONDICIONAL, y solo valen si lleva detrás el automático que lo respalda.
+	'diferencial-2p': {
+		poderCorteKA: 6, sensibilidadMA: 30, claseDiferencial: 'AC', disipacionW: 2.5,
+		datosElectricos: 'referencia',
+	},
+	'diferencial-4p': {
+		poderCorteKA: 6, sensibilidadMA: 30, claseDiferencial: 'AC', disipacionW: 5,
+		datosElectricos: 'referencia',
+	},
+	'guardamotor': { poderCorteKA: 100, rangoRegulacionA: [2.5, 4], disipacionW: 4, datosElectricos: 'referencia' },
+	'guardamotor-9': { poderCorteKA: 100, rangoRegulacionA: [6, 10], disipacionW: 6, datosElectricos: 'referencia' },
+	'portafusible': { poderCorteKA: 100, curvaDisparo: 'gG', disipacionW: 1.5, datosElectricos: 'tipico' },
+
+	/* ---------- Maniobra ---------- */
+	// En un contactor casi toda la disipación es la bobina sujetando el electroimán.
+	'contactor-3p': { disipacionW: 6, datosElectricos: 'referencia' },
+	'contactor-3p-18': { disipacionW: 8, datosElectricos: 'referencia' },
+	'rele-termico': { rangoRegulacionA: [2.5, 4], disipacionW: 5, datosElectricos: 'referencia' },
+	'rele-aux': { corrienteNominal: 8, polos: 2, disipacionW: 1.2, datosElectricos: 'referencia' },
+	// El SSR es el aparato que más calienta de un tablero pequeño: ~1,3 V de caída por la
+	// corriente que pasa. Con 20 A son 25 W dentro del armario, y eso decide si hace falta
+	// ventilación. Es justo el dato que nadie mete a mano y luego sorprende.
+	'rele-estado-solido': { disipacionW: 25, datosElectricos: 'referencia' },
+	'variador': { disipacionW: 35, datosElectricos: 'referencia' },
+
+	/* ---------- Alimentación ---------- */
+	// En una fuente conmutada la disipación es lo que se pierde por el rendimiento (~87-89 %).
+	'fuente-24': { disipacionW: 9, datosElectricos: 'referencia' },
+	'fuente-24-5a': { disipacionW: 16, datosElectricos: 'referencia' },
+	'fuente-24-10a': { disipacionW: 30, datosElectricos: 'referencia' },
+	'trafo-220-24': { corrienteNominal: 0.33, polos: 1, disipacionW: 11, datosElectricos: 'tipico' },
+
+	/* ---------- Conexión ---------- */
+	'bornero-8': { disipacionW: 0.5, datosElectricos: 'tipico' },
+	'bornero-12': { disipacionW: 0.6, datosElectricos: 'tipico' },
+	'bornero-seccionable': { disipacionW: 0.4, datosElectricos: 'tipico' },
+	'bornero-portafusible': { curvaDisparo: 'gG', disipacionW: 2, datosElectricos: 'tipico' },
+	'bornero-pe': { disipacionW: 0, datosElectricos: 'tipico' },
+
+	/* ---------- Control ---------- */
+	// Contactos pasivos: no calientan. Decirlo con un 0 explícito es mejor que dejarlo en blanco
+	// y que el balance térmico les invente unos vatios por su tipo.
+	'pulsador-emergencia': { disipacionW: 0, datosElectricos: 'referencia' },
+	'pulsador-marcha': { disipacionW: 0, datosElectricos: 'referencia' },
+	'selector-2pos': { disipacionW: 0, datosElectricos: 'referencia' },
+	'final-carrera': { disipacionW: 0, datosElectricos: 'referencia' },
+	'sensor-inductivo': { disipacionW: 0.3, datosElectricos: 'referencia' },
+	'piloto-24': { disipacionW: 0.4, datosElectricos: 'referencia' },
+	'horometro': { disipacionW: 0.5, datosElectricos: 'tipico' },
+	'plc': { disipacionW: 5, datosElectricos: 'referencia' },
+};
+
+/** El catálogo que ve el usuario: cada aparato con su geometría y su ficha eléctrica. */
+export const PLANTILLAS: PlantillaAparato[] = PLANTILLAS_BASE.map(
+	(p) => ({ ...p, ...(FICHA_ELECTRICA[p.id] ?? {}) }),
+);
+
+/** Todo aparato del catálogo tiene que declarar de dónde salen sus datos eléctricos. */
+export const SIN_FICHA_ELECTRICA = PLANTILLAS_BASE.filter((p) => !FICHA_ELECTRICA[p.id]).map((p) => p.id);
+
+/**
  * Controladores reales (BMS/HVAC) descritos por ficha de datos. No se modela cada uno a
  * mano: la ficha aporta huella, fondo y borneras con los rótulos del fabricante, y el
  * constructor 3D genérico hace el resto.
@@ -276,6 +392,10 @@ export function plantillaDeControlador(f: FichaControlador): PlantillaAparato {
 		bornes: bornesDeControlador(f),
 		terminales: f.bloques.map((b) => ({ ...b, bornes: [...b.bornes] })),
 		rasgosFrente: { ...f.frente },
+		// Un controlador no es una protección: no tiene calibre, curva ni poder de corte. Lo que
+		// sí aporta al tablero es CALOR, y un armario de BMS con tres o cuatro dentro lo nota.
+		disipacionW: disipacionDeControlador(f),
+		datosElectricos: 'referencia',
 		nota: notaMedidas(f),
 	};
 }
@@ -311,6 +431,18 @@ export function crearDesdePlantilla(plantilla: PlantillaAparato, proyecto: Proye
 		tensionNominal: plantilla.tensionNominal,
 		corrienteNominal: plantilla.corrienteNominal,
 		polos: plantilla.polos,
+		// Ficha eléctrica. El poder de corte y la disipación entran marcados como estimación:
+		// son los valores corrientes de la familia, no los de la hoja de datos de este aparato.
+		// En cuanto el usuario escriba el suyo en la ficha, las banderas se van y el dossier
+		// deja de avisar. Sin esto el balance térmico presumiría de un rigor que no tiene.
+		poderCorteKA: plantilla.poderCorteKA,
+		poderCorteEstimado: plantilla.poderCorteKA !== undefined ? true : undefined,
+		disipacionW: plantilla.disipacionW,
+		disipacionEstimada: plantilla.disipacionW !== undefined ? true : undefined,
+		curvaDisparo: plantilla.curvaDisparo,
+		sensibilidadMA: plantilla.sensibilidadMA,
+		claseDiferencial: plantilla.claseDiferencial,
+		rangoRegulacionA: plantilla.rangoRegulacionA ? [...plantilla.rangoRegulacionA] : undefined,
 		profundidad: plantilla.profundidad,
 		colorCuerpo: plantilla.color,
 		terminales: plantilla.terminales?.map((b) => ({ ...b, bornes: [...b.bornes] })),

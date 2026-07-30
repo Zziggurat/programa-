@@ -489,7 +489,19 @@ function pintarCatalogo(): void {
 		const btn = document.createElement('button');
 		btn.className = 'item-catalogo';
 		const fondo = p.profundidad ? `×${p.profundidad}` : '';
+		// La ficha eléctrica en el tooltip: así se elige el aparato correcto sin colocarlo antes.
+		const ficha = [
+			p.corrienteNominal !== undefined ? `In ${p.corrienteNominal} A` : '',
+			p.curvaDisparo ? `curva ${p.curvaDisparo}` : '',
+			p.rangoRegulacionA ? `regulable ${p.rangoRegulacionA[0]}–${p.rangoRegulacionA[1]} A` : '',
+			p.sensibilidadMA ? `${p.sensibilidadMA} mA${p.claseDiferencial ? ` clase ${p.claseDiferencial}` : ''}` : '',
+			p.poderCorteKA !== undefined ? `Icu ~${p.poderCorteKA} kA` : '',
+			p.disipacionW !== undefined ? `disipa ~${p.disipacionW} W` : '',
+		].filter(Boolean).join(' · ');
 		btn.title = `${p.descripcion}\n${p.fabricante} ${p.referencia} · ${p.ancho}×${p.alto}${fondo} mm`
+			+ (ficha ? `\n${ficha}` : '')
+			+ (p.poderCorteKA !== undefined || p.disipacionW !== undefined
+				? '\n(~ = valor corriente de la familia; corrígelo con la hoja de datos)' : '')
 			+ (p.nota ? `\n${p.nota}` : '');
 		btn.innerHTML = `<span class="chip-color" style="background:${p.color}"></span><span class="nombre">${p.nombre}</span><span class="mas">＋</span>`;
 		btn.onclick = () => anadirDesdeCatalogo(p.id);
@@ -956,9 +968,26 @@ function pintarSeleccion(): void {
 			${col ? `<label>Ancho (mm)<input id="dev-ancho" type="number" step="1" min="5" value="${Math.round(col.ancho)}"></label>
 			<label>Alto (mm)<input id="dev-alto" type="number" step="1" min="5" value="${Math.round(col.alto)}"></label>` : ''}
 			<label>Fondo (mm)<input id="dev-fondo" type="number" step="1" min="5" value="${num(d.profundidad)}" placeholder="auto"></label>
-			<label>Poder de corte<input id="dev-icu" type="number" step="0.5" min="0" value="${num(d.poderCorteKA)}" placeholder="kA"></label>
-			<label>Disipación<input id="dev-disipacion" type="number" step="0.5" min="0" value="${num(d.disipacionW)}" placeholder="W"></label>
+			<label>Curva / clase
+				<select id="dev-curva">
+					${['', 'B', 'C', 'D', 'K', 'Z', 'gG', 'aM'].map((v) =>
+						`<option value="${v}" ${(d.curvaDisparo ?? '') === v ? 'selected' : ''}>${v === '' ? '—' : v}</option>`).join('')}
+				</select></label>
+			<label>Regulación (A)<input id="dev-regulacion" type="text" value="${escaparHtml(d.rangoRegulacionA ? d.rangoRegulacionA.join('–') : '')}" placeholder="6–10"></label>
+			<label>Poder de corte${d.poderCorteEstimado ? ' ~' : ''}<input id="dev-icu" type="number" step="0.5" min="0" value="${num(d.poderCorteKA)}" placeholder="kA"></label>
+			<label>Disipación${d.disipacionEstimada ? ' ~' : ''}<input id="dev-disipacion" type="number" step="0.5" min="0" value="${num(d.disipacionW)}" placeholder="W"></label>
+			${d.tipo === 'diferencial' ? `
+			<label>Sensibilidad (mA)<input id="dev-sensibilidad" type="number" step="10" min="0" value="${num(d.sensibilidadMA)}" placeholder="30"></label>
+			<label>Clase
+				<select id="dev-clase-dif">
+					${['', 'AC', 'A', 'F', 'B'].map((v) =>
+						`<option value="${v}" ${(d.claseDiferencial ?? '') === v ? 'selected' : ''}>${v === '' ? '—' : v}</option>`).join('')}
+				</select></label>` : ''}
 		</div>
+		${d.poderCorteEstimado || d.disipacionEstimada ? `<p class="pista" style="color:var(--aviso)">
+		Los campos con <b>~</b> son el valor corriente de esa familia de aparatos, no el de la hoja de
+		datos de este modelo. Cópialos de la hoja del fabricante y el dossier dejará de marcarlos
+		como estimación.</p>` : ''}
 		<p class="pista">Los datos del catálogo son un punto de partida: corrígelos con la hoja del
 		fabricante y el dossier saldrá con lo que de verdad lleva el tablero.</p>` : '';
 	const bloqueAcciones = esEditor ? `
@@ -1099,12 +1128,28 @@ function pintarSeleccion(): void {
 		numero('dev-corriente', (v) => { d.corrienteNominal = v; });
 		numero('dev-polos', (v) => { d.polos = v === undefined ? undefined : Math.min(4, Math.max(1, Math.round(v))); });
 		numero('dev-fondo', (v) => { d.profundidad = v; }, true);
-		numero('dev-icu', (v) => { d.poderCorteKA = v; });
-		numero('dev-disipacion', (v) => { d.disipacionW = v; });
+		// Al escribirlos a mano dejan de ser estimaciones: el dato ya lo puso una persona
+		// mirando la hoja del fabricante, y el dossier tiene que reflejarlo.
+		numero('dev-icu', (v) => { d.poderCorteKA = v; d.poderCorteEstimado = undefined; });
+		numero('dev-disipacion', (v) => { d.disipacionW = v; d.disipacionEstimada = undefined; });
+		numero('dev-sensibilidad', (v) => { d.sensibilidadMA = v; });
+		texto('dev-regulacion', (v) => {
+			// Se acepta «6-10», «6–10» o «6 a 10»: el usuario escribe lo que ve en el aparato.
+			const n = v.split(/[-–a]/).map((x) => Number(x.trim())).filter((x) => Number.isFinite(x) && x > 0);
+			d.rangoRegulacionA = n.length === 2 ? [Math.min(...n), Math.max(...n)] : undefined;
+		});
 
 		(panel.querySelector('#dev-tension') as HTMLSelectElement | null)?.addEventListener('change', (e) => {
 			const v = (e.target as HTMLSelectElement).value;
 			aplicar(() => { d.tensionNominal = v === '' ? undefined : Number(v); }, true);
+		});
+		(panel.querySelector('#dev-curva') as HTMLSelectElement | null)?.addEventListener('change', (e) => {
+			const v = (e.target as HTMLSelectElement).value;
+			aplicar(() => { d.curvaDisparo = (v || undefined) as Dispositivo['curvaDisparo']; });
+		});
+		(panel.querySelector('#dev-clase-dif') as HTMLSelectElement | null)?.addEventListener('change', (e) => {
+			const v = (e.target as HTMLSelectElement).value;
+			aplicar(() => { d.claseDiferencial = (v || undefined) as Dispositivo['claseDiferencial']; });
 		});
 
 		// Medidas de la huella: se rechaza el cambio si dejaría el aparato encima de otro.

@@ -440,6 +440,43 @@ export function exportarPDF(proyecto: Proyecto): void {
 			];
 		}), { 0: 24, 2: 20, 3: 20, 4: 26 });
 
+	// Ficha eléctrica de las protecciones en una sola tabla: es la página que mira un inspector
+	// para saber si el tablero está coordinado, y la que hay que poder contrastar con las hojas
+	// de datos. El «~» marca lo que todavía es una estimación y no un dato firmado.
+	const ES_PROT = new Set(['disyuntor', 'diferencial', 'guardamotor', 'fusible', 'seccionador']);
+	const protecciones = proyecto.dispositivos.filter((d) => ES_PROT.has(d.tipo) && !d.imagen);
+	if (protecciones.length > 0) {
+		doc.setFont('helvetica', 'bold');
+		doc.setFontSize(11);
+		doc.text('Ficha eléctrica de las protecciones', 12, y);
+		doc.setFont('helvetica', 'normal');
+		y += 4;
+		tabla(['Marcado', 'Referencia', 'In', 'Curva', 'Regulación', 'Icu', 'Sens.', 'Disip.'],
+			protecciones.map((d) => [
+				d.designacion ?? d.id,
+				d.referencia ?? '—',
+				d.corrienteNominal ? `${d.corrienteNominal} A` : '—',
+				d.curvaDisparo ?? '—',
+				d.rangoRegulacionA ? `${d.rangoRegulacionA[0]}–${d.rangoRegulacionA[1]} A` : '—',
+				d.poderCorteKA !== undefined ? `${d.poderCorteEstimado ? '~' : ''}${d.poderCorteKA} kA` : '—',
+				d.sensibilidadMA ? `${d.sensibilidadMA} mA${d.claseDiferencial ? ` ${d.claseDiferencial}` : ''}` : '—',
+				d.disipacionW !== undefined ? `${d.disipacionEstimada ? '~' : ''}${d.disipacionW} W` : '—',
+			]), { 0: 22, 2: 14, 3: 14, 4: 24, 5: 18, 6: 20, 7: 18 });
+
+		const estimados = protecciones.filter((d) => d.poderCorteEstimado || d.disipacionEstimada).length;
+		doc.setFontSize(8);
+		doc.setTextColor(...(estimados ? ROJO : GRIS));
+		doc.text(
+			estimados
+				? `Los valores marcados con «~» (${estimados} de ${protecciones.length} aparatos) son los `
+					+ 'habituales de su familia de producto, no los de la hoja de datos del modelo concreto. '
+					+ 'Cópialos del fabricante en la ficha de cada aparato antes de certificar el conjunto.'
+				: 'Todos los datos eléctricos proceden de la ficha declarada de cada aparato.',
+			12, y, { maxWidth: anchoPag - 24 },
+		);
+		doc.setTextColor(0);
+	}
+
 	/* --------------------- 5. Lista de conductores --------------------- */
 	doc.addPage();
 	cabecera('5. Lista de conductores');

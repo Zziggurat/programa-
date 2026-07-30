@@ -132,8 +132,35 @@ export interface Dispositivo {
 	 * de 6 kA en una acometida de 10 kA no corta, se destruye.
 	 */
 	poderCorteKA?: number;
+	/**
+	 * True cuando el poder de corte es el VALOR HABITUAL DE LA FAMILIA y no un dato leído de la
+	 * hoja del fabricante. El DRC lo dice en su mensaje: un aparato puede acabar rechazado por un
+	 * número que nadie ha confirmado, y quien firma tiene derecho a saberlo.
+	 */
+	poderCorteEstimado?: boolean;
 	/** Potencia disipada en servicio, en W. Sirve para el balance térmico del gabinete. */
 	disipacionW?: number;
+	/**
+	 * True cuando la disipación es una estimación y no un dato de catálogo. Sin esto el balance
+	 * térmico contaría como «declarado por el fabricante» un número que se ha supuesto, y el
+	 * porcentaje de fiabilidad que sale en el dossier sería falso.
+	 */
+	disipacionEstimada?: boolean;
+	/**
+	 * Curva de disparo de un automático (B, C, D, K, Z) o clase de un fusible (gG, aM). Es lo que
+	 * decide cuánta punta de arranque aguanta sin disparar y, junto al calibre, si dos
+	 * protecciones en serie son selectivas entre sí.
+	 */
+	curvaDisparo?: 'B' | 'C' | 'D' | 'K' | 'Z' | 'gG' | 'aM';
+	/** Sensibilidad de un diferencial, en mA (30 = personas, 300 = incendio). */
+	sensibilidadMA?: number;
+	/**
+	 * Clase de un diferencial según la forma de onda que es capaz de detectar. Con variadores o
+	 * fuentes conmutadas aguas abajo, un AC puede quedarse ciego ante la corriente continua.
+	 */
+	claseDiferencial?: 'AC' | 'A' | 'F' | 'B';
+	/** Rango de regulación de un guardamotor o relé térmico, en A: [mínimo, máximo]. */
+	rangoRegulacionA?: [number, number];
 	/** True si el aparato está fuera del gabinete (campo): motores, sensores, etc. */
 	campo?: boolean;
 	/**

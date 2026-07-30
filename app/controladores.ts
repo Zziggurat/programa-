@@ -47,6 +47,23 @@ export interface FichaControlador {
 	color: string;
 }
 
+/**
+ * Disipación estimada de un controlador, en W.
+ *
+ * No la declaro aparato por aparato porque no tengo delante las doce hojas de datos, y doce
+ * números inventados con aire de precisión son peores que una regla explicada: la electrónica de
+ * un DDC consume una base fija y algo más por cada punto de E/S que atiende. Da el orden de
+ * magnitud correcto —un controlador de campo ronda los 10 VA de su hoja— y entra al proyecto
+ * marcada como estimación, igual que todo lo que no viene de la referencia comercial.
+ *
+ * Ojo con lo que esto NO cuenta: lo que consuman las válvulas y compuertas colgadas de sus
+ * salidas no es disipación del controlador. Si las alimenta él desde dentro del armario, eso se
+ * suma aparte en la ficha del aparato.
+ */
+export function disipacionDeControlador(f: FichaControlador): number {
+	return Math.round((3 + 0.35 * f.puntos) * 2) / 2;
+}
+
 /** Serie de terminales correlativos: rango('UI', 1, 6) → UI1…UI6. */
 const rango = (prefijo: string, desde: number, hasta: number): string[] =>
 	Array.from({ length: hasta - desde + 1 }, (_, i) => `${prefijo}${desde + i}`);

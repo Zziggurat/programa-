@@ -341,12 +341,19 @@ export function verificarProyecto(
 					dispositivoId: d.id,
 				});
 			} else if (d.poderCorteKA < icc) {
+				// Si el Icu es el típico de la familia y no el de la hoja de datos, se dice. Se
+				// rechaza igual —el valor de familia no suele errar del lado peligroso— pero quien
+				// firma tiene que saber que el número que tumba su aparato no lo ha confirmado nadie.
+				const origen = d.poderCorteEstimado
+					? ' Ojo: ese poder de corte es el habitual de la familia, no el de la hoja de datos'
+						+ ' de este aparato; confírmalo antes de cambiar de referencia.'
+					: '';
 				hallazgos.push({
 					regla: 'R13-poder-de-corte-insuficiente',
 					severidad: 'error',
 					mensaje: `${etiqueta(d.id)}: poder de corte ${d.poderCorteKA} kA frente a `
 						+ `${icc} kA presuntos. No cortaría la falta: hace falta un aparato de más `
-						+ 'poder de corte o una protección aguas arriba que lo respalde.',
+						+ `poder de corte o una protección aguas arriba que lo respalde.${origen}`,
 					dispositivoId: d.id,
 				});
 			}

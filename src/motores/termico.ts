@@ -62,9 +62,17 @@ export interface BalanceTermico {
 	principales: { designacion: string; watts: number; estimado: boolean }[];
 }
 
-/** Disipación de un aparato: la suya si la declara, o la típica de su tipo. */
+/**
+ * Disipación de un aparato, y si el número es de fiar.
+ *
+ * Hay tres procedencias y el dossier tiene que poder distinguirlas: la que el usuario ha copiado
+ * de la hoja del fabricante (fiable), la que trae el catálogo por ser lo corriente en esa familia
+ * (`disipacionEstimada`, del orden de magnitud correcto pero sin firmar), y la que se deduce del
+ * tipo de aparato cuando no hay nada mejor. Las dos últimas cuentan como estimación: si no, el
+ * porcentaje de fiabilidad del balance térmico sería un adorno.
+ */
 export function disipacionDe(d: Dispositivo): { watts: number; estimado: boolean } {
-	if (d.disipacionW !== undefined) return { watts: d.disipacionW, estimado: false };
+	if (d.disipacionW !== undefined) return { watts: d.disipacionW, estimado: d.disipacionEstimada === true };
 	return { watts: DISIPACION_TIPICA[d.tipo] ?? 1, estimado: true };
 }
 

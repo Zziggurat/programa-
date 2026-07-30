@@ -64,7 +64,7 @@ function arranqueDirecto(): Proyecto {
 		{
 			id: 'q1', tipo: 'guardamotor', descripcion: 'Guardamotor 2.5–4 A (protege el motor)',
 			fabricante: 'Schneider Electric', referencia: 'GV2ME08', tensionNominal: 380, hojaId: 'h1',
-			poderCorteKA: 100, disipacionW: 4.5,
+			poderCorteKA: 100, disipacionW: 4.5, poderCorteEstimado: true, disipacionEstimada: true,
 			bornes: [L('1'), L('2'), L('3'), L('4'), L('5'), L('6')],
 			puentesInternos: [['1', '2'], ['3', '4'], ['5', '6']],
 		},
@@ -188,14 +188,14 @@ function bombaConBoya(): Proyecto {
 			fabricante: 'Schneider Electric', referencia: 'iID', tensionNominal: 220, hojaId: 'h1',
 			// Un diferencial puro no corta cortocircuitos por sí solo: 6 kA es su corriente
 			// condicional respaldada por el automático que lleva detrás.
-			poderCorteKA: 6, disipacionW: 2,
+			poderCorteKA: 6, disipacionW: 2, poderCorteEstimado: true, disipacionEstimada: true,
 			bornes: [L('1'), N('3'), L('2'), N('4')],
 			puentesInternos: [['1', '2'], ['3', '4']],
 		},
 		{
 			id: 'q2', tipo: 'disyuntor', descripcion: 'Automático 2P C10 (protege el cable y la bomba)',
 			fabricante: 'Schneider Electric', referencia: 'iC60N', tensionNominal: 220, hojaId: 'h1',
-			poderCorteKA: 6, disipacionW: 2.5,
+			poderCorteKA: 6, disipacionW: 2.5, poderCorteEstimado: true, disipacionEstimada: true,
 			bornes: [L('1'), N('3'), L('2'), N('4')],
 			puentesInternos: [['1', '2'], ['3', '4']],
 		},

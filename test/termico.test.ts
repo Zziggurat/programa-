@@ -119,3 +119,33 @@ test('los principales salen ordenados de más a menos calor y son como mucho tre
 	assert.equal(b.principales.length, 3);
 	assert.deepEqual(b.principales.map((x) => x.watts), [80, 20, 5]);
 });
+
+test('la disipación del catálogo cuenta como estimación, no como dato de fabricante', () => {
+	const p = tablero([{ id: 'q1', tipo: 'disyuntor' }]);
+	// Así entra un aparato colocado desde el catálogo: con número, pero marcado.
+	p.dispositivos[0].disipacionW = 1.6;
+	p.dispositivos[0].disipacionEstimada = true;
+	const b = calcularBalanceTermico(p)!;
+	assert.equal(b.disipacionW, 1.6);
+	// Lo que importa: el dossier NO puede presumir de dato de fabricante.
+	assert.equal(b.fraccionDeclarada, 0);
+	assert.equal(b.principales[0].estimado, true);
+});
+
+test('en cuanto el usuario escribe la disipación real, deja de ser estimación', () => {
+	const p = tablero([{ id: 'q1', tipo: 'disyuntor' }]);
+	p.dispositivos[0].disipacionW = 2.1;   // copiado de la hoja del fabricante
+	p.dispositivos[0].disipacionEstimada = undefined;
+	const b = calcularBalanceTermico(p)!;
+	assert.equal(b.fraccionDeclarada, 1);
+	assert.equal(b.principales[0].estimado, false);
+});
+
+test('una disipación declarada de 0 W no se confunde con «sin declarar»', () => {
+	// Un pulsador no calienta. Declararlo con 0 tiene que valer más que dejarlo en blanco y
+	// que el motor le invente los vatios típicos de su tipo.
+	assert.deepEqual(disipacionDe({ id: 'p', tipo: 'pulsador', disipacionW: 0, bornes: [] }),
+		{ watts: 0, estimado: false });
+	const sinDeclarar = disipacionDe({ id: 'p2', tipo: 'piloto', bornes: [] });
+	assert.equal(sinDeclarar.estimado, true);
+});
