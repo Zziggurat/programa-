@@ -22,7 +22,7 @@ const server = http.createServer((req, res) => {
 	res.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); res.end(readFileSync(f));
 });
 await new Promise((r) => server.listen(0, r));
-const url = `http://127.0.0.1:${server.address().port}/?qa=1`;
+const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
 // Generador reproducible: si algo falla, se repite con la misma semilla.
 let semilla = Number(process.argv[2] ?? 20260726);

@@ -44,6 +44,28 @@ function filaBornes(g: THREE.Group, n: number, ancho: number, y: number, z: numb
 	}
 }
 
+/** Plancha plana (sin caras laterales) para caras y tapas: no puede pelearse con lo que hay detrás. */
+function plancha(w: number, h: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
+	const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+	m.position.set(x, y, z);
+	return m;
+}
+
+/**
+ * Sesga un material hacia la cámara en la prueba de profundidad.
+ *
+ * Los rótulos y las mirillas son calcomanías: van pegadas a una cara y a la distancia de trabajo
+ * el buffer de profundidad no siempre distingue medio milímetro, así que la cara de detrás ganaba
+ * a ratos y las letras parpadeaban. Con el sesgo, la calcomanía gana SIEMPRE, mire uno desde donde
+ * mire y esté la cámara donde esté.
+ */
+function calcomania<T extends THREE.Material>(mat: T): T {
+	mat.polygonOffset = true;
+	mat.polygonOffsetFactor = -2;
+	mat.polygonOffsetUnits = -2;
+	return mat;
+}
+
 /** Etiqueta frontal impresa (canvas) para referencias y marcas. */
 function etiquetaImpresa(texto: string, w: number, h: number, fondo: string, tinta: string): THREE.Mesh {
 	const canvas = document.createElement('canvas');
@@ -59,11 +81,7 @@ function etiquetaImpresa(texto: string, w: number, h: number, fondo: string, tin
 	ctx.fillText(texto, canvas.width / 2, canvas.height / 2);
 	const tex = new THREE.CanvasTexture(canvas);
 	tex.anisotropy = 4;
-	const m = new THREE.Mesh(
-		new THREE.PlaneGeometry(w, h),
-		new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }),
-	);
-	return m;
+	return plancha(w, h, calcomania(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 })));
 }
 
 /* --------------------------- Modelos por tipo --------------------------- */
@@ -84,7 +102,7 @@ function modular(g: THREE.Group, w: number, h: number, color: number, ref: strin
 	// Mirilla de estado (verde) y referencia impresa.
 	g.add(caja(Math.min(10, w * 0.4), 3.5, 1, M.plastico(0x2e7d32, 0.35), 0, -6, prof + 2.2));
 	const et = etiquetaImpresa(ref, Math.min(w * 0.9, 30), 6, '#f4f4f0', '#333');
-	et.position.set(0, -h * 0.32, prof + 2.2);
+	et.position.set(0, -h * 0.32, prof + 3);   // 1 mm sobre la cara blanca, no rozándola
 	g.add(et);
 	filaBornes(g, polos, w, h / 2 - 5, prof - 14);
 	filaBornes(g, polos, w, -h / 2 + 5, prof - 14);
@@ -97,7 +115,7 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	g.add(caja(w * 0.9, h * 0.42, 12, M.plastico(0x22262a), 0, 2, prof - 4));
 	// Ventana portaetiquetas y referencia.
 	const et = etiquetaImpresa(ref, w * 0.72, 7, '#e8e8e4', '#222');
-	et.position.set(0, 2, prof + 2.2);
+	et.position.set(0, 2, prof + 3);   // la ventana portaetiquetas acaba en prof+2
 	g.add(et);
 	// Rejillas de ventilación laterales.
 	const rejilla = M.plastico(0x191c1f);
@@ -123,18 +141,20 @@ function plc(g: THREE.Group, w: number, h: number, color: number, ref: string): 
 	g.add(caja(w * 0.94, 10, 10, verde, 0, -h / 2 + 6, prof - 8));
 	filaBornes(g, Math.max(6, Math.floor(w / 11)), w * 0.9, h / 2 - 6, prof - 3);
 	filaBornes(g, Math.max(4, Math.floor(w / 16)), w * 0.9, -h / 2 + 6, prof - 3);
-	// Fila de LEDs de estado.
+	// La cara oscura acaba en prof+1: LEDs, rótulo y pantalla van SOBRE ella. Antes se colocaban
+	// por detrás (prof-0,5 / prof+0,2) y la propia cara los tapaba: el autómata salía sin marcado.
+	const cara = prof + 1;
 	for (let i = 0; i < 6; i++) {
 		const led = new THREE.MeshStandardMaterial({
 			color: 0x21d07a, emissive: 0x21d07a, emissiveIntensity: i < 4 ? 0.9 : 0.1, roughness: 0.3,
 		});
-		g.add(caja(2.6, 1.6, 1, led, -w * 0.32 + i * 6, h * 0.2, prof - 0.5));
+		g.add(caja(2.6, 1.6, 1.2, led, -w * 0.32 + i * 6, h * 0.2, cara + 0.8));
 	}
 	const et = etiquetaImpresa(ref, w * 0.5, 8, '#23272b', '#dfe3e6');
-	et.position.set(-w * 0.2, h * 0.06, prof + 0.2);
+	et.position.set(-w * 0.2, h * 0.06, cara + 0.6);
 	g.add(et);
 	// Pantalla pequeña.
-	g.add(caja(w * 0.3, h * 0.24, 1.4, M.plastico(0x0d2b20, 0.3), w * 0.24, h * 0.12, prof - 0.4));
+	g.add(caja(w * 0.3, h * 0.24, 1.4, M.plastico(0x0d2b20, 0.3), w * 0.24, h * 0.12, cara + 1));
 	return prof;
 }
 
@@ -148,11 +168,12 @@ function fuente(g: THREE.Group, w: number, h: number, color: number, ref: string
 		g.add(caja(2, h * 0.9, 2, aleta, -w / 2 + 1, 0, z));
 		g.add(caja(2, h * 0.9, 2, aleta, w / 2 - 1, 0, z));
 	}
+	// La chapa acaba en prof-6: el rótulo y el piloto van pegados a ella, no flotando delante.
 	const et = etiquetaImpresa(ref, w * 0.8, 10, '#dfe3e6', '#222');
-	et.position.set(0, h * 0.18, prof - 2.9);
+	et.position.set(0, h * 0.18, prof - 5.2);
 	g.add(et);
 	// LED DC OK.
-	g.add(caja(3, 3, 1, new THREE.MeshStandardMaterial({ color: 0x21d07a, emissive: 0x21d07a, emissiveIntensity: 0.9 }), w * 0.25, -h * 0.1, prof - 2.5));
+	g.add(caja(3, 3, 1.2, new THREE.MeshStandardMaterial({ color: 0x21d07a, emissive: 0x21d07a, emissiveIntensity: 0.9 }), w * 0.25, -h * 0.1, prof - 5));
 	filaBornes(g, 5, w * 0.9, -h / 2 + 5, prof - 14);
 	return prof;
 }
@@ -187,7 +208,9 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		// Bloque individual: gris (o verde/amarillo si es tierra).
 		const cuerpo = esPE ? M.plastico(0x3f9142, 0.55) : M.plastico(0xaeb4b9, 0.6);
 		g.add(caja(paso - 1.2, h, prof, cuerpo, x, 0, prof / 2));
-		if (esPE) g.add(caja(paso - 1.2, h * 0.3, prof + 0.6, M.plastico(0xe4c437, 0.55), x, 0, prof / 2));
+		// La franja amarilla va algo más estrecha y sobresale 1 mm: con la misma anchura y 0,3 mm,
+		// sus costados coincidían con los del bloque y se peleaban al girar la vista.
+		if (esPE) g.add(caja(paso - 1.8, h * 0.3, prof + 2, M.plastico(0xe4c437, 0.55), x, 0, prof / 2));
 		// Tornillos superior e inferior.
 		const tor = M.metal(0xcfd4d8);
 		g.add(cilindro(2, 2, tor, x, h * 0.28, prof + 0.8));
@@ -203,18 +226,20 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 function variador(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
 	const prof = 120;
 	g.add(caja(w, h, prof * 0.55, M.plastico(color), 0, 0, prof * 0.27));
-	g.add(caja(w * 0.92, h * 0.9, prof * 0.4, M.plastico(0x33383d), 0, 0, prof * 0.72));
+	// El bloque del frente llega hasta la cara declarada del aparato. Antes se quedaba 10 mm
+	// corto y el display y el rótulo salían flotando en el aire por delante de él.
+	g.add(caja(w * 0.92, h * 0.9, prof * 0.48, M.plastico(0x33383d), 0, 0, prof * 0.76));
 	// Radiador trasero.
 	const aleta = M.metal(0x7d838a);
 	for (let i = 0; i < 7; i++) {
 		g.add(caja(w * 0.1, h * 0.9, 8, aleta, -w * 0.42 + i * (w * 0.14), 0, 5));
 	}
 	// Display y teclas.
-	g.add(caja(w * 0.4, h * 0.14, 1.4, new THREE.MeshStandardMaterial({ color: 0x16a34a, emissive: 0x16a34a, emissiveIntensity: 0.55 }), 0, h * 0.28, prof - 0.4));
+	g.add(caja(w * 0.4, h * 0.14, 1.6, new THREE.MeshStandardMaterial({ color: 0x16a34a, emissive: 0x16a34a, emissiveIntensity: 0.55 }), 0, h * 0.28, prof + 0.8));
 	const et = etiquetaImpresa(ref, w * 0.6, 8, '#26292c', '#c8cdd2');
-	et.position.set(0, h * 0.1, prof - 0.2);
+	et.position.set(0, h * 0.1, prof + 0.6);
 	g.add(et);
-	const rueda = cilindro(w * 0.12, 2, M.plastico(0x0f766e, 0.4), 0, -h * 0.18, prof - 0.2);
+	const rueda = cilindro(w * 0.12, 2, M.plastico(0x0f766e, 0.4), 0, -h * 0.18, prof + 1);
 	g.add(rueda);
 	filaBornes(g, 5, w * 0.85, -h / 2 + 6, prof - 12);
 	return prof;
@@ -326,7 +351,7 @@ function bloqueTerminales3D(
 		et.position.set(
 			horizontal ? cx : bloque.lado === 'izquierda' ? cx + retiro : cx - retiro,
 			horizontal ? (bloque.lado === 'arriba' ? cy - retiro : cy + retiro) : cy,
-			prof + 0.2, // por delante de la cara, no dentro de ella
+			prof + 1, // sobre la cara y sobre la tapa del frente, no a ras de ellas
 		);
 		if (!horizontal) et.rotation.z = Math.PI / 2;
 		g.add(et);
@@ -340,12 +365,22 @@ function bloqueTerminales3D(
  */
 function controlador(g: THREE.Group, d: Dispositivo, w: number, h: number, color: number, ref: string): number {
 	const prof = d.profundidad ?? 55;
-	// Cuerpo hasta la cara frontal (z = prof) y tapa central rehundida, como la carcasa
-	// de un controlador real: los conectores asoman por el reborde que queda alrededor.
 	g.add(caja(w, h, prof, M.plastico(color), 0, 0, prof / 2));
-	g.add(caja(
-		Math.max(10, w - 2 * MARGEN_BORNERA - 10), Math.max(10, h - 2 * MARGEN_BORNERA - 10), 1.4,
-		M.plastico(0x22282d, 0.65), 0, 0, prof - 0.5,
+
+	/*
+	 * ESCALERA DE PROFUNDIDADES DEL FRENTE. Antes la tapa era una caja de 1,4 mm centrada en
+	 * `prof - 0,5`: su cara delantera quedaba a 0,2 mm de la del cuerpo, y sus costados
+	 * atravesaban esa misma cara. A la distancia a la que se mira un tablero entero, el buffer
+	 * de profundidad no resuelve 0,2 mm, así que las dos caras se turnaban fotograma a fotograma
+	 * —el parpadeo de la textura— y el rótulo, a 0,7 mm de la tapa, hacía lo mismo con las letras.
+	 * Ahora cada cosa tiene su altura con separaciones de verdad, la tapa es una plancha sin
+	 * costados y los rótulos van sesgados hacia la cámara.
+	 */
+	const Z_TAPA = prof + 0.6;      // plancha frontal, montada sobre la cara del cuerpo
+	const Z_SOBRE = prof + 1.4;     // suelo común de todo lo que se monta sobre la tapa
+	g.add(plancha(
+		Math.max(10, w - 2 * MARGEN_BORNERA - 10), Math.max(10, h - 2 * MARGEN_BORNERA - 10),
+		M.plastico(0x22282d, 0.65), 0, 0, Z_TAPA,
 	));
 
 	// Las posiciones se calculan UNA vez y las comparten todas las borneras del aparato.
@@ -353,24 +388,27 @@ function controlador(g: THREE.Group, d: Dispositivo, w: number, h: number, color
 	for (const bloque of d.terminales ?? []) bloqueTerminales3D(g, posiciones, bloque, w, h, prof);
 
 	const util = Math.min(w, h) - 2 * MARGEN_BORNERA - 10;
-	// Marca y modelo impresos en la cara: es como se identifica el equipo en obra.
-	const et = etiquetaImpresa(
-		`${d.fabricante ?? ''} ${ref}`.trim(),
-		Math.min(w * 0.55, 70), Math.max(5, Math.min(w * 0.55, 70) * 0.14),
-		'#20262b', '#dfe6ea',
-	);
-	et.position.set(0, util * 0.16, prof + 0.9);
-	g.add(et);
-
 	const rasgos = d.rasgosFrente ?? {};
 
 	// Pantalla de servicio, cuando el equipo la lleva.
+	const altoDisplay = Math.min(h * 0.26, 28);
+	const yDisplay = -util * 0.06;
 	if (rasgos.display) {
 		g.add(caja(
-			Math.min(w * 0.42, 48), Math.min(h * 0.26, 28), 1.2,
-			M.plastico(0x0d2b20, 0.3), 0, -util * 0.02, prof + 0.6,
+			Math.min(w * 0.42, 48), altoDisplay, 1.6,
+			M.plastico(0x0d2b20, 0.3), 0, yDisplay, Z_SOBRE + 0.8,
 		));
 	}
+
+	// Marca y modelo impresos en la cara: es como se identifica el equipo en obra. Va SIEMPRE
+	// por encima de la pantalla, para que no se solapen ni se tapen entre ellos.
+	const anchoEt = Math.min(w * 0.55, 70);
+	const altoEt = Math.max(5, anchoEt * 0.14);
+	const et = etiquetaImpresa(`${d.fabricante ?? ''} ${ref}`.trim(), anchoEt, altoEt, '#20262b', '#dfe6ea');
+	et.position.set(0, rasgos.display
+		? Math.min(h / 2 - MARGEN_BORNERA - altoEt, yDisplay + altoDisplay / 2 + altoEt / 2 + 1.5)
+		: util * 0.16, Z_SOBRE + 0.2);
+	g.add(et);
 
 	// LEDs de estado (encendidos los primeros, como un equipo alimentado y comunicando).
 	const leds = Math.min(10, rasgos.leds ?? 4);
@@ -382,14 +420,14 @@ function controlador(g: THREE.Group, d: Dispositivo, w: number, h: number, color
 			emissiveIntensity: encendido ? 0.85 : 0,
 			roughness: 0.3,
 		});
-		g.add(caja(2.4, 1.6, 1, led, -util * 0.3 + i * 5, rasgos.display ? -util * 0.3 : -util * 0.05, prof + 0.9));
+		g.add(caja(2.4, 1.6, 1.2, led, -util * 0.3 + i * 5, rasgos.display ? -util * 0.3 : -util * 0.05, Z_SOBRE + 0.6));
 	}
 
-	// Puertos RJ-45 rehundidos en la cara: solo los que el equipo tiene de verdad.
+	// Puertos RJ-45 en la cara: solo los que el equipo tiene de verdad.
 	const puertos = (rasgos.puertosIP ?? 0) + (rasgos.puertosRS485 ?? 0);
 	const puerto = M.plastico(0x14181b, 0.7);
 	for (let i = 0; i < Math.min(4, puertos); i++) {
-		g.add(caja(13, 11, 3, puerto, util * 0.12 + i * 15, -util * 0.3, prof - 0.6));
+		g.add(caja(13, 11, 2.4, puerto, util * 0.12 + i * 15, -util * 0.3, Z_SOBRE + 1.2));
 	}
 	return prof;
 }

@@ -48,7 +48,7 @@ must('no quedan referencias a archivos externos',
 must('no lleva dentro la sonda de pruebas', !html.includes('puntoParaAgarrar'));
 // El marcado de los diálogos vive en index.html: comprobamos que el empaquetador lo copió.
 for (const id of ['modal-proyecto', 'modal-controlador', 'modal-drc', 'modal-ayuda',
-	'modal-ejemplos', 'seccion-termico', 'estado-guardado', 'menu-archivo']) {
+	'modal-ejemplos', 'seccion-termico', 'estado-guardado', 'menu-archivo', 'inicio', 'mundo']) {
 	must(`conserva el marcado de #${id}`, html.includes(`id="${id}"`));
 }
 
@@ -64,6 +64,15 @@ await page.goto(`file://${ARCHIVO}`, { waitUntil: 'load' });
 await page.waitForTimeout(2200);
 
 must('la aplicación arranca sin errores de JavaScript', errs.length === 0, errs.slice(0, 3).join(' | '));
+
+// Lo PRIMERO que se ve al abrir es la ventana de inicio, no el gabinete: aquí se elige
+// herramienta. Es el único sitio donde se prueba tal cual lo vive el usuario, porque el resto
+// de las suites entran con `?inicio=0` para no repetir el clic cientos de veces.
+must('abre en la ventana de inicio, no en el gabinete', await page.isVisible('#inicio'));
+must('ofrece las dos herramientas', await page.isVisible('#inicio-tableros') && await page.isVisible('#inicio-terreno'));
+await page.click('#inicio-tableros'); await page.waitForTimeout(500);
+must('«Trabajo de tableros» entra al editor', !(await page.isVisible('#inicio')));
+
 must('se dibuja el tablero en 3D', await page.evaluate(() => !!document.querySelector('#escena canvas')));
 must('el lienzo tiene tamaño real', await page.evaluate(() => {
 	const c = document.querySelector('#escena canvas');

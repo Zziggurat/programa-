@@ -10,7 +10,8 @@ import * as THREE from 'three';
 
 import datosCubierta from '../datos/cubierta.json';
 import {
-	EquipoPlanta, Infraestructura, SISTEMAS, SistemaTraza, resumenPlanta,
+	EquipoPlanta, FamiliaObra, Infraestructura, OBRA, SISTEMAS, SistemaTraza, resumenObra,
+	resumenPlanta,
 } from '../src/modelo/infraestructura.js';
 import {
 	construirMundo, crearPaseo, enfocarEquipo, equipoEnPixel, ponerVistaPaseo, ponerVistaSims,
@@ -42,18 +43,29 @@ function pintarResumen(): void {
 	$('mundo-resumen').innerHTML = tarjetas
 		.map(([rot, cif]) => `<div><div class="cifra">${cif}</div><div class="rotulo">${rot}</div></div>`)
 		.join('');
-	$('mundo-leyenda').innerHTML = r.metrosPorSistema.map((s) => {
-		const info = SISTEMAS[s.sistema as SistemaTraza];
-		const col = `#${info.color.toString(16).padStart(6, '0')}`;
+	const fila = (color: number, nombre: string, metros: number): string => {
+		const col = `#${color.toString(16).padStart(6, '0')}`;
 		return `<div class="mundo-fila-sis"><span class="tira" style="background:${col}"></span>`
-			+ `${esc(info.nombre)} · ${s.metros} m</div>`;
-	}).join('');
+			+ `${esc(nombre)} · ${metros} m</div>`;
+	};
+	$('mundo-leyenda').innerHTML = r.metrosPorSistema
+		.map((s) => fila(SISTEMAS[s.sistema as SistemaTraza].color, SISTEMAS[s.sistema as SistemaTraza].nombre, s.metros))
+		.join('');
+	// La obra de la cubierta: lo que hay alrededor de las máquinas, también sacado del plano.
+	const obra = resumenObra(inf);
+	const pilares = inf.columnas?.length ?? 0;
+	$('mundo-leyenda-obra').innerHTML = obra.length || pilares
+		? obra.map((o) => fila(OBRA[o.familia as FamiliaObra].color, OBRA[o.familia as FamiliaObra].nombre, o.metros)).join('')
+			+ (pilares ? `<div class="mundo-fila-sis"><span class="tira" style="background:#9aa4ae"></span>`
+				+ `Pilares de estructura · ${pilares}</div>` : '')
+		: '<div class="vacio">Este plano no trae la obra de la cubierta.</div>';
 	// El aviso no se puede quitar: es la diferencia entre un modelo y una medida.
 	$('mundo-aviso').innerHTML = inf.alturasSupuestas
-		? '⚠️ <b>Las alturas son de proyecto, no del plano.</b> El DWG no trae ninguna cota Z en las '
-			+ 'capas de clima, así que las cotas de conductos y máquinas se han asignado por reglas. '
-			+ 'El recorrido en planta sí es el del plano. Un marcado con <b>?</b> es una máquina '
-			+ 'situada por su posición, sin rótulo en el plano.'
+		? '⚠️ <b>Las alturas son de proyecto, no del plano.</b> El DWG no trae ninguna cota Z, ni en '
+			+ 'las capas de clima ni en las de obra, así que las cotas de conductos, máquinas, '
+			+ 'barandas, muros y pilares se han asignado por reglas. <b>Lo que sí es del plano</b> es '
+			+ 'todo el recorrido en planta y el diámetro de cada pilar. Un marcado con <b>?</b> es una '
+			+ 'máquina situada por su posición, sin rótulo en el plano.'
 		: '';
 	$('mundo-ficha').innerHTML = '<div class="vacio">Haz clic en una máquina para ver su lista de '
 		+ 'puntos de control.</div>';
@@ -88,8 +100,11 @@ function cambiarVista(nueva: 'sims' | 'paseo'): void {
 	$('mundo-sims').classList.toggle('activo', nueva === 'sims');
 	$('mundo-paseo').classList.toggle('activo', nueva === 'paseo');
 	($('mundo-ayuda-paseo') as HTMLElement).hidden = nueva !== 'paseo';
-	if (nueva === 'paseo') { ponerVistaPaseo(mundo); paseo?.activar(); }
-	else { paseo?.desactivar(); ponerVistaSims(mundo); }
+	if (nueva === 'paseo') {
+		ponerVistaPaseo(mundo);
+		paseo?.activar();
+		($('mundo-invertir') as HTMLInputElement).checked = paseo?.estaInvertido() ?? false;
+	} else { paseo?.desactivar(); ponerVistaSims(mundo); }
 }
 
 function ajustar(): void {
@@ -124,7 +139,9 @@ export function abrirMundo(): void {
 		window.addEventListener('resize', ajustar);
 		$('mundo-sims').onclick = () => cambiarVista('sims');
 		$('mundo-paseo').onclick = () => cambiarVista('paseo');
-		$('mundo-centrar').onclick = () => { cambiarVista('sims'); };
+		($('mundo-invertir') as HTMLInputElement).onchange = (ev) => {
+			paseo?.invertirRaton((ev.target as HTMLInputElement).checked);
+		};
 	}
 	ajustar();
 	cambiarVista('sims');
@@ -165,6 +182,19 @@ if (__QA__) {
 		}),
 		tamano: () => mundo?.tamano ?? { ancho: 0, fondo: 0 },
 		vista: () => vista,
+		/**
+		 * Arrastra el ratón `dx`,`dy` píxeles y devuelve hacia dónde se mira después.
+		 *
+		 * Sirve para comprobar el sentido del giro sin depender de fotogramas: arrastrar hacia
+		 * arriba tiene que subir la mirada (y creciente) y arrastrar a la derecha tiene que
+		 * girarla a la derecha, no al revés.
+		 */
+		mirar: (dx: number, dy: number) => {
+			paseo?.mirar(dx, dy);
+			const d = paseo?.direccion();
+			return { x: d?.x ?? 0, y: d?.y ?? 0, z: d?.z ?? 0 };
+		},
+		invertirRaton: (v: boolean) => paseo?.invertirRaton(v),
 		/** Selecciona una máquina por su marcado, como si se hubiera pinchado en ella. */
 		seleccionar: (tag: string) => {
 			const e = inf.equipos.find((x) => x.tag === tag);
@@ -173,10 +203,13 @@ if (__QA__) {
 			pintarFicha(e);
 			return !!e;
 		},
-		/** Nº de mallas de instalación y de equipos montados en la escena. */
+		/** Nº de mallas de instalación, de equipos y de obra montados en la escena. */
 		montado: () => ({
 			trazas: mundo?.instalaciones.children.length ?? 0,
 			equipos: mundo?.equipos.children.length ?? 0,
+			obra: mundo?.obra.children.length ?? 0,
+			tramosObra: (mundo?.obra.children ?? []).reduce(
+				(s, m) => s + ((m.userData.tramos as number) ?? (m.userData.columnas as number) ?? 0), 0),
 		}),
 		/**
 		 * Anda `segundos` de reloj simulado, sin depender de los fotogramas.

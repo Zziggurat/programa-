@@ -49,6 +49,25 @@ function contactosAuxiliares(d: Dispositivo): { borne: string; papel: string }[]
 }
 
 export function comoSeConecta(d: Dispositivo): AyudaCableado | undefined {
+	// La acometida antes que el tipo: es un aparato de campo con letra W y sin nada aguas arriba,
+	// y es POR DONDE ENTRA LA TENSIÓN. Quien no sepa esto puede cablear el tablero entero
+	// perfectamente y no encender nada al energizar, que es lo que estaba pasando.
+	if (d.campo && d.clase === 'W' && d.bornes.some((b) => b.tipo === 'L')) {
+		const fases = d.bornes.filter((b) => b.tipo === 'L');
+		return {
+			resumen: `Por aquí ENTRA la tensión al tablero: ${fases.length === 1 ? 'monofásica' : 'trifásica'} `
+				+ `${d.tensionNominal ?? 220} V. Sin una acometida cableada, «Energizar» no enciende nada, `
+				+ 'porque no hay de dónde sacar la corriente.',
+			bornes: d.bornes.map((b) => ({
+				borne: b.id,
+				papel: b.tipo === 'L' ? 'fase — al borne de entrada de la protección general'
+					: b.tipo === 'N' ? 'neutro — al bornero de neutro (y al retorno de los consumos)'
+						: 'tierra — al bornero de tierra del tablero',
+			})),
+			cuidado: 'Lo primero que va detrás de la acometida es la protección general. Entre la red y '
+				+ 'un consumo nunca debe haber un cable directo.',
+		};
+	}
 	switch (d.tipo) {
 		case 'sensor': {
 			// El caso que motivó todo esto.

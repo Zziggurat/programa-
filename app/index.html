@@ -19,6 +19,46 @@
 	}
 	* { box-sizing: border-box; }
 	[hidden] { display: none !important; }
+
+	/* ---- Ventana de inicio ----
+	   El programa son dos herramientas, no una con un añadido colgado de la barra. Abrir
+	   directamente en el gabinete daba por hecho que uno viene a dibujar tableros, y la mitad
+	   de las veces se viene a mirar la planta. Aquí se elige, y desde las dos se puede volver. */
+	#inicio {
+		position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column;
+		align-items: center; justify-content: center; gap: 24px; padding: 30px;
+		background: radial-gradient(120% 90% at 50% 0%, #1e2a38 0%, var(--fondo) 62%);
+		overflow: auto;
+	}
+	#inicio .marca-inicio { font-size: 30px; font-weight: 800; letter-spacing: -.02em; }
+	#inicio .marca-inicio span { color: var(--acento); }
+	#inicio .lema { color: var(--texto-suave); margin: -16px 0 0; font-size: 13.5px; text-align: center; }
+	#inicio-opciones { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+	.opcion-inicio {
+		width: 320px; text-align: left; background: var(--panel); color: var(--texto);
+		border: 1px solid var(--borde); border-radius: 16px; padding: 24px;
+		display: flex; flex-direction: column; gap: 9px;
+		transition: border-color .14s, transform .14s, background .14s;
+	}
+	.opcion-inicio:hover, .opcion-inicio:focus-visible {
+		border-color: var(--acento); background: var(--panel-2); transform: translateY(-3px);
+		outline: none;
+	}
+	.opcion-inicio .emoji { font-size: 34px; line-height: 1; }
+	.opcion-inicio h2 { margin: 0; font-size: 18px; }
+	.opcion-inicio p { margin: 0; color: var(--texto-suave); line-height: 1.5; font-size: 12.5px; }
+	.opcion-inicio ul { margin: 3px 0 0; padding-left: 17px; color: var(--texto-suave); font-size: 12px;
+		line-height: 1.6; list-style: disc; }
+	.opcion-inicio li::marker { color: var(--acento); }
+	#inicio-secundario { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+	#inicio-secundario button {
+		background: none; border: 1px solid var(--borde); border-radius: 9px;
+		color: var(--texto-suave); padding: 8px 14px; font-size: 12.5px;
+	}
+	#inicio-secundario button:hover { color: var(--texto); border-color: var(--acento); }
+	#inicio .pie-inicio { color: var(--texto-suave); font-size: 11.5px; text-align: center; max-width: 620px; line-height: 1.6; }
+	@media (max-height: 640px) { #inicio { justify-content: flex-start; } }
+
 	body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; background: var(--fondo); color: var(--texto); font-size: 13px; }
 	#escena { position: fixed; inset: 46px 0 0 0; }
 	button { font: inherit; cursor: pointer; }
@@ -34,7 +74,14 @@
 		   portátil. Lo que cede es el nombre del proyecto (un campo de texto aguanta bien
 		   ser estrecho) y, si aún no cabe, los rótulos de los botones dejan paso al icono. */
 	}
-	#barra .marca { font-weight: 700; font-size: 14px; letter-spacing: .01em; }
+	/* La marca es el botón de volver al inicio: sin adorno de botón, pero clicable y accesible. */
+	#barra .marca {
+		font-weight: 700; font-size: 14px; letter-spacing: .01em; white-space: nowrap;
+		background: none; border: 1px solid transparent; border-radius: 8px;
+		color: var(--texto); padding: 4px 7px;
+	}
+	#barra .marca:hover { background: var(--panel-2); border-color: var(--borde); }
+	#barra .marca:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
 	#barra .marca span { color: var(--acento); }
 	/* Estado del guardado: el usuario tiene que poder saber de un vistazo si su trabajo
 	   está a salvo. En silencio es como se pierde una tarde entera. */
@@ -117,6 +164,11 @@
 	#barra.minima { gap: 3px; padding: 0 6px; }
 	#barra.minima .boton { padding: 5px 7px; }
 	#barra.minima #nombre-proyecto { max-width: 120px; }
+	/* Último recurso (pantallas de 1024 y tabletas): el chip del DRC se queda en su punto de
+	   color, que es lo que de verdad se mira de reojo; el texto vuelve al ensanchar. */
+	#barra.micro #chip-drc-texto { display: none; }
+	#barra.micro #nombre-proyecto { max-width: 90px; }
+	#barra.micro .boton { padding: 5px 6px; }
 
 	/* ---- Segunda herramienta: visor 3D de la planta ---- */
 	#mundo { position: fixed; inset: 0; z-index: 70; background: #0c1015; }
@@ -166,6 +218,9 @@
 		background: #12171cE6; border: 1px solid var(--borde); border-radius: 999px;
 		padding: 8px 18px; font-size: 12.5px; color: var(--texto-suave); white-space: nowrap; }
 	#mundo-ayuda-paseo b { color: var(--texto); }
+	#mundo-invertir-caja { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+		margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--borde); }
+	#mundo-invertir-caja:hover { color: var(--texto); }
 	@media (max-width: 900px) { #mundo-panel { display: none; } }
 
 	/* Modo Energizar */
@@ -359,7 +414,9 @@
 	body.modo-visualizacion #btn-deshacer,
 	body.modo-visualizacion #btn-rehacer { display: none !important; }
 	body.modo-visualizacion #escena { inset: 46px 0 0 0; }
-	#btn-ver.activo { background: #1d4ed8; border-color: #2f6bff; color: #fff; }
+	#btn-ver.activo, #btn-2d.activo { background: #1d4ed8; border-color: #2f6bff; color: #fff; }
+	/* En el alzado no hay que girar la vista: se dice con el cursor, no solo con un tooltip. */
+	body.vista-2d #escena canvas { cursor: crosshair; }
 
 	/* Biblioteca de ejemplos y su explicación (reutilizan el aspecto del modal de ayuda) */
 	#modal-ejemplos, #modal-explicacion { position: fixed; inset: 0; z-index: 42; background: #0009;
@@ -432,8 +489,46 @@
 </head>
 <body>
 
+<!-- Ventana de inicio: lo primero que se ve al abrir el programa. -->
+<div id="inicio">
+	<div class="marca-inicio">⚡ Tablero<span>Studio</span></div>
+	<p class="lema">Dos herramientas en un programa. ¿Qué toca hoy?</p>
+	<div id="inicio-opciones">
+		<button class="opcion-inicio" id="inicio-tableros">
+			<span class="emoji">🗄️</span>
+			<h2>Trabajo de tableros</h2>
+			<p>Armar el tablero en 3D, cablearlo y sacar la documentación.</p>
+			<ul>
+				<li>Colocar aparatos en rieles y canaletas</li>
+				<li>Cablear borne a borne y verificar (DRC)</li>
+				<li>Energizar y ver el circuito funcionar</li>
+				<li>Esquema, dossier, rótulos y DXF</li>
+			</ul>
+		</button>
+		<button class="opcion-inicio" id="inicio-terreno">
+			<span class="emoji">🏗️</span>
+			<h2>Ir a terreno · Planta 3D</h2>
+			<p>Recorrer la cubierta del aeropuerto sacada del plano del proyectista.</p>
+			<ul>
+				<li>A pie en primera persona o desde arriba</li>
+				<li>UMAs, extractores, conductos y cañerías</li>
+				<li>Los puntos del BMS máquina por máquina</li>
+				<li>Qué señales están cableadas en el tablero</li>
+			</ul>
+		</button>
+	</div>
+	<div id="inicio-secundario">
+		<button id="inicio-abrir">📂 Abrir un proyecto guardado…</button>
+		<button id="inicio-ejemplos">📚 Tableros de ejemplo</button>
+		<button id="inicio-guia">❓ Guía rápida</button>
+	</div>
+	<p class="pie-inicio">Las dos herramientas están separadas a propósito: la planta no simula tableros
+	y el editor no sabe de cubiertas. Se puede pasar de una a otra en cualquier momento sin perder
+	el trabajo.</p>
+</div>
+
 <header id="barra">
-	<div class="marca">⚡ Tablero<span>Studio</span></div>
+	<button class="marca" id="btn-inicio" title="Volver a la ventana de inicio">⚡ Tablero<span>Studio</span></button>
 	<input id="nombre-proyecto" title="Nombre del proyecto">
 	<span id="estado-guardado" title="Estado del guardado automático">Guardado</span>
 	<div id="modos" title="Editor: armar y modificar la caja. Trabajo: solo cablear y verificar (nada se mueve).">
@@ -444,6 +539,7 @@
 	<button class="boton icono" id="btn-rehacer" aria-label="Rehacer" title="Rehacer (Ctrl+Y)">↷</button>
 	<div class="sep"></div>
 	<button class="boton" id="btn-centrar" aria-label="Centrar la vista" title="Centrar la vista (si te pierdes girando la cámara)">🏠<span class="rotulo-boton">Centrar</span></button>
+	<button class="boton" id="btn-2d" aria-label="Ver el tablero en 2D" title="Ver el tablero en 2D: alzado de frente, a escala y sin perspectiva">📏<span class="rotulo-boton" id="btn-2d-texto">2D</span></button>
 	<button class="boton" id="btn-ver" aria-label="Modo Visualización" title="Modo Visualización: ver el tablero como quedaría de verdad, con la puerta abierta y sin transparencias (no se puede editar)">👁️<span class="rotulo-boton">Ver</span></button>
 	<button class="boton" id="btn-esquema" aria-label="Esquema eléctrico" title="Esquema eléctrico (mando y potencia): el plano que se entrega al cliente y usa el electricista">📐<span class="rotulo-boton">Esquema</span></button>
 	<button class="boton" id="btn-imagen" aria-label="Añadir imagen de referencia" title="Añadir una imagen (foto de gabinete, controlador, motor…) como referencia visual para cablear sobre ella">🖼️<span class="rotulo-boton">Imagen</span></button>
@@ -750,18 +846,23 @@
 			<button id="mundo-sims" class="activo" title="Vista general desde arriba, como en Los Sims">🏙️ Vista general</button>
 			<button id="mundo-paseo" title="Recorrerla a pie: WASD para andar, arrastra para mirar, Shift para correr">🚶 Pasear</button>
 		</div>
-		<button class="boton" id="mundo-centrar" title="Volver a ver la planta entera">🏠</button>
-		<button class="boton peligro" id="mundo-salir" title="Volver al editor de tableros">✕ Salir</button>
+		<button class="boton" id="mundo-inicio" title="Volver a la ventana de inicio">🏠 Inicio</button>
+		<button class="boton peligro" id="mundo-salir" title="Ir al editor de tableros">✕ Salir</button>
 	</header>
 	<div id="mundo-panel">
 		<div id="mundo-resumen"></div>
 		<div id="mundo-ficha"></div>
 		<h3>Sistemas</h3>
 		<div id="mundo-leyenda"></div>
+		<h3>La cubierta</h3>
+		<div id="mundo-leyenda-obra"></div>
 		<p id="mundo-aviso"></p>
 	</div>
 	<div id="mundo-ayuda-paseo" hidden>
 		<b>W A S D</b> andar · <b>Shift</b> correr · <b>arrastra</b> para mirar · <b>clic</b> en una máquina para su ficha
+		<label id="mundo-invertir-caja" title="Cambia el sentido del ratón al mirar, si lo prefieres al revés">
+			<input type="checkbox" id="mundo-invertir"> ratón invertido
+		</label>
 	</div>
 </div>
 
@@ -776,7 +877,13 @@
 		<h3>Cómo se hace cada cosa</h3>
 		<ul class="guia">
 			<li><b>Añadir un aparato:</b> clic en el catálogo de la izquierda.</li>
+			<li><b>Que el tablero encienda algo:</b> el grupo <i>Campo</i> del catálogo trae la <b>acometida</b>
+			(por donde entra la tensión), el <b>motor</b>, la <b>ampolleta</b> y la resistencia. No van sobre la
+			placa: entran por un prensaestopas del borde inferior. <b>Sin acometida cableada, <i>Energizar</i> no
+			enciende nada</b>, por muy bien montado que esté todo lo demás.</li>
 			<li><b>Mover un aparato:</b> arrástralo (se pega solo al riel más cercano).</li>
+			<li><b>Ver la caja en 2D:</b> botón <i>📏 2D</i> — el alzado de frente, a escala y sin perspectiva,
+			como en un plano. Se puede cablear igual; solo se quita el giro de la cámara.</li>
 			<li><b>Cablear:</b> en modo Trabajo, toca un borne (punto naranja) y luego el otro. También puedes hacerlo desde el panel derecho eligiendo aparato y borne de destino.</li>
 			<li><b>Ordenar un cable:</b> <b>doble clic</b> sobre él (botón izquierdo o derecho) crea una <b>unión</b>; arrástrala con el clic izquierdo para llevar el cable por donde quieras. Otro doble clic sobre la unión la quita.</li>
 			<li><b>Ver el esquema:</b> botón <i>📐 Esquema</i> — el plano de mando y potencia, con su numeración de hilos, listo para PDF.</li>

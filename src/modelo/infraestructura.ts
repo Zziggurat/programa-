@@ -60,6 +60,32 @@ export interface TrazaPlanta {
 	puntos: [number, number][];
 }
 
+/**
+ * Familias de obra que el plano dibuja alrededor de las máquinas. No son clima: son la cubierta
+ * en sí, lo que hace que al pasear se reconozca el sitio en vez de ver tubos sobre una losa lisa.
+ */
+export type FamiliaObra = 'borde' | 'baranda' | 'muro' | 'lucernario' | 'escalera' | 'acero';
+
+/** Un tramo de obra: su recorrido en planta es del plano; su altura y su grosor, de proyecto. */
+export interface ObraPlanta {
+	familia: FamiliaObra;
+	/** Altura supuesta sobre la cubierta, en mm. */
+	alto: number;
+	/** Grosor supuesto del elemento, en mm. */
+	grosor: number;
+	puntos: [number, number][];
+}
+
+/** Un pilar de la estructura. La posición y el RADIO salen del plano; la altura, no. */
+export interface ColumnaPlanta {
+	x: number;
+	y: number;
+	/** Radio real del pilar en el plano, en mm. */
+	r: number;
+	/** Altura supuesta del pilar, en mm. Ver `alturasSupuestas`. */
+	alto?: number;
+}
+
 export interface Infraestructura {
 	formato: 'tablero-studio-infraestructura';
 	version: 1;
@@ -77,6 +103,31 @@ export interface Infraestructura {
 	leyendaPuntos: Record<string, { que: string; clase: string }>;
 	equipos: EquipoPlanta[];
 	trazas: TrazaPlanta[];
+	/** Pilares de la estructura leídos del plano. Puede faltar en archivos antiguos. */
+	columnas?: ColumnaPlanta[];
+	/** Barandas, bordes, muros, lucernarios y escaleras. Puede faltar en archivos antiguos. */
+	obra?: ObraPlanta[];
+}
+
+/** Cómo se dibuja y cómo se llama cada familia de obra. */
+export const OBRA: Record<FamiliaObra, { nombre: string; color: number; translucido?: boolean }> = {
+	borde: { nombre: 'Bordes y petos de cubierta', color: 0x6c7681 },
+	baranda: { nombre: 'Barandas', color: 0xa8b3bd },
+	muro: { nombre: 'Muros y casetas', color: 0x7d8790 },
+	lucernario: { nombre: 'Lucernarios y termopanel', color: 0x74c0fc, translucido: true },
+	escalera: { nombre: 'Escaleras y accesos', color: 0xffa94d },
+	acero: { nombre: 'Estructura de acero', color: 0x8d99a6 },
+};
+
+/** Metros de cada familia de obra, para la leyenda del visor. */
+export function resumenObra(inf: Infraestructura): { familia: FamiliaObra; metros: number }[] {
+	const por = new Map<FamiliaObra, number>();
+	for (const o of inf.obra ?? []) {
+		const largo = o.puntos.slice(1).reduce((s, p, i) => s + Math.hypot(p[0] - o.puntos[i][0], p[1] - o.puntos[i][1]), 0);
+		por.set(o.familia, (por.get(o.familia) ?? 0) + largo);
+	}
+	return [...por].map(([familia, mm]) => ({ familia, metros: Math.round(mm / 1000) }))
+		.sort((a, b) => b.metros - a.metros);
 }
 
 /** Color y nombre de cada sistema, compartidos por el visor 3D y sus leyendas. */

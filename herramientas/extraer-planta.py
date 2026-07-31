@@ -55,6 +55,32 @@ SISTEMAS = [
 CAPAS_EQUIPO = re.compile(r'TF-UMA|EQUIPOS.?AIRE|Ventilador', re.I)
 CAPAS_CONTROL = re.compile(r'CONTROL CENTRALIZADO|BUS-LON|EXTR NVA', re.I)
 
+# ---------------------------------------------------------------------------
+# LA OBRA QUE HAY ALREDEDOR DE LAS MÁQUINAS
+#
+# El plano no es solo clima. Debajo de las capas de conductos está dibujada la cubierta entera:
+# sus columnas, sus barandas, sus lucernarios, sus escaleras y sus muros. Sin eso, el visor
+# enseñaba máquinas y tubos flotando sobre una losa lisa, que no se parece en nada a subir a la
+# cubierta de un aeropuerto. Con eso, se reconoce el sitio.
+#
+# El RECORRIDO EN PLANTA de todo esto sale del plano y es exacto; los RADIOS de las columnas,
+# también. Las ALTURAS no: igual que en las capas de clima, aquí tampoco hay ni una cota Z, así
+# que se asignan por reglas de proyecto y el visor no deja de decirlo.
+# ---------------------------------------------------------------------------
+ARQUITECTURA = [
+    # (familia, patrón de capa, altura supuesta mm, grosor supuesto mm, largo mínimo mm)
+    ('borde',      re.compile(r'^ROOF\d?$', re.I),            400, 260, 2500),
+    ('baranda',    re.compile(r'^BARANDA$', re.I),           1100,  60, 1500),
+    ('muro',       re.compile(r'^(WALL\d?|TABIQUE)$', re.I), 2400, 180, 1500),
+    ('lucernario', re.compile(r'^(TERMOP|LUCARNA)$', re.I),   250, 220, 1200),
+    ('escalera',   re.compile(r'^STAIR$', re.I),             1000, 120, 1200),
+    ('acero',      re.compile(r'^ACERO\d?$', re.I),          3200, 140, 2000),
+]
+# Columnas: los círculos de las capas de estructura. El radio es el del plano.
+CAPAS_COLUMNA = re.compile(r'^(STRU-COLUMNA|STRU)$', re.I)
+ALTO_COLUMNA = 7800          # supuesta: altura libre bajo la cubierta de un terminal
+RADIO_COLUMNA = (90, 700)    # fuera de esto un círculo no es una columna
+
 # Altura de los equipos sobre la cubierta (mm). Una UMA de aeropuerto es una caja grande.
 ALTO_UMA = 2200
 ALTO_VEX = 900
@@ -337,6 +363,53 @@ def main() -> None:
                  for tag, d in sorted(diagramas.items()) if tag not in situados and d['puntos']]
     print(f"  {len(equipos)} equipos situados en planta, {len(sinSituar)} solo con diagrama")
 
+    # ---------------- 4. La obra: columnas, barandas, bordes, muros, lucernarios ----------------
+    # Solo lo que cae dentro de la zona modelada, y solo tramos con largo suficiente: el plano
+    # está lleno de detalles de despiece de dos centímetros que en el mundo 3D son ruido.
+    MARGEN = 8000
+    def en_zona(x: float, y: float) -> bool:
+        return (zona['x0'] - MARGEN <= x <= zona['x1'] + MARGEN
+                and zona['y0'] - MARGEN <= y <= zona['y1'] + MARGEN)
+
+    obra: list[dict[str, Any]] = []
+    columnas: list[dict[str, Any]] = []
+    for e in msp:
+        capa = e.dxf.get('layer', '')
+        if e.dxftype() == 'CIRCLE' and CAPAS_COLUMNA.search(capa):
+            c = e.dxf.center
+            r = e.dxf.radius
+            if en_zona(c.x, c.y) and RADIO_COLUMNA[0] <= r <= RADIO_COLUMNA[1]:
+                # La altura viaja con cada pilar para que TODAS las cotas supuestas queden
+                # declaradas aquí, en el extractor, y no repartidas por el visor.
+                columnas.append({'x': round(c.x, 1), 'y': round(c.y, 1), 'r': round(r, 1),
+                                 'alto': ALTO_COLUMNA})
+            continue
+        fam = next(((f, z, g, lm) for f, pat, z, g, lm in ARQUITECTURA if pat.search(capa)), None)
+        if fam is None:
+            continue
+        familia, alto, grosor, largo_min = fam
+        for pts in polilineas_de(e):
+            if not any(en_zona(x, y) for x, y in pts):
+                continue
+            largo = sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
+            if largo < largo_min:
+                continue
+            obra.append({'familia': familia, 'alto': alto, 'grosor': grosor,
+                         'puntos': [[round(x, 1), round(y, 1)] for x, y in pts]})
+    # Columnas duplicadas: la estructura suele dibujar dos círculos concéntricos por pilar.
+    vistas: set[tuple[int, int]] = set()
+    unicas = []
+    for c in sorted(columnas, key=lambda c: -c['r']):
+        clave = (int(c['x'] // 400), int(c['y'] // 400))
+        if clave in vistas:
+            continue
+        vistas.add(clave)
+        unicas.append(c)
+    columnas = unicas
+    porFamilia = collections.Counter(o['familia'] for o in obra)
+    print(f"  obra: {len(columnas)} columnas, "
+          + ', '.join(f'{n} de {f}' for f, n in porFamilia.most_common()))
+
     modelo = {
         'formato': 'tablero-studio-infraestructura',
         'version': 1,
@@ -353,6 +426,8 @@ def main() -> None:
                           {**PUNTOS_BMS, **{k: v for k, v in SONDAS_TEXTO.items()}}.items()},
         'equipos': equipos + sinSituar,
         'trazas': [{k: v for k, v in t.items() if k != 'largo'} for t in trazas],
+        'columnas': columnas,
+        'obra': obra,
     }
     with open(salida, 'w', encoding='utf-8') as f:
         json.dump(modelo, f, ensure_ascii=False, separators=(',', ':'))

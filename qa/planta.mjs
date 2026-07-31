@@ -24,7 +24,7 @@ const server = http.createServer((req, res) => {
 	res.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); res.end(readFileSync(f));
 });
 await new Promise((r) => server.listen(0, r));
-const url = `http://127.0.0.1:${server.address().port}/?qa=1`;
+const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
@@ -66,6 +66,24 @@ for (const s of ['Inyección', 'Extracción', 'Bus LON']) {
 	must(`la leyenda incluye «${s}»`, ley.includes(s));
 }
 must('la leyenda da metros de cada sistema', /\d+\s*m/.test(ley), ley.replace(/\s+/g, ' ').slice(0, 80));
+
+/*
+ * LA CUBIERTA, no solo las máquinas. El plano trae debajo de las capas de clima la obra entera
+ * —petos, barandas, muros, lucernarios, escaleras y pilares— y sin ella el visor enseñaba tubos
+ * flotando sobre una losa lisa. Se comprueba que está montada y que sale de datos, no de adorno.
+ */
+console.log('\n--- 2b. La obra de la cubierta ---');
+const montado = await page.evaluate(() => window.__plantaQA.montado());
+must('la obra está montada en la escena', montado.obra >= 5, `${montado.obra} mallas`);
+must('con tramos de verdad, no cuatro palos', montado.tramosObra > 1000, `${montado.tramosObra} tramos`);
+const obraTexto = await texto('#mundo-leyenda-obra');
+for (const que of ['Bordes y petos', 'Barandas', 'Muros', 'Pilares']) {
+	must(`la leyenda nombra «${que}»`, obraTexto.includes(que));
+}
+must('los pilares salen del plano con su cuenta', /Pilares de estructura · \d+/.test(obraTexto),
+	obraTexto.split('\n').pop());
+// Una malla por familia y no una por tramo: con 1.800 tramos sueltos el paseo iría a tirones.
+must('cada familia va en UNA malla (el paseo tiene que ir fluido)', montado.obra <= 8, `${montado.obra} mallas`);
 
 console.log('\n--- 3. NO deja de avisar de lo que es supuesto ---');
 const aviso = await texto('#mundo-aviso');
@@ -138,7 +156,58 @@ must('sin salirse de la losa', await page.evaluate(() => {
 }));
 await page.screenshot({ path: join(SAL, 'planta-paseo.png') });
 
-console.log('\n--- 6. Salir y volver al editor ---');
+/*
+ * EL SENTIDO DEL RATÓN. Estaba invertido en vertical porque se negaba el vector de dirección
+ * entero, y con él la altura. Se comprueba con números, no a ojo: arrastrar hacia arriba tiene
+ * que SUBIR la mirada, y arrastrar a la derecha tiene que girarla a la derecha.
+ *
+ * «A la derecha», mirando hacia una dirección cualquiera, se decide con el producto vectorial:
+ * el componente Y de (antes × después) es negativo cuando el giro es horario visto desde arriba,
+ * que es lo que tiene que pasar al llevar el ratón a la derecha.
+ */
+console.log('\n--- 6. El ratón mira hacia donde se arrastra ---');
+const mirar = (dx, dy) => page.evaluate(([x, y]) => window.__plantaQA.mirar(x, y), [dx, dy]);
+const invertir = (v) => page.evaluate((x) => window.__plantaQA.invertirRaton(x), v);
+const giroY = (a, b) => a.z * b.x - a.x * b.z;
+
+await invertir(false);
+const centro = await mirar(0, 0);
+const arriba = await mirar(0, -120);             // el ratón sube: clientY disminuye
+must('arrastrar hacia arriba sube la mirada', arriba.y > centro.y + 0.05,
+	`y ${centro.y.toFixed(3)} → ${arriba.y.toFixed(3)}`);
+const abajo = await mirar(0, 240);
+must('y arrastrar hacia abajo la baja', abajo.y < arriba.y - 0.05,
+	`y ${arriba.y.toFixed(3)} → ${abajo.y.toFixed(3)}`);
+const antes = await mirar(0, -120);              // volver a la horizontal
+const derecha = await mirar(150, 0);
+must('arrastrar a la derecha gira la vista a la derecha', giroY(antes, derecha) < -0.01,
+	`giro ${giroY(antes, derecha).toFixed(3)}`);
+const izquierda = await mirar(-300, 0);
+must('y a la izquierda, a la izquierda', giroY(derecha, izquierda) > 0.01,
+	`giro ${giroY(derecha, izquierda).toFixed(3)}`);
+await mirar(150, 0);
+
+// Quien lo prefiera al revés lo tiene a un clic, y el programa se acuerda.
+must('hay un interruptor de ratón invertido', await page.isVisible('#mundo-invertir'));
+await invertir(true);
+const base2 = await mirar(0, 0);
+const invArriba = await mirar(0, -120);
+must('con el ratón invertido, arrastrar arriba baja la mirada', invArriba.y < base2.y - 0.05,
+	`y ${base2.y.toFixed(3)} → ${invArriba.y.toFixed(3)}`);
+must('la preferencia queda guardada', await page.evaluate(
+	() => localStorage.getItem('tablero-studio:raton-invertido') === '1'));
+await invertir(false); await mirar(0, 120);
+
+console.log('\n--- 7. El botón de la casa lleva al inicio ---');
+must('el visor tiene botón de inicio', await page.isVisible('#mundo-inicio'));
+await click('mundo-inicio'); await page.waitForTimeout(500);
+must('cierra el visor', !(await page.isVisible('#mundo')));
+must('y deja a la vista la ventana de inicio', await page.isVisible('#inicio'));
+await click('inicio-terreno'); await page.waitForTimeout(2000);
+must('desde el inicio se vuelve a terreno', await page.isVisible('#mundo'));
+must('y la ventana de inicio se quita de en medio', !(await page.isVisible('#inicio')));
+
+console.log('\n--- 8. Salir y volver al editor ---');
 await click('mundo-salir'); await page.waitForTimeout(500);
 must('el visor se cierra', !(await page.isVisible('#mundo')));
 must('el editor de tableros sigue ahí', await page.isVisible('#escena'));
@@ -147,7 +216,7 @@ must('y su catálogo también', await page.evaluate(
 await click('btn-planta'); await page.waitForTimeout(1200);
 must('se puede volver a abrir', await page.isVisible('#mundo'));
 
-console.log('\n--- 7. Sin errores ---');
+console.log('\n--- 9. Sin errores ---');
 must('ningún error de JavaScript', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 await browser.close(); server.close();

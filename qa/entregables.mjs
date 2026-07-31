@@ -21,7 +21,7 @@ const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-119
 const page = await b.newPage({ viewport: { width: 1400, height: 900 }, acceptDownloads: true });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
 const click = (id) => page.evaluate((i) => document.getElementById(i)?.click(), id);
-await page.goto(`http://127.0.0.1:${server.address().port}/?qa=1`); await page.waitForTimeout(900);
+await page.goto(`http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`); await page.waitForTimeout(900);
 if (await page.isVisible('#modal-ayuda')) { await click('btn-cerrar-ayuda'); await page.waitForTimeout(200); }
 await click('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {

@@ -1,6 +1,6 @@
 /**
  * QA automático del sistema de cables de TableroStudio.
- * Arranca la app compilada (app/dist) con la sonda «?qa=1» y comprueba, sobre el 3D real:
+ * Arranca la app compilada (app/dist) con la sonda «?qa=1&inicio=0» y comprueba, sobre el 3D real:
  * cero cables fantasma, conexión por clic, codos, arrastre, uniones y borrado.
  *
  *   node qa/cables.mjs
@@ -19,7 +19,7 @@ const server = http.createServer((req, res) => {
 	res.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); res.end(readFileSync(f));
 });
 await new Promise((r) => server.listen(0, r));
-const url = `http://127.0.0.1:${server.address().port}/?qa=1`;
+const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });

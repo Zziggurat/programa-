@@ -19,7 +19,7 @@ const server = http.createServer((req, res) => {
 	res.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); res.end(readFileSync(f));
 });
 await new Promise((r) => server.listen(0, r));
-const url = `http://127.0.0.1:${server.address().port}/?qa=1`;
+const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });

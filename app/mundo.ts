@@ -19,14 +19,20 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import {
-	EquipoPlanta, Infraestructura, SISTEMAS, TrazaPlanta, resumenPlanta,
+	ColumnaPlanta, EquipoPlanta, FamiliaObra, Infraestructura, OBRA, ObraPlanta, SISTEMAS,
+	TrazaPlanta,
 } from '../src/modelo/infraestructura.js';
 
 /* --------------------------------- Construcción --------------------------------- */
 
+/** Un tramo de obra a la altura de una persona, para no aparecer dentro de él. */
+interface Obstaculo { ax: number; az: number; bx: number; bz: number }
+
 const COLOR_UMA = 0x8b98a5;
 const COLOR_VEX = 0x6b7d8f;
-const COLOR_CUBIERTA = 0x1b1f24;
+// La losa era casi negra y al pasear no se distinguía el suelo de la nada. Una cubierta es una
+// membrana o un hormigón gris: se ve por dónde se pisa.
+const COLOR_CUBIERTA = 0x2b3138;
 
 interface Mundo {
 	escena: THREE.Scene;
@@ -34,6 +40,10 @@ interface Mundo {
 	orbita: OrbitControls;
 	equipos: THREE.Group;
 	instalaciones: THREE.Group;
+	/** Barandas, petos, muros, lucernarios, escaleras y pilares de la cubierta. */
+	obra: THREE.Group;
+	/** Tramos de obra que llegan a la altura de una persona, en coordenadas de escena. */
+	obstaculos: Obstaculo[];
 	/** Centro de la planta en coordenadas de escena, para encuadrar. */
 	centro: THREE.Vector3;
 	tamano: { ancho: number; fondo: number };
@@ -148,6 +158,88 @@ function fusionar(geos: THREE.BufferGeometry[]): THREE.BufferGeometry | undefine
 	return out;
 }
 
+/**
+ * LA CUBIERTA EN SÍ: barandas, petos, muros, lucernarios, escaleras y estructura.
+ *
+ * Antes esto no se dibujaba y el visor enseñaba máquinas y tubos flotando sobre una losa lisa.
+ * Una cubierta de aeropuerto no es una losa lisa: tiene un peto por todo el borde, barandas donde
+ * se trabaja, casetas, lucernarios por los que entra la luz al terminal y escaleras de acceso. Y
+ * todo eso está dibujado en el plano, debajo de las capas de clima —solo había que mirarlo—.
+ *
+ * El recorrido en planta de cada tramo es el del plano. La altura y el grosor, no: el plano
+ * tampoco los trae aquí, así que salen de reglas de proyecto igual que las de los conductos, y el
+ * aviso del visor lo sigue diciendo.
+ */
+function construirObra(
+	obra: ObraPlanta[], aEscena: ReturnType<typeof hacerConversor>, obstaculos: Obstaculo[],
+): THREE.Group {
+	const grupo = new THREE.Group();
+	const porFamilia = new Map<FamiliaObra, THREE.BufferGeometry[]>();
+	for (const o of obra) {
+		const alto = o.alto / 1000;
+		const grosor = Math.max(0.04, o.grosor / 1000);
+		for (let i = 1; i < o.puntos.length; i++) {
+			const a = aEscena(o.puntos[i - 1][0], o.puntos[i - 1][1], 0);
+			const b = aEscena(o.puntos[i][0], o.puntos[i][1], 0);
+			const largo = a.distanceTo(b);
+			if (largo < 0.2) continue;
+			// Lo que llega a la altura de una persona se apunta como obstáculo, para no aparecer
+			// dentro de un muro al empezar el paseo.
+			if (alto > 0.9) obstaculos.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z });
+			// Un tramo es un prisma tumbado sobre la cubierta y girado hacia donde va.
+			const g = new THREE.BoxGeometry(largo, alto, grosor);
+			g.deleteAttribute('uv');
+			const medio = a.clone().add(b).multiplyScalar(0.5);
+			g.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.atan2(a.z - b.z, b.x - a.x)));
+			g.translate(medio.x, alto / 2, medio.z);
+			if (!porFamilia.has(o.familia)) porFamilia.set(o.familia, []);
+			porFamilia.get(o.familia)!.push(g);
+		}
+	}
+	for (const [familia, geos] of porFamilia) {
+		const info = OBRA[familia];
+		const fusionada = fusionar(geos);
+		if (!fusionada) continue;
+		const malla = new THREE.Mesh(fusionada, new THREE.MeshStandardMaterial({
+			color: info.color, roughness: familia === 'lucernario' ? 0.15 : 0.85,
+			metalness: familia === 'baranda' || familia === 'acero' ? 0.7 : 0.05,
+			transparent: !!info.translucido, opacity: info.translucido ? 0.42 : 1,
+		}));
+		malla.receiveShadow = true;
+		malla.castShadow = familia !== 'lucernario';
+		malla.userData.familia = familia;
+		malla.userData.tramos = geos.length;
+		grupo.add(malla);
+	}
+	return grupo;
+}
+
+/**
+ * Los pilares. Posición y RADIO son los del plano —eso sí lo trae, y por eso unos son más
+ * gruesos que otros—; la altura es de proyecto, como todo lo demás en Z.
+ */
+function construirColumnas(
+	columnas: ColumnaPlanta[], aEscena: ReturnType<typeof hacerConversor>,
+): THREE.Mesh | undefined {
+	const geos: THREE.BufferGeometry[] = [];
+	for (const c of columnas) {
+		const p = aEscena(c.x, c.y, 0);
+		const alto = (c.alto ?? 7800) / 1000;
+		const g = new THREE.CylinderGeometry(c.r / 1000, (c.r * 1.12) / 1000, alto, 12);
+		g.deleteAttribute('uv');
+		g.translate(p.x, alto / 2, p.z);
+		geos.push(g);
+	}
+	const fusionada = fusionar(geos);
+	if (!fusionada) return undefined;
+	const malla = new THREE.Mesh(fusionada, new THREE.MeshStandardMaterial({
+		color: 0x9aa4ae, roughness: 0.8, metalness: 0.1,
+	}));
+	malla.castShadow = true;
+	malla.userData.columnas = columnas.length;
+	return malla;
+}
+
 /** Una máquina: su caja, y un cartel con su marcado que siempre mira a la cámara. */
 function construirEquipo(e: EquipoPlanta, aEscena: ReturnType<typeof hacerConversor>): THREE.Group | undefined {
 	if (e.x === null || e.y === null) return undefined;
@@ -203,11 +295,41 @@ function cartel(texto: string, altura: number, seguro: boolean): THREE.Sprite {
 	return sp;
 }
 
+/**
+ * Cúpula de cielo. Una cubierta está A LA INTEMPERIE: sin cielo, al levantar la vista se veía
+ * un vacío negro y el sitio parecía un sótano. Es una esfera del revés con un degradado de
+ * anochecer —del azul del horizonte al casi negro del cenit—, que además sienta bien con el
+ * resto del programa, que es oscuro.
+ */
+function cieloDeAnochecer(radio: number): THREE.Mesh {
+	const lienzo = document.createElement('canvas');
+	lienzo.width = 4; lienzo.height = 256;
+	const c = lienzo.getContext('2d')!;
+	const g = c.createLinearGradient(0, 0, 0, 256);
+	g.addColorStop(0, '#0a0e14');    // cenit
+	g.addColorStop(0.55, '#16202c');
+	g.addColorStop(0.82, '#243342');
+	g.addColorStop(1, '#31445a');    // horizonte
+	c.fillStyle = g;
+	c.fillRect(0, 0, 4, 256);
+	const tex = new THREE.CanvasTexture(lienzo);
+	tex.colorSpace = THREE.SRGBColorSpace;
+	const cielo = new THREE.Mesh(
+		new THREE.SphereGeometry(Math.max(400, radio * 1.6), 24, 16),
+		new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }),
+	);
+	cielo.userData.cielo = true;
+	return cielo;
+}
+
 export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement): Mundo {
 	const aEscena = hacerConversor(inf);
 	const escena = new THREE.Scene();
 	escena.background = new THREE.Color(0x0c1015);
-	escena.fog = new THREE.Fog(0x0c1015, 90, 340);
+	// La niebla se funde con el horizonte del cielo, no con el negro: si no, a media distancia
+	// las máquinas se disuelven en un gris que no se parece a estar a la intemperie.
+	escena.fog = new THREE.Fog(0x243342, 110, 420);
+	escena.add(cieloDeAnochecer(Math.max(inf.zona.x1 - inf.zona.x0, inf.zona.y1 - inf.zona.y0) / 1000));
 
 	const ancho = (inf.zona.x1 - inf.zona.x0) / 1000;
 	const fondo = (inf.zona.y1 - inf.zona.y0) / 1000;
@@ -220,12 +342,14 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
 	losa.position.y = -0.18;
 	losa.receiveShadow = true;
 	escena.add(losa);
+	// La rejilla va 4 cm sobre la losa. A 2 cm se peleaban a lo lejos: en una planta de 240 m, a
+	// 200 de distancia el buffer de profundidad no distingue dos centímetros.
 	const rejilla = new THREE.GridHelper(Math.max(ancho, fondo) + 20, Math.round((Math.max(ancho, fondo) + 20) / 5),
 		0x2a3138, 0x1c2126);
-	rejilla.position.y = 0.02;
+	rejilla.position.y = 0.04;
 	escena.add(rejilla);
 
-	escena.add(new THREE.HemisphereLight(0x9fb6cd, 0x1a1f24, 1.05));
+	escena.add(new THREE.HemisphereLight(0xa9c0d6, 0x2a3138, 1.25));
 	const sol = new THREE.DirectionalLight(0xffe8c4, 1.5);
 	sol.position.set(ancho * 0.4, 90, fondo * 0.3);
 	sol.castShadow = true;
@@ -239,6 +363,18 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
 	const instalaciones = construirInstalaciones(inf.trazas, aEscena);
 	escena.add(instalaciones);
 
+	// La cubierta que hay debajo de las instalaciones: petos, barandas, casetas, lucernarios,
+	// escaleras y pilares. Es lo que hace que al pasear se reconozca el sitio.
+	const obstaculos: Obstaculo[] = [];
+	const obra = construirObra(inf.obra ?? [], aEscena, obstaculos);
+	escena.add(obra);
+	const columnas = construirColumnas(inf.columnas ?? [], aEscena);
+	if (columnas) obra.add(columnas);
+	for (const c of inf.columnas ?? []) {
+		const p = aEscena(c.x, c.y, 0);
+		obstaculos.push({ ax: p.x, az: p.z, bx: p.x, bz: p.z });
+	}
+
 	const equipos = new THREE.Group();
 	for (const e of inf.equipos) {
 		const g = construirEquipo(e, aEscena);
@@ -246,13 +382,15 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
 	}
 	escena.add(equipos);
 
-	const camara = new THREE.PerspectiveCamera(58, 1, 0.1, 1200);
+	// `near` a 30 cm y no a 10: a la escala de esta planta, un plano cercano diminuto gasta toda
+	// la precisión de profundidad cerca de la cámara y deja parpadeando lo que se ve al fondo.
+	const camara = new THREE.PerspectiveCamera(58, 1, 0.3, 1200);
 	const orbita = new OrbitControls(camara, lienzo);
 	orbita.enableDamping = true;
 	orbita.dampingFactor = 0.09;
 	orbita.maxPolarAngle = Math.PI / 2.05;   // no meter la cámara bajo la losa
 
-	return { escena, camara, orbita, equipos, instalaciones,
+	return { escena, camara, orbita, equipos, instalaciones, obra, obstaculos,
 		centro: new THREE.Vector3(0, 0, 0), tamano: { ancho, fondo } };
 }
 
@@ -278,14 +416,87 @@ export function ponerVistaSims(m: Mundo): void {
  */
 export function ponerVistaPaseo(m: Mundo): void {
 	m.orbita.enabled = false;      // en paseo manda el teclado y el ratón libre
-	const cerca = m.equipos.children[Math.floor(m.equipos.children.length / 2)];
-	if (cerca) {
-		m.camara.position.set(cerca.position.x + 9, 1.7, cerca.position.z + 9);
-		m.camara.lookAt(cerca.position.x, 1.7, cerca.position.z);
+	const maquinas = m.equipos.children;
+	if (maquinas.length === 0) {
+		m.camara.position.set(0, 1.7, m.tamano.fondo * 0.42);
+		m.camara.lookAt(0, 1.7, 0);
 		return;
 	}
-	m.camara.position.set(0, 1.7, m.tamano.fondo * 0.42);
-	m.camara.lookAt(0, 1.7, 0);
+	/*
+	 * SE EMPIEZA EL PASEO MIRANDO UNA MÁQUINA, Y VIÉNDOLA.
+	 *
+	 * Antes se salía siempre a nueve metros en diagonal de la máquina de en medio. Con la cubierta
+	 * lisa aquello valía; en cuanto se dibujaron los muros y las casetas, la mitad de las veces se
+	 * empezaba con la cara contra el hormigón —el sitio estaba libre, pero la máquina quedaba al
+	 * otro lado de una pared—. Así que ahora se exige lo mismo que exigiría cualquiera: sitio
+	 * despejado donde ponerse Y línea de visión limpia hasta la máquina.
+	 */
+	const DIST = 10;
+	const candidatas = [...maquinas].sort((a, b) => a.position.x - b.position.x)
+		.filter((_, i, arr) => i % Math.max(1, Math.floor(arr.length / 9)) === 0);
+	for (const maquina of candidatas) {
+		for (let i = 0; i < 8; i++) {
+			const a = (i * Math.PI) / 4 + Math.PI / 8;
+			const x = maquina.position.x + Math.cos(a) * DIST;
+			const z = maquina.position.z + Math.sin(a) * DIST;
+			if (distanciaAObra(m, x, z) < 1.6) continue;
+			if (haySolido(m, new THREE.Vector3(x, 1.7, z), 2)) continue;
+			if (!seVe(m, x, z, maquina.position.x, maquina.position.z)) continue;
+			m.camara.position.set(x, 1.7, z);
+			m.camara.lookAt(maquina.position.x, 1.7, maquina.position.z);
+			return;
+		}
+	}
+	const ultima = maquinas[Math.floor(maquinas.length / 2)];
+	m.camara.position.set(ultima.position.x + DIST, 1.7, ultima.position.z + DIST);
+	m.camara.lookAt(ultima.position.x, 1.7, ultima.position.z);
+}
+
+/** ¿Se llega en línea recta de (x0,z0) a (x1,z1) sin cruzar un muro o una baranda? */
+function seVe(m: Mundo, x0: number, z0: number, x1: number, z1: number): boolean {
+	for (const o of m.obstaculos) {
+		if (o.ax === o.bx && o.az === o.bz) continue;   // un pilar no tapa una máquina
+		if (seCruzan(x0, z0, x1, z1, o.ax, o.az, o.bx, o.bz)) return false;
+	}
+	return true;
+}
+
+/** Cruce de dos segmentos en planta, por el signo de los productos vectoriales. */
+function seCruzan(
+	ax: number, az: number, bx: number, bz: number,
+	cx: number, cz: number, dx: number, dz: number,
+): boolean {
+	const lado = (px: number, pz: number, qx: number, qz: number, rx: number, rz: number): number =>
+		Math.sign((qx - px) * (rz - pz) - (qz - pz) * (rx - px));
+	const d1 = lado(ax, az, bx, bz, cx, cz);
+	const d2 = lado(ax, az, bx, bz, dx, dz);
+	const d3 = lado(cx, cz, dx, dz, ax, az);
+	const d4 = lado(cx, cz, dx, dz, bx, bz);
+	return d1 !== d2 && d3 !== d4;
+}
+
+/** ¿Hay algo macizo —una máquina— a menos de `radio` del punto? */
+function haySolido(m: Mundo, p: THREE.Vector3, radio: number): boolean {
+	return m.equipos.children.some((g) => {
+		const caja = new THREE.Box3().setFromObject(g);
+		return caja.distanceToPoint(p) < radio;
+	});
+}
+
+/** Distancia en planta al tramo de obra más cercano (muros, barandas, pilares). */
+function distanciaAObra(m: Mundo, x: number, z: number): number {
+	let min = Infinity;
+	for (const o of m.obstaculos) {
+		const dx = o.bx - o.ax;
+		const dz = o.bz - o.az;
+		const largoSq = dx * dx + dz * dz;
+		const t = largoSq > 0
+			? Math.max(0, Math.min(1, ((x - o.ax) * dx + (z - o.az) * dz) / largoSq))
+			: 0;
+		const d = Math.hypot(x - (o.ax + t * dx), z - (o.az + t * dz));
+		if (d < min) min = d;
+	}
+	return min;
 }
 
 /**
@@ -293,6 +504,12 @@ export function ponerVistaPaseo(m: Mundo): void {
  *
  * No usa `PointerLockControls` para no bloquear el cursor sin avisar —eso desconcierta a quien
  * no juega— sino arrastre con el botón izquierdo, que es lo que ya hace en el resto del programa.
+ *
+ * SENTIDO DEL RATÓN. El convenio es el de cualquier juego en primera persona: arrastrar hacia
+ * arriba mira hacia arriba y arrastrar a la derecha mira a la derecha. Antes la vertical estaba
+ * al revés por un fallo de signo —se negaba el vector de dirección entero, y con él la altura—.
+ * Como el gusto en esto no es universal, queda un interruptor que invierte los dos ejes y se
+ * recuerda entre sesiones.
  */
 export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 	const teclas = new Set<string>();
@@ -300,8 +517,10 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 	let ultimo = { x: 0, y: 0 };
 	let yaw = Math.PI;
 	let pitch = 0;
+	let invertido = leerInvertido();
 	const ALTURA_OJOS = 1.7;
 	const VELOCIDAD = 14;          // m/s: se recorren 240 m sin aburrirse
+	const SENSIBILIDAD = 0.0035;
 
 	const onKeyDown = (e: KeyboardEvent) => { teclas.add(e.code); };
 	const onKeyUp = (e: KeyboardEvent) => { teclas.delete(e.code); };
@@ -309,10 +528,21 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 	const onUp = () => { girando = false; };
 	const onMove = (e: MouseEvent) => {
 		if (!girando) return;
-		yaw -= (e.clientX - ultimo.x) * 0.0035;
-		pitch = Math.max(-1.4, Math.min(1.4, pitch - (e.clientY - ultimo.y) * 0.0035));
+		mirar(e.clientX - ultimo.x, e.clientY - ultimo.y);
 		ultimo = { x: e.clientX, y: e.clientY };
 	};
+
+	/** Gira la vista por un arrastre de `dx`,`dy` píxeles. Separado para poder probarlo. */
+	function mirar(dx: number, dy: number): void {
+		const s = invertido ? -1 : 1;
+		yaw -= dx * SENSIBILIDAD * s;
+		pitch = Math.max(-1.4, Math.min(1.4, pitch - dy * SENSIBILIDAD * s));
+	}
+	function invertirRaton(valor: boolean): void {
+		invertido = valor;
+		try { localStorage.setItem('tablero-studio:raton-invertido', valor ? '1' : '0'); } catch { /* sin almacén */ }
+	}
+	function estaInvertido(): boolean { return invertido; }
 
 	function activar(): void {
 		window.addEventListener('keydown', onKeyDown);
@@ -337,9 +567,11 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 		girando = false;
 	}
 	function paso(dt: number): void {
+		// Ojo con el signo: solo la horizontal va negada. Negar el vector entero —como se hacía—
+		// invierte también la altura y deja el «arriba es abajo» que se veía al pasear.
 		const dir = new THREE.Vector3(
-			Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch),
-		).multiplyScalar(-1);
+			-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch),
+		);
 		m.camara.lookAt(m.camara.position.clone().add(dir));
 		const adelante = new THREE.Vector3(dir.x, 0, dir.z).normalize();
 		const lado = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), adelante).normalize();
@@ -360,7 +592,18 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 		m.camara.position.x = Math.max(-lx, Math.min(lx, m.camara.position.x));
 		m.camara.position.z = Math.max(-lz, Math.min(lz, m.camara.position.z));
 	}
-	return { activar, desactivar, paso };
+	return { activar, desactivar, paso, mirar, invertirRaton, estaInvertido, direccion };
+
+	/** Hacia dónde se está mirando ahora mismo (unitario). */
+	function direccion(): THREE.Vector3 {
+		return new THREE.Vector3(
+			-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch),
+		);
+	}
+}
+
+function leerInvertido(): boolean {
+	try { return localStorage.getItem('tablero-studio:raton-invertido') === '1'; } catch { return false; }
 }
 
 /** Equipo bajo el puntero, si hay alguno (para pinchar una máquina y ver su ficha). */
@@ -403,4 +646,4 @@ export function enfocarEquipo(m: Mundo, tag: string): void {
 	m.orbita.update();
 }
 
-export { resumenPlanta };
+export { resumenPlanta } from '../src/modelo/infraestructura.js';

@@ -74,8 +74,10 @@ Además de los tests del núcleo, hay varias suites que manejan el editor 3D de 
 | `npm run qa:nuevas` | Biblioteca de ejemplos con su explicación y modo Visualización |
 | `npm run qa:estres` | Decenas de operaciones al azar verificando los invariantes tras cada una |
 | `npm run qa:energizar` | El modo Energizar: pulsar un pulsador arranca el motor, el enclavamiento lo sostiene al soltar, el paro lo tira y no vuelve solo |
-| `npm run qa:planta` | La segunda herramienta: el visor 3D de la cubierta se abre aparte del editor, los datos salen del plano, se consultan los puntos del BMS de una máquina y se recorre a pie |
-| `npm run qa:empaquetado` | **El archivo que se entrega**: abre `dist-final/TableroStudio.html` con `file://`, sin servidor, y comprueba que arranca, que se puede trabajar y que salen el dossier y el proyecto guardado |
+| `npm run qa:planta` | La segunda herramienta: el visor se abre aparte del editor, los datos salen del plano, se consultan los puntos del BMS de una máquina, se recorre a pie, está montada la obra de la cubierta y **el ratón mira hacia donde se arrastra** (comprobado con números, no a ojo) |
+| `npm run qa:inicio` | La **ventana de inicio**; el **alzado 2D**, que es ortográfico de verdad —la escala no cambia con la profundidad, y en 3D sí—; que al agrandar la caja el tablero **no atraviese el suelo**; y que ninguna cara del frente de un aparato quede a menos de 0,5 mm de otra, que es lo que hacía **parpadear** las letras |
+| `npm run qa:prender` | **De cero a encender**: placa en blanco → sacar del catálogo la acometida, el disyuntor y la ampolleta → cablearlos a clics → Energizar → la ampolleta prende, y se apaga al abrir el disyuntor. Y el arranque de un motor trifásico con su contactor y su pulsador |
+| `npm run qa:empaquetado` | **El archivo que se entrega**: abre `dist-final/TableroStudio.html` con `file://`, sin servidor, y comprueba que arranca en la ventana de inicio, que se puede trabajar y que salen el dossier y el proyecto guardado |
 
 Se apoyan en una sonda que solo existe abriendo la página con `?qa=1`; en el uso normal
 del programa no se define nada. La única que no la usa es `qa:empaquetado`: el build que se
@@ -96,14 +98,21 @@ caliente tiene, qué sondas de temperatura, su estado de funcionamiento— con e
 gobierna (un Honeywell `XL50`) y si sus señales van cableadas en el tablero. Dos vistas: general
 desde arriba, y a pie en primera persona con WASD.
 
-**Honestidad sobre lo que se ve:** el DWG no trae **ninguna** cota Z en las capas de clima, así que
-las alturas de conductos y máquinas son reglas de proyecto, no medidas. El visor lo dice y no deja
-de decirlo, porque quien lo mire va a tomar decisiones con lo que ve. El recorrido en planta sí es
-el del plano.
+Y monta también **la cubierta en sí**, no solo las máquinas: **4,4 km de bordes y petos**, **1,7 km
+de barandas**, **1,3 km de muros y casetas**, **83 pilares** con su diámetro real, escaleras de
+acceso, lucernarios y estructura de acero. Todo eso estaba dibujado en el plano, debajo de las capas
+de clima. Sin ello el visor enseñaba tubos flotando sobre una losa lisa; con ello se reconoce el
+sitio al pasear.
+
+**Honestidad sobre lo que se ve:** el DWG no trae **ninguna** cota Z, ni en las capas de clima ni en
+las de obra, así que las alturas de conductos, máquinas, barandas, muros y pilares son reglas de
+proyecto, no medidas. El visor lo dice y no deja de decirlo, porque quien lo mire va a tomar
+decisiones con lo que ve. Lo que **sí** es del plano es todo el recorrido en planta y el diámetro de
+cada pilar.
 
 El plano se procesa **una vez, fuera de la aplicación**, con `herramientas/extraer-planta.py`: los
-21 MB de DWG se convierten a DXF (164 MB, 331.000 entidades) y de ahí sale un JSON de 240 KB con lo
-que hace falta. Un navegador no abre 164 MB; este JSON sí.
+21 MB de DWG se convierten a DXF (164 MB, 331.000 entidades en 153 capas) y de ahí sale un JSON de
+370 KB con lo que hace falta. Un navegador no abre 164 MB; este JSON sí.
 
 ```bash
 dwg2dxf -o Cubierta.dxf Cubierta.dwg          # LibreDWG, o «Guardar como» de AutoCAD
@@ -111,10 +120,33 @@ pip install ezdxf
 npm run extraer-planta Cubierta.dxf datos/cubierta.json
 ```
 
+### Ventana de inicio
+
+El programa **no abre en el gabinete**: abre en una pantalla donde se elige herramienta —
+**🗄️ Trabajo de tableros** o **🏗️ Ir a terreno (Planta 3D)** —, con accesos directos a abrir un
+proyecto, a los ejemplos y a la guía. Son dos herramientas, y la elección es del que trabaja. Se
+vuelve al inicio pulsando la marca **⚡ TableroStudio** de la barra, o el botón 🏠 del visor de
+planta. El editor no se destruye al salir: entrar y volver no pierde nada.
+
+Para saltarla —enlazar el editor desde fuera, o correr las pruebas cientos de veces— se abre la
+página con `?inicio=0`.
+
 ### Editor 3D (`app/`)
 
 Configurador 3D completo del gabinete, al estilo de Schneider eDesign o WAGO Smart
 Designer, conectado en vivo con los motores del núcleo:
+
+- **Vista 2D** (botón «📏 2D»): el **alzado** del tablero, mirando la placa de frente, a escala y
+  **sin perspectiva**. Es una cámara ortográfica de verdad, no la de siempre puesta de frente: en
+  3D un aparato que sobresale 12 cm se dibuja un 14 % más grande que su vecino y no se pueden
+  comparar de un vistazo; en el alzado los dos miden lo que miden. Se cablea igual — lo único que
+  se quita es el giro de la cámara, porque un alzado que se puede inclinar deja de ser un alzado.
+- **Grupo «Campo» del catálogo**: la **acometida** (mono y trifásica), el **motor** (1F y 3F), la
+  **ampolleta** y la resistencia. No se atornillan a la placa: entran por un prensaestopas del
+  borde inferior, que es lo que se ve de ellos desde dentro del tablero. Sin una acometida
+  cableada, «Energizar» no enciende nada por muy bien montado que esté todo lo demás — y hasta
+  ahora la acometida solo existía dentro de los tableros de ejemplo, así que quien empezaba con la
+  placa en blanco no tenía por dónde meter la tensión.
 
 - **Tableros de ejemplo explicados** (botón «📚 Ejemplos»): arranque directo de motor,
   bomba de agua con boya de nivel y tablero de control con PLC a 24 V. Cada uno se abre

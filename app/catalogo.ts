@@ -53,7 +53,13 @@ export interface PlantillaAparato {
 	rol?: Rol;
 	/** Color del chip en el catálogo (coincide con el cuerpo 3D). */
 	color: string;
-	grupo: 'Protección' | 'Maniobra' | 'Control' | 'Alimentación' | 'Conexión';
+	grupo: 'Protección' | 'Maniobra' | 'Control' | 'Alimentación' | 'Conexión' | 'Campo';
+	/**
+	 * Aparato DE CAMPO: no se atornilla a la placa, está fuera del tablero (la red que lo
+	 * alimenta, el motor que gobierna, la ampolleta que enciende). Se dibuja como el
+	 * prensaestopas por el que sale su cable, y por eso no tiene hueco ni riel.
+	 */
+	campo?: boolean;
 	/** Fondo real del aparato en mm (equipos de catálogo con ficha de datos). */
 	profundidad?: number;
 	/** Borneras reales del equipo (controladores): dónde está cada terminal. */
@@ -305,6 +311,63 @@ const PLANTILLAS_BASE: PlantillaAparato[] = [
 		referencia: '632.2', tensionNominal: 24, ancho: 48, alto: 48, color: '#263238',
 		bornes: [C('+'), C('-')],
 	},
+
+	/* ------------------------------- CAMPO -------------------------------
+	 *
+	 * Lo que está FUERA del tablero: la red que lo alimenta y las cargas que gobierna. Hasta
+	 * ahora solo existían dentro de los tableros de ejemplo, así que quien empezaba con la placa
+	 * en blanco no tenía por dónde meter la tensión —y sin acometida, «Energizar» no enciende
+	 * nada por muy bien cableado que esté todo—. Ni tenía un motor ni una ampolleta que encender,
+	 * que es justo lo que se pide comprobar.
+	 *
+	 * No se atornillan a un riel: se dibujan como el prensaestopas por donde su cable sale del
+	 * gabinete, que es lo que se ve de ellos desde dentro del tablero.
+	 */
+	{
+		id: 'acometida-mono', nombre: 'Acometida 220 V (red)', tipo: 'otro', clase: 'W', grupo: 'Campo',
+		campo: true,
+		descripcion: 'Acometida monofásica 220 V — de aquí entra la tensión al tablero',
+		fabricante: '—', referencia: 'Red 1F+N+PE', tensionNominal: 220, polos: 1,
+		ancho: 40, alto: 40, color: '#b23b3b',
+		bornes: [L('L'), N('N'), { id: 'PE', tipo: 'PE' }],
+	},
+	{
+		id: 'acometida-tri', nombre: 'Acometida 380 V trifásica', tipo: 'otro', clase: 'W', grupo: 'Campo',
+		campo: true,
+		descripcion: 'Acometida trifásica 380 V — de aquí entra la tensión al tablero',
+		fabricante: '—', referencia: 'Red 3F+N+PE', tensionNominal: 380, polos: 3,
+		ancho: 40, alto: 40, color: '#b23b3b',
+		bornes: [L('L1'), L('L2'), L('L3'), N('N'), { id: 'PE', tipo: 'PE' }],
+	},
+	{
+		id: 'ampolleta-220', nombre: 'Ampolleta 220 V', tipo: 'piloto', grupo: 'Campo', campo: true,
+		descripcion: 'Ampolleta / luminaria 220 V gobernada desde el tablero',
+		fabricante: '—', referencia: 'E27 LED 9 W', tensionNominal: 220, corrienteNominal: 0.05,
+		polos: 1, ancho: 40, alto: 40, color: '#fdd835',
+		bornes: [L('L'), N('N'), { id: 'PE', tipo: 'PE' }],
+	},
+	{
+		id: 'motor-mono', nombre: 'Motor 1F 220 V', tipo: 'motor', grupo: 'Campo', campo: true,
+		descripcion: 'Motor monofásico 220 V (bomba, ventilador pequeño)',
+		fabricante: '—', referencia: 'M 1F 0,37 kW', tensionNominal: 220, corrienteNominal: 2.6,
+		polos: 1, ancho: 40, alto: 40, color: '#546e7a',
+		bornes: [L('U1'), N('N'), { id: 'PE', tipo: 'PE' }],
+	},
+	{
+		id: 'motor-tri', nombre: 'Motor 3F 380 V', tipo: 'motor', grupo: 'Campo', campo: true,
+		descripcion: 'Motor trifásico 380 V (el motor típico de una UMA)',
+		fabricante: '—', referencia: 'M 3F 1,5 kW', tensionNominal: 380, corrienteNominal: 3.5,
+		polos: 3, ancho: 40, alto: 40, color: '#546e7a',
+		bornes: [L('U'), L('V'), L('W'), { id: 'PE', tipo: 'PE' }],
+	},
+	{
+		id: 'resistencia-campo', nombre: 'Resistencia calefactora', tipo: 'resistencia', grupo: 'Campo',
+		campo: true,
+		descripcion: 'Batería de resistencias 220 V (recalentamiento de aire)',
+		fabricante: '—', referencia: 'R 1,5 kW', tensionNominal: 220, corrienteNominal: 6.8,
+		polos: 1, ancho: 40, alto: 40, color: '#c1440e',
+		bornes: [L('R1'), N('R2'), { id: 'PE', tipo: 'PE' }],
+	},
 ];
 
 /**
@@ -391,6 +454,20 @@ const FICHA_ELECTRICA: Record<string, Partial<PlantillaAparato>> = {
 	'piloto-24': { disipacionW: 0.4, datosElectricos: 'referencia' },
 	'horometro': { disipacionW: 0.5, datosElectricos: 'tipico' },
 	'plc': { disipacionW: 5, datosElectricos: 'referencia' },
+
+	/* ---------- Campo ----------
+	 * Estos aparatos están FUERA del armario, así que su disipación DENTRO del armario es cero.
+	 * No es un hueco sin rellenar ni una estimación prudente: un motor de 1,5 kW calienta mucho,
+	 * pero calienta en la cubierta, no en el tablero, y el balance térmico del armario no debe
+	 * contarlo. Los calibres son los de una máquina corriente de ese tamaño — 'tipico' —, porque
+	 * la placa del motor de cada obra la trae el usuario y la corrige en la ficha del aparato.
+	 */
+	'acometida-mono': { disipacionW: 0, datosElectricos: 'tipico' },
+	'acometida-tri': { disipacionW: 0, datosElectricos: 'tipico' },
+	'ampolleta-220': { disipacionW: 0, datosElectricos: 'tipico' },
+	'motor-mono': { disipacionW: 0, datosElectricos: 'tipico' },
+	'motor-tri': { disipacionW: 0, datosElectricos: 'tipico' },
+	'resistencia-campo': { disipacionW: 0, datosElectricos: 'tipico' },
 };
 
 /** El catálogo que ve el usuario: cada aparato con su geometría y su ficha eléctrica. */
@@ -434,7 +511,7 @@ export function plantillaDeControlador(f: FichaControlador): PlantillaAparato {
 for (const ficha of CONTROLADORES) PLANTILLAS.push(plantillaDeControlador(ficha));
 
 /** Orden en que se muestran los grupos: el recorrido natural de la corriente por el tablero. */
-const ORDEN_GRUPOS: PlantillaAparato['grupo'][] = ['Protección', 'Maniobra', 'Alimentación', 'Control', 'Conexión'];
+const ORDEN_GRUPOS: PlantillaAparato['grupo'][] = ['Protección', 'Maniobra', 'Alimentación', 'Control', 'Conexión', 'Campo'];
 PLANTILLAS.sort((a, b) => ORDEN_GRUPOS.indexOf(a.grupo) - ORDEN_GRUPOS.indexOf(b.grupo));
 
 /** Crea un dispositivo nuevo desde una plantilla, con designación IEC correlativa. */
@@ -453,6 +530,9 @@ export function crearDesdePlantilla(plantilla: PlantillaAparato, proyecto: Proye
 		id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`,
 		tipo: plantilla.tipo,
 		clase: plantilla.clase,
+		// La marca de campo es la que hace que el simulador reconozca una acometida como origen
+		// de tensión, y que el dibujo la saque por un prensaestopas en vez de por la placa.
+		campo: plantilla.campo,
 		numero,
 		designacion,
 		congelado: true, // la designación asignada al colocar no se pisa en renumeraciones
@@ -469,7 +549,9 @@ export function crearDesdePlantilla(plantilla: PlantillaAparato, proyecto: Proye
 		poderCorteKA: plantilla.poderCorteKA,
 		poderCorteEstimado: plantilla.poderCorteKA !== undefined ? true : undefined,
 		disipacionW: plantilla.disipacionW,
-		disipacionEstimada: plantilla.disipacionW !== undefined ? true : undefined,
+		// Un aparato de campo disipa CERO dentro del armario, y eso no es una estimación: está
+		// fuera. Marcarlo como estimado haría que el dossier avisara de un dato que sí es exacto.
+		disipacionEstimada: plantilla.disipacionW !== undefined && !plantilla.campo ? true : undefined,
 		curvaDisparo: plantilla.curvaDisparo,
 		sensibilidadMA: plantilla.sensibilidadMA,
 		claseDiferencial: plantilla.claseDiferencial,

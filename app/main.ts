@@ -260,13 +260,24 @@ contenedor.appendChild(renderer.domElement);
 
 const escena = new THREE.Scene();
 escena.background = new THREE.Color(0x171a1d);
-escena.fog = new THREE.Fog(0x171a1d, 2200, 4200);
+const nieblaEscena = new THREE.Fog(0x171a1d, 2200, 4200);
+escena.fog = nieblaEscena;
 
-const camara = new THREE.PerspectiveCamera(42, 1, 1, 8000);
+/*
+ * El plano cercano NO es un detalle. La precisión del buffer de profundidad se reparte de forma
+ * hiperbólica: con `near` a 1 mm y la cámara a 2 m —la distancia normal para ver un tablero
+ * entero— apenas se distinguen 0,25 mm, y todo lo que va pegado a la cara de un aparato (rótulos,
+ * mirillas, tapas) se turnaba fotograma a fotograma con la cara de detrás. De ahí el parpadeo.
+ * Subiéndolo a 25 mm la precisión a esa misma distancia mejora unas 25 veces, y como la órbita
+ * no deja acercarse a menos de 220 mm del tablero, nada queda cortado por delante.
+ */
+const camara = new THREE.PerspectiveCamera(42, 1, 25, 8000);
 
 const controles = new OrbitControls(camara, renderer.domElement);
 controles.enableDamping = true;
 controles.dampingFactor = 0.08;
+controles.minDistance = 220;
+controles.maxDistance = 6000;
 // La cámara se mantiene SIEMPRE por delante del tablero, como en un configurador profesional:
 // se puede girar de lado a lado y mirar desde arriba o abajo, pero nunca pasar por detrás
 // (donde todo se ve espejado, los cables quedan tapados por la caja y no hay forma de trabajar).
@@ -274,6 +285,35 @@ controles.minAzimuthAngle = -Math.PI * 0.42;
 controles.maxAzimuthAngle = Math.PI * 0.42;
 controles.minPolarAngle = Math.PI * 0.10;
 controles.maxPolarAngle = Math.PI * 0.80;
+
+/*
+ * ------------------------------ VISTA 2D ------------------------------
+ *
+ * Petición del compañero: «si la caja se pudiera ver en 2D». No es un capricho — el alzado es
+ * como se lee un tablero en papel: mirando la placa de frente, con las medidas a escala y sin
+ * perspectiva. En 3D, un aparato que sobresale 120 mm sale más grande que su vecino y no se
+ * puede comparar de un vistazo.
+ *
+ * Por eso es una cámara ORTOGRÁFICA de verdad y no la de siempre puesta de frente: en ortográfica
+ * dos aparatos del mismo ancho se dibujan del mismo ancho, estén al fondo o en punta. Se le quita
+ * el giro (un alzado que se puede inclinar deja de ser un alzado) y se dejan el desplazamiento y
+ * el zoom, que sí hacen falta para mirar un rincón de cerca.
+ */
+const camaraOrto = new THREE.OrthographicCamera(-500, 500, 500, -500, 10, 9000);
+camaraOrto.position.set(0, 0, 3000);
+const controlesOrto = new OrbitControls(camaraOrto, renderer.domElement);
+controlesOrto.enableRotate = false;
+controlesOrto.enableDamping = true;
+controlesOrto.dampingFactor = 0.08;
+controlesOrto.enabled = false;
+// Sin giro, el botón izquierdo tiene que servir para lo único que queda: desplazar la hoja.
+controlesOrto.mouseButtons = {
+	LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN,
+};
+
+let vista2D = false;
+/** La cámara con la que se dibuja y se pincha ahora mismo. */
+function camaraViva(): THREE.Camera { return vista2D ? camaraOrto : camara; }
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 escena.environment = pmrem.fromScene(new RoomEnvironment(), 0.045).texture;
@@ -298,6 +338,23 @@ escena.add(contraluz);
 
 const suelo = new THREE.GridHelper(4000, 80, 0x2c3238, 0x22272c);
 escena.add(suelo);
+
+/**
+ * Deja el suelo justo debajo de LO MÁS BAJO QUE HAY DIBUJADO.
+ *
+ * Antes se calculaba con la altura de la placa (`g.alto`), que no es la del tablero: la caja
+ * envolvente es una medida aparte —se puede pedir una envolvente de 2,40 m sobre una placa de
+ * 0,58 m— y va centrada en la placa, así que sobresale por abajo la mitad de la diferencia. Al
+ * agrandar la caja, el tablero atravesaba la rejilla.
+ *
+ * Y tampoco basta con la altura de la caja: por debajo de ella cuelgan cosas —el marco de la
+ * puerta, los prensaestopas, los aparatos de campo— que ninguna fórmula recoge. Así que no se
+ * calcula: se MIDE la escena montada. Cualquier pieza que se añada mañana queda cubierta sola.
+ */
+function asentarSuelo(): void {
+	const bajo = new THREE.Box3().setFromObject(escenario.raiz).min.y;
+	suelo.position.y = (Number.isFinite(bajo) ? bajo : -cajaDe(proyecto.gabinete!).alto / 2) - 40;
+}
 
 let escenario: Escenario = construirEscenario(proyecto);
 escena.add(escenario.raiz);
@@ -345,7 +402,22 @@ function encuadrar(): void {
 	controles.target.set(-desvio, 0, 0);
 	camara.position.set(-desvio, 0, distancia);
 	controles.update();
-	suelo.position.y = -(g.alto / 2 + 42);
+
+	// El alzado se encuadra por su cuenta: en ortográfica el tamaño no lo da la distancia
+	// sino el ancho del marco, y hay que respetar la proporción del lienzo para no deformar
+	// el tablero (un tablero deformado en un alzado es un plano que miente).
+	const marcoAlto = Math.max(altoMundo, (anchoMundo * alto) / anchoVisible) / 2;
+	const marcoAncho = (marcoAlto * lienzo.clientWidth) / alto;
+	camaraOrto.left = -marcoAncho;
+	camaraOrto.right = marcoAncho;
+	camaraOrto.top = marcoAlto;
+	camaraOrto.bottom = -marcoAlto;
+	camaraOrto.position.set(-desvio, 0, 3000);
+	camaraOrto.updateProjectionMatrix();
+	controlesOrto.target.set(-desvio, 0, 0);
+	controlesOrto.update();
+
+	asentarSuelo();
 	encuadrePendiente = false;
 }
 
@@ -398,7 +470,7 @@ function montarEscenario(): void {
 	for (const t of escenario.tapas) t.visible = verTapas;
 	const verEtiquetas = !visualizacion && ($('ver-etiquetas') as HTMLInputElement).checked;
 	for (const t of escenario.etiquetas) t.visible = verEtiquetas;
-	suelo.position.y = -(proyecto.gabinete!.alto / 2 + 42);
+	asentarSuelo();
 }
 
 /** Recalcula, reconstruye y repinta todo (tras un cambio estructural). */
@@ -611,6 +683,24 @@ function anadirDesdeCatalogo(plantillaId: string): void {
 
 /** Crea el aparato de una plantilla y lo coloca en el primer hueco libre de un riel. */
 function colocarPlantilla(plantilla: PlantillaAparato): void {
+	/*
+	 * Los aparatos de CAMPO (la red, el motor, la ampolleta) no van sobre la placa: viven fuera
+	 * del tablero y lo que se ve de ellos es el prensaestopas por el que sale su cable. Así que
+	 * no buscan hueco ni riel — solo entran al proyecto, y el dibujo los saca por el borde.
+	 */
+	if (plantilla.campo) {
+		capturar();
+		const dc = crearDesdePlantilla(plantilla, proyecto);
+		dc.hojaId = proyecto.hojas[0]?.id;
+		dc.posicion = { x: proyecto.dispositivos.length % 10, y: Math.floor(proyecto.dispositivos.length / 10) };
+		proyecto.dispositivos.push(dc);
+		actualizarTodo();          // cambian todos los prensaestopas: se reparten a lo ancho
+		seleccionar(dc.id);
+		avisar(`${dc.designacion ?? plantilla.nombre} entra por un prensaestopas del borde inferior. `
+			+ 'Cablea sus bornes desde el panel de la derecha.', 'ok');
+		return;
+	}
+
 	const hueco = buscarHueco(plantilla.ancho, plantilla.alto);
 	if (!hueco) {
 		avisar('Añade primero un riel DIN (panel «Gabinete y estructura» → + Riel)', 'error');
@@ -1780,7 +1870,7 @@ function seleccionar(id: string | undefined): void {
 function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camara);
+	raycaster.setFromCamera(puntero, camaraViva());
 	const impactos = raycaster.intersectObjects(escenario.raiz.children, true);
 	// De los cables se guardan dos candidatos: el tubo que de VERDAD se ve bajo el puntero y el
 	// tubo grueso de agarre (invisible, para poder pinchar sin puntería). Gana siempre el visible;
@@ -1805,7 +1895,7 @@ function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 function cableBajoElPuntero(ev: MouseEvent): string | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camara);
+	raycaster.setFromCamera(puntero, camaraViva());
 	// Recursivo: los tubos cuelgan dentro de un grupo hijo de escenario.cables.
 	const impactos = raycaster.intersectObjects(escenario.cables.children, true);
 	// PRIMERO el cable que de verdad se ve bajo el puntero; el tubo grueso de agarre (invisible)
@@ -1820,7 +1910,7 @@ function cableBajoElPuntero(ev: MouseEvent): string | undefined {
 function cableEstaDelante(ev: MouseEvent): boolean {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camara);
+	raycaster.setFromCamera(puntero, camaraViva());
 	const dCable = raycaster.intersectObjects(escenario.cables.children, true)
 		.find((i) => i.object.userData.conductorId)?.distance ?? Infinity;
 	const dAparato = raycaster.intersectObjects(escenario.dispositivos.children, true)
@@ -1842,7 +1932,7 @@ let gomaCable: THREE.Line | undefined;                 // «goma elástica» del
 function borneBajoElPunteroCon(ev: MouseEvent): { borne: RefBorne; distancia: number } | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camara);
+	raycaster.setFromCamera(puntero, camaraViva());
 	const h = raycaster.intersectObjects(escenario.bornes.children, true).find((i) => i.object.userData.borneId);
 	if (!h) return undefined;
 	return {
@@ -1866,7 +1956,7 @@ function borneBajoElPuntero(ev: MouseEvent): RefBorne | undefined {
 function cableTapaAlBorne(ev: MouseEvent, distanciaBorne: number): boolean {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camara);
+	raycaster.setFromCamera(puntero, camaraViva());
 	const d = raycaster.intersectObjects(escenario.cables.children, true)
 		.find((i) => i.object.userData.tuboVisible)?.distance;
 	return d !== undefined && d < distanciaBorne;
@@ -2134,7 +2224,7 @@ const desfase = new THREE.Vector2();
 function puntoModeloEnZ(ev: MouseEvent, z: number): { x: number; y: number } | undefined {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camara);
+	raycaster.setFromCamera(puntero, camaraViva());
 	const impacto = new THREE.Vector3();
 	if (!raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -z), impacto)) return undefined;
 	const g = proyecto.gabinete!;
@@ -2301,7 +2391,7 @@ function handleBajoElPuntero(ev: MouseEvent): DatosHandle | undefined {
 	if (escenario.handles.children.length === 0) return undefined;
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camara);
+	raycaster.setFromCamera(puntero, camaraViva());
 	const impactos = raycaster.intersectObjects(escenario.handles.children, false);
 	// Los marcadores/etiquetas de extremo no tienen `handle`; se ignoran para no bloquear el tirador.
 	return impactos.find((i) => i.object.userData.handle)?.object.userData.handle as DatosHandle | undefined;
@@ -2328,7 +2418,7 @@ function cotaBajoElPuntero(ev: PointerEvent): DatosCota | undefined {
 	if (!escenario.cotas.visible) return undefined;
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camara);
+	raycaster.setFromCamera(puntero, camaraViva());
 	const impactos = raycaster.intersectObjects(escenario.cotas.children, true);
 	return impactos.find((i) => i.object.userData.cota)?.object.userData.cota as DatosCota | undefined;
 }
@@ -3175,15 +3265,17 @@ function aplicarEnergizado(activo: boolean): void {
 
 /* La segunda herramienta se carga solo cuando se abre: son 240 KB de planta y un visor entero
    que quien solo diseña tableros no tiene por qué pagar al arrancar. */
-($('btn-planta') as HTMLButtonElement).onclick = async () => {
+async function irAPlanta(): Promise<void> {
 	try {
 		const { abrirMundo, cerrarMundo } = await import('./mundo-ui.js');
 		($('mundo-salir') as HTMLButtonElement).onclick = () => cerrarMundo();
+		($('mundo-inicio') as HTMLButtonElement).onclick = () => { cerrarMundo(); mostrarInicio(); };
 		abrirMundo();
 	} catch (e) {
 		avisar(`No se pudo abrir el visor de la planta: ${(e as Error).message}`, 'error');
 	}
-};
+}
+($('btn-planta') as HTMLButtonElement).onclick = irAPlanta;
 
 ($('btn-energizar') as HTMLButtonElement).onclick = () => aplicarEnergizado(!energizado);
 ($('btn-sim-reposo') as HTMLButtonElement).onclick = () => {
@@ -3936,10 +4028,45 @@ for (const id of ['modal-ejemplos', 'modal-explicacion']) {
 	avisar('Placa en blanco. Haz clic en un aparato del catálogo (izquierda) para colocarlo.', 'ok');
 };
 
-// Primera visita: abrir la guía automáticamente una sola vez.
+/* ---------------------------- Ventana de inicio ----------------------------
+ *
+ * El programa abre aquí, no en el gabinete: son dos herramientas y la elección es del que
+ * trabaja, no del programa. El editor sigue montado por debajo —no se destruye ni se vuelve a
+ * construir— así que entrar y salir del inicio no cuesta nada ni pierde el trabajo a medias.
+ */
+function mostrarInicio(): void {
+	($('inicio') as HTMLElement).hidden = false;
+}
+function ocultarInicio(): void {
+	($('inicio') as HTMLElement).hidden = true;
+	// El lienzo ha estado tapado: puede haber cambiado de tamaño mientras tanto.
+	ajustarTamano();
+	if (encuadrePendiente) encuadrar();
+}
+
+($('btn-inicio') as HTMLButtonElement).onclick = mostrarInicio;
+($('inicio-tableros') as HTMLButtonElement).onclick = ocultarInicio;
+($('inicio-terreno') as HTMLButtonElement).onclick = () => { ocultarInicio(); void irAPlanta(); };
+($('inicio-abrir') as HTMLButtonElement).onclick = () => { ocultarInicio(); $('btn-abrir').click(); };
+($('inicio-ejemplos') as HTMLButtonElement).onclick = () => { ocultarInicio(); abrirBibliotecaEjemplos(); };
+($('inicio-guia') as HTMLButtonElement).onclick = () => {
+	ocultarInicio();
+	($('modal-ayuda') as HTMLElement).hidden = false;
+};
+
+/*
+ * `?inicio=0` entra directo al editor. Lo usan las pruebas automáticas —que abren cientos de
+ * veces la aplicación y no vienen a elegir herramienta— y sirve además para enlazar el editor
+ * desde fuera. Sin el parámetro, siempre se ve el inicio.
+ */
+const saltarInicio = new URLSearchParams(location.search).get('inicio') === '0';
+if (saltarInicio) ocultarInicio();
+
+// Primera visita: abrir la guía automáticamente una sola vez. Nunca por debajo del inicio:
+// ahí no se ve, y el usuario se encuentra un modal abierto al entrar al editor sin saber por qué.
 try {
 	if (!localStorage.getItem('tablerostudio-visto')) {
-		($('modal-ayuda') as HTMLElement).hidden = false;
+		if (saltarInicio) ($('modal-ayuda') as HTMLElement).hidden = false;
 		localStorage.setItem('tablerostudio-visto', '1');
 	}
 } catch { /* sin localStorage */ }
@@ -3948,8 +4075,37 @@ function ajustarTamano(): void {
 	const r = contenedor.getBoundingClientRect();
 	camara.aspect = r.width / r.height;
 	camara.updateProjectionMatrix();
+	// El alzado conserva la altura que tenía y recalcula el ancho con la nueva proporción: al
+	// estrechar la ventana se ve menos a los lados, no un tablero achatado.
+	const semiAlto = (camaraOrto.top - camaraOrto.bottom) / 2;
+	camaraOrto.left = -(semiAlto * r.width) / r.height;
+	camaraOrto.right = (semiAlto * r.width) / r.height;
+	camaraOrto.updateProjectionMatrix();
 	renderer.setSize(r.width, r.height);
 }
+
+/**
+ * Cambia entre el 3D y el alzado 2D.
+ *
+ * La niebla se apaga en 2D: está puesta para dar profundidad al 3D y en un alzado solo sirve
+ * para desteñir el tablero. La rejilla del suelo también sobra —en un alzado se ve de canto,
+ * como una raya— así que se esconde.
+ */
+function aplicarVista2D(activar: boolean): void {
+	vista2D = activar;
+	controles.enabled = !activar;
+	controlesOrto.enabled = activar;
+	escena.fog = activar ? null : nieblaEscena;
+	suelo.visible = !activar;
+	document.body.classList.toggle('vista-2d', activar);
+	$('btn-2d').classList.toggle('activo', activar);
+	$('btn-2d').setAttribute('title', activar
+		? 'Volver a la vista 3D (ahora estás en el alzado 2D)'
+		: 'Ver el tablero en 2D: alzado de frente, a escala y sin perspectiva');
+	($('btn-2d-texto') as HTMLElement).textContent = activar ? '3D' : '2D';
+	encuadrar();
+}
+($('btn-2d') as HTMLButtonElement).onclick = () => aplicarVista2D(!vista2D);
 /**
  * Aprieta la barra de herramientas hasta que quepa, MIDIENDO en cada paso.
  *
@@ -3970,7 +4126,7 @@ export function ajustarRotulosBarra(): void {
 	// inicializar» en tiempo de ejecución que TypeScript compila sin quejarse. Me pasó exactamente
 	// eso al escribir esto. Es el mismo riesgo que hace que partir este archivo en módulos sea
 	// peligroso mientras el nivel superior siga siendo un guion de arranque.
-	const NIVELES = ['compacta', 'apretada', 'minima'];
+	const NIVELES = ['compacta', 'apretada', 'minima', 'micro'];
 	const barra = $('barra');
 	barra.classList.remove(...NIVELES);
 	if (barra.scrollWidth <= barra.clientWidth + 1) return;
@@ -3979,6 +4135,21 @@ export function ajustarRotulosBarra(): void {
 		if (barra.scrollWidth <= barra.clientWidth + 1) return;
 	}
 }
+
+/*
+ * Y se vuelve a medir CADA VEZ QUE CAMBIA LO QUE PONE EN LA BARRA.
+ *
+ * Faltaba esto y por eso volvió a desbordar al añadir el botón 2D: se medía una sola vez al
+ * arrancar, cuando el chip del DRC todavía no decía «DRC sin hallazgos» y el proyecto no tenía
+ * nombre. Con el texto definitivo ya no cabía, pero nadie lo volvía a comprobar. En vez de
+ * llamar a la función desde los seis sitios que escriben en la barra —y olvidarse del séptimo—,
+ * se mira la barra entera: cualquier texto o botón que cambie dispara una nueva medida.
+ *
+ * No se observan atributos a propósito: esta función cambia las clases de la propia barra, y
+ * observarlas la haría llamarse a sí misma sin parar.
+ */
+new MutationObserver(() => ajustarRotulosBarra())
+	.observe($('barra'), { childList: true, subtree: true, characterData: true });
 
 window.addEventListener('resize', () => {
 	ajustarTamano();
@@ -4011,8 +4182,8 @@ aplicarModo('editor');
 actualizarBotonesHistorial();
 
 renderer.setAnimationLoop(() => {
-	controles.update();
-	renderer.render(escena, camara);
+	(vista2D ? controlesOrto : controles).update();
+	renderer.render(escena, camaraViva());
 });
 
 /*
@@ -4026,7 +4197,7 @@ renderer.setAnimationLoop(() => {
 if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 	const aPantalla = (v: THREE.Vector3): { x: number; y: number } => {
 		const r = renderer.domElement.getBoundingClientRect();
-		const p = v.clone().project(camara);
+		const p = v.clone().project(camaraViva());
 		return { x: r.left + (p.x * 0.5 + 0.5) * r.width, y: r.top + (-p.y * 0.5 + 0.5) * r.height };
 	};
 	(window as unknown as Record<string, unknown>).qa = {
@@ -4058,7 +4229,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				const mundo = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(malla.matrixWorld);
 				const p = aPantalla(mundo);
 				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
-				raycaster.setFromCamera(puntero, camara);
+				raycaster.setFromCamera(puntero, camaraViva());
 				const impactos = raycaster.intersectObjects(
 					[...escenario.cables.children, ...escenario.dispositivos.children], true,
 				).filter((h) => h.object.userData.tuboVisible || h.object.userData.dispositivoId);
@@ -4152,7 +4323,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				const p = aPantalla(escenario.aEscena(x, y, 30));
 				// Solo vale si en ese píxel lo primero que se ve es el propio perfil (no un aparato).
 				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
-				raycaster.setFromCamera(puntero, camara);
+				raycaster.setFromCamera(puntero, camaraViva());
 				const golpe = raycaster.intersectObjects(escenario.raiz.children, true)
 					.find((h) => h.object.userData[clave] || h.object.userData.dispositivoId);
 				if (golpe?.object.userData[clave] === id) return p;
@@ -4201,7 +4372,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				// Si se pide una zona (p. ej. el lienzo sin los paneles), solo valen puntos de dentro.
 				if (zona && (p.x < zona.x0 || p.x > zona.x1 || p.y < zona.y0 || p.y > zona.y1)) continue;
 				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
-				raycaster.setFromCamera(puntero, camara);
+				raycaster.setFromCamera(puntero, camaraViva());
 				const impactosCable = raycaster.intersectObjects(escenario.cables.children, true);
 				const cable = impactosCable.find((h) => h.object.userData.tuboVisible);
 				if (cable?.object.userData.conductorId !== id) continue;
@@ -4245,7 +4416,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				const v = aPantalla(new THREE.Vector3(centro.x + dx * radio, centro.y + dy * radio, centro.z));
 				const p = { x: Math.round(v.x), y: Math.round(v.y) };
 				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
-				raycaster.setFromCamera(puntero, camara);
+				raycaster.setFromCamera(puntero, camaraViva());
 				const b = raycaster.intersectObjects(escenario.bornes.children, true).find((h) => h.object.userData.borneId);
 				if (b?.object !== esfera) continue;
 				const cable = raycaster.intersectObjects(escenario.cables.children, true)
@@ -4262,7 +4433,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		diagnosticoPixel: (x: number, y: number) => {
 			const r = renderer.domElement.getBoundingClientRect();
 			puntero.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
-			raycaster.setFromCamera(puntero, camara);
+			raycaster.setFromCamera(puntero, camaraViva());
 			const tirador = raycaster.intersectObjects(escenario.handles.children, true)[0];
 			const borne = raycaster.intersectObjects(escenario.bornes.children, true).find((h) => h.object.userData.borneId);
 			const marca = [
@@ -4281,7 +4452,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		cableEnPixel: (x: number, y: number) => {
 			const r = renderer.domElement.getBoundingClientRect();
 			puntero.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
-			raycaster.setFromCamera(puntero, camara);
+			raycaster.setFromCamera(puntero, camaraViva());
 			const impactos = raycaster.intersectObjects(escenario.cables.children, true);
 			const visto = impactos.find((i) => i.object.userData.tuboVisible)?.object.userData.conductorId;
 			return (visto ?? impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId) as string | undefined;
@@ -4328,6 +4499,63 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		camara: () => ({
 			x: camara.position.x, y: camara.position.y, z: camara.position.z,
 			tx: controles.target.x, ty: controles.target.y, tz: controles.target.z,
+		}),
+		/** Estado de la vista 2D: si está puesta, y si la cámara viva es de verdad ortográfica. */
+		vista2D: () => ({
+			activa: vista2D,
+			ortografica: (camaraViva() as THREE.OrthographicCamera).isOrthographicCamera === true,
+			gira: (vista2D ? controlesOrto : controles).enableRotate,
+			niebla: !!escena.fog,
+		}),
+		/**
+		 * Píxeles de pantalla por milímetro de mundo A LA PROFUNDIDAD `z`.
+		 *
+		 * Es la medida que separa un alzado de una foto: en ortográfica sale la MISMA para
+		 * cualquier `z` —100 mm miden lo mismo estén al fondo de la caja o sobresaliendo del
+		 * aparato más gordo—, y en perspectiva crece al acercarse. Se mide sobre un segmento
+		 * conocido en vez de sobre un aparato, porque el modelo 3D de un aparato lleva pinzas,
+		 * palancas y rótulos que no entran en su medida de catálogo.
+		 */
+		escalaEnPantalla: (z = 0) => {
+			const a = aPantalla(new THREE.Vector3(0, -100, z));
+			const b = aPantalla(new THREE.Vector3(0, 100, z));
+			return Math.abs(b.y - a.y) / 200;
+		},
+		/**
+		 * Las piezas del FRENTE de un aparato, con su hueco en Z y si su material va sesgado
+		 * hacia la cámara.
+		 *
+		 * Sirve para cazar el parpadeo de raíz en vez de a ojo: dos caras planas paralelas que se
+		 * solapan en XY y quedan a menos de medio milímetro una de otra se turnan fotograma a
+		 * fotograma, y eso es lo que hacía parpadear las letras y la tapa de los controladores.
+		 * Con esto la prueba puede comprobar la geometría, que es determinista, en vez de comparar
+		 * capturas de pantalla, que en un contenedor que renderiza por software no valen.
+		 */
+		capasDeFrente: (dispositivoId: string) => {
+			const g = escenario.dispositivos.children.find((o) => o.userData.dispositivoId === dispositivoId);
+			if (!g) return [];
+			const piezas: {
+				z0: number; z1: number; x0: number; x1: number; y0: number; y1: number; sesgo: boolean;
+			}[] = [];
+			g.traverse((o) => {
+				if (!(o instanceof THREE.Mesh) || !o.geometry) return;
+				o.geometry.computeBoundingBox();
+				const c = o.geometry.boundingBox;
+				if (!c) return;
+				const mat = o.material as THREE.Material;
+				piezas.push({
+					z0: c.min.z + o.position.z, z1: c.max.z + o.position.z,
+					x0: c.min.x + o.position.x, x1: c.max.x + o.position.x,
+					y0: c.min.y + o.position.y, y1: c.max.y + o.position.y,
+					sesgo: !!mat.polygonOffset,
+				});
+			});
+			return piezas;
+		},
+		/** Altura del suelo y punto más bajo del tablero: el suelo nunca puede quedar por encima. */
+		suelo: () => ({
+			y: suelo.position.y,
+			fondoDelTablero: new THREE.Box3().setFromObject(escenario.raiz).min.y,
 		}),
 		/** Punto de anclaje (mm de modelo) de un borne, tal cual lo usa el cableado. */
 		anclaje: (dispositivoId: string, borneId: string) => anclajeBorne(proyecto, dispositivoId, borneId),
