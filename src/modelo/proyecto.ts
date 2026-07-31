@@ -23,6 +23,20 @@ export function opcionesDe(proyecto: Proyecto): Required<OpcionesProyecto> {
 }
 
 /**
+ * ¿Este dato lo DECLARA el proyecto, o es el valor por defecto del programa?
+ *
+ * `opcionesDe()` funde los valores por defecto para que los motores siempre tengan con qué
+ * calcular, y eso está bien para calcular. Pero para IMPRIMIR no: la placa de características de
+ * IEC 61439-1 §6.1 es un documento que firma quien monta el conjunto, y poner en ella «50 Hz» o
+ * «35 °C» porque son los valores por defecto del programa es afirmar algo que nadie ha
+ * declarado. Con esto, el dossier puede escribir «a declarar» en su lugar.
+ */
+export function declarado<K extends keyof OpcionesProyecto>(proyecto: Proyecto, campo: K): boolean {
+	const v = proyecto.opciones?.[campo];
+	return v !== undefined && v !== '';
+}
+
+/**
  * Caja envolvente del gabinete. Si el proyecto no la declara se ESTIMA a partir de la placa
  * (margen estándar de 30 mm por lado y 160 mm de fondo), y se dice que es una estimación:
  * dar por bueno un fondo supuesto es lo que hace que un tablero no cierre. Nunca puede ser

@@ -89,6 +89,7 @@ export function cargarProyecto(json: string): ResultadoCarga {
 		conductores,
 		gabinete,
 		opciones: esObjeto(bruto.opciones) ? (bruto.opciones as Proyecto['opciones']) : undefined,
+		esquema: leerAjustesEsquema(bruto.esquema),
 	};
 	return { proyecto, arreglos };
 }
@@ -114,6 +115,36 @@ function leerGabinete(bruto: Record<string, unknown>, arreglos: string[]): Gabin
 	};
 }
 
+/**
+ * Ajustes del dibujo del esquema: columnas por hoja y títulos propios.
+ *
+ * Se leen aquí y no se dejan pasar tal cual porque son del archivo, y un archivo puede venir
+ * tocado a mano: 500 columnas por hoja dejarían el esquema ilegible sin decir por qué.
+ */
+function leerAjustesEsquema(bruto: unknown): Proyecto['esquema'] {
+	if (!esObjeto(bruto)) return undefined;
+	const cols = Number(bruto.columnasPorHoja);
+	const titulos: Record<string, string> = {};
+	if (esObjeto(bruto.titulos)) {
+		for (const [k, v] of Object.entries(bruto.titulos)) {
+			if (typeof v === 'string' && v.trim()) titulos[k] = v.trim().slice(0, 120);
+		}
+	}
+	const ajustes: Proyecto['esquema'] = {};
+	if (Number.isFinite(cols)) ajustes.columnasPorHoja = Math.max(4, Math.min(20, Math.round(cols)));
+	if (Object.keys(titulos).length) ajustes.titulos = titulos;
+	return Object.keys(ajustes).length ? ajustes : undefined;
+}
+
+/** Colocación manual de un símbolo. Un valor imposible se descarta y el motor vuelve a decidir. */
+function leerColocacionEsquema(bruto: unknown): Dispositivo['esquema'] {
+	if (!esObjeto(bruto)) return undefined;
+	const columna = Number(bruto.columna);
+	const fila = Number(bruto.fila);
+	if (!Number.isFinite(columna) || !Number.isFinite(fila)) return undefined;
+	return { columna: Math.max(1, Math.round(columna)), fila: Math.max(1, Math.round(fila)) };
+}
+
 function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 	if (!esLista(bruto)) {
 		if (bruto !== undefined) arreglos.push('la lista de aparatos estaba corrupta');
@@ -129,7 +160,11 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			continue;
 		}
 		vistos.add(d.id as string);
-		salida.push({ ...(d as unknown as Dispositivo), bornes: esLista(d.bornes) ? (d.bornes as Dispositivo['bornes']) : [] });
+		salida.push({
+			...(d as unknown as Dispositivo),
+			bornes: esLista(d.bornes) ? (d.bornes as Dispositivo['bornes']) : [],
+			esquema: leerColocacionEsquema((d as Record<string, unknown>).esquema),
+		});
 	}
 	if (descartados) arreglos.push(`${descartados} aparato(s) sin datos suficientes`);
 	return salida;

@@ -9,6 +9,7 @@
  * Convenio de coordenadas: el modelo usa Y hacia ABAJO (como una pantalla) y el CAD usa Y
  * hacia ARRIBA, así que se invierte la Y al escribir.
  */
+import { sinTildes } from '../modelo/archivos.js';
 
 export interface EntidadDXF {
 	capa: string;
@@ -66,7 +67,7 @@ function entidad(e: EntidadDXF, altoMm: number): string {
 
 /** Quita acentos y caracteres que el DXF R12 no sabe representar. */
 export function sinAcentos(t: string): string {
-	return t.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7E]/g, '');
+	return sinTildes(t).replace(/[^\x20-\x7E]/g, '');
 }
 
 /** Monta el archivo DXF completo a partir de una lista de entidades. */

@@ -138,8 +138,14 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 			: '';
 		// La designación va a la IZQUIERDA del símbolo, como en un esquema de verdad: encima se
 		// pisaría con los números de los bornes y con los hilos que entran por arriba.
+		// ZONA DE AGARRE. Un <g> de SVG solo recibe el ratón donde hay algo PINTADO, y un símbolo
+		// eléctrico son cuatro líneas finas: sin esto había que acertar justo encima de un trazo
+		// para seleccionarlo, y arrastrarlo era imposible. El rectángulo es invisible pero sí
+		// recibe el puntero, así que se agarra el símbolo entero, rótulo incluido.
+		const agarre = `<rect x="${n(s.x - 9)}" y="${n(s.y - 3)}" width="${n(s.ancho + 12)}" `
+			+ `height="${n(s.alto + 6)}" fill="transparent" pointer-events="all"/>`;
 		partes.push(
-			`<g data-dispositivo="${esc(s.dispositivoId)}" class="simbolo">${marca}`
+			`<g data-dispositivo="${esc(s.dispositivoId)}" class="simbolo">${marca}${agarre}`
 			+ s.trazos.map((t) => pintarTrazo(t, tinta)).join('')
 			+ `<text x="${n(s.x - 5)}" y="${n(s.y + s.alto / 2 + 1.2)}" font-size="3.4" text-anchor="end" fill="${tinta}" `
 			+ `font-family="system-ui, sans-serif" font-weight="700">${esc(s.designacion)}</text></g>`,

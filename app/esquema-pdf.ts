@@ -7,6 +7,7 @@
  */
 import { jsPDF } from 'jspdf';
 import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
+import { descargar } from './dialogos.js';
 
 const TINTA: [number, number, number] = [15, 18, 22];
 const SUAVE: [number, number, number] = [120, 132, 145];
@@ -164,6 +165,6 @@ export async function exportarEsquemaPDF(
 		cajetin(doc, hoja, proyecto, hojas.length, datos);
 	});
 
-	doc.save(archivo);
+	descargar(archivo, doc.output('blob'));
 }
 

@@ -573,8 +573,19 @@
 	#esq-titulo { font-size: 13px; font-weight: 600; margin-left: 6px; }
 	#esquema-lienzo { flex: 1; overflow: auto; padding: 18px; display: flex; align-items: flex-start; justify-content: center; }
 	#esquema-hoja { box-shadow: 0 10px 40px #0009; border-radius: 3px; overflow: hidden; line-height: 0; }
-	#esquema-hoja .simbolo { cursor: pointer; }
+	#esquema-hoja .simbolo { cursor: grab; }
 	#esquema-hoja .simbolo:hover { opacity: .65; }
+	#esquema-hoja.arrastrando, #esquema-hoja.arrastrando .simbolo { cursor: grabbing; }
+	#esq-cols-caja { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px;
+		color: var(--texto-suave); white-space: nowrap; }
+	#esq-columnas { width: 52px; background: var(--panel-2); border: 1px solid var(--borde);
+		border-radius: 7px; color: var(--texto); padding: 4px 6px; font-family: inherit;
+		font-size: 12.5px; }
+	#esq-ayuda { flex: none; text-align: center; font-size: 11.5px; color: var(--texto-suave);
+		padding: 6px 12px 10px; }
+	#esq-ayuda b { color: var(--texto); }
+	/* Guía de la rejilla mientras se arrastra: enseña dónde va a caer el símbolo. */
+	#esquema-hoja .guia-suelta { pointer-events: none; }
 	#esquema-vacio { color: var(--texto-suave); font-size: 14px; text-align: center; padding: 60px 20px; line-height: 1.7; }
 	#lista-cables li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 7px; cursor: pointer; }
 	#lista-cables li:hover { background: var(--panel-2); }
@@ -693,11 +704,18 @@
 		<button class="boton" id="esq-ajustar" title="Ajustar la hoja a la ventana">Ajustar</button>
 		<button class="boton" id="esq-acercar" title="Acercar">+</button>
 		<div class="sep"></div>
+		<label id="esq-cols-caja" title="Columnas por hoja. Menos columnas = símbolos más separados y más hojas">
+			Columnas <input type="number" id="esq-columnas" min="4" max="20" step="1" value="10">
+		</label>
+		<button class="boton" id="esq-titulo-editar" title="Poner un título propio a esta hoja">✎ Título</button>
+		<button class="boton" id="esq-auto" title="Deshacer las colocaciones a mano y volver a ordenar el esquema solo">⟲ Ordenar solo</button>
+		<div class="sep"></div>
 		<button class="boton" id="esq-svg" title="Descargar la hoja en SVG (vectorial, para editarla o imprimirla en A3)">Descargar SVG</button>
 		<button class="boton primario" id="esq-pdf" title="Exportar TODAS las hojas del esquema a PDF">📄 Esquema a PDF</button>
 		<button class="boton" id="esq-cerrar" title="Volver al tablero 3D">✕ Cerrar</button>
 	</div>
 	<div id="esquema-lienzo"><div id="esquema-hoja"></div></div>
+	<div id="esq-ayuda"><b>Arrastra</b> cualquier símbolo para colocarlo donde quieras · los hilos lo siguen</div>
 </section>
 
 <aside id="panel-izq" class="panel">
@@ -874,14 +892,22 @@
 		</div>
 		<h3 style="margin:16px 0 4px;font-size:14px">Datos de la instalación</h3>
 		<p class="sub" style="margin-top:0">De estos depende que el programa pueda verificar el tablero:
-		sin la Icc no se comprueba el poder de corte, y sin el montaje no sale el balance térmico.</p>
+		sin la Icc no se comprueba el poder de corte, y sin el montaje no sale el balance térmico.
+		<b>Lo que dejes en blanco sale como «a declarar» en el dossier</b>, no relleno con un valor
+		supuesto: la placa de características la firmas tú.</p>
 		<div class="rejilla-ctrl">
 			<label>Icc presunta en la acometida (kA)<input id="pr-icc" type="number" step="0.5" min="0" placeholder="10"></label>
 			<label>Temperatura ambiente (°C)<input id="pr-ambiente" type="number" step="1" min="-20" max="60" placeholder="35"></label>
 			<label>Montaje del armario<select id="pr-montaje">
+				<option value="">Sin declarar (se supone mural)</option>
 				<option value="mural">Adosado a pared</option>
 				<option value="exento">Exento (libre por todas las caras)</option>
 				<option value="empotrado">Empotrado entre otros armarios</option>
+			</select></label>
+			<label>Uso previsto<select id="pr-uso">
+				<option value="">Sin declarar</option>
+				<option value="interior">Interior</option>
+				<option value="intemperie">A la intemperie</option>
 			</select></label>
 			<label>Corriente asignada InA (A)<input id="pr-inominal" type="number" step="1" min="0" placeholder="63"></label>
 			<label>Frecuencia (Hz)<input id="pr-frecuencia" type="number" step="1" min="0" placeholder="50"></label>

@@ -9,6 +9,10 @@
  * probar por separado del resto del editor.
  */
 
+import { nombreSeguroDeArchivo } from '../src/modelo/archivos.js';
+
+export { nombreSeguroDeArchivo };
+
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
 export let cerrarDialogo: ((valor: string | null) => void) | undefined;
@@ -62,11 +66,23 @@ export function responderDialogo(valor: string | null): void {
 	cerrarDialogo?.(valor);
 }
 
-/** Descarga un contenido como archivo, sin pasar por el servidor. */
-export function descargar(nombre: string, contenido: string, tipo = 'text/plain'): void {
+/**
+ * Descarga un contenido como archivo, sin pasar por el servidor.
+ *
+ * El nombre se limpia AQUÍ y no en cada sitio que descarga: así ninguna exportación futura puede
+ * saltarse la limpieza y volver a producir un archivo llamado «download». El enlace se mete en el
+ * documento antes de pulsarlo, y el blob se libera después y no en la misma vuelta, que es lo que
+ * deja descargas a medias en algunos navegadores.
+ */
+export function descargar(nombre: string, contenido: string | Blob, tipo = 'text/plain'): void {
+	const blob = contenido instanceof Blob ? contenido : new Blob([contenido], { type: tipo });
+	const url = URL.createObjectURL(blob);
 	const a = document.createElement('a');
-	a.href = URL.createObjectURL(new Blob([contenido], { type: tipo }));
-	a.download = nombre;
+	a.href = url;
+	a.download = nombreSeguroDeArchivo(nombre);
+	a.rel = 'noopener';
+	a.style.display = 'none';
+	document.body.appendChild(a);
 	a.click();
-	URL.revokeObjectURL(a.href);
+	setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20_000);
 }

@@ -180,6 +180,19 @@ export interface Dispositivo {
 	 * de forma visual cualquier foto (un gabinete, un controlador, un motor…).
 	 */
 	imagen?: string;
+	/**
+	 * Colocación MANUAL en el esquema: la columna y la fila donde quien dibuja ha decidido que
+	 * va este aparato, arrastrándolo. Si falta, la decide el motor de esquema.
+	 *
+	 * Se guarda aparte de `posicion` a propósito: `posicion` es de dónde lo puso quien construyó
+	 * el proyecto, y esto es una DECISIÓN DE DIBUJO que el usuario puede deshacer con «reordenar
+	 * solo». Un esquema automático está bien para empezar, pero el que se entrega lo ordena una
+	 * persona: agrupa la maniobra, separa lo que va a campo y deja hueco donde hará falta.
+	 *
+	 * La columna es GLOBAL —sigue de una hoja a la siguiente—, así que arrastrar un aparato más
+	 * allá de la última columna de su hoja lo pasa a la hoja siguiente, que es lo que se espera.
+	 */
+	esquema?: { columna: number; fila: number };
 	/** Hoja del esquema donde está dibujado. */
 	hojaId?: string;
 	/** Posición en la hoja, en coordenadas de rejilla (columna/fila continuas). */
@@ -338,6 +351,13 @@ export interface OpcionesProyecto {
 	/** Corriente asignada del conjunto InA (A). 0 = sin declarar. */
 	corrienteAsignadaA?: number;
 	/**
+	 * Dónde va instalado el conjunto. Va en la placa de características de IEC 61439-1 §6.1, y
+	 * NO es un detalle: un tablero de cubierta está a la intemperie —sol, lluvia, viento— y eso
+	 * cambia el grado IP que hay que exigir y el comportamiento térmico. Vacío = sin declarar, y
+	 * entonces la placa dice «a declarar» en vez de suponer «interior».
+	 */
+	usoPrevisto?: '' | 'interior' | 'intemperie';
+	/**
 	 * Plantilla de designación IEC 81346. Variables: {funcion} {ubicacion} {clase} {n}.
 	 * Los bloques entre corchetes se omiten si su variable está vacía.
 	 */
@@ -363,6 +383,16 @@ export interface Proyecto {
 	conductores: Conductor[];
 	gabinete?: Gabinete;
 	opciones?: OpcionesProyecto;
+	/** Ajustes del dibujo del esquema que decide quien dibuja, no el motor. */
+	esquema?: AjustesEsquema;
+}
+
+/** Lo que se puede cambiar del esquema sin tocar el circuito. */
+export interface AjustesEsquema {
+	/** Columnas por hoja. Menos columnas = símbolos más anchos y más hojas. Por defecto 10. */
+	columnasPorHoja?: number;
+	/** Títulos propios de las hojas, por índice de hoja (1, 2, 3…). */
+	titulos?: Record<string, string>;
 }
 
 export const OPCIONES_POR_DEFECTO: Required<OpcionesProyecto> = {
@@ -381,4 +411,5 @@ export const OPCIONES_POR_DEFECTO: Required<OpcionesProyecto> = {
 	regimenNeutro: '',
 	frecuenciaHz: 50,
 	corrienteAsignadaA: 0,
+	usoPrevisto: '',
 };

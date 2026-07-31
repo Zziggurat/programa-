@@ -88,6 +88,37 @@ export const MARGEN = { izq: 20, der: 10, arriba: 14, abajo: 34 };
 const BARRA_ARRIBA = 28;
 const BARRA_ABAJO = 34;
 
+/**
+ * Filas de la rejilla en que se puede soltar un símbolo al arrastrarlo.
+ *
+ * Ocho es lo que cabe leyéndose en un A3 sin que los símbolos se toquen, y es una rejilla: un
+ * esquema que se entrega tiene los aparatos alineados, no puestos a ojo. Arrastrar libre queda
+ * bonito en pantalla y descuidado en papel.
+ */
+export const FILAS_ESQ = 8;
+
+/** Franja vertical donde se dibuja el circuito, entre las dos barras de alimentación. */
+export function bandaDeCircuito(papel = HOJA_A3): { arriba: number; abajo: number } {
+	return {
+		arriba: MARGEN.arriba + BARRA_ARRIBA + 18,
+		abajo: papel.alto - MARGEN.abajo - BARRA_ABAJO - 18,
+	};
+}
+
+/** Fila (1..FILAS_ESQ) en la que cae una altura en mm. Es la inversa de `alturaDeFila`. */
+export function filaDeAltura(y: number, papel = HOJA_A3): number {
+	const { arriba, abajo } = bandaDeCircuito(papel);
+	const t = (y - arriba) / Math.max(1, abajo - arriba);
+	return Math.max(1, Math.min(FILAS_ESQ, Math.round(t * (FILAS_ESQ - 1)) + 1));
+}
+
+/** Altura en mm del centro de una fila. */
+export function alturaDeFila(fila: number, papel = HOJA_A3): number {
+	const { arriba, abajo } = bandaDeCircuito(papel);
+	const f = Math.max(1, Math.min(FILAS_ESQ, fila));
+	return arriba + ((f - 1) / (FILAS_ESQ - 1)) * (abajo - arriba);
+}
+
 /** Ancho de una columna de circuito, en mm. */
 export function anchoColumna(hoja = HOJA_A3, columnas = 10): number {
 	return (hoja.ancho - MARGEN.izq - MARGEN.der) / columnas;
@@ -399,7 +430,10 @@ export function montarEsquema(
 	opciones: { columnasPorHoja?: number; hoja?: { ancho: number; alto: number } } = {},
 ): HojaEsq[] {
 	const papel = opciones.hoja ?? HOJA_A3;
-	const columnas = opciones.columnasPorHoja ?? 10;
+	// Las columnas por hoja son del PROYECTO: quien dibuja decide si quiere el esquema apretado
+	// en pocas hojas o desahogado en varias. `opciones` solo manda cuando se pide expresamente.
+	const columnas = Math.max(4, Math.min(20,
+		opciones.columnasPorHoja ?? proyecto.esquema?.columnasPorHoja ?? 10));
 	const paso = anchoColumna(papel, columnas);
 	const aparatos = proyecto.dispositivos.filter((d) => !d.imagen);
 	if (aparatos.length === 0) return [];
@@ -417,7 +451,12 @@ export function montarEsquema(
 
 	let numeroHoja = 0;
 	for (const grupo of grupos) {
+		// El motor propone; la colocación manual dispone. Un aparato que se ha arrastrado se queda
+		// donde lo dejaron, y el resto se sigue ordenando solo alrededor.
 		const porColumna = repartirEnColumnas(proyecto, grupo.lista);
+		for (const d of grupo.lista) {
+			if (d.esquema) porColumna.set(d.id, Math.max(0, d.esquema.columna - 1));
+		}
 		const porNivel = nivelesDe(proyecto, grupo.lista);
 		const nivelMax = Math.max(1, ...[...porNivel.values()]);
 		// Franja útil para escalonar los aparatos entre la barra de arriba y la de abajo.
@@ -438,9 +477,11 @@ export function montarEsquema(
 				// Centro del símbolo: en su columna, a media altura de la zona de circuito.
 				const cx = MARGEN.izq + paso * (col + 0.5);
 				// Cuanto más «lejos» está el aparato de la alimentación, más abajo se dibuja.
-				const cyIdeal = nivelMax === 0
-					? (yArriba + yAbajo) / 2
-					: yArriba + ((porNivel.get(d.id) ?? 1) / nivelMax) * (yAbajo - yArriba);
+				const cyIdeal = d.esquema
+					? alturaDeFila(d.esquema.fila, papel)
+					: nivelMax === 0
+						? (yArriba + yAbajo) / 2
+						: yArriba + ((porNivel.get(d.id) ?? 1) / nivelMax) * (yAbajo - yArriba);
 				// Un símbolo alto (un bloque de controlador) no puede salirse del marco ni pisar
 				// las barras de alimentación y retorno: se ciñe a la franja de circuito.
 				const mitad = s.alto / 2;
@@ -466,7 +507,8 @@ export function montarEsquema(
 			hojas.push({
 				id: `esq${numeroHoja}`,
 				numero: numeroHoja,
-				titulo: nHojas > 1 ? `${grupo.titulo} (${h + 1}/${nHojas})` : grupo.titulo,
+				titulo: proyecto.esquema?.titulos?.[String(numeroHoja)]
+					?? (nHojas > 1 ? `${grupo.titulo} (${h + 1}/${nHojas})` : grupo.titulo),
 				anchoMm: papel.ancho, altoMm: papel.alto, columnas,
 				simbolos, hilos: [], referencias: [],
 			});

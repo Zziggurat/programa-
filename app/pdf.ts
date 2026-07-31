@@ -25,8 +25,9 @@ import { generarBOM, generarListaConductores } from '../src/motores/documentacio
 import { fondoDe, generarFichaTablero } from '../src/motores/ficha-tablero.js';
 import { montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
 import { calcularBalanceTermico } from '../src/motores/termico.js';
-import { opcionesDe } from '../src/modelo/proyecto.js';
+import { declarado, opcionesDe } from '../src/modelo/proyecto.js';
 import { CONTROLADORES } from './controladores.js';
+import { descargar } from './dialogos.js';
 
 const AZUL: [number, number, number] = [43, 74, 111];
 const GRIS: [number, number, number] = [90, 98, 106];
@@ -272,6 +273,88 @@ export function exportarPDF(proyecto: Proyecto): void {
 	);
 	doc.setTextColor(0);
 
+	/*
+	 * ---------- Procedencia de los datos ----------
+	 *
+	 * La página que hace este dossier defendible delante de un cliente exigente: dice, antes que
+	 * nada, QUÉ SE HA DECLARADO Y QUÉ NO. Un documento técnico que calla lo que le falta obliga a
+	 * quien lo recibe a averiguarlo, y lo que se averigua tarde se paga caro.
+	 */
+	doc.addPage();
+	cabecera('Procedencia de los datos');
+	doc.setFontSize(9);
+	doc.setTextColor(...GRIS);
+	doc.text(
+		'Todo lo que sigue en este dossier sale del tablero tal como está dibujado en este momento: '
+		+ 'los aparatos son los que hay colocados, las conexiones las que hay cableadas y las medidas '
+		+ 'las de la placa. Nada se rellena por parecido. Lo que el proyecto todavía no declara se '
+		+ 'lista aquí y aparece marcado en su apartado.',
+		12, y, { maxWidth: anchoPag - 24 },
+	);
+	y += 18;
+
+	const faltantes: [string, string][] = [];
+	const anotar = (campo: string, falta: boolean, consecuencia: string): void => {
+		if (falta) faltantes.push([campo, consecuencia]);
+	};
+	anotar('Cliente', !datos.cliente, 'no sale en la portada ni en el cajetín del esquema');
+	anotar('Obra', !datos.obra, 'no sale en la portada ni en el cajetín del esquema');
+	anotar('Proyectista', !datos.proyectista, 'el plano no dice quién lo firma');
+	anotar('Fabricante del conjunto', !datos.fabricante,
+		'IEC 61439-1 §6.1 lo exige en la placa de características');
+	anotar('Corriente de cortocircuito presunta (Icp)', !opciones.iccPresuntaKA,
+		'no se puede comprobar si las protecciones aguantan la falta');
+	anotar('Corriente asignada del conjunto (InA)', !opciones.corrienteAsignadaA,
+		'la placa de características queda incompleta');
+	anotar('Grado de protección (IP)', !opciones.gradoIP,
+		'sin él no se sabe si la envolvente vale para donde va');
+	anotar('Régimen de neutro', !opciones.regimenNeutro, 'condiciona la protección contra contactos indirectos');
+	anotar('Uso previsto (interior o intemperie)', !opciones.usoPrevisto,
+		'un tablero a la intemperie exige otra envolvente y otro cálculo térmico');
+	anotar('Temperatura ambiente de proyecto', !declarado(proyecto, 'temperaturaAmbienteC'),
+		`el balance térmico se ha calculado suponiendo ${opciones.temperaturaAmbienteC} °C`);
+	anotar('Forma de instalación del armario', !declarado(proyecto, 'montajeGabinete'),
+		'el balance térmico se ha calculado suponiendo montaje mural');
+	anotar('Frecuencia asignada', !declarado(proyecto, 'frecuenciaHz'), 'la placa de características queda incompleta');
+
+	if (faltantes.length === 0) {
+		doc.setFillColor(233, 245, 236);
+		doc.setDrawColor(...VERDE);
+		doc.roundedRect(12, y, anchoPag - 24, 16, 2, 2, 'FD');
+		doc.setTextColor(...VERDE);
+		doc.setFont('helvetica', 'bold');
+		doc.setFontSize(10);
+		doc.text('El proyecto declara todos los datos necesarios. Nada queda supuesto.', 17, y + 10);
+		doc.setFont('helvetica', 'normal');
+		doc.setTextColor(0);
+		y += 24;
+	} else {
+		doc.setTextColor(0);
+		doc.setFont('helvetica', 'bold');
+		doc.setFontSize(10.5);
+		doc.text(`Pendiente de declarar (${faltantes.length})`, 12, y);
+		doc.setFont('helvetica', 'normal');
+		y += 4;
+		tabla(['Dato', 'Qué implica que falte'], faltantes, { 0: 66 });
+	}
+
+	// Y lo que sí está declarado, con su procedencia, para que se lea de un vistazo.
+	const declarados: [string, string][] = [
+		['Aparatos y conexiones', `${ficha.aparatos.total} aparatos y ${ficha.conductores.total} conexiones dibujadas`],
+		['Medidas de la placa', ficha.placa ? `${mm(ficha.placa.ancho)} × ${mm(ficha.placa.alto)}, del propio tablero` : 'sin gabinete definido'],
+		['Longitudes de cable', `${metros(ficha.conductores.longitudTotalMm)}, del ruteo real por canaleta con `
+			+ `${Math.round(opciones.reservaCable * 100)} % de reserva`],
+		['Verificación eléctrica', errores
+			? `${errores} error(es) y ${avisos} aviso(s) — ver el apartado de verificación`
+			: `sin errores${avisos ? `, ${avisos} aviso(s)` : ''}`],
+	];
+	doc.setFont('helvetica', 'bold');
+	doc.setFontSize(10.5);
+	doc.text('Declarado y comprobado', 12, y);
+	doc.setFont('helvetica', 'normal');
+	y += 4;
+	tabla(['Dato', 'De dónde sale'], declarados, { 0: 66 });
+
 	/* --------------------- 1. Ficha del tablero --------------------- */
 	doc.addPage();
 	cabecera('1. Ficha del tablero');
@@ -513,11 +596,16 @@ export function exportarPDF(proyecto: Proyecto): void {
 		autoTable(doc, {
 			startY: y,
 			body: [
-				['Instalación supuesta', MONTAJES[termico.montaje]],
+				// Se dice de dónde sale cada ENTRADA del cálculo. Un salto térmico calculado sobre
+				// un montaje y una temperatura que nadie ha declarado es un número con pinta de
+				// medida y fondo de suposición: quien lo lea tiene derecho a saberlo.
+				['Instalación', MONTAJES[termico.montaje]
+					+ (declarado(proyecto, 'montajeGabinete') ? '' : ' — SUPUESTO, sin declarar en el proyecto')],
 				['Superficie efectiva de disipación', `${termico.superficieM2.toFixed(2)} m²`],
 				['Potencia disipada en el interior', `${termico.disipacionW} W`],
 				['Densidad de disipación', `${(termico.superficieM2 > 0 ? termico.disipacionW / termico.superficieM2 : 0).toFixed(0)} W/m²`],
-				['Temperatura ambiente de proyecto', `${termico.temperaturaAmbienteC} °C`],
+				['Temperatura ambiente de proyecto', `${termico.temperaturaAmbienteC} °C`
+					+ (declarado(proyecto, 'temperaturaAmbienteC') ? '' : ' — SUPUESTA, sin declarar en el proyecto')],
 				['Salto térmico estimado', `+${termico.saltoTermicoK} K`],
 				['Temperatura interior estimada', `${termico.temperaturaInteriorC} °C`],
 			] as [string, string][],
@@ -625,6 +713,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	y += 16;
 
 	const SIN = 'a declarar';
+	const USO: Record<string, string> = { interior: 'Interior', intemperie: 'A la intemperie' };
 	const tensionMax = ficha.tensiones.length ? Math.max(...ficha.tensiones) : undefined;
 	// Ui y Uimp no se inventan: se toma el escalón normalizado inmediatamente por encima de la
 	// tensión de empleo, que es lo que hace un proyectista, y se marca como valor propuesto.
@@ -639,14 +728,17 @@ export function exportarPDF(proyecto: Proyecto): void {
 		['Tensión asignada de empleo  Ue', tensionMax !== undefined ? `${tensionMax} V` : SIN],
 		['Tensión asignada de aislamiento  Ui', ui !== undefined ? `${ui} V (propuesto)` : SIN],
 		['Tensión soportada a impulsos  Uimp', uimp !== undefined ? `${uimp} kV (propuesto)` : SIN],
-		['Frecuencia asignada', `${opciones.frecuenciaHz} Hz`],
+		// Lo que NO declara el proyecto se deja «a declarar», no se rellena con el valor por
+		// defecto del programa: esta placa la firma quien monta el conjunto.
+		['Frecuencia asignada', declarado(proyecto, 'frecuenciaHz') ? `${opciones.frecuenciaHz} Hz` : SIN],
 		['Corriente asignada del conjunto  InA', opciones.corrienteAsignadaA ? `${opciones.corrienteAsignadaA} A` : SIN],
 		['Corriente de cortocircuito presunta  Icp', opciones.iccPresuntaKA ? `${opciones.iccPresuntaKA} kA` : SIN],
 		['Factor de diversidad  RDF', SIN],
 		['Grado de protección', opciones.gradoIP || SIN],
 		['Régimen de neutro', opciones.regimenNeutro || SIN],
-		['Uso previsto', 'Interior'],
-		['Temperatura ambiente de proyecto', `${opciones.temperaturaAmbienteC} °C`],
+		['Uso previsto', USO[opciones.usoPrevisto] ?? SIN],
+		['Temperatura ambiente de proyecto',
+			declarado(proyecto, 'temperaturaAmbienteC') ? `${opciones.temperaturaAmbienteC} °C` : SIN],
 		['Temperatura interior estimada', termico ? `${termico.temperaturaInteriorC} °C` : SIN],
 		['Dimensiones (an × al × f)', ficha.caja ? `${mm(ficha.caja.ancho)} × ${mm(ficha.caja.alto)} × ${mm(ficha.caja.profundidad)}` : SIN],
 		['Masa', SIN],
@@ -723,6 +815,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 		doc.text(`${proyecto.nombre} — dossier técnico`, 12, 290);
 	}
 
-	const nombre = proyecto.nombre.replace(/[^\wáéíóúñ -]/gi, '').trim() || 'tablero';
-	doc.save(`${nombre} - dossier.pdf`);
+	// Se descarga con el mismo camino que todo lo demás, y no con `doc.save()`, para que el nombre
+	// pase por la limpieza: un acento en el título dejaba el PDF guardado como «download».
+	descargar(`${proyecto.nombre} - dossier.pdf`, doc.output('blob'));
 }

@@ -12,8 +12,9 @@ import { calcularPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores } from '../src/motores/numeracion.js';
 import { generarReferencias } from '../src/motores/referencias.js';
 import {
-	ANCHO_MAX_SIMBOLO, anchoColumna, esBloqueFuncional, esPotencia, HOJA_A3, montarEsquema, posicionesEnEsquema,
-	repartirEnColumnas, rutaHilo, separarEtiquetas, simboloDe,
+	ANCHO_MAX_SIMBOLO, alturaDeFila, anchoColumna, esBloqueFuncional, esPotencia, FILAS_ESQ,
+	filaDeAltura, HOJA_A3, montarEsquema, posicionesEnEsquema, repartirEnColumnas, rutaHilo,
+	separarEtiquetas, simboloDe,
 } from '../src/motores/esquema.js';
 
 /** Arranque directo mínimo: automático → contactor → motor, con su mando. */
@@ -429,4 +430,114 @@ test('un bornero grande sigue dibujándose como bornero, no como bloque', () => 
 	const s = simboloDe(p.dispositivos[0]);
 	assert.ok(s.trazos.some((t) => t.tipo === 'circulo'), 'conserva la fila de círculos del bornero');
 	assert.ok(s.ancho <= ANCHO_MAX_SIMBOLO, 'y sigue cabiendo en su columna');
+});
+
+/* ----------------------- El esquema se puede ordenar a mano ----------------------- */
+
+/**
+ * Un esquema automático está bien para empezar, pero el que se entrega lo ordena una persona.
+ * Estas pruebas fijan el trato: lo que se arrastra se queda donde se dejó, y lo que no se toca
+ * se sigue ordenando solo.
+ */
+function dosAparatos(): Proyecto {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{
+			id: 'q1', tipo: 'disyuntor', designacion: '-Q1', tensionNominal: 220,
+			bornes: [{ id: '1', tipo: 'L' }, { id: '2', tipo: 'L' }],
+		},
+		{
+			id: 'h1', tipo: 'piloto', designacion: '-H1', tensionNominal: 220,
+			bornes: [{ id: 'X1', tipo: 'L' }, { id: 'X2', tipo: 'N' }],
+		},
+	];
+	p.conductores = [{ id: 'c1', de: { dispositivoId: 'q1', borneId: '2' }, a: { dispositivoId: 'h1', borneId: 'X1' } }];
+	return p;
+}
+
+const simbolo = (hojas: ReturnType<typeof montarEsquema>, id: string) =>
+	hojas.flatMap((h) => h.simbolos).find((s) => s.dispositivoId === id);
+
+test('sin colocación manual, el motor decide (como hasta ahora)', () => {
+	const p = dosAparatos();
+	const s = simbolo(montarEsquema(p, calcularPotenciales(p)), 'h1');
+	assert.ok(s, 'el aparato no sale en el esquema');
+});
+
+test('un aparato arrastrado se queda EN SU COLUMNA', () => {
+	const p = dosAparatos();
+	p.dispositivos[1].esquema = { columna: 7, fila: 3 };
+	const s = simbolo(montarEsquema(p, calcularPotenciales(p)), 'h1')!;
+	assert.equal(s.columna, 7, `quedó en la columna ${s.columna} y se pidió la 7`);
+});
+
+test('y EN SU FILA: arriba y abajo no dan lo mismo', () => {
+	const p = dosAparatos();
+	p.dispositivos[1].esquema = { columna: 3, fila: 1 };
+	const arriba = simbolo(montarEsquema(p, calcularPotenciales(p)), 'h1')!.y;
+	p.dispositivos[1].esquema = { columna: 3, fila: FILAS_ESQ };
+	const abajo = simbolo(montarEsquema(p, calcularPotenciales(p)), 'h1')!.y;
+	assert.ok(abajo > arriba + 40, `fila 1 en y=${arriba} y fila ${FILAS_ESQ} en y=${abajo}`);
+});
+
+test('la fila y la altura son inversas la una de la otra', () => {
+	for (let f = 1; f <= FILAS_ESQ; f++) {
+		assert.equal(filaDeAltura(alturaDeFila(f)), f, `la fila ${f} no vuelve a ser la ${f}`);
+	}
+});
+
+test('una fila fuera de rango se ciñe al papel en vez de salirse', () => {
+	assert.equal(filaDeAltura(-500), 1);
+	assert.equal(filaDeAltura(5000), FILAS_ESQ);
+	const p = dosAparatos();
+	p.dispositivos[1].esquema = { columna: 3, fila: 99 };
+	const s = simbolo(montarEsquema(p, calcularPotenciales(p)), 'h1')!;
+	assert.ok(s.y > 0 && s.y + s.alto < 297, `el símbolo se sale del A3: y=${s.y} alto=${s.alto}`);
+});
+
+test('arrastrar más allá de la última columna pasa el aparato a la hoja siguiente', () => {
+	const p = dosAparatos();
+	p.esquema = { columnasPorHoja: 6 };
+	p.dispositivos[1].esquema = { columna: 9, fila: 4 };   // 9 > 6 → segunda hoja
+	const hojas = montarEsquema(p, calcularPotenciales(p));
+	const conH1 = hojas.find((h) => h.simbolos.some((s) => s.dispositivoId === 'h1'))!;
+	const conQ1 = hojas.find((h) => h.simbolos.some((s) => s.dispositivoId === 'q1'))!;
+	assert.notEqual(conH1.numero, conQ1.numero, 'los dos siguen en la misma hoja');
+	assert.equal(simbolo(hojas, 'h1')!.columna, 3, 'no se ha repartido bien dentro de la hoja');
+});
+
+test('las columnas por hoja son del proyecto y cambian el reparto', () => {
+	const p = dosAparatos();
+	p.esquema = { columnasPorHoja: 4 };
+	assert.equal(montarEsquema(p, calcularPotenciales(p))[0].columnas, 4);
+	p.esquema = { columnasPorHoja: 14 };
+	assert.equal(montarEsquema(p, calcularPotenciales(p))[0].columnas, 14);
+});
+
+test('un número de columnas absurdo no rompe el dibujo', () => {
+	const p = dosAparatos();
+	for (const n of [0, -3, 500]) {
+		p.esquema = { columnasPorHoja: n };
+		const h = montarEsquema(p, calcularPotenciales(p))[0];
+		assert.ok(h.columnas >= 4 && h.columnas <= 20, `${n} columnas dejó ${h.columnas}`);
+	}
+});
+
+test('el título de una hoja se puede cambiar', () => {
+	const p = dosAparatos();
+	p.esquema = { titulos: { 1: 'Acometida y alumbrado del taller' } };
+	assert.equal(montarEsquema(p, calcularPotenciales(p))[0].titulo, 'Acometida y alumbrado del taller');
+});
+
+test('los hilos siguen al aparato que se ha movido', () => {
+	// Mover un símbolo y que el cable se quede donde estaba sería peor que no poder moverlo.
+	const p = dosAparatos();
+	p.dispositivos[1].esquema = { columna: 8, fila: 7 };
+	const hojas = montarEsquema(p, calcularPotenciales(p));
+	const s = simbolo(hojas, 'h1')!;
+	const hilo = hojas.flatMap((h) => h.hilos).find((x) => x.conductorId === 'c1');
+	assert.ok(hilo, 'el hilo desapareció al mover el aparato');
+	const cerca = hilo!.nodos.some((n) =>
+		n.x >= s.x - 6 && n.x <= s.x + s.ancho + 6 && n.y >= s.y - 6 && n.y <= s.y + s.alto + 6);
+	assert.ok(cerca, 'el hilo no llega al aparato en su nueva posición');
 });

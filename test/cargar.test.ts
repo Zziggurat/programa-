@@ -129,3 +129,35 @@ test('los datos administrativos y las opciones sobreviven a la ida y vuelta', ()
 test('el archivo abierto queda marcado con la versión de formato de este programa', () => {
 	assert.equal(abrir(bueno()).proyecto.version, VERSION_FORMATO);
 });
+
+/* ---------------- Los ajustes del esquema sobreviven a guardar y abrir ---------------- */
+
+test('las colocaciones a mano del esquema no se pierden al abrir el archivo', () => {
+	// Si se perdieran, el usuario ordenaría su esquema, guardaría, y al volver se lo encontraría
+	// desordenado otra vez sin saber por qué.
+	const p = crearProyecto('t');
+	p.gabinete = { ancho: 400, alto: 400, rieles: [], canaletas: [], colocaciones: [] };
+	p.dispositivos = [{ id: 'q1', tipo: 'disyuntor', bornes: [], esquema: { columna: 7, fila: 3 } }];
+	p.esquema = { columnasPorHoja: 6, titulos: { 1: 'Fuerza del taller' } };
+
+	const { proyecto } = cargarProyecto(JSON.stringify(p));
+	assert.deepEqual(proyecto.dispositivos[0].esquema, { columna: 7, fila: 3 });
+	assert.equal(proyecto.esquema?.columnasPorHoja, 6);
+	assert.equal(proyecto.esquema?.titulos?.['1'], 'Fuerza del taller');
+});
+
+test('un ajuste de esquema corrupto no rompe el dibujo: se descarta', () => {
+	const p = crearProyecto('t') as unknown as Record<string, unknown>;
+	p.gabinete = { ancho: 400, alto: 400, rieles: [], canaletas: [], colocaciones: [] };
+	p.dispositivos = [
+		{ id: 'a', tipo: 'disyuntor', bornes: [], esquema: { columna: 'siete', fila: null } },
+		{ id: 'b', tipo: 'disyuntor', bornes: [], esquema: 'lo que sea' },
+	];
+	p.esquema = { columnasPorHoja: 500, titulos: { 1: 42, 2: '  ' } };
+
+	const { proyecto } = cargarProyecto(JSON.stringify(p));
+	assert.equal(proyecto.dispositivos[0].esquema, undefined, 'una columna que no es número se cuela');
+	assert.equal(proyecto.dispositivos[1].esquema, undefined);
+	assert.equal(proyecto.esquema?.columnasPorHoja, 20, '500 columnas dejarían el esquema ilegible');
+	assert.equal(proyecto.esquema?.titulos, undefined, 'títulos que no son texto se cuelan');
+});

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { crearProyecto } from '../src/modelo/proyecto.js';
+import { crearProyecto, declarado, opcionesDe } from '../src/modelo/proyecto.js';
 import { Proyecto } from '../src/modelo/tipos.js';
 import { calcularPotenciales } from '../src/motores/potenciales.js';
 import { aplicarPlantilla, numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
@@ -110,4 +110,45 @@ test('referencias cruzadas: el maestro lista sus contactos con posición', () =>
 	assert.equal(x.contactos[0].contacto, 'NA');
 	assert.equal(x.contactos[0].posicion, '1.C5'); // hoja 1, fila C (y=2), columna 5 (x=4)
 	assert.equal(r.maestroDeEsclavo.get('k1c')?.designacion, '-K1');
+});
+
+/* ------------- Declarado por el proyecto vs. supuesto por el programa ------------- */
+
+/**
+ * `opcionesDe()` funde los valores por defecto para que los motores siempre tengan con qué
+ * calcular. Pero la placa de características de IEC 61439-1 §6.1 la firma quien monta el
+ * conjunto, y escribir en ella «50 Hz» o «35 °C» porque son los valores por defecto del programa
+ * es afirmar algo que nadie ha declarado. De ahí esta distinción.
+ */
+test('un proyecto recién creado no declara nada, aunque tenga valores con los que calcular', () => {
+	const p = crearProyecto('t');
+	assert.equal(opcionesDe(p).temperaturaAmbienteC, 35, 'sin valor por defecto no se puede calcular');
+	assert.equal(declarado(p, 'temperaturaAmbienteC'), false, 'pero no lo ha declarado nadie');
+	assert.equal(declarado(p, 'montajeGabinete'), false);
+	assert.equal(declarado(p, 'frecuenciaHz'), false);
+	assert.equal(declarado(p, 'usoPrevisto'), false);
+});
+
+test('lo que el proyecto sí declara se distingue, incluso si coincide con el valor por defecto', () => {
+	const p = crearProyecto('t', { temperaturaAmbienteC: 35, frecuenciaHz: 50 });
+	assert.equal(declarado(p, 'temperaturaAmbienteC'), true,
+		'declarar 35 °C a propósito no es lo mismo que no decir nada');
+	assert.equal(declarado(p, 'frecuenciaHz'), true);
+});
+
+test('un campo vacío cuenta como NO declarado', () => {
+	const p = crearProyecto('t', { gradoIP: '', regimenNeutro: '', usoPrevisto: '' });
+	assert.equal(declarado(p, 'gradoIP'), false);
+	assert.equal(declarado(p, 'regimenNeutro'), false);
+	assert.equal(declarado(p, 'usoPrevisto'), false);
+	const q = crearProyecto('t', { gradoIP: 'IP54', usoPrevisto: 'intemperie' });
+	assert.equal(declarado(q, 'gradoIP'), true);
+	assert.equal(declarado(q, 'usoPrevisto'), true);
+});
+
+test('un tablero a la intemperie se puede declarar como tal', () => {
+	// Los tableros de la cubierta del aeropuerto están al sol y a la lluvia: dar por supuesto
+	// «interior» en su placa de características sería justo lo contrario de la verdad.
+	const p = crearProyecto('t', { usoPrevisto: 'intemperie' });
+	assert.equal(opcionesDe(p).usoPrevisto, 'intemperie');
 });

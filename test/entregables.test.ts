@@ -12,6 +12,7 @@ import { calcularPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores } from '../src/motores/numeracion.js';
 import { tiraDeAparatos, tirasDeBorneros, todasLasTiras } from '../src/motores/etiquetas.js';
 import { CAPAS, generarDXF, rectangulo, sinAcentos } from '../src/motores/dxf.js';
+import { nombreSeguroDeArchivo } from '../src/modelo/archivos.js';
 
 function conBornero(): Proyecto {
 	const p = crearProyecto('t');
@@ -192,4 +193,56 @@ test('generarDXF: nunca escribe caracteres que el DXF R12 no sepa representar', 
 	assert.ok(!/[^\x00-\x7F]/.test(dxf), 'se coló un carácter no ASCII');
 	assert.ok(!/NaN|Infinity/.test(dxf));
 	assert.match(dxf, /1\nNandu/, 'el texto se translitera, no se borra');
+});
+
+/* ------------------- Nombres de archivo de lo que se entrega ------------------- */
+
+/**
+ * El fallo que arreglan estas pruebas: un solo carácter fuera de ASCII en el atributo `download`
+ * y el navegador TIRA EL NOMBRE ENTERO, guardando el archivo como «download» sin extensión.
+ * Como los tableros se llaman «Climatización» o «Arranque estrella-triángulo», le pasaba a casi
+ * todos los proyectos reales.
+ */
+test('las tildes se transliteran, no se borran: el nombre sigue leyéndose', () => {
+	assert.equal(nombreSeguroDeArchivo('Climatización sala 3'), 'Climatizacion sala 3');
+	assert.equal(nombreSeguroDeArchivo('Arranque estrella-triángulo'), 'Arranque estrella-triangulo');
+	assert.equal(nombreSeguroDeArchivo('Diseño de la señal'), 'Diseno de la senal');
+});
+
+test('el nombre que sale es ASCII puro, que es lo que exige la descarga', () => {
+	for (const bruto of [
+		'Climatización', 'Tablero de distribución', 'UMA-3-343 · señales', 'Ñandú', 'Müller & Cía',
+		'控制柜', 'Tablero 100 % útil',
+	]) {
+		const n = nombreSeguroDeArchivo(bruto);
+		assert.ok(/^[A-Za-z0-9 ._-]*$/.test(n), `«${bruto}» → «${n}» no es ASCII seguro`);
+		assert.ok(n.length > 0, `«${bruto}» se quedó sin nombre`);
+	}
+});
+
+test('se quitan los caracteres que ningún sistema de archivos admite', () => {
+	assert.equal(nombreSeguroDeArchivo('a/b\\c:d*e?f"g<h>i|j'), 'a b c d e f g h i j');
+});
+
+test('un nombre no puede acabar en punto ni en espacio (Windows lo rechaza)', () => {
+	assert.equal(nombreSeguroDeArchivo('Tablero.'), 'Tablero');
+	assert.equal(nombreSeguroDeArchivo('Tablero   '), 'Tablero');
+});
+
+test('un nombre imposible no deja el archivo sin nombre', () => {
+	assert.equal(nombreSeguroDeArchivo('※※※'), 'tablero');
+	assert.equal(nombreSeguroDeArchivo(''), 'tablero');
+	assert.equal(nombreSeguroDeArchivo('   '), 'tablero');
+});
+
+test('los nombres largos se recortan, pero no a la nada', () => {
+	const n = nombreSeguroDeArchivo('Tablero de climatización '.repeat(20));
+	assert.ok(n.length <= 100, `${n.length} caracteres`);
+	assert.ok(n.startsWith('Tablero de climatizacion'));
+});
+
+test('el DXF y la descarga comparten la misma transliteración', () => {
+	// Si divergieran, el mismo tablero saldría con un nombre en el archivo y otro dentro del plano.
+	assert.equal(sinAcentos('Climatización'), 'Climatizacion');
+	assert.equal(nombreSeguroDeArchivo('Climatización'), 'Climatizacion');
 });
