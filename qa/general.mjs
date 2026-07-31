@@ -10,6 +10,26 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+/**
+ * El dossier ya no se descarga de golpe: el botón 📄 abre la VISTA PREVIA, y se descarga desde
+ * ella. Este ayudante recorre ese camino, que es el que hace ahora cualquiera.
+ *
+ * Se borra antes el indicador de tamaño para no dar por buena la generación ANTERIOR: si no, al
+ * abrir la vista previa por segunda vez la espera terminaría al instante con el PDF de antes.
+ */
+async function abrirVistaPreviaDossier(page) {
+	await page.evaluate(() => {
+		const e = document.getElementById('dos-estado');
+		if (e) e.textContent = '';
+		document.getElementById('btn-pdf').click();
+	});
+	await page.waitForFunction(
+		() => /KB/.test(document.getElementById('dos-estado')?.textContent ?? ''),
+		{ timeout: 40000 },
+	);
+}
+
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon' };
 const server = http.createServer((req, res) => {
@@ -94,9 +114,12 @@ const bajar = async (id, patron) => {
 	const d = await esperado;
 	return d && patron.test(d.suggestedFilename());
 };
+
 must('Guardar descarga el .tablero.json', await bajar('btn-guardar', /\.tablero\.json$/i));
 must('Dossier HTML se descarga', await bajar('btn-dossier', /\.html?$/i));
-must('Exportar PDF se descarga', await bajar('btn-pdf', /\.pdf$/i));
+await abrirVistaPreviaDossier(page);
+must('el dossier se descarga desde la vista previa', await bajar('dos-descargar', /\.pdf$/i));
+await jsClick('dos-cerrar');
 
 console.log('\n--- 7. Estado final ---');
 must('sin errores de JavaScript en toda la sesión', errs.length === 0, errs.join(' | '));

@@ -9,6 +9,26 @@ import { chromium } from 'playwright-core';
 import http from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
+
+/**
+ * El dossier ya no se descarga de golpe: el botón 📄 abre la VISTA PREVIA, y se descarga desde
+ * ella. Este ayudante recorre ese camino, que es el que hace ahora cualquiera.
+ *
+ * Se borra antes el indicador de tamaño para no dar por buena la generación ANTERIOR: si no, al
+ * abrir la vista previa por segunda vez la espera terminaría al instante con el PDF de antes.
+ */
+async function abrirVistaPreviaDossier(page) {
+	await page.evaluate(() => {
+		const e = document.getElementById('dos-estado');
+		if (e) e.textContent = '';
+		document.getElementById('btn-pdf').click();
+	});
+	await page.waitForFunction(
+		() => /KB/.test(document.getElementById('dos-estado')?.textContent ?? ''),
+		{ timeout: 40000 },
+	);
+}
+
 const ROOT = join('/workspace/programa-', 'app', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 const server = http.createServer((q, r) => {
@@ -57,7 +77,8 @@ await click('esq-cerrar'); await page.waitForTimeout(400);
 await bajar('btn-etiquetas', 'rótulos');
 
 console.log('\n--- PDF del dossier ---');
-await bajar('btn-pdf', 'dossier');
+await abrirVistaPreviaDossier(page);
+await bajar('dos-descargar', 'dossier');
 
 must('sin errores de JavaScript', errs.length === 0, errs.slice(0,2).join(' | '));
 console.log(fallos === 0 ? '\n=== PDFs CORRECTOS ✔ ===' : `\n=== ${fallos} FALLOS ✗ ===`);

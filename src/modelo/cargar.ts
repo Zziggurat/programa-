@@ -10,6 +10,7 @@
  * sanos y se deja escrito dónde va la migración de la próxima versión.
  */
 import { Conductor, Dispositivo, Gabinete, Hoja, Proyecto } from './tipos.js';
+import { BloqueDossier, TrozoTexto } from './dossier.js';
 
 /** Versión de formato que escribe este programa. */
 export const VERSION_FORMATO = 1;
@@ -90,6 +91,7 @@ export function cargarProyecto(json: string): ResultadoCarga {
 		gabinete,
 		opciones: esObjeto(bruto.opciones) ? (bruto.opciones as Proyecto['opciones']) : undefined,
 		esquema: leerAjustesEsquema(bruto.esquema),
+		dossier: leerAjustesDossier(bruto.dossier),
 	};
 	return { proyecto, arreglos };
 }
@@ -133,6 +135,53 @@ function leerAjustesEsquema(bruto: unknown): Proyecto['esquema'] {
 	const ajustes: Proyecto['esquema'] = {};
 	if (Number.isFinite(cols)) ajustes.columnasPorHoja = Math.max(4, Math.min(20, Math.round(cols)));
 	if (Object.keys(titulos).length) ajustes.titulos = titulos;
+	return Object.keys(ajustes).length ? ajustes : undefined;
+}
+
+/**
+ * Lo que el usuario ha decidido sobre el dossier: qué apartados lleva y qué le ha añadido.
+ *
+ * Los bloques traen IMÁGENES en data URL, que pueden ser megas. Se aceptan tal cual —son suyas—
+ * pero se comprueba que sean de verdad una imagen: un `data:text/html` metido a mano en el archivo
+ * acabaría en el PDF, y de ahí a un sitio donde se abra.
+ */
+function leerAjustesDossier(bruto: unknown): Proyecto['dossier'] {
+	if (!esObjeto(bruto)) return undefined;
+	const secciones: Record<string, boolean> = {};
+	if (esObjeto(bruto.secciones)) {
+		for (const [k, v] of Object.entries(bruto.secciones)) {
+			if (typeof v === 'boolean') secciones[k] = v;
+		}
+	}
+	const bloques: BloqueDossier[] = [];
+	if (esLista(bruto.bloques)) {
+		for (const b of bruto.bloques) {
+			if (!esObjeto(b) || !texto(b.id)) continue;
+			const tipo = b.tipo === 'imagen' ? 'imagen' : 'texto';
+			const donde = ['portada', 'principio', 'final'].includes(String(b.donde))
+				? (b.donde as BloqueDossier['donde']) : 'final';
+			const imagen = texto(b.imagen);
+			if (tipo === 'imagen' && !(imagen && /^data:image\//i.test(imagen))) continue;
+			bloques.push({
+				id: b.id as string,
+				tipo,
+				donde,
+				titulo: texto(b.titulo),
+				pie: texto(b.pie),
+				imagen: tipo === 'imagen' ? imagen : undefined,
+				anchoPct: Number.isFinite(Number(b.anchoPct))
+					? Math.max(10, Math.min(100, Number(b.anchoPct))) : undefined,
+				trozos: tipo === 'texto' && esLista(b.trozos)
+					? (b.trozos as unknown[]).filter(esObjeto)
+						.filter((t) => typeof t.texto === 'string')
+						.map((t) => t as unknown as TrozoTexto)
+					: undefined,
+			});
+		}
+	}
+	const ajustes: Proyecto['dossier'] = {};
+	if (Object.keys(secciones).length) ajustes.secciones = secciones;
+	if (bloques.length) ajustes.bloques = bloques;
 	return Object.keys(ajustes).length ? ajustes : undefined;
 }
 

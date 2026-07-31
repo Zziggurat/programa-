@@ -161,3 +161,46 @@ test('un ajuste de esquema corrupto no rompe el dibujo: se descarta', () => {
 	assert.equal(proyecto.esquema?.columnasPorHoja, 20, '500 columnas dejarían el esquema ilegible');
 	assert.equal(proyecto.esquema?.titulos, undefined, 'títulos que no son texto se cuelan');
 });
+
+/* ------------- Lo que se añade al dossier sobrevive a guardar y abrir ------------- */
+
+test('los apartados apagados y los bloques del dossier se conservan', () => {
+	const p = crearProyecto('t');
+	p.gabinete = { ancho: 400, alto: 400, rieles: [], canaletas: [], colocaciones: [] };
+	p.dossier = {
+		secciones: { bom: false },
+		bloques: [
+			{ id: 'b1', tipo: 'texto', donde: 'principio', titulo: 'Presentación',
+				trozos: [{ texto: 'Estimado ' }, { texto: 'cliente', negrita: true, tam: 14 }] },
+			{ id: 'b2', tipo: 'imagen', donde: 'final', imagen: 'data:image/png;base64,AAAA', anchoPct: 70 },
+		],
+	};
+	const { proyecto } = cargarProyecto(JSON.stringify(p));
+	assert.equal(proyecto.dossier?.secciones?.bom, false);
+	assert.equal(proyecto.dossier?.bloques?.length, 2);
+	assert.deepEqual(proyecto.dossier?.bloques?.[0].trozos?.[1], { texto: 'cliente', negrita: true, tam: 14 });
+	assert.equal(proyecto.dossier?.bloques?.[1].anchoPct, 70);
+});
+
+test('un «data:» que no es una imagen NO entra en el dossier', () => {
+	// Un data:text/html metido a mano en el archivo acabaría dentro del PDF que se manda fuera.
+	const p = crearProyecto('t') as unknown as Record<string, unknown>;
+	p.gabinete = { ancho: 400, alto: 400, rieles: [], canaletas: [], colocaciones: [] };
+	p.dossier = {
+		bloques: [
+			{ id: 'malo', tipo: 'imagen', donde: 'final', imagen: 'data:text/html,<script>x</script>' },
+			{ id: 'peor', tipo: 'imagen', donde: 'final', imagen: 'javascript:alert(1)' },
+			{ id: 'bueno', tipo: 'imagen', donde: 'final', imagen: 'data:image/jpeg;base64,BBBB' },
+		],
+	};
+	const { proyecto } = cargarProyecto(JSON.stringify(p));
+	assert.deepEqual(proyecto.dossier?.bloques?.map((b) => b.id), ['bueno']);
+});
+
+test('un bloque con un destino inventado se coloca al final, no se pierde', () => {
+	const p = crearProyecto('t') as unknown as Record<string, unknown>;
+	p.gabinete = { ancho: 400, alto: 400, rieles: [], canaletas: [], colocaciones: [] };
+	p.dossier = { bloques: [{ id: 'x', tipo: 'texto', donde: 'en la luna', trozos: [{ texto: 'hola' }] }] };
+	const { proyecto } = cargarProyecto(JSON.stringify(p));
+	assert.equal(proyecto.dossier?.bloques?.[0].donde, 'final');
+});

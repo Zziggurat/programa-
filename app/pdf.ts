@@ -28,6 +28,9 @@ import { calcularBalanceTermico } from '../src/motores/termico.js';
 import { declarado, opcionesDe } from '../src/modelo/proyecto.js';
 import { CONTROLADORES } from './controladores.js';
 import { descargar } from './dialogos.js';
+import {
+	BloqueDossier, EstiloTrozo, bloquesEn, repartirEnLineas, saleSeccion,
+} from '../src/modelo/dossier.js';
 
 const AZUL: [number, number, number] = [43, 74, 111];
 const GRIS: [number, number, number] = [90, 98, 106];
@@ -142,7 +145,13 @@ function dibujarPlaca(
 }
 
 /** Genera y descarga el dossier técnico del proyecto en PDF. */
-export function exportarPDF(proyecto: Proyecto): void {
+/**
+ * Arma el dossier y lo devuelve SIN descargarlo.
+ *
+ * Separado de `exportarPDF()` para que la vista previa pueda enseñarlo antes de que nadie lo
+ * guarde: el documento que se ve es exactamente el que se descarga, porque es el mismo.
+ */
+export function construirDossier(proyecto: Proyecto): jsPDF {
 	// Recalcular todo para que el PDF refleje el estado actual del tablero.
 	numerarDispositivos(proyecto);
 	const potenciales = calcularPotenciales(proyecto);
@@ -208,6 +217,95 @@ export function exportarPDF(proyecto: Proyecto): void {
 	const errores = hallazgos.filter((h) => h.severidad === 'error').length;
 	const avisos = hallazgos.length - errores;
 
+	/* ------------- Lo que añade a mano quien firma el dossier ------------- */
+
+	/** Pone la fuente y el estilo de un trozo en el documento, para medir o para escribir. */
+	const ponerEstilo = (e: EstiloTrozo): void => {
+		doc.setFont(e.fuente, e.negrita && e.cursiva ? 'bolditalic' : e.negrita ? 'bold' : e.cursiva ? 'italic' : 'normal');
+		doc.setFontSize(e.tam);
+	};
+	const medirTrozo = (texto: string, e: EstiloTrozo): number => {
+		ponerEstilo(e);
+		return doc.getTextWidth(texto);
+	};
+
+	/** Escribe un texto con formato mezclado a partir de `y`, saltando de página si hace falta. */
+	const escribirConFormato = (bloque: BloqueDossier, ancho: number): void => {
+		const lineas = repartirEnLineas(bloque.trozos ?? [], ancho, medirTrozo);
+		for (const linea of lineas) {
+			if (y + linea.alto > 282) { doc.addPage(); y = 24; }
+			let x = 12;
+			for (const t of linea.trozos) {
+				ponerEstilo(t.estilo);
+				doc.setTextColor(20, 24, 28);
+				doc.text(t.texto, x, y + linea.alto * 0.72);
+				x += t.ancho;
+			}
+			y += linea.alto;
+		}
+		doc.setFont('helvetica', 'normal');
+		doc.setTextColor(0);
+	};
+
+	/** Mete una imagen respetando su proporción y sin que se salga de la página. */
+	const meterImagen = (bloque: BloqueDossier, anchoMax: number): void => {
+		if (!bloque.imagen) return;
+		const props = doc.getImageProperties(bloque.imagen);
+		const ancho = Math.min(anchoMax, anchoMax * ((bloque.anchoPct ?? 100) / 100));
+		const alto = (props.height / props.width) * ancho;
+		// Si no cabe en lo que queda de página, se pasa entera a la siguiente en vez de partirla.
+		if (y + alto > 282) { doc.addPage(); y = 24; }
+		doc.addImage(bloque.imagen, props.fileType, 12, y, ancho, alto, undefined, 'FAST');
+		y += alto + 3;
+		if (bloque.pie) {
+			doc.setFontSize(8.5);
+			doc.setTextColor(...GRIS);
+			doc.text(bloque.pie, 12, y, { maxWidth: ancho });
+			doc.setTextColor(0);
+			y += 6;
+		}
+		y += 4;
+	};
+
+	/** Un bloque del usuario: su título si lo tiene, y su contenido. */
+	const dibujarBloque = (b: BloqueDossier, ancho: number, tamTitulo = 12.5): void => {
+		if (b.titulo) {
+			if (y > 265) { doc.addPage(); y = 24; }
+			doc.setFont('helvetica', 'bold');
+			doc.setFontSize(tamTitulo);
+			doc.setTextColor(...AZUL);
+			doc.text(b.titulo, 12, y);
+			doc.setTextColor(0);
+			doc.setFont('helvetica', 'normal');
+			y += tamTitulo * 0.56;
+		}
+		if (b.tipo === 'imagen') meterImagen(b, ancho);
+		else escribirConFormato(b, ancho);
+	};
+
+	/** Dibuja, en su propia página, todo lo que el usuario ha puesto en `donde`. */
+	const dibujarBloques = (donde: BloqueDossier['donde'], titulo: string): void => {
+		const bloques = bloquesEn(proyecto.dossier, donde);
+		if (bloques.length === 0) return;
+		doc.addPage();
+		cabecera(titulo);
+		for (const b of bloques) { dibujarBloque(b, anchoPag - 24); y += 4; }
+	};
+
+	/*
+	 * APARTADOS QUE SE PUEDEN QUITAR.
+	 *
+	 * Se dibuja TODO y al final se borran las páginas de los apartados apagados, en vez de llenar
+	 * el generador de condicionales. Es menos código y menos frágil: el dibujo de cada apartado no
+	 * se entera de nada, y añadir uno nuevo no obliga a tocar la fontanería.
+	 */
+	const rangos: { id: string; desde: number; hasta: number }[] = [];
+	const marcar = (id: string): void => {
+		const previo = rangos[rangos.length - 1];
+		if (previo) previo.hasta = doc.getNumberOfPages() - 1;
+		rangos.push({ id, desde: doc.getNumberOfPages(), hasta: doc.getNumberOfPages() });
+	};
+
 	/* ---------------------------- Portada ---------------------------- */
 	doc.setFillColor(...AZUL);
 	doc.rect(0, 0, anchoPag, 62, 'F');
@@ -257,21 +355,35 @@ export function exportarPDF(proyecto: Proyecto): void {
 		doc.setFont('helvetica', 'normal');
 	});
 
-	// Vista del tablero en la propia portada: el cliente reconoce su tablero de un vistazo.
+	/*
+	 * Vista del tablero en la propia portada: el cliente reconoce su tablero de un vistazo.
+	 *
+	 * Si el usuario ha puesto algo suyo EN LA PORTADA, el plano se dibuja más bajo para dejarle
+	 * sitio debajo. Antes se escribía encima del plano, que es peor que no dejar poner nada.
+	 */
+	const dePortada = bloquesEn(proyecto.dossier, 'portada');
+	const altoPlano = dePortada.length ? 86 : 118;
 	doc.setTextColor(...GRIS);
 	doc.setFontSize(9);
 	doc.text('Disposición de la placa de montaje', 20, 132);
 	doc.setTextColor(0);
-	const escalaPortada = dibujarPlaca(doc, proyecto, { x: 20, y: 138, ancho: anchoPag - 46, alto: 118 });
+	const escalaPortada = dibujarPlaca(doc, proyecto, { x: 20, y: 138, ancho: anchoPag - 46, alto: altoPlano });
 	doc.setFontSize(7.5);
 	doc.setTextColor(...GRIS);
 	doc.text(
 		escalaPortada
 			? `Escala aproximada 1:${Math.round(1 / escalaPortada)} · medidas en milímetros`
 			: 'El proyecto todavía no tiene gabinete definido.',
-		20, altoPag - 22,
+		20, 138 + altoPlano + 5,
 	);
 	doc.setTextColor(0);
+	if (dePortada.length) {
+		y = 138 + altoPlano + 13;
+		for (const b of dePortada) { dibujarBloque(b, anchoPag - 40, 11); y += 3; }
+	}
+
+	// Lo que va al principio, en su propia página antes de los apartados generados.
+	dibujarBloques('principio', 'Presentación');
 
 	/*
 	 * ---------- Procedencia de los datos ----------
@@ -282,6 +394,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	 */
 	doc.addPage();
 	cabecera('Procedencia de los datos');
+	marcar('procedencia');
 	doc.setFontSize(9);
 	doc.setTextColor(...GRIS);
 	doc.text(
@@ -358,6 +471,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	/* --------------------- 1. Ficha del tablero --------------------- */
 	doc.addPage();
 	cabecera('1. Ficha del tablero');
+	marcar('ficha');
 	// Si el proyecto no declara la caja, la ficha la deduce de la placa: hay que decirlo, no
 	// dar por buena una medida supuesta en un papel que se usa para pedir el armario.
 	const cajaTexto = ficha.caja
@@ -443,6 +557,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	/* --------------- 2. Disposición de la placa (a escala) --------------- */
 	doc.addPage();
 	cabecera('2. Disposición de la placa');
+	marcar('placa');
 	// La altura del hueco deja sitio bajo el dibujo para la cota, la leyenda y el pie.
 	const escala = dibujarPlaca(doc, proyecto, { x: 12, y: 38, ancho: anchoPag - 32, alto: 142 });
 	y = 194;
@@ -494,6 +609,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	/* --------------------- 3. Lista de materiales --------------------- */
 	doc.addPage();
 	cabecera('3. Lista de materiales (BOM)');
+	marcar('bom');
 	if (bom.length === 0) {
 		doc.setFontSize(10);
 		doc.text('El proyecto no tiene aparatos.', 12, y);
@@ -511,6 +627,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	/* --------------------- 4. Índice de aparatos --------------------- */
 	doc.addPage();
 	cabecera('4. Índice de aparatos');
+	marcar('aparatos');
 	tabla(['Marcado', 'Descripción', 'Tensión', 'In / Ib', 'En el esquema'],
 		referencias.indice.map((e) => {
 			const d = proyecto.dispositivos.find((x) => x.id === e.dispositivoId);
@@ -563,6 +680,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	/* --------------------- 5. Lista de conductores --------------------- */
 	doc.addPage();
 	cabecera('5. Lista de conductores');
+	marcar('conductores');
 	if (conductores.length === 0) {
 		doc.setFontSize(10);
 		doc.text('El proyecto no tiene conductores.', 12, y);
@@ -577,6 +695,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	if (referencias.cruzadas.length > 0) {
 		doc.addPage();
 		cabecera('6. Referencias cruzadas');
+		marcar('referencias');
 		const filas = referencias.cruzadas.flatMap((x) =>
 			x.contactos.length === 0
 				? [[x.designacion, x.posicion, '(sin contactos)', '', '']]
@@ -588,6 +707,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	if (termico) {
 		doc.addPage();
 		cabecera('7. Balance térmico del gabinete');
+		marcar('termico');
 		const MONTAJES: Record<string, string> = {
 			mural: 'adosado a pared (cara trasera sin disipar)',
 			exento: 'exento (disipa por todas las caras)',
@@ -687,6 +807,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	/* --------------------- 9. Verificación DRC --------------------- */
 	doc.addPage();
 	cabecera('Verificación eléctrica (DRC)');
+	marcar('drc');
 	if (hallazgos.length === 0) {
 		doc.setFontSize(11);
 		doc.setTextColor(...VERDE);
@@ -701,6 +822,7 @@ export function exportarPDF(proyecto: Proyecto): void {
 	/* ------------- Anexo A · Placa de características IEC 61439 ------------- */
 	doc.addPage();
 	cabecera('Anexo A · Placa de características');
+	marcar('anexo');
 	doc.setFontSize(9);
 	doc.setTextColor(...GRIS);
 	doc.text(
@@ -805,6 +927,17 @@ export function exportarPDF(proyecto: Proyecto): void {
 	);
 	doc.setTextColor(0);
 
+	dibujarBloques('final', 'Anexos del proyectista');
+
+	/* ---------- Fuera los apartados que no se quieren en ESTE dossier ---------- */
+	const ultimo = rangos[rangos.length - 1];
+	if (ultimo) ultimo.hasta = doc.getNumberOfPages();
+	// De atrás hacia delante: borrar una página mueve las de después, y al revés se descuadraría.
+	for (const r of [...rangos].reverse()) {
+		if (saleSeccion(proyecto.dossier, r.id)) continue;
+		for (let n = r.hasta; n >= r.desde; n--) doc.deletePage(n);
+	}
+
 	/* --------------------- Pie de página en todas --------------------- */
 	const paginas = doc.getNumberOfPages();
 	for (let i = 1; i <= paginas; i++) {
@@ -815,7 +948,16 @@ export function exportarPDF(proyecto: Proyecto): void {
 		doc.text(`${proyecto.nombre} — dossier técnico`, 12, 290);
 	}
 
+	return doc;
+}
+
+/** El dossier como PDF listo para enseñar en la vista previa. */
+export function dossierComoBlob(proyecto: Proyecto): Blob {
+	return construirDossier(proyecto).output('blob') as Blob;
+}
+
+export function exportarPDF(proyecto: Proyecto): void {
 	// Se descarga con el mismo camino que todo lo demás, y no con `doc.save()`, para que el nombre
 	// pase por la limpieza: un acento en el título dejaba el PDF guardado como «download».
-	descargar(`${proyecto.nombre} - dossier.pdf`, doc.output('blob'));
+	descargar(`${proyecto.nombre} - dossier.pdf`, dossierComoBlob(proyecto));
 }

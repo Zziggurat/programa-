@@ -54,9 +54,20 @@ async function empezarDeCero() {
 mkdirSync(join(AQUI, '_salida'), { recursive: true });
 /** Exporta el dossier y devuelve su contenido como texto crudo del PDF. */
 async function exportar(nombre) {
+	// El botón 📄 abre la vista previa; el dossier se descarga desde ella.
+	await page.evaluate(() => {
+		const e = document.getElementById('dos-estado');
+		if (e) e.textContent = '';
+		document.getElementById('btn-pdf').click();
+	});
+	await page.waitForFunction(
+		() => /KB/.test(document.getElementById('dos-estado')?.textContent ?? ''), { timeout: 40000 });
 	const espera = page.waitForEvent('download');
-	await jsClick('btn-pdf');
+	await jsClick('dos-descargar');
 	const d = await espera;
+	// Se cierra: la vista previa ocupa la pantalla entera y taparía el editor de detrás.
+	await jsClick('dos-cerrar');
+	await page.waitForTimeout(150);
 	const destino = join(AQUI, '_salida', `${nombre}.pdf`);
 	await d.saveAs(destino);
 	const bytes = readFileSync(destino);
@@ -75,7 +86,11 @@ await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
 const p = await qa('proyecto');
 const uno = await exportar('ejemplo');
 must('el PDF se genera y pesa lo suyo', uno.bytes > 30000, `${uno.bytes} bytes`);
-must('el archivo lleva el nombre del proyecto', uno.archivo.includes('Tablero'), uno.archivo);
+// Se compara con el nombre REAL del proyecto abierto y no con una palabra fija: así la prueba
+// sigue valiendo cuando cambia la biblioteca de ejemplos.
+must('el archivo lleva el nombre del proyecto',
+	uno.archivo.startsWith(p.nombre.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9 ._-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 30)),
+	`${uno.archivo} · proyecto «${p.nombre}»`);
 must('tiene todas las secciones del dossier', paginas(uno.texto) >= 8, `${paginas(uno.texto)} páginas`);
 for (const seccion of ['Ficha del tablero', 'Disposici', 'Lista de materiales', 'ndice de aparatos',
 	'Lista de conductores', 'Verificaci']) {

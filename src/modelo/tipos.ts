@@ -14,6 +14,8 @@ export type LetraClase =
 	| 'Q' | 'R' | 'S' | 'T' | 'U' | 'W' | 'X' | 'Y';
 
 /** Tipos de aparato conocidos, con su letra IEC por defecto (se puede forzar con `clase`). */
+import { AjustesDossier } from './dossier.js';
+
 export type TipoDispositivo =
 	| 'plc' | 'fuente' | 'transformador' | 'contactor' | 'rele'
 	| 'disyuntor' | 'guardamotor' | 'diferencial' | 'fusible' | 'seccionador'
@@ -391,6 +393,8 @@ export interface Proyecto {
 	opciones?: OpcionesProyecto;
 	/** Ajustes del dibujo del esquema que decide quien dibuja, no el motor. */
 	esquema?: AjustesEsquema;
+	/** Qué apartados lleva el dossier y qué le añade a mano quien lo firma. */
+	dossier?: AjustesDossier;
 }
 
 /** Lo que se puede cambiar del esquema sin tocar el circuito. */

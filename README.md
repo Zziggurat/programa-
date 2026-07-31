@@ -8,7 +8,7 @@ totalmente personalizable.
 ## Qué hace ya (núcleo v0.1)
 
 El núcleo es una librería TypeScript **sin interfaz gráfica**, con un modelo de datos JSON y
-quince motores independientes y testeados:
+dieciséis motores independientes y testeados:
 
 | Motor | Archivo | Qué resuelve |
 |---|---|---|
@@ -23,6 +23,7 @@ quince motores independientes y testeados:
 | Terminales | `src/motores/terminales.ts` | Geometría de las borneras declaradas por ficha de datos: es la única fuente de verdad que comparten el modelo 3D y el anclaje de los cables |
 | Ficha del tablero | `src/motores/ficha-tablero.ts` | Las cifras del conjunto: recuento de aparatos por familia, medidas de caja y placa, metros de riel y canaleta, cable por sección, ocupación de la placa |
 | Simulación | `src/motores/simulacion.ts` | Energizar el tablero y verlo funcionar: contactos según el estado de cada mando, propagación de la tensión e iteración a punto fijo para que el enclavamiento se sostenga. Y con qué **corriente**: intensidades por rama contadas **por fase**, cortocircuitos fase-neutro y fase-fase con la protección que los ve, **tiempo de disparo** según la curva (B/C/D/K/Z y gG), sobrecarga cronometrada y **temporizadores** a la conexión y a la desconexión. Y dos comprobaciones que se hacen antes de dar tensión: que cada carga reciba **su** tensión (un piloto de 24 V en el circuito de 220 se quema, y «funciona» en cualquier simulación que solo mire si hay tensión o no) y que la **punta de arranque** de un motor —seis veces su nominal— la aguante la protección de delante |
+| Dossier editable | `src/modelo/dossier.ts` | Qué apartados lleva el dossier y qué le añade a mano quien lo firma. Aquí está el **reparto del texto en líneas**: cortar un párrafo donde cabe sabiendo que dentro hay trozos en negrita, en cursiva, de otro tamaño y de otra fuente, y que una palabra suelta puede no caber ni ella sola |
 | Nombres de archivo | `src/modelo/archivos.ts` | Deja en ASCII el nombre de lo que se descarga. No es manía: **un solo carácter con tilde en el atributo `download` y el navegador tira el nombre entero** y guarda el archivo como «download», sin extensión — que es lo que le pasaba a «Climatización» y a casi todos los tableros de aquí |
 | Consulta de planta | `src/motores/planta.ts` | Buscar una máquina entre 129 como se escribe de verdad (sin guiones ni tildes), filtrar por tipo/controlador/señales, colorear por cuatro criterios, y **medir una tirada de cable**: recta, recorrido ortogonal por bandeja, subida y bajada, y los metros a pedir con su reserva |
 | Del mundo al tablero | `src/motores/planta-tablero.ts` | Convertir las máquinas elegidas en la cubierta en el tablero que las gobierna: lista de señales, bornera por máquina con sus comunes puenteados, peine de comunes, controlador dimensionado a la E/S real, alimentación y todo el cableado |
@@ -80,6 +81,7 @@ Además de los tests del núcleo, hay varias suites que manejan el editor 3D de 
 | `npm run qa:planta` | La segunda herramienta: el visor se abre aparte del editor, los datos salen del plano, se consultan los puntos del BMS de una máquina, se recorre a pie, está montada la obra de la cubierta y **el ratón mira hacia donde se arrastra** (comprobado con números, no a ojo) |
 | `npm run qa:inicio` | La **ventana de inicio**; el **alzado 2D**, que es ortográfico de verdad —la escala no cambia con la profundidad, y en 3D sí—; que al agrandar la caja el tablero **no atraviese el suelo**; y que ninguna cara del frente de un aparato quede a menos de 0,5 mm de otra, que es lo que hacía **parpadear** las letras |
 | `npm run qa:prender` | **De cero a encender**: placa en blanco → sacar del catálogo la acometida, el disyuntor y la ampolleta → cablearlos a clics → Energizar → la ampolleta prende, y se apaga al abrir el disyuntor. Y el arranque de un motor trifásico con su contactor y su pulsador |
+| `npm run qa:dossier` | La **vista previa editable del dossier**: que el PDF se vea antes de descargarlo y que lo que se ve sea el PDF de verdad, que se quiten apartados, que el texto se escriba con negrita, cursiva, tamaño y fuente, que entren imágenes de archivo y capturas del tablero en 3D y en 2D — y al final se descarga y se **lee el PDF** para comprobar que lo escrito está dentro |
 | `npm run qa:esquema` | El **esquema que se ordena a mano** (arrastrar un símbolo, deshacerlo, volver a ordenar solo, columnas por hoja) y el **dossier que no supone nada**: se exporta sin declarar ningún dato y se lee el PDF para comprobar que dice «a declarar» en vez de inventarse el uso previsto, la frecuencia o la temperatura |
 | `npm run qa:planta-trabajo` | La planta **como herramienta de trabajo**: buscar entre las 129 máquinas, filtrar, colorear, **medir una tirada** (30 y 40 m: recta 50, recorrido 70, a pedir 85) y el puente entero **del plano al tablero** — elegir tres UMAs, revisar su lista de señales y comprobar que el tablero llega al editor con sus borneras rotuladas y **sin un error de DRC** |
 | `npm run qa:empaquetado` | **El archivo que se entrega**: abre `dist-final/TableroStudio.html` con `file://`, sin servidor, y comprueba que arranca en la ventana de inicio, que se puede trabajar y que salen el dossier y el proyecto guardado |
@@ -221,6 +223,22 @@ Designer, conectado en vivo con los motores del núcleo:
   cambiar el **número de columnas por hoja** (la palanca que convierte un esquema apretado en uno
   que se lee), poner **título propio** a cada hoja, y volver a **«⟲ Ordenar solo»** cuando se
   quiera. Todo entra en el historial de deshacer y se guarda en el proyecto.
+- **El dossier se ve antes de descargarlo, y se edita** (botón «📄 Ver dossier»): el PDF se abre
+  en una vista previa —no una maqueta parecida: **es el PDF**, el mismo que se descarga— y al lado
+  están las herramientas para dejarlo como se quiere entregar:
+  - **qué apartados lleva**: se quita la lista de materiales, las referencias cruzadas o lo que no
+    le interese a ese cliente. La verificación eléctrica y la procedencia de los datos **no se
+    pueden quitar**: son lo que hace defendible el documento.
+  - **texto propio con formato**, como en un procesador: se escribe, se selecciona y se le da
+    **negrita**, *cursiva*, tamaño (8 a 28 pt) y fuente (Helvetica, Times o Courier). Ctrl+B y
+    Ctrl+I también.
+  - **imágenes**: una foto del disco, una **captura del tablero en 3D** o su **alzado 2D**, con su
+    pie y su ancho.
+  - y cada cosa **donde se quiera**: en la portada, al principio o al final, en el orden que sea.
+
+  Lo que **no** se edita a mano son las tablas y las cifras, y es a propósito: salen del tablero, y
+  un dossier donde se pudieran escribir a dedo dejaría de valer para lo único que vale, que es ser
+  fiel a lo que hay montado.
 - **El dossier no afirma lo que nadie ha declarado.** La placa de características de IEC 61439-1
   §6.1 la firma quien monta el conjunto, así que el programa dejó de rellenarla con SUS valores por
   defecto: lo que el proyecto no declara sale como «a declarar», el balance térmico marca cuáles de

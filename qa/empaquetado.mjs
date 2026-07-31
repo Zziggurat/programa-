@@ -126,8 +126,22 @@ const bajar = async (selector, patron, abridor) => {
 	return { ok: patron.test(d.suggestedFilename()), nombre: d.suggestedFilename(), bytes: readFileSync(destino).length };
 };
 
-const pdf = await bajar('#btn-pdf', /\.pdf$/i);
+// El botón 📄 abre la VISTA PREVIA del dossier; se descarga desde ella. Aquí se comprueba
+// también que la vista previa funciona en el archivo entregado, sin sonda de pruebas.
+await page.click('#btn-pdf');
+await page.waitForFunction(
+	() => /KB/.test(document.getElementById('dos-estado')?.textContent ?? ''), { timeout: 40000 });
+must('la vista previa del dossier se abre en el archivo entregado', await page.isVisible('#panel-dossier'));
+must('y enseña el PDF de verdad', await page.evaluate(() => {
+	const f = document.querySelector('#dos-vista iframe');
+	return !!f && f.src.startsWith('blob:');
+}));
+const pdf = await bajar('#dos-descargar', /\.pdf$/i);
 must('exporta el dossier en PDF', pdf.ok && pdf.bytes > 30000, `${pdf.nombre} · ${pdf.bytes ?? 0} bytes`);
+// La vista previa ocupa la pantalla entera: se cierra antes de seguir tocando el editor.
+await page.click('#dos-cerrar');
+await page.waitForTimeout(200);
+must('la vista previa se cierra y se vuelve al tablero', !(await page.isVisible('#panel-dossier')));
 
 const proyecto = await bajar('#btn-guardar', /\.json$/i, '#btn-archivo');
 must('guarda el proyecto en un archivo', proyecto.ok && proyecto.bytes > 500,

@@ -13,6 +13,26 @@ import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
+/**
+ * El dossier ya no se descarga de golpe: el botón 📄 abre la VISTA PREVIA, y se descarga desde
+ * ella. Este ayudante recorre ese camino, que es el que hace ahora cualquiera.
+ *
+ * Se borra antes el indicador de tamaño para no dar por buena la generación ANTERIOR: si no, al
+ * abrir la vista previa por segunda vez la espera terminaría al instante con el PDF de antes.
+ */
+async function abrirVistaPreviaDossier(page) {
+	await page.evaluate(() => {
+		const e = document.getElementById('dos-estado');
+		if (e) e.textContent = '';
+		document.getElementById('btn-pdf').click();
+	});
+	await page.waitForFunction(
+		() => /KB/.test(document.getElementById('dos-estado')?.textContent ?? ''),
+		{ timeout: 40000 },
+	);
+}
+
+
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SAL = join(AQUI, '_salida'); mkdirSync(SAL, { recursive: true });
 const ROOT = join(AQUI, '..', 'app', 'dist');
@@ -116,7 +136,8 @@ const bajar = async (id) => {
 	await d.saveAs(destino);
 	return { nombre: d.suggestedFilename(), destino };
 };
-const pdf = await bajar('btn-pdf');
+await abrirVistaPreviaDossier(page);
+const pdf = await bajar('dos-descargar');
 must('el dossier se descarga con su nombre completo', !!pdf && /\.pdf$/i.test(pdf.nombre),
 	pdf?.nombre ?? '(no descargó)');
 
@@ -144,7 +165,8 @@ await page.evaluate(() => {
 		regimenNeutro: 'TN-S', usoPrevisto: 'intemperie',
 	};
 });
-const pdf2 = await bajar('btn-pdf');
+await abrirVistaPreviaDossier(page);
+const pdf2 = await bajar('dos-descargar');
 const texto2 = pdf2 ? execFileSync('python3', [join(AQUI, 'leer-pdf.py'), pdf2.destino]).toString() : '';
 must('ya no queda nada pendiente',
 	texto2.includes('declara todos los datos necesarios'),
