@@ -26,6 +26,7 @@ import {
 	anclajeBorne, cajaDe, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	liberar, rutasDeCables, salidasDeCable, vaciar, VOLTAJE_COLOR, Z_FRENTE,
+	Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
@@ -38,7 +39,7 @@ import { HojaEsq, montarEsquema, posicionesEnEsquema } from '../src/motores/esqu
 import { hojaASvg } from './esquema-svg.js';
 import { exportarEsquemaPDF } from './esquema-pdf.js';
 import { dxfDeEsquema, dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
-import { distPuntoSegmento, longitudSolapada, orthogonalize } from './geometria-cables.js';
+import { distPuntoSegmento, longitudSolapada, orthogonalize, redondearEsquinas } from './geometria-cables.js';
 
 /** Bandera que inyecta el empaquetador: true solo en el build para las pruebas (QA=1). */
 declare const __QA__: boolean;
@@ -314,6 +315,18 @@ controlesOrto.mouseButtons = {
 let vista2D = false;
 /** La cámara con la que se dibuja y se pincha ahora mismo. */
 function camaraViva(): THREE.Camera { return vista2D ? camaraOrto : camara; }
+
+/**
+ * Suelta o bloquea la cámara QUE MANDA AHORA. Mientras se arrastra un cable, un aparato o una
+ * cota, la cámara tiene que quedarse quieta.
+ *
+ * Va por función y no tocando `controles` directamente porque hay DOS juegos de controles. Al
+ * añadir el alzado se seguía bloqueando solo el de la perspectiva, así que en 2D —donde el botón
+ * izquierdo desplaza la hoja— arrastrar una unión de cable movía la vista entera en vez del punto.
+ */
+function permitirOrbita(permitir: boolean): void {
+	(vista2D ? controlesOrto : controles).enabled = permitir;
+}
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 escena.environment = pmrem.fromScene(new RoomEnvironment(), 0.045).texture;
@@ -706,6 +719,8 @@ function colocarPlantilla(plantilla: PlantillaAparato): void {
 		avisar('Añade primero un riel DIN (panel «Gabinete y estructura» → + Riel)', 'error');
 		return;
 	}
+	// Si ya había uno pegado al ratón, se suelta donde esté antes de sacar el siguiente.
+	if (colocando) soltarColocacion();
 	capturar();
 	const d = crearDesdePlantilla(plantilla, proyecto);
 	d.hojaId = proyecto.hojas[0]?.id;
@@ -729,6 +744,75 @@ function colocarPlantilla(plantilla: PlantillaAparato): void {
 	if (rielTocado) reconstruirEstructuraUno({ tipo: 'riel', id: rielTocado });
 	actualizarConservandoAparatos();
 	seleccionar(d.id);
+	colocando = { id: d.id };
+	renderer.domElement.style.cursor = 'copy';
+	$('ayuda').textContent = `📦 ${d.designacion ?? plantilla.nombre} va pegado al ratón — `
+		+ 'muévelo por la placa y haz clic para soltarlo · Esc lo cancela.';
+}
+
+/**
+ * COLOCAR DONDE ESTÁ EL RATÓN, no siempre en el primer hueco del riel de arriba.
+ *
+ * Al pinchar en el catálogo el aparato nace pegado al puntero y va siguiéndolo por la placa,
+ * pegándose al riel más cercano, hasta que un clic lo suelta. Antes todo caía en el mismo sitio
+ * y había que arrastrarlo desde allí uno por uno.
+ *
+ * El aparato ya existe en el proyecto mientras se coloca —así se ve de verdad, con su tamaño y
+ * su color, en vez de una silueta—; si se cancela con Esc, se quita.
+ */
+let colocando: { id: string } | undefined;
+
+/** Lleva el aparato que se está colocando al punto del ratón, pegado al riel más cercano. */
+function moverColocacionAlCursor(ev: MouseEvent): void {
+	if (!colocando) return;
+	const g = proyecto.gabinete!;
+	const col = g.colocaciones.find((c) => c.dispositivoId === colocando!.id);
+	const p = puntoModelo(ev);
+	if (!col || !p) return;
+	const snap = snapAriel(p.x, p.y, col.ancho, col.alto);
+	const cx = snap ? snap.cx : p.x;
+	const cy = snap ? snap.cy : p.y;
+	col.rielId = snap?.rielId;
+	col.x = Math.min(Math.max(Math.round(cx - col.ancho / 2), 0), g.ancho - col.ancho);
+	col.y = Math.min(Math.max(Math.round(cy - col.alto / 2), 0), g.alto - col.alto);
+	const c = escenario.aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
+	grupoDe(colocando.id)?.position.set(c.x, c.y, 0);
+	// Rojo si cae encima de otro aparato: se ve antes de soltar, no después.
+	const choca = solapaCon(col.x, col.y, col.ancho, col.alto, colocando.id);
+	for (const m of resaltados) m.emissive.setHex(choca ? 0xff3b3b : 0x1d4ed8);
+}
+
+/** Suelta el aparato donde esté. Si choca con otro, no se suelta y se avisa. */
+function soltarColocacion(): boolean {
+	if (!colocando) return false;
+	const col = proyecto.gabinete!.colocaciones.find((c) => c.dispositivoId === colocando!.id);
+	if (col && solapaCon(col.x, col.y, col.ancho, col.alto, colocando.id)) {
+		avisar('Ahí se encima con otro aparato: busca un hueco libre.', 'error');
+		return true;   // sigue pegado al ratón
+	}
+	const id = colocando.id;
+	colocando = undefined;
+	renderer.domElement.style.cursor = '';
+	const rielTocado = col ? extenderRielPara(col) : undefined;
+	if (rielTocado) reconstruirEstructuraUno({ tipo: 'riel', id: rielTocado });
+	actualizarConservandoAparatos();
+	seleccionar(id);
+	$('ayuda').textContent = '';
+	return true;
+}
+
+/** Cancela la colocación en curso y quita el aparato recién sacado del catálogo. */
+function cancelarColocacion(): void {
+	if (!colocando) return;
+	const id = colocando.id;
+	colocando = undefined;
+	renderer.domElement.style.cursor = '';
+	proyecto.dispositivos = proyecto.dispositivos.filter((d) => d.id !== id);
+	proyecto.gabinete!.colocaciones = proyecto.gabinete!.colocaciones.filter((c) => c.dispositivoId !== id);
+	aplicarSeleccion(undefined);
+	actualizarTodo();
+	$('ayuda').textContent = '';
+	avisar('Colocación cancelada.', 'info');
 }
 
 /**
@@ -1346,18 +1430,32 @@ function pintarSeleccion(): void {
 			pintarSeleccion();
 		};
 		// Profundidad de la imagen: al fondo (detrás del riel) o al frente.
+		/*
+		 * Profundidad de la imagen. El primer clic SALTA al tope: «al frente» tiene que dejarla
+		 * delante de verdad y «al fondo» detrás de verdad, no un poco más allá.
+		 *
+		 * Antes cada clic movía 15 mm desde cero, y como el riel sobresale 22 mm, pulsar «al
+		 * frente» una vez dejaba la imagen todavía tapada —parecía que el programa la mandaba
+		 * sola hacia atrás—. A partir del tope, los clics siguientes sí afinan de 20 en 20 para
+		 * quien quiera ponerla por delante de los aparatos.
+		 */
 		const moverEnZ = (paso: number) => {
 			if (!col) return;
 			capturar();
-			col.z = Math.max(-40, Math.min(60, Math.round((col.z ?? 0) + paso)));
+			const z = col.z ?? 0;
+			const destino = paso > 0
+				? (z < Z_IMAGEN_FRENTE ? Z_IMAGEN_FRENTE : z + 20)
+				: (z > Z_IMAGEN_FONDO ? Z_IMAGEN_FONDO : z - 10);
+			col.z = Math.max(-40, Math.min(140, Math.round(destino)));
 			reconstruirDispositivoUno(d.id);
 			pintarSeleccion();
-			avisar(col.z <= -10 ? 'Imagen al fondo: la estructura queda por delante'
-				: col.z >= 20 ? 'Imagen al frente: por delante de rieles y canaletas'
-					: `Profundidad de la imagen: ${col.z} mm`);
+			avisar(col.z <= Z_IMAGEN_FONDO ? 'Imagen al fondo: la estructura queda por delante'
+				: col.z >= 100 ? `Imagen por delante de todo (${col.z} mm)`
+					: col.z >= Z_IMAGEN_FRENTE ? `Imagen delante del riel (${col.z} mm)`
+						: `Profundidad de la imagen: ${col.z} mm`);
 		};
-		(panel.querySelector('#btn-img-fondo') as HTMLButtonElement).onclick = () => moverEnZ(-15);
-		(panel.querySelector('#btn-img-frente') as HTMLButtonElement).onclick = () => moverEnZ(15);
+		(panel.querySelector('#btn-img-fondo') as HTMLButtonElement).onclick = () => moverEnZ(-1);
+		(panel.querySelector('#btn-img-frente') as HTMLButtonElement).onclick = () => moverEnZ(1);
 		const lista = panel.querySelector('#lista-pines')!;
 		for (const b of d.bornes) {
 			const fila = document.createElement('div');
@@ -1923,7 +2021,9 @@ function cableEstaDelante(ev: MouseEvent): boolean {
 type RefBorne = { dispositivoId: string; borneId: string };
 let cableandoDesde: RefBorne | undefined;              // borne de origen mientras se tiende un cable
 let codosCableado: { x: number; y: number }[] = [];    // codos marcados con clic durante el tendido
-let gomaCable: THREE.Line | undefined;                 // «goma elástica» del cable que sigue al cursor
+let gomaCable: THREE.Mesh | undefined;                 // el cable en vivo que sigue al cursor al tender
+/** Botón apretado desde que empezó el cableado, para poder rematarlo soltando sobre el destino. */
+let arrastreDeCableado: { movido: boolean; recorrido: number } | undefined;
 
 /**
  * Borne (punto de conexión) bajo el puntero, con la distancia a la cámara: hace falta para
@@ -2007,7 +2107,12 @@ function iniciarCableado(b: RefBorne): void {
 	cableandoDesde = b;
 	codosCableado = [];
 	resaltarHoverBorne(b);
-	avisar('Haz clic en el otro borne para conectar · clic en un punto libre marca un codo · Esc cancela.', 'info');
+	// El cable aparece EN EL ACTO, pegado al borne, sin esperar a que el ratón se mueva. Antes
+	// no se veía nada hasta el primer movimiento y parecía que el clic no había hecho nada.
+	const a = anclajeBorne(proyecto, b.dispositivoId, b.borneId);
+	if (a) actualizarGomaCable(a.x, a.y);
+	avisar('Arrastra hasta el otro borne y suelta —o haz clic en él— para conectar · '
+		+ 'clic en un punto libre marca un codo · Esc cancela.', 'info');
 }
 
 /** Marca un codo del cable que se está tendiendo (como en Tinkercad, clic a clic). */
@@ -2021,6 +2126,8 @@ function anadirCodoCableado(x: number, y: number): void {
 function cancelarCableado(): void {
 	cableandoDesde = undefined;
 	codosCableado = [];
+	arrastreDeCableado = undefined;
+	permitirOrbita(true);   // se soltó el cable: la cámara vuelve a girar
 	if (gomaCable) {
 		escenario.raiz.remove(gomaCable);
 		gomaCable.geometry.dispose();
@@ -2030,23 +2137,42 @@ function cancelarCableado(): void {
 	resaltarHoverBorne(undefined);
 }
 
-/** Actualiza la goma elástica: borne de origen → codos marcados → cursor, en tramos rectos. */
+/**
+ * El CABLE EN VIVO mientras se tiende: borne de origen → codos marcados → cursor.
+ *
+ * No es una línea de un píxel como antes, es el mismo tubo con el que se va a dibujar el cable
+ * de verdad: mismo grosor, mismos codos redondeados y misma altura de trabajo. Así lo que se
+ * arrastra es exactamente lo que va a quedar, y se ve moverse mientras se lleva al otro borne
+ * —que era la parte que faltaba—. Va en verde y con un punto de luz para distinguirlo de los
+ * cables ya tendidos.
+ */
 function actualizarGomaCable(x: number, y: number): void {
 	if (!cableandoDesde) return;
 	const a = anclajeBorne(proyecto, cableandoDesde.dispositivoId, cableandoDesde.borneId);
 	if (!a) return;
 	const nodos = orthogonalize([{ x: a.x, y: a.y }, ...codosCableado, { x, y }]);
-	const pts = nodos.map((p) => escenario.aEscena(p.x, p.y, 50));
-	pts[0] = escenario.aEscena(a.x, a.y, a.z + 4);
+	const suave = redondearEsquinas(nodos, 16);
+	const pts = [
+		escenario.aEscena(a.x, a.y, a.z + 4),
+		...suave.map((p) => escenario.aEscena(p.x, p.y, Z_FRENTE)),
+	];
+	// Con el cursor todavía encima del borne no hay recorrido: un tubo de largo cero revienta
+	// la geometría, así que se separa un pelo hacia el frente para que siempre haya curva.
+	if (pts.length < 2 || pts[0].distanceTo(pts[pts.length - 1]) < 0.5) {
+		pts.push(escenario.aEscena(a.x, a.y, Z_FRENTE + 10));
+	}
+	const curva = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.5);
+	const geo = new THREE.TubeGeometry(curva, Math.max(24, pts.length * 6), 2.2, 7, false);
 	if (!gomaCable) {
-		gomaCable = new THREE.Line(
-			new THREE.BufferGeometry().setFromPoints(pts),
-			new THREE.LineBasicMaterial({ color: 0x35c46a, depthTest: false, transparent: true, opacity: 0.9 }),
-		);
+		gomaCable = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+			color: 0x35c46a, emissive: 0x1f7a44, emissiveIntensity: 0.85, roughness: 0.4,
+			transparent: true, opacity: 0.92, depthTest: false,
+		}));
 		gomaCable.renderOrder = 999;
 		escenario.raiz.add(gomaCable);
 	} else {
-		gomaCable.geometry.setFromPoints(pts);
+		gomaCable.geometry.dispose();
+		gomaCable.geometry = geo;
 	}
 }
 
@@ -2497,6 +2623,8 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	const foco = document.activeElement as HTMLElement | null;
 	if (foco && /^(INPUT|SELECT|TEXTAREA)$/.test(foco.tagName)) foco.blur();
 	if (visualizacion) return; // en Visualización solo se mira: nada se selecciona ni se mueve
+	// Aparato pegado al ratón: el clic lo suelta y no hace nada más.
+	if (colocando && ev.button === 0) { soltarColocacion(); return; }
 	// Cablear por clic: si estamos eligiendo destino, el próximo clic sobre otro aparato
 	// lo fija como destino en el formulario (funciona en cualquier modo). Se actualiza el
 	// DOM en el sitio para no perder la selección de destino al re-renderizar.
@@ -2538,7 +2666,14 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		// Tendiendo un cable el borne manda siempre: hay que poder rematarlo donde sea.
 		if (golpe && (cableandoDesde || !cableTapaAlBorne(ev, golpe.distancia))) {
 			if (cableandoDesde) completarCableado(golpe.borne);
-			else iniciarCableado(golpe.borne);
+			else {
+				iniciarCableado(golpe.borne);
+				// Queda anotado que el botón está apretado: si se arrastra hasta el otro borne y
+				// se suelta allí, el cable se remata sin necesidad de un segundo clic. Y la cámara
+				// se queda quieta mientras tanto: tirando de un cable no se gira el tablero.
+				arrastreDeCableado = { movido: false, recorrido: 0 };
+				permitirOrbita(false);
+			}
 			return;
 		}
 		// Tendiendo un cable: cada clic en un punto libre marca un CODO (como en Tinkercad).
@@ -2555,7 +2690,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		handleArrastrado = handle;
 		arrastrando = true;
 		capturadoEsteArrastre = false;
-		controles.enabled = false;
+		permitirOrbita(false);
 		return;
 	}
 
@@ -2599,7 +2734,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 				arrastrando = true;
 				handleArrastrado = undefined;
 				capturadoEsteArrastre = false;
-				controles.enabled = false;
+				permitirOrbita(false);
 				renderer.domElement.style.cursor = 'grabbing';
 			}
 			return;
@@ -2621,7 +2756,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	arrastrando = true;
 	handleArrastrado = undefined;
 	capturadoEsteArrastre = false;
-	controles.enabled = false;
+	permitirOrbita(false);
 	const p = puntoModelo(ev);
 	if (!p) return;
 	if (elem.tipo === 'dispositivo') {
@@ -2639,6 +2774,8 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 
 renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (visualizacion) return;
+	// Aparato recién sacado del catálogo: va pegado al ratón hasta que un clic lo suelta.
+	if (colocando) { moverColocacionAlCursor(ev); return; }
 	// Resaltado al pasar el ratón (modo Trabajo): bornes (para cablear) y cables (para tocarlos).
 	if (!arrastrando) {
 		if (modo === 'trabajo') {
@@ -2646,7 +2783,15 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			resaltarHoverBorne(b);
 			mostrarTipBorne(b, ev);
 			resaltarHoverCable(b ? undefined : cableBajoElPuntero(ev));
-			if (cableandoDesde) { const p = puntoCable(ev); if (p) actualizarGomaCable(p.x, p.y); }
+			if (cableandoDesde) {
+				const p = puntoCable(ev);
+				if (p) actualizarGomaCable(p.x, p.y);
+				// Un temblor de la mano no es un arrastre: hasta 5 px recorridos sigue siendo clic.
+				if (arrastreDeCableado) {
+					arrastreDeCableado.recorrido += Math.hypot(ev.movementX || 0, ev.movementY || 0);
+					if (arrastreDeCableado.recorrido > 5) arrastreDeCableado.movido = true;
+				}
+			}
 			renderer.domElement.style.cursor = b || cableandoDesde ? 'crosshair' : (cableBajoElPuntero(ev) ? 'grab' : '');
 		}
 		return;
@@ -2665,7 +2810,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		} else {
 			// Sin unión donde se pinchó no hay nada que mover: se avisa una sola vez.
 			avisar('Haz doble clic sobre el cable para crear una unión y poder moverlo ahí.', 'info');
-			controles.enabled = true;
+			permitirOrbita(true);
 			arrastrando = false;
 			renderer.domElement.style.cursor = '';
 		}
@@ -2745,7 +2890,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	// Un CABLE no se mueve por aquí: sus uniones las lleva `arrastrandoCable`. Si se llegara a
 	// esta parte con un cable seleccionado (pasaba al pinchar un cable sin uniones y arrastrar),
 	// se buscaría un riel con el id del cable y se rompía la escena.
-	if (sel.tipo === 'cable') { arrastrando = false; controles.enabled = true; return; }
+	if (sel.tipo === 'cable') { arrastrando = false; permitirOrbita(true); return; }
 	if (sel.tipo === 'dispositivo') {
 		const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id)!;
 		const antesX = col.x;
@@ -2778,7 +2923,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		// Mover un riel ARRASTRA CONSIGO los aparatos anclados a él (como al soltar el perfil
 		// DIN en un tablero real). Si algo choca o se sale, se avisa en rojo en el momento.
 		const riel = g.rieles.find((r) => r.id === sel!.id);
-		if (!riel) { arrastrando = false; controles.enabled = true; return; }
+		if (!riel) { arrastrando = false; permitirOrbita(true); return; }
 		const nx = Math.round((p.x - desfase.x) / 5) * 5;
 		const ny = Math.round((p.y - desfase.y) / 5) * 5;
 		const dx = nx - riel.x;
@@ -2796,14 +2941,33 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 
 renderer.domElement.addEventListener('pointerleave', () => mostrarTipBorne(undefined));
 
-renderer.domElement.addEventListener('pointerup', () => {
+renderer.domElement.addEventListener('pointerup', (ev) => {
+	/*
+	 * TENDER EL CABLE ARRASTRANDO, no solo a dos clics.
+	 *
+	 * Se pincha el borne, se lleva el cable hasta el otro sin soltar y se suelta allí — que es
+	 * como lo hace todo el mundo la primera vez. Si el ratón NO se movió, no se remata nada: eso
+	 * fue un clic, y el cableado sigue vivo esperando el segundo. Los dos modos conviven, porque
+	 * el de clic a clic es el que permite ir marcando codos por el camino.
+	 */
+	if (cableandoDesde && arrastreDeCableado) {
+		const movido = arrastreDeCableado.movido;
+		arrastreDeCableado = undefined;
+		permitirOrbita(true);
+		if (movido) {
+			const golpe = borneBajoElPunteroCon(ev);
+			if (golpe) completarCableado(golpe.borne);
+			else avisar('Suéltalo sobre un borne para conectar · o sigue a clics para marcar codos · Esc cancela.', 'info');
+			return;
+		}
+	}
 	if (!arrastrando) return;
 	arrastrando = false;
 	handleArrastrado = undefined;
 	const eraCable = arrastrandoCable;
 	arrastrandoCable = undefined;
 	pendienteCable = undefined; // si no llegó a moverse, fue solo un clic de selección
-	controles.enabled = true;
+	permitirOrbita(true);
 	renderer.domElement.style.cursor = '';
 	if (!capturadoEsteArrastre) { arrastreInicio = undefined; estadoRielArrastre = undefined; return; } // fue un clic
 	// Riel soltado: si sus aparatos chocaron con otros o se salieron de la placa, se devuelve
@@ -2979,6 +3143,7 @@ window.addEventListener('keydown', (ev) => {
 		// Escape cierra primero lo que esté abierto encima: es lo que espera cualquiera.
 		const abiertos = ['modal-proyecto', 'modal-controlador', 'modal-drc'].filter((id) => !($(id) as HTMLElement).hidden);
 		if (abiertos.length) { for (const id of abiertos) ($(id) as HTMLElement).hidden = true; }
+		else if (colocando) cancelarColocacion();
 		else if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); }
 		else aplicarSeleccion(undefined);
 	}
@@ -3065,6 +3230,7 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 				x: Math.max(0, Math.round((g.ancho - ancho) / 2)),
 				y: Math.max(0, Math.round((g.alto - alto) / 2)),
 				ancho, alto,
+				z: Z_IMAGEN_FRENTE,   // delante del riel desde el primer momento
 			});
 			actualizarTodo();
 			seleccionar(id);
@@ -3306,7 +3472,7 @@ function aplicarVisualizacion(activo: boolean): void {
 		mostrarTipBorne(undefined);
 		aplicarSeleccion(undefined);
 		arrastrando = false;
-		controles.enabled = true;
+		permitirOrbita(true);
 	}
 	// Aquí no se trabaja, así que la cámara va SUELTA: se puede dar toda la vuelta al tablero
 	// y mirarlo desde donde se quiera. Al volver a editar se recuperan los topes de trabajo
@@ -3325,6 +3491,8 @@ function aplicarVisualizacion(activo: boolean): void {
 }
 
 function aplicarModo(nuevo: Modo): void {
+	// Cambiar de modo con un aparato pegado al ratón lo dejaría colgado para siempre: se suelta.
+	if (colocando) soltarColocacion();
 	modo = nuevo;
 	document.body.classList.toggle('modo-trabajo', modo === 'trabajo');
 	$('modo-editor').classList.toggle('activo', modo === 'editor');
@@ -3341,7 +3509,7 @@ function aplicarModo(nuevo: Modo): void {
 	if (modo === 'trabajo') {
 		arrastrando = false;
 		modoPin = false;
-		controles.enabled = true;
+		permitirOrbita(true);
 		// Si había una canaleta/riel seleccionado, se deselecciona (no se editan en Trabajo).
 		if (sel && sel.tipo !== 'dispositivo') aplicarSeleccion(undefined);
 	}
@@ -4296,6 +4464,22 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			modo,
 			modoPin,
 			cableando: cableandoDesde ? `${cableandoDesde.dispositivoId}.${cableandoDesde.borneId}` : undefined,
+			/**
+			 * El cable EN VIVO que sigue al cursor: si está montado y cuánto mide. Con esto la
+			 * prueba puede exigir que aparezca en el mismo clic —sin esperar a que el ratón se
+			 * mueva— y que se estire de verdad al llevarlo hacia el otro borne.
+			 */
+			goma: gomaCable
+				? {
+					montado: true,
+					largo: (() => {
+						const pos = gomaCable.geometry.getAttribute('position');
+						const caja = new THREE.Box3().setFromBufferAttribute(pos as THREE.BufferAttribute);
+						return Math.round(caja.max.distanceTo(caja.min));
+					})(),
+					tubo: gomaCable.geometry.type === 'TubeGeometry',
+				}
+				: { montado: false, largo: 0, tubo: false },
 			arrastrando,
 			tirador: !!handleArrastrado,
 			bornesVisibles: escenario.bornes.visible,
@@ -4347,7 +4531,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			return { totalMm: Math.round(total), pares, cables: rutas.length };
 		},
 		/** Recorrido resuelto de cada cable (mm de modelo), tal cual se dibuja. */
-		rutas: () => rutasDeCables(proyecto).map((r) => ({ id: r.conductorId, nodos: r.nodos })),
+		rutas: () => rutasDeCables(proyecto).map((r) => ({ id: r.conductorId, nodos: r.nodos, z: r.z })),
 		/**
 		 * Punto de pantalla donde el propio programa agarraría ESE cable: se comprueba en la misma
 		 * pasada que el rayo cae en su tubo visible y que ningún borne se le pone delante. Así la
@@ -4506,6 +4690,12 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			ortografica: (camaraViva() as THREE.OrthographicCamera).isOrthographicCamera === true,
 			gira: (vista2D ? controlesOrto : controles).enableRotate,
 			niebla: !!escena.fog,
+			// Posición y zoom del alzado: con esto la prueba puede exigir que arrastrar una unión
+			// de cable NO mueva la vista ni un milímetro.
+			x: Math.round(camaraOrto.position.x * 100) / 100,
+			y: Math.round(camaraOrto.position.y * 100) / 100,
+			zoom: Math.round(camaraOrto.zoom * 10000) / 10000,
+			suelta: controlesOrto.enabled,
 		}),
 		/**
 		 * Píxeles de pantalla por milímetro de mundo A LA PROFUNDIDAD `z`.

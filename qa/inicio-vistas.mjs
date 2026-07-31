@@ -239,7 +239,127 @@ const conSesgo = await Promise.all(puestos.map(async ({ id }) =>
 must('los rótulos impresos van sesgados hacia la cámara', conSesgo.filter(Boolean).length >= 4,
 	`${conSesgo.filter(Boolean).length} de ${puestos.length} aparatos`);
 
-console.log('\n--- 5. Sin errores ---');
+/* ---------- 5. Manejo de cables y de aparatos, estilo Tinkercad ---------- */
+console.log('\n--- 5. El cable se ve mientras se lleva de un borne a otro ---');
+await click('btn-nuevo'); await page.waitForTimeout(200);
+if (await page.isVisible('#modal-dialogo')) { await click('dialogo-ok'); await page.waitForTimeout(400); }
+await click('btn-empezar-ejemplo'); await page.waitForTimeout(400);
+await page.locator('.tarjeta-ejemplo button').nth(0).click(); await page.waitForTimeout(1000);
+await click('btn-cerrar-explicacion'); await page.waitForTimeout(300);
+await click('modo-trabajo'); await page.waitForTimeout(400);
+await click('btn-centrar'); await page.waitForTimeout(700);
+
+/*
+ * Dos bornes separados y que NO estén ya conectados entre sí: el tablero de ejemplo viene
+ * cableado, y sobre un par ya unido el programa avisa y no tiende nada (con razón).
+ */
+const visibles = (await qa('bornes')).filter((b) => b.x > 60 && b.x < 1380 && b.y > 60 && b.y < 880);
+const yaUnidos = new Set((await qa('proyecto')).conductores.flatMap((c) => [
+	`${c.de.dispositivoId}:${c.de.borneId}|${c.a.dispositivoId}:${c.a.borneId}`,
+	`${c.a.dispositivoId}:${c.a.borneId}|${c.de.dispositivoId}:${c.de.borneId}`,
+]));
+let bA;
+let bB;
+for (const p of visibles) {
+	const q = visibles.find((o) => o.dispositivo !== p.dispositivo
+		&& Math.hypot(o.x - p.x, o.y - p.y) > 120
+		&& !yaUnidos.has(`${p.dispositivo}:${p.borne}|${o.dispositivo}:${o.borne}`));
+	if (q) { bA = p; bB = q; break; }
+}
+must('hay dos bornes sin conectar para probar el tendido', !!bA && !!bB);
+
+const cablesAntes = (await qa('proyecto')).conductores.length;
+await page.mouse.move(bA.x, bA.y);
+await page.mouse.down();
+await page.waitForTimeout(200);
+// LO QUE FALTABA: el cable tiene que verse ya, sin mover el ratón.
+const goma0 = (await qa('estadoInteraccion')).goma;
+must('al apretar el borne YA aparece el cable', goma0.montado, JSON.stringify(goma0));
+must('y es un tubo, no una raya de un píxel', goma0.tubo);
+
+// Y tiene que estirarse mientras se lleva al otro borne (la animación que se pedía).
+await page.mouse.move((bA.x + bB.x) / 2, (bA.y + bB.y) / 2, { steps: 6 }); await page.waitForTimeout(150);
+const goma1 = (await qa('estadoInteraccion')).goma;
+await page.mouse.move(bB.x, bB.y, { steps: 6 }); await page.waitForTimeout(150);
+const goma2 = (await qa('estadoInteraccion')).goma;
+must('el cable se estira al llevarlo hacia el otro borne',
+	goma2.largo > goma1.largo && goma1.largo > 0, `${goma0.largo} → ${goma1.largo} → ${goma2.largo} mm`);
+
+// Y se remata SOLTANDO, sin un segundo clic.
+await page.mouse.up(); await page.waitForTimeout(500);
+const cablesDespues = (await qa('proyecto')).conductores.length;
+must('soltando sobre el otro borne queda el cable hecho', cablesDespues === cablesAntes + 1,
+	`${cablesAntes} → ${cablesDespues}`);
+must('y el cable en vivo desaparece', !(await qa('estadoInteraccion')).goma.montado);
+await page.screenshot({ path: join(SAL, 'cable-en-vivo.png') });
+
+console.log('\n--- 6. Los cables no se montan unos sobre otros ---');
+const amont = await qa('amontonamiento');
+must('el amontonamiento se mide', amont.cables > 10, `${amont.cables} cables`);
+must('cada cable va prácticamente por su sitio', amont.totalMm / amont.cables < 25,
+	`${Math.round(amont.totalMm / amont.cables)} mm/cable · ${amont.pares} pares · ${amont.totalMm} mm en total`);
+// Y en 3D corren a profundidades distintas, para que los cruces se apilen en vez de atravesarse.
+const profundidades = new Set((await qa('rutas')).map((r) => r.z));
+must('los cables se reparten en capas de profundidad', profundidades.size > 1,
+	`${profundidades.size} capas: ${[...profundidades].sort((a, b) => a - b).join(', ')} mm`);
+
+console.log('\n--- 7. El aparato nuevo se coloca donde está el ratón ---');
+await click('modo-editor'); await page.waitForTimeout(400);
+const antesAparatos = (await qa('proyecto')).dispositivos.length;
+await page.locator('#catalogo button', { hasText: 'Relé auxiliar 24 V' }).first().click({ force: true });
+await page.waitForTimeout(500);
+const nuevo = (await qa('proyecto')).dispositivos.at(-1);
+must('el aparato entra al proyecto', (await qa('proyecto')).dispositivos.length === antesAparatos + 1);
+must('y queda pegado al ratón esperando dónde soltarlo', await page.evaluate(
+	() => document.getElementById('ayuda').textContent.includes('pegado al ratón')));
+
+/** Lleva el ratón a un punto de la placa y lee dónde acabó el aparato. */
+const dondeCae = async (mx, my) => {
+	await page.mouse.move(mx, my, { steps: 4 }); await page.waitForTimeout(220);
+	const col = (await qa('proyecto')).gabinete.colocaciones.find((c) => c.dispositivoId === nuevo.id);
+	return { x: col.x, y: col.y };
+};
+const arriba = await dondeCae(700, 320);
+const abajo = await dondeCae(700, 620);
+must('sigue al ratón por la placa', Math.abs(abajo.y - arriba.y) > 20,
+	`y ${arriba.y} → ${abajo.y} mm`);
+await page.mouse.click(700, 620); await page.waitForTimeout(500);
+must('el clic lo suelta ahí', !(await page.evaluate(
+	() => document.getElementById('ayuda').textContent.includes('pegado al ratón'))));
+const colFinal = (await qa('proyecto')).gabinete.colocaciones.find((c) => c.dispositivoId === nuevo.id);
+must('y se queda donde se soltó, no en el riel de arriba', Math.abs(colFinal.y - abajo.y) < 2,
+	`y=${colFinal.y} mm`);
+must('pegado a un riel, como manda un aparato DIN', !!colFinal.rielId, colFinal.rielId);
+
+console.log('\n--- 8. En el alzado 2D se mueve el punto, no la cámara ---');
+await click('modo-trabajo'); await page.waitForTimeout(400);
+await click('btn-2d'); await page.waitForTimeout(700);
+const cableId = (await qa('proyecto')).conductores[0].id;
+const agarre = await qa('puntoParaAgarrar', cableId);
+must('se localiza un punto del cable en el alzado', !!agarre, JSON.stringify(agarre));
+if (agarre) {
+	// Doble clic para crear la unión, y luego se arrastra, igual que en 3D.
+	await page.mouse.dblclick(agarre.x, agarre.y); await page.waitForTimeout(400);
+	const rutaAntes = (await qa('rutas')).find((r) => r.id === cableId);
+	const camaraAntes = await qa('vista2D');   // se mide AQUÍ, con este tablero y este encuadre
+	await page.mouse.move(agarre.x, agarre.y);
+	await page.mouse.down();
+	await page.mouse.move(agarre.x + 70, agarre.y + 40, { steps: 8 }); await page.waitForTimeout(250);
+	const durante = await qa('vista2D');
+	await page.mouse.up(); await page.waitForTimeout(400);
+	const rutaDespues = (await qa('rutas')).find((r) => r.id === cableId);
+	must('arrastrar mueve el CABLE', JSON.stringify(rutaAntes.nodos) !== JSON.stringify(rutaDespues.nodos));
+	// Este era el bug: en el alzado el botón izquierdo desplaza la hoja, así que sin bloquear la
+	// cámara al empezar el arrastre se movía la vista entera en vez del punto del cable.
+	must('la cámara del alzado queda bloqueada mientras se arrastra', durante.suelta === false);
+	must('y NO se mueve ni un milímetro',
+		durante.x === camaraAntes.x && durante.y === camaraAntes.y && durante.zoom === camaraAntes.zoom,
+		`antes (${camaraAntes.x}, ${camaraAntes.y}) z${camaraAntes.zoom} → durante (${durante.x}, ${durante.y}) z${durante.zoom}`);
+	must('la vista sigue siendo el alzado', camaraAntes.activa && (await qa('vista2D')).activa);
+}
+await click('btn-2d'); await page.waitForTimeout(400);
+
+console.log('\n--- 9. Sin errores ---');
 must('ningún error de JavaScript', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 await browser.close(); server.close();

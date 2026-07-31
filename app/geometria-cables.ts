@@ -113,27 +113,41 @@ export function rutaAutomatica(a: Punto, b: Punto, corredores: Banda[], carril: 
  * primer carril libre EN SU TRAMO DE X. Dos cables solo comparten altura si van por zonas del
  * tablero que no se pisan, que es exactamente como se peina un tablero de verdad.
  *
- * Devuelve una función que, para cada par de bornes, da los puntos intermedios de su ruta.
+ * Devuelve una función que, para cada par de bornes, da los puntos intermedios de su ruta y el
+ * número de carril que le ha tocado (el dibujo lo usa para separarlos también en profundidad).
  */
-export function crearRepartidor(corredores: Banda[], holgura = 8): (a: Punto, b: Punto) => Punto[] {
+export function crearRepartidor(
+	corredores: Banda[], holgura = 8,
+): (a: Punto, b: Punto) => { puntos: Punto[]; carril: number } {
 	const ocupado = new Map<number, { x0: number; x1: number }[]>();
-	let repartidos = 0;
+	let sueltos = 0;
 	return (a, b) => {
-		if (Math.abs(a.x - b.x) < 2) return []; // misma vertical: tramo recto, sin codos
+		if (Math.abs(a.x - b.x) < 2) return { puntos: [], carril: sueltos++ }; // misma vertical
 		const corredor = mejorCorredor(a, b, corredores);
 		if (!corredor) {
 			const y = Math.round((a.y + b.y) / 2);
-			return [{ x: a.x, y }, { x: b.x, y }];
+			return { puntos: [{ x: a.x, y }, { x: b.x, y }], carril: sueltos++ };
 		}
 		const tramo = { x0: Math.min(a.x, b.x) - holgura, x1: Math.max(a.x, b.x) + holgura };
 		const carriles = carrilesDe(corredor);
-		const libre = carriles.find((y) => !(ocupado.get(y) ?? []).some((u) => u.x1 > tramo.x0 && u.x0 < tramo.x1));
-		// Si el corredor está lleno se reparte por turnos: mejor repartido que todos en el mismo sitio.
-		const y = libre ?? carriles[repartidos % carriles.length];
-		repartidos++;
-		const usos = ocupado.get(y);
-		if (usos) usos.push(tramo); else ocupado.set(y, [tramo]);
-		return [{ x: a.x, y }, { x: b.x, y }];
+		/*
+		 * Se elige el carril que MENOS se pise con lo ya tendido, no el primero libre y luego por
+		 * turnos. Con el corredor lleno, el reparto por turnos volvía a montar cables enteros unos
+		 * encima de otros; midiendo el solape, al que peor le toca es al que menos estorba.
+		 */
+		let mejorY = carriles[0];
+		let mejorSolape = Infinity;
+		for (const y of carriles) {
+			let solape = 0;
+			for (const u of ocupado.get(y) ?? []) {
+				solape += Math.max(0, Math.min(u.x1, tramo.x1) - Math.max(u.x0, tramo.x0));
+			}
+			if (solape < mejorSolape) { mejorSolape = solape; mejorY = y; }
+			if (solape === 0) break;   // un carril limpio ya no se puede mejorar
+		}
+		const usos = ocupado.get(mejorY);
+		if (usos) usos.push(tramo); else ocupado.set(mejorY, [tramo]);
+		return { puntos: [{ x: a.x, y: mejorY }, { x: b.x, y: mejorY }], carril: carriles.indexOf(mejorY) };
 	};
 }
 

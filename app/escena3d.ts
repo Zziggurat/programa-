@@ -92,6 +92,14 @@ const ALTO_RIEL = 35;
 /** Profundidad a la que corren los cables (al frente, sin atravesar aparatos). */
 export const Z_FRENTE = 52;
 
+/**
+ * Profundidades de una imagen de referencia. El riel sobresale 22 mm de la placa, así que una
+ * imagen a ras (z = 0) queda TAPADA por él: por eso nace ya por delante, que es para lo que se
+ * pone —para trabajar sobre ella—. «Al fondo» la manda detrás de toda la estructura.
+ */
+export const Z_IMAGEN_FRENTE = 26;
+export const Z_IMAGEN_FONDO = -12;
+
 export function construirEscenario(proyecto: Proyecto, realista = false): Escenario {
 	const g = proyecto.gabinete;
 	if (!g) throw new Error('El proyecto no tiene gabinete');
@@ -619,7 +627,22 @@ export interface RutaCable {
 	a: Anclaje;
 	/** Nodos del recorrido en coordenadas de modelo, ya ortogonalizados. */
 	nodos: { x: number; y: number }[];
+	/** Profundidad a la que corre este cable. Ver `CAPAS_CABLE`. */
+	z: number;
 }
+
+/**
+ * CAPAS DE CABLEADO. En un tablero de verdad los cables no viven todos en el mismo plano: el
+ * mazo se va montando y unos pasan por delante de otros. Aquí, con todos a la misma cota, dos
+ * cables que se cruzaban se ATRAVESABAN —se veía el tubo de uno saliendo por dentro del otro—.
+ * Repartiéndolos en unas pocas capas de 3 mm, los cruces se apilan como en un mazo real y cada
+ * cable se sigue con la vista sin perderlo.
+ *
+ * Son pocas y muy juntas a propósito: el agarre con el ratón proyecta sobre el plano de
+ * referencia, y una separación grande descuadraría el clic respecto de lo que se ve.
+ */
+const CAPAS_CABLE = 4;
+const SEPARACION_CAPAS = 3;
 
 /**
  * Resuelve el recorrido de TODOS los cables: única fuente de verdad que usan tanto el dibujo
@@ -642,18 +665,35 @@ const ABANICO_MM = 6;
  * cable con el que se trabaja sean exactamente el mismo (si no, la selección queda descalibrada).
  */
 export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, borneId: string, conductorId: string) => number {
-	const enBorne = new Map<string, string[]>();
+	/*
+	 * El abanico se reparte por COLUMNA, no por borne.
+	 *
+	 * Al principio solo se separaban los cables que salían del MISMO borne. Pero medido sobre los
+	 * tableros de ejemplo, todo el amontonamiento que quedaba estaba en las bajadas verticales de
+	 * bornes DISTINTOS que caen en la misma vertical —el borne de arriba de un aparato y el de
+	 * abajo del que tiene encima, por ejemplo—: sus dos bajadas se montaban una sobre otra en
+	 * toda su longitud. Agrupando por la columna en la que baja el cable se separan también esos,
+	 * que es lo que hace un electricista al peinar: los hilos de una misma vertical se abren un
+	 * poco para que se puedan seguir con la vista y contar.
+	 */
+	const enColumna = new Map<string, string[]>();
 	const anota = (clave: string, id: string) => {
-		const l = enBorne.get(clave);
-		if (l) l.push(id); else enBorne.set(clave, [id]);
+		const l = enColumna.get(clave);
+		if (l) l.push(id); else enColumna.set(clave, [id]);
+	};
+	const columnaDe = (dispositivoId: string, borneId: string): string => {
+		const a = anclajeBorne(proyecto, dispositivoId, borneId);
+		return a ? String(Math.round(a.x / 5)) : `${dispositivoId}:${borneId}`;
 	};
 	for (const c of proyecto.conductores) {
-		anota(`${c.de.dispositivoId}:${c.de.borneId}`, c.id);
-		anota(`${c.a.dispositivoId}:${c.a.borneId}`, c.id);
+		anota(columnaDe(c.de.dispositivoId, c.de.borneId), c.id);
+		anota(columnaDe(c.a.dispositivoId, c.a.borneId), c.id);
 	}
 	return (dispositivoId, borneId, conductorId) => {
-		const l = enBorne.get(`${dispositivoId}:${borneId}`) ?? [];
+		const l = enColumna.get(columnaDe(dispositivoId, borneId)) ?? [];
 		if (l.length < 2) return 0;
+		// Un cable puede tener sus dos puntas en la misma columna: cuenta la primera aparición
+		// para una punta y la última para la otra, que es lo que las separa entre sí.
 		return (l.indexOf(conductorId) - (l.length - 1) / 2) * ABANICO_MM;
 	};
 }
@@ -683,16 +723,21 @@ export function rutasDeCables(proyecto: Proyecto): RutaCable[] {
 	const repartir = crearRepartidor(corredores);
 	const rutas: RutaCable[] = [];
 
+	let manuales = 0;
 	for (const conductor of proyecto.conductores) {
 		const p = salidasDeCable(proyecto, conductor, abanico);
 		if (!p) continue;
-		const intermedios = conductor.trazado?.length ? conductor.trazado : repartir(p.salidaA, p.salidaB);
+		// Un cable peinado a mano manda: se respeta su trazado y solo se le busca profundidad.
+		const auto = conductor.trazado?.length ? undefined : repartir(p.salidaA, p.salidaB);
+		const intermedios = auto ? auto.puntos : conductor.trazado!;
+		const carril = auto ? auto.carril : manuales++;
 		rutas.push({
 			conductorId: conductor.id,
 			de: p.de,
 			a: p.a,
 			// El recorrido arranca en el borne y enseguida se abre a su carril propio.
 			nodos: orthogonalize([p.salidaA, ...intermedios, p.salidaB]),
+			z: Z_FRENTE + (carril % CAPAS_CABLE) * SEPARACION_CAPAS,
 		});
 	}
 	return rutas;
@@ -717,7 +762,7 @@ export function construirCables(
 		const suave = redondearEsquinas(ruta.nodos, 10 + radio * 4);
 		const puntos = [
 			aEscena(ruta.de.x, ruta.de.y, ruta.de.z),
-			...suave.map((p) => aEscena(p.x, p.y, Z_FRENTE)),
+			...suave.map((p) => aEscena(p.x, p.y, ruta.z)),
 			aEscena(ruta.a.x, ruta.a.y, ruta.a.z),
 		];
 		// «centripetal» evita los lazos y cúspides que salían al pasar por vértices muy juntos.
@@ -820,11 +865,15 @@ export function anclajeBorne(
 	// del gabinete, igual que en un tablero real, para que el cable tenga un recorrido visible.
 	if (!col) return anclajeCampo(proyecto, d, borneId);
 	if (d.imagen) {
+		// La profundidad de la imagen CUENTA: sus pines se dibujan sobre el panel, así que si la
+		// imagen está adelantada, el punto de enganche del cable tiene que adelantarse con ella.
+		// Sin esto el cable salía por detrás del pin y el pin dejaba de poder pincharse.
+		const z = (col.z ?? 0) + 10;
 		const b = d.bornes.find((x) => x.id === borneId);
 		if (b?.u !== undefined && b?.v !== undefined) {
-			return { x: col.x + b.u * col.ancho, y: col.y + b.v * col.alto, z: 10 };
+			return { x: col.x + b.u * col.ancho, y: col.y + b.v * col.alto, z };
 		}
-		return { x: col.x + col.ancho / 2, y: col.y + col.alto / 2, z: 10 };
+		return { x: col.x + col.ancho / 2, y: col.y + col.alto / 2, z };
 	}
 	// Aparato con borneras declaradas (controladores reales): el cable sale del terminal
 	// que dice su ficha de datos, no de un reparto genérico en dos filas.

@@ -136,6 +136,12 @@ página con `?inicio=0`.
 Configurador 3D completo del gabinete, al estilo de Schneider eDesign o WAGO Smart
 Designer, conectado en vivo con los motores del núcleo:
 
+- **Manejo estilo Tinkercad.** Un aparato sacado del catálogo nace **pegado al ratón**: se lleva
+  donde toca —pegándose solo al riel más cercano, en rojo si se encima con otro— y se suelta con un
+  clic. Un cable se tiende **pinchando un borne y arrastrando hasta el otro**: el cable va saliendo
+  contigo, con su grosor y sus codos redondeados de verdad, y se conecta al soltar (o a dos clics,
+  que además deja marcar codos por el camino). Y los cables se reparten **en cuatro capas de
+  profundidad**, para que dos que se cruzan se apilen como en un mazo real en vez de atravesarse.
 - **Vista 2D** (botón «📏 2D»): el **alzado** del tablero, mirando la placa de frente, a escala y
   **sin perspectiva**. Es una cámara ortográfica de verdad, no la de siempre puesta de frente: en
   3D un aparato que sobresale 12 cm se dibuja un 14 % más grande que su vecino y no se pueden

@@ -150,7 +150,7 @@ test('repartidor: diez cables por el mismo corredor no se pisan NUNCA', () => {
 	const rutas = Array.from({ length: 10 }, (_, k) => {
 		const a = { x: 20 + k * 18, y: 40 };
 		const b = { x: 300 - k * 18, y: 220 };
-		return orthogonalize([a, ...repartir(a, b), b]);
+		return orthogonalize([a, ...repartir(a, b).puntos, b]);
 	});
 	let solape = 0;
 	for (let i = 0; i < rutas.length; i++) {
@@ -162,20 +162,20 @@ test('repartidor: diez cables por el mismo corredor no se pisan NUNCA', () => {
 test('repartidor: cables de zonas distintas SÍ pueden compartir carril (no desperdicia el pasillo)', () => {
 	const corredores = corredoresLibres([], 100, 160);
 	const repartir = crearRepartidor(corredores);
-	const izq = repartir({ x: 0, y: 100 }, { x: 60, y: 160 });
-	const der = repartir({ x: 400, y: 100 }, { x: 460, y: 160 });
+	const izq = repartir({ x: 0, y: 100 }, { x: 60, y: 160 }).puntos;
+	const der = repartir({ x: 400, y: 100 }, { x: 460, y: 160 }).puntos;
 	assert.equal(izq[0].y, der[0].y, 'si no se pisan, van a la misma altura (peinado ordenado)');
 });
 
 test('repartidor: dos cables que se pisarían acaban en alturas distintas', () => {
 	const corredores = corredoresLibres([], 100, 160);
 	const repartir = crearRepartidor(corredores);
-	const uno = repartir({ x: 0, y: 100 }, { x: 300, y: 160 });
-	const otro = repartir({ x: 20, y: 100 }, { x: 280, y: 160 });
+	const uno = repartir({ x: 0, y: 100 }, { x: 300, y: 160 }).puntos;
+	const otro = repartir({ x: 20, y: 100 }, { x: 280, y: 160 }).puntos;
 	assert.notEqual(uno[0].y, otro[0].y, 'no pueden compartir carril si comparten tramo');
 });
 
 test('repartidor: bornes en la misma vertical siguen sin meter codos', () => {
 	const repartir = crearRepartidor(corredoresLibres([], 0, 200));
-	assert.deepEqual(repartir({ x: 50, y: 10 }, { x: 50, y: 150 }), []);
+	assert.deepEqual(repartir({ x: 50, y: 10 }, { x: 50, y: 150 }).puntos, []);
 });
