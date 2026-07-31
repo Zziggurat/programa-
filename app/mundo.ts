@@ -493,6 +493,8 @@ export function crearCinta(m: Mundo) {
 	grupo.name = 'cinta';
 	m.escena.add(grupo);
 	const puntos: THREE.Vector3[] = [];
+	/** Marcado de la máquina en la que se puso cada punto, si se puso en una. */
+	const nombres: (string | undefined)[] = [];
 
 	function limpiar(): void {
 		for (const o of [...grupo.children]) {
@@ -537,11 +539,17 @@ export function crearCinta(m: Mundo) {
 	}
 
 	return {
-		anadir(p: THREE.Vector3): void { puntos.push(p); redibujar(); },
-		deshacer(): void { puntos.pop(); redibujar(); },
-		reiniciar(): void { puntos.length = 0; limpiar(); },
+		anadir(p: THREE.Vector3, etiqueta?: string): void {
+			puntos.push(p);
+			nombres.push(etiqueta);
+			redibujar();
+		},
+		deshacer(): void { puntos.pop(); nombres.pop(); redibujar(); },
+		reiniciar(): void { puntos.length = 0; nombres.length = 0; limpiar(); },
 		medida: () => medirTirada(puntos),
 		cuantos: () => puntos.length,
+		/** De dónde a dónde va la tirada, con el marcado de las máquinas si se pincharon. */
+		extremos: (): string[] => nombres.filter((x): x is string => !!x),
 		visible(v: boolean): void { grupo.visible = v; },
 	};
 }

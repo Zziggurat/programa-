@@ -11,10 +11,11 @@ import assert from 'node:assert/strict';
 
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import { crearProyecto } from '../src/modelo/proyecto.js';
-import { Conductor, Proyecto } from '../src/modelo/tipos.js';
+import { Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { numerarDispositivos } from '../src/motores/numeracion.js';
 import {
-	contactosAuxiliaresIEC, contactosCerrados, memoriaVacia, polosDe, simular, tiempoDeDisparo,
+	contactosAuxiliaresIEC, contactosCerrados, memoriaVacia, polosDe, simular,
+	tensionSecundariaDe, tiempoDeDisparo,
 } from '../src/motores/simulacion.js';
 
 /**
@@ -609,4 +610,147 @@ test('ESTRELLA-TRIÁNGULO: por el térmico pasa la corriente del motor, no el tr
 	assert.equal(r.corrienteTotal, 8.5);
 	const q1 = r.cargaPorAparato.get('q1');
 	assert.equal(q1!.porcentaje, 53, 'un motor de 8,5 A en un automático de 16 A es el 53 %');
+});
+
+/* ================== TENSIÓN EQUIVOCADA Y PUNTA DE ARRANQUE ================== */
+
+/** Acometida (mono o trifásica) → automático → una carga. */
+function tableroCarga(opciones: {
+	tensionRed: number; trifasica?: boolean; carga: Partial<Dispositivo>; calibre?: number;
+	curva?: 'B' | 'C' | 'D' | 'gG';
+}): Proyecto {
+	const p = crearProyecto('t');
+	const fases = opciones.trifasica
+		? [{ id: 'L1', tipo: 'L' as const }, { id: 'L2', tipo: 'L' as const }, { id: 'L3', tipo: 'L' as const }]
+		: [{ id: 'L1', tipo: 'L' as const }];
+	p.dispositivos = [
+		{
+			id: 'red', tipo: 'otro', clase: 'W', descripcion: 'Acometida', campo: true,
+			tensionNominal: opciones.tensionRed,
+			bornes: [...fases, { id: 'N', tipo: 'N' }],
+		},
+		{
+			id: 'q1', tipo: 'disyuntor', designacion: '-Q1',
+			corrienteNominal: opciones.calibre ?? 16, curvaDisparo: opciones.curva ?? 'C',
+			bornes: [{ id: '1', tipo: 'L' }, { id: '2', tipo: 'L' }],
+		},
+		{ id: 'm1', designacion: '-M1', tipo: 'piloto', bornes: [], ...opciones.carga } as Dispositivo,
+	];
+	const cab = (de: [string, string], a: [string, string], id: string): Conductor =>
+		({ id, de: { dispositivoId: de[0], borneId: de[1] }, a: { dispositivoId: a[0], borneId: a[1] } });
+	p.conductores = [cab(['red', 'L1'], ['q1', '1'], 'c1'), cab(['q1', '2'], ['m1', 'A'], 'c2')];
+	if (opciones.trifasica && (opciones.carga.bornes ?? []).some((b) => b.id === 'C')) {
+		p.conductores.push(cab(['red', 'L2'], ['m1', 'B'], 'c3'), cab(['red', 'L3'], ['m1', 'C'], 'c4'));
+	} else {
+		p.conductores.push(cab(['red', 'N'], ['m1', 'B'], 'c3'));
+	}
+	return p;
+}
+
+const dosBornes = [{ id: 'A', tipo: 'L' as const }, { id: 'B', tipo: 'N' as const }];
+const tresBornes = [{ id: 'A', tipo: 'L' as const }, { id: 'B', tipo: 'L' as const }, { id: 'C', tipo: 'L' as const }];
+
+test('un piloto de 24 V colgado del circuito de 220 se avisa: en el tablero se quema', () => {
+	const p = tableroCarga({ tensionRed: 220, carga: { tensionNominal: 24, corrienteNominal: 0.02, bornes: dosBornes } });
+	const r = simular(p);
+	assert.equal(r.tensionesEquivocadas.length, 1, 'no se ha detectado la tensión equivocada');
+	assert.equal(r.tensionesEquivocadas[0].recibe, 220);
+	assert.equal(r.tensionesEquivocadas[0].suya, 24);
+	assert.match(r.tensionesEquivocadas[0].que, /quema/);
+	assert.ok(r.avisos.some((a) => /24 V/.test(a)), r.avisos.join(' | '));
+});
+
+test('y una carga de 220 en su circuito de 220 NO se avisa', () => {
+	const p = tableroCarga({ tensionRed: 220, carga: { tensionNominal: 220, corrienteNominal: 0.5, bornes: dosBornes } });
+	assert.deepEqual(simular(p).tensionesEquivocadas, []);
+});
+
+test('220 y 230 son la misma red: no se avisa por el redondeo del catálogo', () => {
+	const p = tableroCarga({ tensionRed: 230, carga: { tensionNominal: 220, corrienteNominal: 0.5, bornes: dosBornes } });
+	assert.deepEqual(simular(p).tensionesEquivocadas, []);
+});
+
+test('EL CASO QUE NO PUEDE FALLAR: mando de 220 V en un tablero trifásico de 380 está BIEN', () => {
+	// Entre una fase y el neutro de una red de 380 hay 220. Avisar aquí mandaría a alguien a
+	// revisar un cableado impecable, que es peor que no avisar.
+	const p = tableroCarga({ tensionRed: 380, trifasica: true, carga: { tensionNominal: 220, corrienteNominal: 0.5, bornes: dosBornes } });
+	assert.deepEqual(simular(p).tensionesEquivocadas, [], 'falso positivo en el mando de 220 V');
+});
+
+test('y un motor de 380 entre las tres fases también está bien', () => {
+	const p = tableroCarga({ tensionRed: 380, trifasica: true, carga: { tipo: 'motor', tensionNominal: 380, corrienteNominal: 3, polos: 3, bornes: tresBornes } });
+	const r = simular(p);
+	assert.deepEqual(r.tensionesEquivocadas, []);
+	assert.ok(r.funcionando.some((f) => f.designacion === '-M1'), 'el motor no gira');
+});
+
+test('pero un motor de 220 entre las tres fases de 380 sí se avisa', () => {
+	const p = tableroCarga({ tensionRed: 380, trifasica: true, carga: { tipo: 'motor', tensionNominal: 220, corrienteNominal: 3, polos: 3, bornes: tresBornes } });
+	const r = simular(p);
+	assert.equal(r.tensionesEquivocadas.length, 1, 'un motor de 220 a 380 pasa desapercibido');
+	assert.equal(r.tensionesEquivocadas[0].recibe, 380);
+});
+
+test('PUNTA DE ARRANQUE: un motor pide seis veces su nominal al arrancar en directo', () => {
+	const p = tableroCarga({ tensionRed: 220, calibre: 16, carga: { tipo: 'motor', tensionNominal: 220, corrienteNominal: 5, bornes: dosBornes } });
+	const r = simular(p);
+	const a = r.arranques.find((x) => x.designacion === '-M1');
+	assert.ok(a, 'no se calcula la punta de arranque');
+	assert.equal(a!.nominal, 5);
+	assert.equal(a!.punta, 30, '5 A × 6 = 30 A');
+	assert.ok(a!.protecciones.some((x) => x.designacion === '-Q1'), 'no ve la protección de delante');
+});
+
+test('un automático de curva B salta en el arranque de un motor, y se dice', () => {
+	// El caso de libro: una curva B es para alumbrado y tomas, y salta con el magnético a 5 veces
+	// el calibre. 5 A × 6 = 30 A por un B10 son 3 veces… pero por un B4 son 7,5: magnético, y el
+	// motor no llega a arrancar. Es el fallo que hace volver al tablero una y otra vez.
+	const p = tableroCarga({ tensionRed: 220, calibre: 4, curva: 'B', carga: { tipo: 'motor', tensionNominal: 220, corrienteNominal: 5, bornes: dosBornes } });
+	const r = simular(p);
+	const a = r.arranques[0];
+	assert.ok(a.saltaAlArrancar, `no avisa: ${JSON.stringify(a.protecciones)}`);
+	assert.ok(r.avisos.some((x) => /arrancando EN DIRECTO/.test(x)), r.avisos.join(' | '));
+});
+
+test('y uno bien elegido no salta: el motor arranca', () => {
+	const p = tableroCarga({ tensionRed: 220, calibre: 16, curva: 'C', carga: { tipo: 'motor', tensionNominal: 220, corrienteNominal: 5, bornes: dosBornes } });
+	const r = simular(p);
+	assert.equal(r.arranques[0].saltaAlArrancar, false);
+	assert.ok(!r.avisos.some((x) => /arrancando EN DIRECTO/.test(x)), r.avisos.join(' | '));
+});
+
+test('una punta por debajo del magnético NO se toma por un fallo de arranque', () => {
+	// 30 A por un C4 son 7,5 veces: mucho, pero por debajo del magnético (10×). El motor arranca
+	// —tarda 13 s en disparar por térmico— y decir «no arrancaría» sería falso. Que ese automático
+	// esté mal elegido para 5 A continuos es otro asunto, y lo canta el disparo por sobrecarga.
+	const p = tableroCarga({ tensionRed: 220, calibre: 4, curva: 'C', carga: { tipo: 'motor', tensionNominal: 220, corrienteNominal: 5, bornes: dosBornes } });
+	const r = simular(p);
+	assert.equal(r.arranques[0].saltaAlArrancar, false, 'confunde arrancar con ir sobrecargado');
+	assert.ok(r.disparos.some((d) => d.motivo === 'sobrecarga'),
+		'y sin embargo va sobrecargado: eso sí hay que decirlo');
+});
+
+test('los ejemplos del programa arrancan sin que salte nada', () => {
+	// Si un ejemplo no arrancara, estaría enseñando a montar un tablero que no funciona.
+	for (const id of ['arranque-directo', 'estrella-triangulo']) {
+		const p = ejemplo(id);
+		const marcha = p.dispositivos.find((d) => /MARCHA/i.test(d.descripcion ?? ''))!;
+		const r = simular(p, { [marcha.id]: { activo: true } });
+		assert.ok(r.arranques.length > 0, `en «${id}» no se ve ningún arranque`);
+		for (const a of r.arranques) {
+			assert.equal(a.saltaAlArrancar, false,
+				`en «${id}», ${a.designacion} no arrancaría: ${JSON.stringify(a.protecciones)}`);
+		}
+		assert.deepEqual(r.tensionesEquivocadas, [], `«${id}» tiene una carga a la tensión que no es`);
+	}
+});
+
+test('EL SECUNDARIO DEL TRANSFORMADOR no es siempre 24 V', () => {
+	// Era: `d.tensionNominal === 220 ? 24 : 24`, que da 24 mire por donde se mire. Un
+	// transformador de mando de 380/110 se simulaba como si sacara 24.
+	assert.equal(tensionSecundariaDe({ id: 't', tipo: 'transformador', bornes: [], descripcion: 'Transformador 380/110 V' }), 110);
+	assert.equal(tensionSecundariaDe({ id: 't', tipo: 'transformador', bornes: [], descripcion: 'Transformador 220/24 V 3 A' }), 24);
+	assert.equal(tensionSecundariaDe({ id: 't', tipo: 'transformador', bornes: [], tensionSecundariaV: 48 }), 48,
+		'el dato declarado manda sobre la descripción');
+	assert.equal(tensionSecundariaDe({ id: 't', tipo: 'fuente', bornes: [] }), 24, 'sin nada, lo más común');
 });

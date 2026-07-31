@@ -253,13 +253,15 @@ function activarMedir(activo: boolean): void {
 function pintarCinta(): void {
 	const med = cinta?.medida();
 	const cuantos = cinta?.cuantos() ?? 0;
+	const extremos = cinta?.extremos() ?? [];
 	const cuerpo = $('mundo-cinta-cuerpo');
 	const botones = '<div class="botones">'
 		+ '<button class="boton" id="cinta-deshacer">↶ Quitar último</button>'
 		+ '<button class="boton" id="cinta-limpiar">Empezar de nuevo</button></div>';
 	cuerpo.innerHTML = !med
-		? `<div class="ayuda">Haz clic en la cubierta para marcar por dónde va el cable. Con dos `
-			+ `puntos ya hay medida.${cuantos ? ' <b>1 punto marcado.</b>' : ''}</div>`
+		? `<div class="ayuda">Haz clic en la cubierta para marcar por dónde va el cable, o `
+			+ `<b>en una máquina</b> para medir hasta ella exactamente. Con dos puntos ya hay `
+			+ `medida.${cuantos ? ' <b>1 punto marcado.</b>' : ''}</div>`
 			+ (cuantos ? botones : '')
 		: `<div class="cifras">`
 			+ `<div><div class="cifra">${med.recorrido.toFixed(1)} m</div>`
@@ -272,6 +274,9 @@ function pintarCinta(): void {
 			+ `<div class="pedir"><div class="cifra">${med.cablePedido} m</div>`
 			+ `<div class="rotulo">Cable a pedir (con ${Math.round(med.reserva * 100)} % de reserva)</div></div>`
 			+ `</div>`
+			+ (extremos.length
+				? `<div class="ayuda">Pasa por <b>${extremos.map(esc).join('</b> → <b>')}</b>.</div>`
+				: '')
 			+ `<div class="ayuda">El recorrido va en ortogonal, como la bandeja; la recta es solo el `
 			+ `mínimo teórico. La subida y la bajada suponen la bandeja a 3,2 m.</div>`
 			+ botones;
@@ -490,6 +495,14 @@ if (__QA__) {
 		medir: (activo: boolean) => { activarMedir(activo); return midiendo; },
 		marcarPunto: (x: number, y: number, z: number) => {
 			cinta?.anadir(new THREE.Vector3(x, y, z));
+			pintarCinta();
+			return cinta?.medida();
+		},
+		/** Marca un punto EN UNA MÁQUINA, como si se hubiera pinchado en ella midiendo. */
+		medirEquipo: (tag: string) => {
+			const g = mundo?.equipos.children.find((x) => x.userData.tag === tag);
+			if (!g) return undefined;
+			cinta?.anadir(g.position.clone(), tag);
 			pintarCinta();
 			return cinta?.medida();
 		},

@@ -3484,6 +3484,32 @@ function pintarPanelSimulacion(): void {
 			(fila as HTMLElement).onclick = () => seleccionar((fila as HTMLElement).dataset.id!);
 		}
 	}
+	/*
+	 * LA PUNTA DE ARRANQUE. Un motor pide seis veces su nominal al arrancar, y es la causa nº 1 de
+	 * «el automático salta cada vez que parte la máquina». Se enseña siempre que hay un motor
+	 * girando, no solo cuando va a saltar: saber que la punta cabe también es información.
+	 */
+	if (r.arranques.length) {
+		$('sim-carga').insertAdjacentHTML('beforeend',
+			'<h3 class="titulo-sim">Punta de arranque (directo)</h3>'
+			+ r.arranques.map((a) => {
+				const p0 = a.protecciones[0];
+				const detalle = a.saltaAlArrancar
+					? `⚠️ ${escaparHtml(a.protecciones.find((x) => x.disparaEnS !== undefined && x.disparaEnS <= 3)!.designacion)} dispara antes de que arranque`
+					: p0
+						? `la aguanta ${escaparHtml(p0.designacion)} (${p0.calibre} A)`
+						: 'sin protección delante';
+				return `<div class="fila-carga ${a.saltaAlArrancar ? 'malo' : 'bien'}" `
+					+ `data-id="${escaparHtml(a.dispositivoId)}">`
+					+ `<span class="des-sim">${escaparHtml(a.designacion)}</span>`
+					+ `<span class="cifra-carga">${escaparHtml(formatearA(a.punta))} `
+					+ `(${a.veces} × ${escaparHtml(formatearA(a.nominal))}) · ${detalle}</span></div>`;
+			}).join(''));
+		for (const fila of $('sim-carga').querySelectorAll('.fila-carga[data-id]')) {
+			(fila as HTMLElement).onclick = () => seleccionar((fila as HTMLElement).dataset.id!);
+		}
+	}
+
 	// Cuentas atrás en marcha: se ve el temporizador contando, que es media gracia de tenerlo.
 	for (const t of r.temporizadores.filter((x) => x.contando)) {
 		const fila = document.createElement('div');

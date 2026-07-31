@@ -127,6 +127,12 @@ export interface Dispositivo {
 	/** Nº de polos de la protección o del consumo (1, 2, 3 o 4). Trifásico = 3 o más. */
 	polos?: number;
 	/**
+	 * Tensión del SECUNDARIO de un transformador o de una fuente, en voltios. `tensionNominal` es
+	 * la del primario —lo que le entra—, y sin este dato la simulación no sabe qué reparte.
+	 * Si falta, se deduce de la descripción («Transformador 220/24 V») y si tampoco, se supone 24.
+	 */
+	tensionSecundariaV?: number;
+	/**
 	 * Poder de corte de una protección, en kA (Icu/Icn de la hoja del fabricante). Es lo que
 	 * decide si el aparato aguanta el cortocircuito del sitio donde se instala: un automático
 	 * de 6 kA en una acometida de 10 kA no corta, se destruye.

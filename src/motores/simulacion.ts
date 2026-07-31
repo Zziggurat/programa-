@@ -112,6 +112,8 @@ export interface BorneVivo {
 	 * del equilibrado de fases.
 	 */
 	fuente: string;
+	/** True si viene de un sistema trifásico: entonces `tension` es la compuesta. */
+	trifasica: boolean;
 }
 
 /** Lo que consume una carga cuando está funcionando, y de qué fase cuelga. */
@@ -189,6 +191,41 @@ export interface ResultadoSimulacion {
 	disparos: Disparo[];
 	/** Temporizadores contando ahora mismo, para poder enseñar la cuenta atrás. */
 	temporizadores: CuentaAtras[];
+	/** Consumos que están recibiendo una tensión distinta de la suya. */
+	tensionesEquivocadas: TensionEquivocada[];
+	/** Punta de arranque de los motores en marcha y si la protección la aguanta. */
+	arranques: Arranque[];
+}
+
+/** Una carga alimentada a una tensión que no es la suya. */
+export interface TensionEquivocada {
+	dispositivoId: string;
+	designacion: string;
+	/** Tensión que le está llegando, en V. */
+	recibe: number;
+	/** Tensión para la que está hecha, en V. */
+	suya: number;
+	que: string;
+}
+
+/**
+ * La PUNTA DE ARRANQUE de un motor: los primeros segundos, un motor de jaula pide del orden de
+ * seis veces su corriente nominal. No es un detalle académico: es lo que decide si el automático
+ * salta cada vez que arranca la máquina, que es la avería más común y la más molesta de buscar.
+ */
+export interface Arranque {
+	dispositivoId: string;
+	designacion: string;
+	/** Corriente nominal del motor, en A. */
+	nominal: number;
+	/** Punta estimada al arrancar EN DIRECTO, en A. */
+	punta: number;
+	/** Veces la nominal. Es la del arranque directo: con estrella-triángulo o arrancador es menor. */
+	veces: number;
+	/** Protecciones que ven esa punta y qué hacen con ella. */
+	protecciones: { designacion: string; calibre: number; disparaEnS?: number }[];
+	/** True si alguna protección dispararía durante el arranque. */
+	saltaAlArrancar: boolean;
 }
 
 /** Aparatos cuyos puentes internos son CONTACTOS y por tanto dependen de su estado. */
@@ -202,6 +239,43 @@ const CONSUME: Set<TipoDispositivo> = new Set([
 ]);
 
 const MAX_PASADAS = 24;
+
+/**
+ * Veces la corriente nominal que pide un motor de jaula al arrancar en directo, y cuánto dura.
+ *
+ * Seis veces es el orden de magnitud de un motor asíncrono normal (IEC 60034 da entre 5 y 8 según
+ * la clase de arranque); tres segundos es lo que tarda en coger vueltas una carga corriente. No
+ * son los de un motor concreto —eso está en su placa— pero sí los que hacen ver el problema.
+ */
+const VECES_ARRANQUE = 6;
+const SEGUNDOS_ARRANQUE = 3;
+
+/**
+ * Tensión que le está llegando de verdad a un consumo.
+ *
+ * Entre fase y retorno es la de la fuente. Entre TRES FASES distintas es la compuesta, que es √3
+ * veces la de fase: un motor conectado a las tres fases de una red de 220 V por fase trabaja a
+ * 380, y confundirlo sería decirle a alguien que su motor de 380 está mal conectado cuando está
+ * perfecto.
+ */
+function tensionDeEmpleo(d: Dispositivo, vivos: Map<string, BorneVivo>): number | undefined {
+	const conTension = d.bornes
+		.filter((b) => b.tipo !== 'PE')
+		.map((b) => vivos.get(`${d.id}::${b.id}`))
+		.filter((v): v is BorneVivo => !!v);
+	if (conTension.length === 0) return undefined;
+	const fases = conTension.filter((v) => v.papel === 'fase');
+	if (fases.length === 0) return undefined;
+	const distintas = new Set(fases.map((v) => v.fuente));
+	const sistema = Math.max(...fases.map((v) => v.tension));
+	// Entre tres fases se trabaja a la tensión COMPUESTA, que es la declarada del sistema.
+	if (distintas.size >= 3) return sistema;
+	// Entre una fase y el neutro de una red trifásica se trabaja a la SIMPLE: 380/√3 = 220. Por
+	// eso el circuito de mando de 220 V de un tablero trifásico está bien, y decir lo contrario
+	// sería mandar a alguien a revisar un cableado impecable.
+	if (fases[0].trifasica) return Math.round(sistema / Math.sqrt(3));
+	return sistema;
+}
 
 /* --------------------------- Contactos de cada aparato --------------------------- */
 
@@ -352,7 +426,14 @@ export function polosDe(d: Dispositivo): [string, string][] {
 
 /* ------------------------------- Fuentes de tensión ------------------------------- */
 
-interface Fuente { clave: string; tension: number; papel: 'fase' | 'retorno' }
+interface Fuente {
+	clave: string;
+	/** Tensión declarada del sistema. En trifásica es la COMPUESTA (entre fases). */
+	tension: number;
+	papel: 'fase' | 'retorno';
+	/** True si su origen reparte tres fases: entonces `tension` es compuesta y fase-neutro es /√3. */
+	trifasica: boolean;
+}
 
 /**
  * De dónde entra la tensión al tablero. Dos sitios: la acometida (los bornes de un aparato de
@@ -368,22 +449,43 @@ function fuentesDe(proyecto: Proyecto): Fuente[] {
 			&& (d.clase === 'W' || /acometida|red|alimentaci/i.test(d.descripcion ?? ''));
 		if (esAcometida) {
 			const tension = d.tensionNominal ?? 220;
+			const trifasica = d.bornes.filter((b) => b.tipo === 'L').length >= 3;
 			for (const b of d.bornes) {
-				if (b.tipo === 'L') fuentes.push({ clave: claveBorne({ dispositivoId: d.id, borneId: b.id }), tension, papel: 'fase' });
-				if (b.tipo === 'N') fuentes.push({ clave: claveBorne({ dispositivoId: d.id, borneId: b.id }), tension, papel: 'retorno' });
+				if (b.tipo === 'L') fuentes.push({ clave: claveBorne({ dispositivoId: d.id, borneId: b.id }), tension, papel: 'fase', trifasica });
+				if (b.tipo === 'N') fuentes.push({ clave: claveBorne({ dispositivoId: d.id, borneId: b.id }), tension, papel: 'retorno', trifasica });
 			}
 		}
 		// Secundario de una fuente o un transformador: su salida es una fuente nueva, pero SOLO si
 		// su primario está alimentado. Eso lo resuelve la iteración; aquí solo se declara.
 		if (d.tipo === 'fuente' || d.tipo === 'transformador') {
-			const tension = d.tipo === 'fuente' ? 24 : (d.tensionNominal === 220 ? 24 : 24);
+			const tension = tensionSecundariaDe(d);
 			const mas = d.bornes.find((b) => b.id === '+V' || b.id === 'S1');
 			const menos = d.bornes.find((b) => b.id === '-V' || b.id === 'S2');
-			if (mas) fuentes.push({ clave: claveBorne({ dispositivoId: d.id, borneId: mas.id }), tension, papel: 'fase' });
-			if (menos) fuentes.push({ clave: claveBorne({ dispositivoId: d.id, borneId: menos.id }), tension, papel: 'retorno' });
+			// El secundario de un transformador de mando o de una fuente es monofásico.
+			if (mas) fuentes.push({ clave: claveBorne({ dispositivoId: d.id, borneId: mas.id }), tension, papel: 'fase', trifasica: false });
+			if (menos) fuentes.push({ clave: claveBorne({ dispositivoId: d.id, borneId: menos.id }), tension, papel: 'retorno', trifasica: false });
 		}
 	}
 	return fuentes;
+}
+
+/**
+ * Qué tensión reparte el secundario de un transformador o de una fuente.
+ *
+ * Antes esto devolvía 24 SIEMPRE —la expresión era `d.tensionNominal === 220 ? 24 : 24`, que da
+ * 24 mire por donde se mire—, así que un transformador de mando de 380/110 V se simulaba como si
+ * sacara 24. Ahora manda el dato declarado; si no lo hay, se lee de la descripción, que es donde
+ * de verdad está escrito en casi todos los catálogos («Transformador 220/24 V 3 A»); y si tampoco,
+ * se supone 24, que es lo más común en control.
+ */
+export function tensionSecundariaDe(d: Dispositivo): number {
+	if (d.tensionSecundariaV && d.tensionSecundariaV > 0) return d.tensionSecundariaV;
+	const m = /(\d{2,4})\s*\/\s*(\d{1,4})\s*V/i.exec(d.descripcion ?? '');
+	if (m) {
+		const secundario = Number(m[2]);
+		if (secundario > 0 && secundario < Number(m[1])) return secundario;
+	}
+	return 24;
 }
 
 /** ¿Está alimentado el primario de esta fuente/transformador? */
@@ -551,6 +653,76 @@ export function simular(
 			+ 'marcha, o cierra el contacto que alimenta la bobina.');
 	}
 
+	/*
+	 * TENSIÓN EQUIVOCADA. Un piloto de 24 V cableado al circuito de 220 «funciona» en cualquier
+	 * simulación que solo mire si hay o no hay tensión —y se quema en el tablero de verdad—. Aquí
+	 * se compara lo que le llega con lo que declara el aparato, que es lo que hace un electricista
+	 * antes de dar tensión.
+	 */
+	const tensionesEquivocadas: TensionEquivocada[] = [];
+	for (const c of consumos) {
+		const d = aparatos.find((x) => x.id === c.dispositivoId)!;
+		if (!d.tensionNominal) continue;
+		const recibe = tensionDeEmpleo(d, vivos);
+		if (recibe === undefined) continue;
+		// Un 10 % de margen: 220/230 V y 380/400 V son la misma red, no un error de cableado.
+		if (Math.abs(recibe - d.tensionNominal) / d.tensionNominal <= 0.1) continue;
+		const alta = recibe > d.tensionNominal;
+		tensionesEquivocadas.push({
+			dispositivoId: d.id,
+			designacion: c.designacion,
+			recibe,
+			suya: d.tensionNominal,
+			que: alta
+				? `le llegan ${recibe} V y es de ${d.tensionNominal} V: se quema al dar tensión`
+				: `le llegan ${recibe} V y necesita ${d.tensionNominal} V: no llegará a funcionar bien`,
+		});
+	}
+	for (const t of tensionesEquivocadas) {
+		avisos.unshift(`⚠️ ${t.designacion}: ${t.que}.`);
+	}
+
+	/*
+	 * PUNTA DE ARRANQUE. Un motor de jaula pide del orden de seis veces su nominal durante los
+	 * primeros segundos. Es la causa nº 1 de «el automático salta cada vez que arranca la máquina»,
+	 * y se ve antes de montar nada sin más que leer la curva con la punta en vez de con la nominal.
+	 */
+	const arranques: Arranque[] = [];
+	for (const c of consumos) {
+		const d = aparatos.find((x) => x.id === c.dispositivoId)!;
+		if (d.tipo !== 'motor' || !c.corriente) continue;
+		const punta = Math.round(c.corriente * VECES_ARRANQUE * 10) / 10;
+		const protecciones: Arranque['protecciones'] = [];
+		for (const carga of cargaPorAparato.values()) {
+			if (carga.nominal === undefined || carga.corriente < c.corriente - 1e-9) continue;
+			const p = aparatos.find((x) => x.id === carga.dispositivoId)!;
+			if (!PROTEGE.has(p.tipo)) continue;
+			protecciones.push({
+				designacion: carga.designacion,
+				calibre: carga.nominal,
+				disparaEnS: tiempoDeDisparo(punta, carga.nominal, p.curvaDisparo),
+			});
+		}
+		arranques.push({
+			dispositivoId: d.id,
+			designacion: c.designacion,
+			nominal: c.corriente,
+			punta,
+			veces: VECES_ARRANQUE,
+			protecciones,
+			// Solo cuenta como problema si dispararía DENTRO del arranque: una curva térmica que
+			// tarda un minuto no molesta a un arranque de tres segundos.
+			saltaAlArrancar: protecciones.some((x) => x.disparaEnS !== undefined && x.disparaEnS <= SEGUNDOS_ARRANQUE),
+		});
+	}
+	for (const a of arranques.filter((x) => x.saltaAlArrancar)) {
+		const culpable = a.protecciones.find((x) => x.disparaEnS !== undefined && x.disparaEnS <= SEGUNDOS_ARRANQUE)!;
+		avisos.push(`🚦 ${a.designacion} arrancando EN DIRECTO pide ${formatearA(a.punta)} `
+			+ `(${a.veces} × ${formatearA(a.nominal)}) y ${culpable.designacion} dispararía a los `
+			+ `${culpable.disparaEnS!.toFixed(2)} s: el motor no llegaría a arrancar. Sube la curva del `
+			+ 'automático, pon un guardamotor, o arranca en estrella-triángulo.');
+	}
+
 	if (cortocircuitos.length) {
 		avisos.unshift(`⚡ CORTOCIRCUITO: ${cortocircuitos[0].que}. `
 			+ (cortocircuitos[0].proteccionesAguasArriba.length
@@ -577,6 +749,8 @@ export function simular(
 		corrienteTotal: Math.round(corrienteTotal * 100) / 100,
 		cortocircuitos,
 		disparos,
+		tensionesEquivocadas,
+		arranques,
 		temporizadores: cuentasAtras(aparatos, activos, reloj),
 	};
 }
@@ -683,7 +857,7 @@ function propagar(
 		for (const clave of padre.keys()) {
 			const ya = vivos.get(clave);
 			if (ya && !(ya.papel === 'retorno' && f.papel === 'fase')) continue;
-			vivos.set(clave, { tension: f.tension, papel: f.papel, fuente: f.clave });
+			vivos.set(clave, { tension: f.tension, papel: f.papel, fuente: f.clave, trifasica: f.trifasica });
 		}
 	}
 	return { vivos, alcances, conductorEntre };

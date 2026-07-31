@@ -114,6 +114,20 @@ must('se pide más cable del que mide la recta', med.cablePedido > med.recta, `$
 const panel = await page.textContent('#mundo-cinta-cuerpo');
 must('el panel enseña lo que hay que pedir', panel.includes(`${med.cablePedido} m`), panel.slice(0, 90));
 must('y dice que lleva reserva', /reserva/i.test(panel));
+// Medir PINCHANDO UNA MÁQUINA toma su centro exacto, que es de donde a donde se mide de verdad.
+await qa('medir', false); await qa('medir', true);
+const conMaquinas = await page.evaluate(() => {
+	const q = window.__plantaQA;
+	const situadas = q.equipos.filter((e) => e.x !== null).slice(0, 2).map((e) => e.tag);
+	q.medirEquipo(situadas[0]);
+	const m = q.medirEquipo(situadas[1]);
+	return { tags: situadas, medida: m, panel: document.getElementById('mundo-cinta-cuerpo').textContent };
+});
+must('se puede medir de máquina a máquina', !!conMaquinas.medida,
+	JSON.stringify(conMaquinas.medida));
+must('y el panel dice por qué máquinas pasa',
+	conMaquinas.tags.every((t) => conMaquinas.panel.includes(t)),
+	conMaquinas.tags.join(' → '));
 await qa('medir', false);
 must('apagar el modo Medir cierra el panel', !(await page.isVisible('#mundo-cinta')));
 
