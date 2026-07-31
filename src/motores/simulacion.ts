@@ -27,8 +27,26 @@
  * realimentación. Sin iterar, al soltar el pulsador de marcha el motor se pararía, que es
  * precisamente lo que el enclavamiento evita en la realidad.
  *
- * Lo que esto NO es: no calcula intensidades, ni tiempos de disparo, ni ejecuta el programa de un
- * PLC. Dice qué está con tensión y qué está funcionando, que es lo que se quiere ver.
+ * ADEMÁS DE QUÉ FUNCIONA, CUÁNTO CUESTA Y QUÉ SALTA
+ *
+ * Saber que una lámpara se enciende está bien, pero un tablero se dimensiona con números. Así que
+ * la propagación se hace fuente por fuente y guardando de dónde viene cada borne, y con ese árbol
+ * salen tres cosas más:
+ *
+ *  - LA INTENSIDAD de cada rama: la corriente de una carga la lleva entera todo lo que hay entre
+ *    ella y la fuente, así que sumando rama a rama se sabe qué pasa por cada cable y por cada
+ *    protección, y a qué porcentaje de su calibre va cada una.
+ *  - LOS CORTOCIRCUITOS: aquí una carga no une sus dos bornes, así que si desde una fase se llega
+ *    al neutro (o a otra fase) es que están unidos sin carga por medio. Eso es una falta, y se
+ *    sabe además qué protecciones la ven.
+ *  - EL DISPARO: con la corriente y el calibre se lee la curva del aparato y se dice si dispara y
+ *    en cuánto tiempo. Cablear mal ahora tiene la consecuencia que tiene en un tablero real.
+ *
+ * Y los relés pueden ser TEMPORIZADOS, a la conexión o a la desconexión, que es lo que hace falta
+ * para una estrella-triángulo o para el arranque escalonado de una UMA.
+ *
+ * Lo que esto sigue sin ser: no resuelve la red con impedancias ni ejecuta el programa de un PLC.
+ * Las corrientes son las de empleo declaradas, no el resultado de un cálculo de cortocircuito.
  */
 import { Conductor, Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tipos.js';
 import { claveBorne } from '../modelo/proyecto.js';
@@ -47,6 +65,39 @@ export interface EstadoAparato {
 
 export type EstadoTablero = Record<string, EstadoAparato>;
 
+/**
+ * MEMORIA DE LOS TEMPORIZADORES entre una simulación y la siguiente.
+ *
+ * Un temporizador no es una función del estado actual: depende de CUÁNDO cambió la cosa. Aquí se
+ * guarda, por relé, el instante en que su bobina pasó a estar alimentada o dejó de estarlo, y con
+ * eso y el reloj se decide si ya le tocaba conmutar. Vive fuera del motor —lo lleva quien simula—
+ * porque el motor tiene que poder llamarse mil veces sin efectos colaterales.
+ */
+export interface MemoriaTiempos {
+	/** Instante (ms) en que la bobina de cada relé se alimentó por última vez. */
+	desdeConectado: Record<string, number>;
+	/** Instante (ms) en que dejó de estarlo. */
+	desdeSoltado: Record<string, number>;
+	/** Relés cuya temporización ya se cumplió: sus contactos están conmutados. */
+	cumplidos: string[];
+}
+
+export function memoriaVacia(): MemoriaTiempos {
+	return { desdeConectado: {}, desdeSoltado: {}, cumplidos: [] };
+}
+
+/** Lo que hay que saber de un temporizador para enseñarlo: cuánto lleva y cuánto le falta. */
+export interface CuentaAtras {
+	dispositivoId: string;
+	designacion: string;
+	tipo: 'trabajo' | 'reposo';
+	/** Segundos que faltan para que conmute. 0 si ya conmutó. */
+	restan: number;
+	total: number;
+	/** True si está contando ahora mismo. */
+	contando: boolean;
+}
+
 export interface BorneVivo {
 	/** Tensión respecto al retorno de su circuito, en V. */
 	tension: number;
@@ -61,6 +112,50 @@ export interface BorneVivo {
 	 * del equilibrado de fases.
 	 */
 	fuente: string;
+}
+
+/** Lo que consume una carga cuando está funcionando, y de qué fase cuelga. */
+export interface Consumo {
+	dispositivoId: string;
+	designacion: string;
+	/** Intensidad de empleo, en A. */
+	corriente: number;
+	/** Bornes de fase por los que entra (para repartir la corriente entre las fases). */
+	fases: string[];
+}
+
+/** Un cortocircuito detectado: dos potenciales distintos unidos sin carga por medio. */
+export interface Cortocircuito {
+	/** Clave del borne donde se tocan. */
+	clave: string;
+	/** Descripción legible: «fase L1 con el neutro», «fase L1 con fase L2». */
+	que: string;
+	/** Protecciones que ven la falta, de la más cercana a la más lejana. */
+	proteccionesAguasArriba: string[];
+}
+
+/** Una protección que ha disparado en esta simulación, y por qué. */
+export interface Disparo {
+	dispositivoId: string;
+	designacion: string;
+	motivo: 'cortocircuito' | 'sobrecarga';
+	/** Corriente que la hizo disparar, en A. */
+	corriente: number;
+	/** Calibre del aparato, en A. */
+	nominal: number;
+	/** Tiempo estimado de disparo según su curva, en segundos. */
+	segundos: number;
+	explicacion: string;
+}
+
+/** Carga que soporta un aparato de corte: cuánto pasa por él y cuánto aguanta. */
+export interface CargaAparato {
+	dispositivoId: string;
+	designacion: string;
+	corriente: number;
+	nominal?: number;
+	/** Porcentaje del calibre. Por encima de 100 está sobrecargado. */
+	porcentaje?: number;
 }
 
 export interface ResultadoSimulacion {
@@ -78,6 +173,22 @@ export interface ResultadoSimulacion {
 	pasadas: number;
 	/** True si el circuito no llegó a un estado estable (p. ej. un relé que se autoexcita y corta). */
 	oscila: boolean;
+
+	/* --------- Lo que consume el tablero de verdad --------- */
+	/** Cargas en marcha con su intensidad. */
+	consumos: Consumo[];
+	/** Intensidad que lleva cada conductor, en A. */
+	corrientePorConductor: Map<string, number>;
+	/** Intensidad que atraviesa cada aparato de corte, con su calibre. */
+	cargaPorAparato: Map<string, CargaAparato>;
+	/** Intensidad total que entra por la acometida, en A. */
+	corrienteTotal: number;
+	/** Cortocircuitos vistos en el circuito tal como está cableado. */
+	cortocircuitos: Cortocircuito[];
+	/** Protecciones que disparan por esta situación. */
+	disparos: Disparo[];
+	/** Temporizadores contando ahora mismo, para poder enseñar la cuenta atrás. */
+	temporizadores: CuentaAtras[];
 }
 
 /** Aparatos cuyos puentes internos son CONTACTOS y por tanto dependen de su estado. */
@@ -210,14 +321,23 @@ export function contactosAuxiliaresIEC(d: Dispositivo): ContactoIEC[] {
  * —un automático se describe con sus bornes 1, 2, 3, 4 y ya— y sin esto no conduciría nada: el
  * tablero se quedaría muerto al energizar. Se deducen entonces de la convención de siempre:
  * impares arriba, pares abajo, y cada polo es la pareja consecutiva (1-2, 3-4, 5-6).
+ *
+ * Con un tope: en IEC 60947-1 los polos de potencia llegan hasta el 7-8 (cuatro polos). Del 11 en
+ * adelante son BLOQUES AUXILIARES —11-12 es un NC, 13-14 un NA—, y tomarlos por polos ponía a un
+ * relé auxiliar a conducir por su contacto de reposo justo cuando la bobina estaba metida, o sea
+ * al revés de como funciona. Por eso se descarta todo borne que ya sea un contacto IEC.
  */
 export function polosDe(d: Dispositivo): [string, string][] {
 	if (d.puentesInternos?.length) return d.puentesInternos.map(([a, b]) => [a, b] as [string, string]);
 	const ids = new Set(d.bornes.map((b) => b.id));
+	const auxiliares = new Set<string>();
+	for (const c of contactosAuxiliaresIEC(d)) { auxiliares.add(c.comun); auxiliares.add(c.salida); }
 	const pares: [string, string][] = [];
-	// Bornes numerados a secas: 1-2, 3-4, 5-6…
-	for (let i = 1; i <= 11; i += 2) {
-		if (ids.has(String(i)) && ids.has(String(i + 1))) pares.push([String(i), String(i + 1)]);
+	// Bornes numerados a secas: 1-2, 3-4, 5-6, 7-8.
+	for (let i = 1; i <= 7; i += 2) {
+		const a = String(i);
+		const b = String(i + 1);
+		if (ids.has(a) && ids.has(b) && !auxiliares.has(a) && !auxiliares.has(b)) pares.push([a, b]);
 	}
 	// Estilo contactor: 1/L1 entra y 2/T1 sale.
 	for (let i = 1; i <= 3; i++) {
@@ -293,22 +413,32 @@ export function simular(
 	proyecto: Proyecto,
 	estado: EstadoTablero = {},
 	activosPrevios?: ReadonlySet<string>,
+	reloj?: { ahora: number; memoria: MemoriaTiempos },
 ): ResultadoSimulacion {
 	const aparatos = proyecto.dispositivos.filter((d) => !d.imagen);
 	const fuentes = fuentesDe(proyecto);
 
 	let vivos = new Map<string, BorneVivo>();
 	let activos = new Set<string>(activosPrevios ?? []);
+	/*
+	 * Qué relés tienen los contactos CONMUTADOS ahora mismo. En un relé instantáneo es lo mismo
+	 * que tener la bobina alimentada; en uno temporizado, no: durante la cuenta atrás la bobina
+	 * está metida y los contactos siguen en reposo. Por eso van separados.
+	 */
+	let conmutados = new Set<string>(activosPrevios ?? []);
 	let pasadas = 0;
 	let estable = false;
+	let prop: Propagacion = { vivos, alcances: [], conductorEntre: new Map() };
 
 	while (pasadas < MAX_PASADAS && !estable) {
 		pasadas++;
-		const nuevosVivos = propagar(proyecto, aparatos, fuentes, estado, activos, vivos);
+		prop = propagar(proyecto, aparatos, fuentes, estado, activos, vivos, conmutados);
+		const nuevosVivos = prop.vivos;
 		const nuevosActivos = new Set<string>();
 		for (const d of aparatos) {
 			if (bobinaAlimentada(d, nuevosVivos)) nuevosActivos.add(d.id);
 		}
+		conmutados = aplicarTemporizadores(aparatos, nuevosActivos, reloj);
 		estable = igualesClaves(vivos, nuevosVivos) && igualesConjuntos(activos, nuevosActivos);
 		vivos = nuevosVivos;
 		activos = nuevosActivos;
@@ -317,15 +447,96 @@ export function simular(
 	// Lo que se VE funcionando: consumos con tensión en sus dos extremos, y bobinas metidas.
 	const funcionando: ResultadoSimulacion['funcionando'] = [];
 	const avisos: string[] = [];
+	const consumos: Consumo[] = [];
 	for (const d of aparatos) {
 		const etiqueta = d.designacion ?? d.id;
 		if (CONSUME.has(d.tipo)) {
 			if (tieneCircuitoCompleto(d, vivos)) {
 				activos.add(d.id);
-				funcionando.push({ dispositivoId: d.id, designacion: etiqueta, que: queHace(d) });
+				const corriente = corrienteDe(d);
+				funcionando.push({
+					dispositivoId: d.id,
+					designacion: etiqueta,
+					que: `${queHace(d)} · ${formatearA(corriente)}`,
+				});
+				consumos.push({
+					dispositivoId: d.id,
+					designacion: etiqueta,
+					corriente,
+					fases: d.bornes
+						.filter((b) => vivos.get(`${d.id}::${b.id}`)?.papel === 'fase')
+						.map((b) => `${d.id}::${b.id}`),
+				});
 			}
 		} else if (activos.has(d.id)) {
-			funcionando.push({ dispositivoId: d.id, designacion: etiqueta, que: 'bobina alimentada, contactos cambiados' });
+			const t = d.temporizacion;
+			const espera = t?.tipo === 'trabajo' && !conmutados.has(d.id);
+			funcionando.push({
+				dispositivoId: d.id,
+				designacion: etiqueta,
+				que: espera ? `bobina alimentada, contando ${t!.segundos} s` : 'bobina alimentada, contactos cambiados',
+			});
+		} else if (conmutados.has(d.id)) {
+			// Temporizado a la desconexión: la bobina ya no tiene tensión pero aguanta.
+			funcionando.push({
+				dispositivoId: d.id,
+				designacion: etiqueta,
+				que: `soltada la bobina, aguantando ${d.temporizacion?.segundos ?? 0} s`,
+			});
+		}
+	}
+
+	/* ---- Lo que consume el tablero: intensidades por rama, faltas y disparos ---- */
+	const { porConductor, porAparato } = repartirCorrientes(consumos, prop);
+	const cortocircuitos = buscarCortocircuitos(prop, aparatos);
+	const cargaPorAparato = new Map<string, CargaAparato>();
+	const disparos: Disparo[] = [];
+	const PROTEGE = new Set<TipoDispositivo>(['disyuntor', 'diferencial', 'guardamotor', 'fusible', 'rele']);
+	for (const d of aparatos) {
+		const corriente = porAparato.get(d.id) ?? 0;
+		if (corriente === 0 && !PROTEGE.has(d.tipo)) continue;
+		const nominal = calibreDe(d);
+		const carga: CargaAparato = {
+			dispositivoId: d.id,
+			designacion: d.designacion ?? d.id,
+			corriente: Math.round(corriente * 100) / 100,
+			nominal,
+			porcentaje: nominal ? Math.round((corriente / nominal) * 100) : undefined,
+		};
+		cargaPorAparato.set(d.id, carga);
+		// Sobrecarga: la protección ve más corriente de la que aguanta y acaba disparando.
+		if (PROTEGE.has(d.tipo) && nominal && estado[d.id]?.disparado !== true) {
+			const segundos = tiempoDeDisparo(corriente, nominal, d.curvaDisparo);
+			if (segundos !== undefined) {
+				disparos.push({
+					dispositivoId: d.id,
+					designacion: d.designacion ?? d.id,
+					motivo: 'sobrecarga',
+					corriente: Math.round(corriente * 100) / 100,
+					nominal,
+					segundos,
+					explicacion: `${formatearA(corriente)} por un aparato de ${nominal} A `
+						+ `(${Math.round((corriente / nominal) * 100)} % del calibre): dispara en `
+						+ `${segundos < 1 ? 'menos de un segundo' : `${Math.round(segundos)} s`}.`,
+				});
+			}
+		}
+	}
+	// Un cortocircuito lo dispara todo lo que lo ve, y de forma instantánea: no hay que esperar a
+	// que la corriente calculada lo diga, porque aquí no hay impedancias con las que calcularla.
+	for (const falta of cortocircuitos) {
+		for (const id of falta.proteccionesAguasArriba.slice(0, 1)) {
+			const d = aparatos.find((x) => x.id === id);
+			if (!d || estado[id]?.disparado === true || disparos.some((x) => x.dispositivoId === id)) continue;
+			disparos.push({
+				dispositivoId: id,
+				designacion: d.designacion ?? id,
+				motivo: 'cortocircuito',
+				corriente: Number.POSITIVE_INFINITY,
+				nominal: calibreDe(d) ?? 0,
+				segundos: 0.01,
+				explicacion: `Cortocircuito: ${falta.que}. Corta al instante por el magnético.`,
+			});
 		}
 	}
 
@@ -340,18 +551,78 @@ export function simular(
 			+ 'marcha, o cierra el contacto que alimenta la bobina.');
 	}
 
+	if (cortocircuitos.length) {
+		avisos.unshift(`⚡ CORTOCIRCUITO: ${cortocircuitos[0].que}. `
+			+ (cortocircuitos[0].proteccionesAguasArriba.length
+				? 'Dispara la protección de cabecera.'
+				: 'Y no hay ninguna protección delante que lo corte.'));
+	}
+	for (const d of disparos.filter((x) => x.motivo === 'sobrecarga')) {
+		avisos.push(`🔥 ${d.designacion} sobrecargado: ${d.explicacion}`);
+	}
+
 	const conductoresVivos = new Set<string>();
 	for (const c of proyecto.conductores) {
 		if (vivos.has(claveBorne(c.de)) && vivos.has(claveBorne(c.a))) conductoresVivos.add(c.id);
 	}
 
+	const corrienteTotal = consumos.reduce((s, c) => s + c.corriente, 0);
+
 	return {
 		vivos, conductoresVivos, activos, funcionando, avisos,
 		pasadas, oscila: !estable,
+		consumos,
+		corrientePorConductor: porConductor,
+		cargaPorAparato,
+		corrienteTotal: Math.round(corrienteTotal * 100) / 100,
+		cortocircuitos,
+		disparos,
+		temporizadores: cuentasAtras(aparatos, activos, reloj),
 	};
 }
 
-/** Una pasada de propagación con los contactos que corresponden al estado actual. */
+/** Calibre efectivo de un aparato de corte: el nominal, o el tope de su rango de regulación. */
+function calibreDe(d: Dispositivo): number | undefined {
+	if (d.corrienteNominal !== undefined && d.corrienteNominal > 0) return d.corrienteNominal;
+	if (d.rangoRegulacionA?.length === 2) return d.rangoRegulacionA[1];
+	return undefined;
+}
+
+/** Intensidad en palabras, con la precisión que tiene sentido leer. */
+export function formatearA(a: number): string {
+	if (!Number.isFinite(a)) return '∞';
+	if (a >= 10) return `${a.toFixed(0)} A`;
+	if (a >= 1) return `${a.toFixed(1)} A`;
+	return `${(a * 1000).toFixed(0)} mA`;
+}
+
+/**
+ * Hasta dónde llega UNA fuente, y por qué camino.
+ *
+ * Se propaga fuente por fuente en vez de todas a la vez, y guardando de qué borne viene cada
+ * borne alcanzado. Eso cuesta una pasada por fuente —son cuatro o cinco— y a cambio da dos cosas
+ * que antes no se podían saber:
+ *
+ *  - EL CAMINO DE LA CORRIENTE. Remontando los padres desde una carga hasta su fuente sale la
+ *    rama entera: por qué cables va y qué protecciones atraviesa. Sin eso no hay forma de sumar
+ *    intensidades ni de saber qué automático protege a qué.
+ *  - LOS CORTOCIRCUITOS. Si un mismo borne lo alcanzan dos fuentes de distinto potencial —una
+ *    fase y el neutro, o dos fases— es que están unidos sin carga por medio. Con una sola pasada
+ *    conjunta esto era invisible: ganaba la primera que llegaba y la otra no se veía.
+ */
+interface Alcance {
+	fuente: Fuente;
+	/** Borne desde el que se llegó a cada borne. La fuente misma no tiene padre. */
+	padre: Map<string, string | undefined>;
+}
+
+interface Propagacion {
+	vivos: Map<string, BorneVivo>;
+	alcances: Alcance[];
+	/** borne → bornes vecinos por conductor, con el id del conductor que los une. */
+	conductorEntre: Map<string, string>;
+}
+
 function propagar(
 	proyecto: Proyecto,
 	aparatos: Dispositivo[],
@@ -359,46 +630,63 @@ function propagar(
 	estado: EstadoTablero,
 	activos: Set<string>,
 	vivosPrevios: Map<string, BorneVivo>,
-): Map<string, BorneVivo> {
+	conmutados: Set<string>,
+): Propagacion {
 	// Grafo: borne ↔ borne por conductores, puentes de bornero y contactos cerrados.
 	const vecinos = new Map<string, string[]>();
-	const unir = (a: string, b: string) => {
+	const conductorEntre = new Map<string, string>();
+	const unir = (a: string, b: string, conductorId?: string) => {
 		if (!vecinos.has(a)) vecinos.set(a, []);
 		if (!vecinos.has(b)) vecinos.set(b, []);
 		vecinos.get(a)!.push(b);
 		vecinos.get(b)!.push(a);
+		if (conductorId) {
+			conductorEntre.set(`${a}>${b}`, conductorId);
+			conductorEntre.set(`${b}>${a}`, conductorId);
+		}
 	};
-	for (const c of proyecto.conductores as Conductor[]) unir(claveBorne(c.de), claveBorne(c.a));
+	for (const c of proyecto.conductores as Conductor[]) unir(claveBorne(c.de), claveBorne(c.a), c.id);
 	for (const d of aparatos) {
 		for (const grupo of d.puentes ?? []) {
 			for (let i = 1; i < grupo.length; i++) unir(`${d.id}::${grupo[0]}`, `${d.id}::${grupo[i]}`);
 		}
-		for (const [a, b] of contactosCerrados(d, estado[d.id] ?? {}, activos.has(d.id))) {
+		// Los contactos siguen a `conmutados`, no a la bobina: en un temporizado no es lo mismo.
+		for (const [a, b] of contactosCerrados(d, estado[d.id] ?? {}, conmutados.has(d.id))) {
 			unir(`${d.id}::${a}`, `${d.id}::${b}`);
 		}
 	}
 
-	// Anchura desde cada fuente. Una fuente secundaria solo cuenta si su primario está alimentado
-	// en la pasada anterior: así el 24 V aparece después del 220, como en la realidad.
-	const vivos = new Map<string, BorneVivo>();
-	const cola: { clave: string; v: BorneVivo }[] = [];
-	for (const f of fuentes) {
+	// Una fuente secundaria solo cuenta si su primario está alimentado en la pasada anterior: así
+	// el 24 V aparece después del 220, como en la realidad.
+	const activas = fuentes.filter((f) => {
 		const dueño = f.clave.split('::')[0];
 		const d = aparatos.find((x) => x.id === dueño);
-		if (d && (d.tipo === 'fuente' || d.tipo === 'transformador') && !primarioAlimentado(d, vivosPrevios)) continue;
-		const v: BorneVivo = { tension: f.tension, papel: f.papel, fuente: f.clave };
-		vivos.set(f.clave, v);
-		cola.push({ clave: f.clave, v });
-	}
-	while (cola.length) {
-		const { clave, v } = cola.shift()!;
-		for (const sig of vecinos.get(clave) ?? []) {
-			if (vivos.has(sig)) continue;
-			vivos.set(sig, v);
-			cola.push({ clave: sig, v });
+		return !(d && (d.tipo === 'fuente' || d.tipo === 'transformador') && !primarioAlimentado(d, vivosPrevios));
+	});
+
+	const alcances: Alcance[] = [];
+	const vivos = new Map<string, BorneVivo>();
+	for (const f of activas) {
+		const padre = new Map<string, string | undefined>([[f.clave, undefined]]);
+		const cola = [f.clave];
+		while (cola.length) {
+			const clave = cola.shift()!;
+			for (const sig of vecinos.get(clave) ?? []) {
+				if (padre.has(sig)) continue;
+				padre.set(sig, clave);
+				cola.push(sig);
+			}
+		}
+		alcances.push({ fuente: f, padre });
+		// `vivos` conserva su significado de siempre (una entrada por borne). Manda la fase sobre
+		// el retorno: es lo que espera el resto del programa al pintar un cable «con tensión».
+		for (const clave of padre.keys()) {
+			const ya = vivos.get(clave);
+			if (ya && !(ya.papel === 'retorno' && f.papel === 'fase')) continue;
+			vivos.set(clave, { tension: f.tension, papel: f.papel, fuente: f.clave });
 		}
 	}
-	return vivos;
+	return { vivos, alcances, conductorEntre };
 }
 
 /** ¿Tiene la bobina de este aparato tensión en A1 y retorno en A2? */
@@ -430,6 +718,252 @@ function tieneCircuitoCompleto(d: Dispositivo, vivos: Map<string, BorneVivo>): b
 	const fases = new Set(conTension.filter((v) => v.papel === 'fase').map((v) => v.fuente));
 	const hayRetorno = conTension.some((v) => v.papel === 'retorno');
 	return (fases.size >= 1 && hayRetorno) || fases.size >= 3;
+}
+
+/* ------------------------------- Temporizadores ------------------------------- */
+
+/**
+ * Decide qué relés tienen los contactos CONMUTADOS, contando el tiempo de los temporizados.
+ *
+ * Un relé normal conmuta en cuanto le entra tensión en la bobina, así que para él «bobina
+ * alimentada» y «contactos conmutados» son lo mismo. Un temporizado no:
+ *
+ *  - A LA CONEXIÓN (trabajo): le entra tensión, empieza a contar y NO conmuta hasta que pasan
+ *    sus segundos. Es el de la estrella-triángulo y el del arranque escalonado de una UMA.
+ *  - A LA DESCONEXIÓN (reposo): conmuta al instante, y al quitarle la tensión AGUANTA sus
+ *    segundos antes de soltar. Es el de la parada retardada de un extractor.
+ *
+ * Sin reloj —cuando se simula una sola vez, sin animación— los temporizados se comportan como
+ * instantáneos: es lo razonable para responder «¿este circuito funciona?» sin esperar.
+ */
+function aplicarTemporizadores(
+	aparatos: Dispositivo[],
+	bobinasMetidas: Set<string>,
+	reloj?: { ahora: number; memoria: MemoriaTiempos },
+): Set<string> {
+	if (!reloj) return new Set(bobinasMetidas);
+	const { ahora, memoria } = reloj;
+	const conmutados = new Set<string>();
+	const cumplidos = new Set(memoria.cumplidos);
+	for (const d of aparatos) {
+		const metida = bobinasMetidas.has(d.id);
+		const t = d.temporizacion;
+		if (!t || t.segundos <= 0) {
+			if (metida) conmutados.add(d.id);
+			continue;
+		}
+		if (metida) {
+			if (memoria.desdeConectado[d.id] === undefined) memoria.desdeConectado[d.id] = ahora;
+			delete memoria.desdeSoltado[d.id];
+			if (t.tipo === 'reposo') { conmutados.add(d.id); cumplidos.add(d.id); continue; }
+			const llevaS = (ahora - memoria.desdeConectado[d.id]) / 1000;
+			if (llevaS >= t.segundos) { conmutados.add(d.id); cumplidos.add(d.id); } else cumplidos.delete(d.id);
+		} else {
+			if (memoria.desdeSoltado[d.id] === undefined) memoria.desdeSoltado[d.id] = ahora;
+			delete memoria.desdeConectado[d.id];
+			if (t.tipo === 'trabajo') { cumplidos.delete(d.id); continue; }
+			const llevaS = (ahora - memoria.desdeSoltado[d.id]) / 1000;
+			if (llevaS < t.segundos) conmutados.add(d.id); else cumplidos.delete(d.id);
+		}
+	}
+	memoria.cumplidos = [...cumplidos];
+	return conmutados;
+}
+
+/** Cuentas atrás en marcha, para poder enseñarlas mientras corren. */
+function cuentasAtras(
+	aparatos: Dispositivo[],
+	bobinasMetidas: Set<string>,
+	reloj?: { ahora: number; memoria: MemoriaTiempos },
+): CuentaAtras[] {
+	if (!reloj) return [];
+	const salida: CuentaAtras[] = [];
+	for (const d of aparatos) {
+		const t = d.temporizacion;
+		if (!t || t.segundos <= 0) continue;
+		const metida = bobinasMetidas.has(d.id);
+		const inicio = metida ? reloj.memoria.desdeConectado[d.id] : reloj.memoria.desdeSoltado[d.id];
+		const cuenta = (metida && t.tipo === 'trabajo') || (!metida && t.tipo === 'reposo');
+		const llevaS = inicio === undefined ? 0 : (reloj.ahora - inicio) / 1000;
+		salida.push({
+			dispositivoId: d.id,
+			designacion: d.designacion ?? d.id,
+			tipo: t.tipo,
+			restan: cuenta ? Math.max(0, Math.round((t.segundos - llevaS) * 10) / 10) : 0,
+			total: t.segundos,
+			contando: cuenta && llevaS < t.segundos,
+		});
+	}
+	return salida;
+}
+
+/* --------------------------- Intensidades y faltas --------------------------- */
+
+/**
+ * Corriente que consume una carga en marcha, en A.
+ *
+ * Si la ficha del aparato la trae (`corrienteNominal`), esa manda: es la que puso el usuario o la
+ * que viene del catálogo. Si no, se estima por el tipo, con valores de aparatos corrientes, para
+ * que el balance no se quede en blanco — y quien quiera el número exacto lo escribe en la ficha.
+ */
+function corrienteDe(d: Dispositivo): number {
+	if (d.corrienteNominal !== undefined && d.corrienteNominal > 0) return d.corrienteNominal;
+	switch (d.tipo) {
+		case 'motor': return 3.5;
+		case 'resistencia': return 6;
+		case 'valvula': return 0.3;
+		case 'piloto': return 0.02;
+		case 'condensador': return 0.5;
+		default: return 0.1;
+	}
+}
+
+/**
+ * Reparte la corriente de cada carga por el camino que recorre hasta su fuente.
+ *
+ * Un tablero es un árbol de ramas en paralelo colgando de la acometida, así que la corriente de
+ * una carga la lleva ENTERA todo lo que hay entre ella y la fuente: sus cables, sus contactores y
+ * sus protecciones. Sumando rama a rama sale lo que pasa por cada aparato, que es exactamente lo
+ * que hay que saber para decir si un automático va sobrado o al límite.
+ *
+ * No es un cálculo de red con nudos y mallas —eso pide impedancias que un tablero no declara—,
+ * pero para un cuadro de distribución es lo mismo, porque no hay caminos alternativos en paralelo.
+ */
+function repartirCorrientes(
+	consumos: Consumo[],
+	prop: Propagacion,
+): { porConductor: Map<string, number>; porAparato: Map<string, number> } {
+	const porConductor = new Map<string, number>();
+	/*
+	 * La corriente de un aparato se lleva POR FASE, no sumada.
+	 *
+	 * Un motor trifásico de 3,5 A hace pasar 3,5 A por cada polo de su guardamotor, no 10,5: cada
+	 * polo lleva una fase. Sumar las tres daba el triple y hacía «disparar» aparatos que van
+	 * sobrados. Así que se acumula por fase y al final se toma la peor, que es la que dimensiona
+	 * el aparato — exactamente el criterio con el que se elige un calibre.
+	 */
+	const porFase = new Map<string, Map<string, number>>();
+	const sumaFase = (aparato: string, fuente: string, a: number) => {
+		if (!porFase.has(aparato)) porFase.set(aparato, new Map());
+		const m = porFase.get(aparato)!;
+		m.set(fuente, (m.get(fuente) ?? 0) + a);
+	};
+
+	for (const carga of consumos) {
+		for (const alcance of prop.alcances) {
+			// Solo cuenta el camino por la fase que de verdad alimenta a esta carga.
+			for (const borne of carga.fases) {
+				if (!alcance.padre.has(borne)) continue;
+				let actual: string | undefined = borne;
+				const visto = new Set<string>();
+				while (actual && !visto.has(actual)) {
+					visto.add(actual);
+					const anterior: string | undefined = alcance.padre.get(actual);
+					if (!anterior) break;
+					const conductor = prop.conductorEntre.get(`${anterior}>${actual}`);
+					if (conductor) porConductor.set(conductor, (porConductor.get(conductor) ?? 0) + carga.corriente);
+					const dueñoA = actual.split('::')[0];
+					const dueñoB = anterior.split('::')[0];
+					// El aparato solo «lleva» la corriente si esta le entra por un borne y le sale
+					// por otro: pasar de un borne suyo a otro suyo es atravesarlo.
+					if (dueñoA === dueñoB && dueñoA !== carga.dispositivoId) {
+						sumaFase(dueñoA, alcance.fuente.clave, carga.corriente);
+					}
+					actual = anterior;
+				}
+				break;   // una sola vez por carga y por fase alcanzada
+			}
+		}
+	}
+	const porAparato = new Map<string, number>();
+	for (const [aparato, fases] of porFase) porAparato.set(aparato, Math.max(...fases.values()));
+	return { porConductor, porAparato };
+}
+
+/**
+ * Cortocircuitos: bornes a los que llegan dos potenciales distintos sin carga por medio.
+ *
+ * En este modelo una carga NO une sus dos bornes (un motor no es un puente), así que si a un
+ * mismo punto llegan la fase y el neutro, o dos fases, es que están unidos por cable o por
+ * contactos: eso es una falta, y en un tablero real dispara el automático de cabecera.
+ */
+function buscarCortocircuitos(prop: Propagacion, aparatos: Dispositivo[]): Cortocircuito[] {
+	const faltas: Cortocircuito[] = [];
+	const nombre = (clave: string): string => {
+		const [id, borne] = clave.split('::');
+		const d = aparatos.find((x) => x.id === id);
+		return `${d?.designacion ?? id}:${borne}`;
+	};
+	const vistos = new Set<string>();
+	for (let i = 0; i < prop.alcances.length; i++) {
+		for (let j = i + 1; j < prop.alcances.length; j++) {
+			const a = prop.alcances[i];
+			const b = prop.alcances[j];
+			// Dos tomas del mismo potencial (dos neutros del mismo transformador) no son falta.
+			if (a.fuente.papel === b.fuente.papel && a.fuente.papel === 'retorno') continue;
+			if (a.fuente.tension !== b.fuente.tension) continue;   // circuitos distintos (220 y 24)
+			/*
+			 * La falta existe cuando desde una fuente se llega a la OTRA. Y el camino que sigue la
+			 * corriente de falta es justo ese: el que va de una a otra. Antes se buscaba «el primer
+			 * borne común», que en un corto franco es la propia fuente —todo el trozo conductor lo
+			 * es—, y remontando desde ahí no se cruzaba ninguna protección: la falta se detectaba
+			 * pero no se sabía qué tenía que saltar.
+			 */
+			if (!a.padre.has(b.fuente.clave)) continue;
+			const punto = b.fuente.clave;
+			const clavePar = `${a.fuente.clave}|${b.fuente.clave}`;
+			if (vistos.has(clavePar)) continue;
+			vistos.add(clavePar);
+			const que = a.fuente.papel !== b.fuente.papel
+				? `${nombre(a.fuente.clave)} contra el retorno ${nombre(b.fuente.clave)}`
+				: `${nombre(a.fuente.clave)} contra ${nombre(b.fuente.clave)} (dos fases)`;
+			faltas.push({
+				clave: punto,
+				que,
+				proteccionesAguasArriba: proteccionesEnCamino(a, punto, aparatos),
+			});
+		}
+	}
+	return faltas;
+}
+
+/** Protecciones que hay entre la fuente y un punto, de la más cercana al punto a la más lejana. */
+function proteccionesEnCamino(alcance: Alcance, punto: string, aparatos: Dispositivo[]): string[] {
+	const ES_PROTECCION = new Set<TipoDispositivo>(['disyuntor', 'diferencial', 'guardamotor', 'fusible']);
+	const salida: string[] = [];
+	const visto = new Set<string>();
+	let actual: string | undefined = punto;
+	while (actual && !visto.has(actual)) {
+		visto.add(actual);
+		const anterior: string | undefined = alcance.padre.get(actual);
+		if (!anterior) break;
+		const dueñoA = actual.split('::')[0];
+		if (dueñoA === anterior.split('::')[0]) {
+			const d = aparatos.find((x) => x.id === dueñoA);
+			if (d && ES_PROTECCION.has(d.tipo) && !salida.includes(d.id)) salida.push(d.id);
+		}
+		actual = anterior;
+	}
+	return salida;
+}
+
+/**
+ * Tiempo de disparo de una protección, en segundos, según su curva.
+ *
+ * Es la lectura de una curva tiempo-corriente de un magnetotérmico, simplificada a lo que hace
+ * falta aquí: por debajo del calibre no dispara nunca; por encima del umbral magnético (la curva
+ * B dispara a 3-5·In, la C a 5-10, la D a 10-20) corta en milisegundos; y entre medias es el
+ * térmico, que tarda tanto más cuanto menos se pasa. No sustituye a la curva del fabricante —para
+ * eso está la hoja de datos—, pero da el orden de magnitud correcto, que es de lo que se aprende.
+ */
+export function tiempoDeDisparo(corriente: number, nominal: number, curva?: string): number | undefined {
+	if (nominal <= 0) return undefined;
+	const veces = corriente / nominal;
+	if (veces <= 1.13) return undefined;                 // corriente de no disparo convencional
+	const magnetico = curva === 'B' ? 5 : curva === 'D' ? 20 : curva === 'gG' ? 8 : 10;
+	if (veces >= magnetico) return 0.01;                 // corte magnético: instantáneo
+	// Térmico: aproximación del tramo I²t de la curva convencional (1 h a 1,45·In).
+	return Math.min(3600, 3600 / ((veces - 1) * (veces - 1) * 6.5));
 }
 
 function queHace(d: Dispositivo): string {

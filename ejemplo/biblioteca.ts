@@ -65,6 +65,9 @@ function arranqueDirecto(): Proyecto {
 			id: 'q1', tipo: 'guardamotor', descripcion: 'Guardamotor 2.5–4 A (protege el motor)',
 			fabricante: 'Schneider Electric', referencia: 'GV2ME08', tensionNominal: 380, hojaId: 'h1',
 			poderCorteKA: 100, disipacionW: 4.5, poderCorteEstimado: true, disipacionEstimada: true,
+			// Regulación real del GV2ME08, ajustada al motor: con esto la simulación puede decir a
+			// qué porcentaje del calibre va y si el guardamotor está bien elegido.
+			rangoRegulacionA: [2.5, 4],
 			bornes: [L('1'), L('2'), L('3'), L('4'), L('5'), L('6')],
 			puentesInternos: [['1', '2'], ['3', '4'], ['5', '6']],
 		},
@@ -78,6 +81,7 @@ function arranqueDirecto(): Proyecto {
 		{
 			id: 'f2', tipo: 'rele', clase: 'F', descripcion: 'Relé térmico de sobrecarga',
 			fabricante: 'Schneider Electric', referencia: 'LRD08', hojaId: 'h1',
+			rangoRegulacionA: [2.5, 4],
 			bornes: [L('1'), L('2'), L('3'), L('4'), L('5'), L('6'), C('95'), C('96')],
 			puentesInternos: [['1', '2'], ['3', '4'], ['5', '6']],
 		},
@@ -87,11 +91,14 @@ function arranqueDirecto(): Proyecto {
 		},
 		{
 			id: 'm1', tipo: 'motor', descripcion: 'Motor trifásico 1,5 kW', campo: true,
-			tensionNominal: 380, hojaId: 'h1', bornes: [L('U'), L('V'), L('W'), PE()],
+			// 1,5 kW a 380 V trifásicos con cos φ 0,8 y rendimiento 0,85 son ~3,4 A por fase.
+			// Es el dato que hace que la simulación pueda decir cuánto consume el tablero.
+			tensionNominal: 380, corrienteNominal: 3.4, hojaId: 'h1',
+			bornes: [L('U'), L('V'), L('W'), PE()],
 		},
 		{
 			id: 'f1', tipo: 'fusible', descripcion: 'Fusible del circuito de mando', hojaId: 'h2',
-			tensionNominal: 220, bornes: [C('1'), C('2')],
+			tensionNominal: 220, corrienteNominal: 2, curvaDisparo: 'gG', bornes: [C('1'), C('2')],
 		},
 		{
 			id: 's0', tipo: 'pulsador', descripcion: 'Pulsador de PARO (contacto NC, rojo)', campo: true,
@@ -189,6 +196,7 @@ function bombaConBoya(): Proyecto {
 			// Un diferencial puro no corta cortocircuitos por sí solo: 6 kA es su corriente
 			// condicional respaldada por el automático que lleva detrás.
 			poderCorteKA: 6, disipacionW: 2, poderCorteEstimado: true, disipacionEstimada: true,
+			corrienteNominal: 25, sensibilidadMA: 30, claseDiferencial: 'AC',
 			bornes: [L('1'), N('3'), L('2'), N('4')],
 			puentesInternos: [['1', '2'], ['3', '4']],
 		},
@@ -196,6 +204,7 @@ function bombaConBoya(): Proyecto {
 			id: 'q2', tipo: 'disyuntor', descripcion: 'Automático 2P C10 (protege el cable y la bomba)',
 			fabricante: 'Schneider Electric', referencia: 'iC60N', tensionNominal: 220, hojaId: 'h1',
 			poderCorteKA: 6, disipacionW: 2.5, poderCorteEstimado: true, disipacionEstimada: true,
+			corrienteNominal: 10, curvaDisparo: 'C',
 			bornes: [L('1'), N('3'), L('2'), N('4')],
 			puentesInternos: [['1', '2'], ['3', '4']],
 		},
@@ -219,7 +228,9 @@ function bombaConBoya(): Proyecto {
 		},
 		{
 			id: 'm1', tipo: 'motor', descripcion: 'Bomba monofásica 0,75 kW', campo: true,
-			tensionNominal: 220, hojaId: 'h1', bornes: [L('L'), N('N'), PE()],
+			// 0,75 kW a 220 V monofásicos con cos φ 0,8 y rendimiento 0,75 son ~5,7 A.
+			tensionNominal: 220, corrienteNominal: 5.7, hojaId: 'h1',
+			bornes: [L('L'), N('N'), PE()],
 		},
 	];
 
@@ -261,6 +272,196 @@ function bombaConBoya(): Proyecto {
 			{ dispositivoId: 'q2', x: 95, y: 40, ancho: 36, alto: 80, rielId: 'r1' },
 			{ dispositivoId: 'km1', x: 155, y: 37, ancho: 45, alto: 86, rielId: 'r1' },
 			{ dispositivoId: 'x1', x: 60, y: 255, ancho: 110, alto: 50, rielId: 'r2' },
+		],
+	};
+	return p;
+}
+
+/* --------------- 3. Arranque estrella-triángulo con temporizador --------------- */
+
+/**
+ * El arranque de un ventilador de cubierta: en estrella cada bobinado recibe 220 V en vez de
+ * 380 y el motor tira un tercio de la punta; a los pocos segundos, cuando ya ha cogido vueltas,
+ * el temporizador pasa a triángulo y el motor queda a plena tensión.
+ *
+ * Es el ejemplo que hace visible el reloj de la simulación: hay una cuenta atrás de verdad y
+ * los contactores se relevan solos, sin que nadie toque nada.
+ */
+function estrellaTriangulo(): Proyecto {
+	n = 0;
+	const p = crearProyecto('Arranque estrella-triángulo (ventilador de cubierta)');
+	p.opciones = { iccPresuntaKA: 10, temperaturaAmbienteC: 40, montajeGabinete: 'mural' };
+	p.hojas = [
+		{ id: 'h1', numero: 1, titulo: 'Fuerza 380 V' },
+		{ id: 'h2', numero: 2, titulo: 'Mando 220 V y temporización' },
+	];
+
+	const contactor = (
+		id: string, descripcion: string, referencia: string, aux: string[],
+	): Dispositivo => ({
+		id, tipo: 'contactor', descripcion, fabricante: 'Schneider Electric', referencia,
+		tensionNominal: 220, hojaId: 'h1', rol: { tipo: 'maestro' },
+		disipacionW: 4, disipacionEstimada: true,
+		bornes: [
+			L('1/L1'), L('3/L2'), L('5/L3'), L('2/T1'), L('4/T2'), L('6/T3'),
+			C('A1'), C('A2'), ...aux.map(C),
+		],
+		puentesInternos: [['1/L1', '2/T1'], ['3/L2', '4/T2'], ['5/L3', '6/T3']],
+	});
+
+	p.dispositivos = [
+		{
+			id: 'red', tipo: 'otro', clase: 'W', descripcion: 'Acometida 380 V 3F+N+PE', campo: true,
+			tensionNominal: 380, hojaId: 'h1', bornes: [L('L1'), L('L2'), L('L3'), N('N'), PE()],
+		},
+		{
+			id: 'q1', tipo: 'disyuntor', descripcion: 'Automático 3P C16 (protege el cable)',
+			fabricante: 'Schneider Electric', referencia: 'iC60N 3P C16', tensionNominal: 380,
+			hojaId: 'h1', corrienteNominal: 16, curvaDisparo: 'C', polos: 3,
+			poderCorteKA: 10, disipacionW: 6, poderCorteEstimado: true, disipacionEstimada: true,
+			bornes: [L('1'), L('3'), L('5'), L('2'), L('4'), L('6')],
+			puentesInternos: [['1', '2'], ['3', '4'], ['5', '6']],
+		},
+		{
+			id: 'f2', tipo: 'rele', clase: 'F', descripcion: 'Relé térmico 7–10 A (regulado a 8,5 A)',
+			fabricante: 'Schneider Electric', referencia: 'LRD14', hojaId: 'h1',
+			rangoRegulacionA: [7, 10], disipacionW: 5, disipacionEstimada: true,
+			bornes: [L('1'), L('3'), L('5'), L('2'), L('4'), L('6'), C('95'), C('96')],
+			puentesInternos: [['1', '2'], ['3', '4'], ['5', '6']],
+		},
+		// KM1 lleva el contacto 13-14 de autorretención; KM2 y KM3 llevan el 21-22 con el que se
+		// bloquean el uno al otro: si los dos cerraran a la vez sería un cortocircuito entre fases.
+		contactor('km1', 'Contactor de LÍNEA', 'LC1D12', ['13', '14']),
+		contactor('km2', 'Contactor de ESTRELLA', 'LC1D09', ['21', '22']),
+		contactor('km3', 'Contactor de TRIÁNGULO', 'LC1D12', ['21', '22']),
+		{
+			id: 'x1', tipo: 'bornero', descripcion: 'Bornero de fuerza al motor (6 hilos + tierra)',
+			hojaId: 'h1',
+			bornes: [C('U1'), C('V1'), C('W1'), C('U2'), C('V2'), C('W2'), PE()],
+		},
+		{
+			id: 'm1', tipo: 'motor', descripcion: 'Ventilador trifásico 4 kW, 6 bornes', campo: true,
+			// 4 kW a 380 V con cos φ 0,84 y rendimiento 0,85 son ~8,5 A por fase en triángulo.
+			tensionNominal: 380, corrienteNominal: 8.5, polos: 3, hojaId: 'h1',
+			bornes: [L('U1'), L('V1'), L('W1'), L('U2'), L('V2'), L('W2'), PE()],
+		},
+		{
+			id: 'f1', tipo: 'fusible', descripcion: 'Fusible del circuito de mando', hojaId: 'h2',
+			tensionNominal: 220, corrienteNominal: 2, curvaDisparo: 'gG', bornes: [C('1'), C('2')],
+		},
+		{
+			id: 's0', tipo: 'pulsador', descripcion: 'Pulsador de PARO (contacto NC, rojo)', campo: true,
+			tensionNominal: 220, hojaId: 'h2', bornes: [C('11'), C('12')],
+		},
+		{
+			id: 's1', tipo: 'pulsador', descripcion: 'Pulsador de MARCHA (contacto NA, verde)', campo: true,
+			tensionNominal: 220, hojaId: 'h2', bornes: [C('13'), C('14')],
+		},
+		{
+			id: 'kt', tipo: 'rele', descripcion: 'Temporizador a la conexión, 6 s (estrella→triángulo)',
+			fabricante: 'Schneider Electric', referencia: 'RE22R1', tensionNominal: 220, hojaId: 'h2',
+			rol: { tipo: 'maestro' }, disipacionW: 2, disipacionEstimada: true,
+			// Aquí está la gracia: al meterle tensión NO conmuta. Cuenta 6 s con los contactos en
+			// reposo —11-12 cerrado, o sea estrella— y al cumplirse los da vuelta: abre la estrella
+			// y cierra el triángulo.
+			temporizacion: { tipo: 'trabajo', segundos: 6 },
+			bornes: [C('A1'), C('A2'), C('11'), C('12'), C('13'), C('14')],
+		},
+		{
+			id: 'x2', tipo: 'bornero', descripcion: 'Bornero de mando (botonera)', hojaId: 'h2',
+			bornes: [C('1'), C('2'), C('3'), C('4'), C('5'), C('6')],
+			puentes: [['2', '5'], ['3', '6']],
+		},
+	];
+
+	p.conductores = [
+		// --- Fuerza: red → automático → térmico → contactores → bornero → motor ---
+		cable(['red', 'L1'], ['q1', '1'], 4, 'marrón'),
+		cable(['red', 'L2'], ['q1', '3'], 4, 'negro'),
+		cable(['red', 'L3'], ['q1', '5'], 4, 'gris'),
+		cable(['q1', '2'], ['f2', '1'], 4, 'marrón'),
+		cable(['q1', '4'], ['f2', '3'], 4, 'negro'),
+		cable(['q1', '6'], ['f2', '5'], 4, 'gris'),
+		// La línea sale del térmico y se reparte entre el contactor de línea y el de triángulo.
+		cable(['f2', '2'], ['km1', '1/L1'], 4, 'marrón'),
+		cable(['f2', '4'], ['km1', '3/L2'], 4, 'negro'),
+		cable(['f2', '6'], ['km1', '5/L3'], 4, 'gris'),
+		cable(['km1', '1/L1'], ['km3', '1/L1'], 4, 'marrón'),
+		cable(['km1', '3/L2'], ['km3', '3/L2'], 4, 'negro'),
+		cable(['km1', '5/L3'], ['km3', '5/L3'], 4, 'gris'),
+		// KM1 alimenta las CABEZAS de bobinado U1 V1 W1.
+		cable(['km1', '2/T1'], ['x1', 'U1'], 4, 'marrón'),
+		cable(['km1', '4/T2'], ['x1', 'V1'], 4, 'negro'),
+		cable(['km1', '6/T3'], ['x1', 'W1'], 4, 'gris'),
+		// KM3 alimenta las COLAS U2 V2 W2, pero CRUZADAS: es eso lo que forma el triángulo.
+		cable(['km3', '2/T1'], ['x1', 'V2'], 4, 'marrón'),
+		cable(['km3', '4/T2'], ['x1', 'W2'], 4, 'negro'),
+		cable(['km3', '6/T3'], ['x1', 'U2'], 4, 'gris'),
+		// KM2 junta las tres colas en un punto: eso es la estrella.
+		cable(['x1', 'U2'], ['km2', '1/L1'], 4, 'marrón'),
+		cable(['x1', 'V2'], ['km2', '3/L2'], 4, 'negro'),
+		cable(['x1', 'W2'], ['km2', '5/L3'], 4, 'gris'),
+		cable(['km2', '2/T1'], ['km2', '4/T2'], 4, 'azul'),   // puente de estrella
+		cable(['km2', '4/T2'], ['km2', '6/T3'], 4, 'azul'),
+		// Los seis hilos hasta el motor, más la tierra.
+		cable(['x1', 'U1'], ['m1', 'U1'], 4, 'marrón'),
+		cable(['x1', 'V1'], ['m1', 'V1'], 4, 'negro'),
+		cable(['x1', 'W1'], ['m1', 'W1'], 4, 'gris'),
+		cable(['x1', 'U2'], ['m1', 'U2'], 4, 'marrón'),
+		cable(['x1', 'V2'], ['m1', 'V2'], 4, 'negro'),
+		cable(['x1', 'W2'], ['m1', 'W2'], 4, 'gris'),
+		cable(['red', 'PE'], ['x1', 'PE'], 4, 'verde/amarillo'),
+		cable(['x1', 'PE'], ['m1', 'PE'], 4, 'verde/amarillo'),
+		// --- Mando 220 V: fase → fusible → paro → marcha → bobinas → térmico → neutro ---
+		cable(['red', 'L1'], ['f1', '1'], 1, 'marrón'),
+		cable(['f1', '2'], ['x2', '1'], 1, 'marrón'),
+		cable(['x2', '1'], ['s0', '11'], 1, 'marrón'),
+		cable(['s0', '12'], ['x2', '2'], 1, 'negro'),
+		cable(['x2', '2'], ['s1', '13'], 1, 'negro'),
+		cable(['s1', '14'], ['x2', '3'], 1, 'negro'),
+		// Desde aquí, el punto de mando: alimenta KM1 y el temporizador a la vez.
+		cable(['x2', '3'], ['km1', 'A1'], 1, 'negro'),
+		cable(['km1', 'A1'], ['kt', 'A1'], 1, 'negro'),
+		cable(['km1', '13'], ['x2', '5'], 1, 'negro'),   // autorretención por las bornas puenteadas
+		cable(['km1', '14'], ['x2', '6'], 1, 'negro'),
+		// El temporizador reparte: 11-12 (cerrado en reposo) → estrella; 13-14 → triángulo.
+		cable(['km1', 'A1'], ['kt', '11'], 1, 'negro'),
+		cable(['kt', '12'], ['km3', '21'], 1, 'negro'),  // pasando por el bloqueo del triángulo
+		cable(['km3', '22'], ['km2', 'A1'], 1, 'negro'),
+		cable(['km1', 'A1'], ['kt', '13'], 1, 'negro'),
+		cable(['kt', '14'], ['km2', '21'], 1, 'negro'),  // pasando por el bloqueo de la estrella
+		cable(['km2', '22'], ['km3', 'A1'], 1, 'negro'),
+		// Los tres retornos de bobina se juntan y vuelven por el contacto del térmico.
+		cable(['km1', 'A2'], ['f2', '95'], 1, 'azul'),
+		cable(['km2', 'A2'], ['km1', 'A2'], 1, 'azul'),
+		cable(['km3', 'A2'], ['km1', 'A2'], 1, 'azul'),
+		cable(['kt', 'A2'], ['km1', 'A2'], 1, 'azul'),
+		cable(['f2', '96'], ['red', 'N'], 1, 'azul'),
+	];
+
+	p.gabinete = {
+		ancho: 600,
+		alto: 600,
+		rieles: [
+			{ id: 'r1', x: 30, y: 90, largo: 540 },
+			{ id: 'r2', x: 30, y: 280, largo: 540 },
+			{ id: 'r3', x: 30, y: 470, largo: 540 },
+		],
+		canaletas: [
+			{ id: 'c1', x: 20, y: 175, largo: 560, orientacion: 'h', ancho: 40, alto: 60 },
+			{ id: 'c2', x: 20, y: 365, largo: 560, orientacion: 'h', ancho: 40, alto: 60 },
+			{ id: 'c3', x: 20, y: 175, largo: 250, orientacion: 'v', ancho: 40, alto: 60 },
+		],
+		colocaciones: [
+			{ dispositivoId: 'km1', x: 80, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
+			{ dispositivoId: 'km2', x: 175, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
+			{ dispositivoId: 'km3', x: 270, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
+			{ dispositivoId: 'f2', x: 380, y: 55, ancho: 45, alto: 70, rielId: 'r1' },
+			{ dispositivoId: 'q1', x: 80, y: 238, ancho: 54, alto: 85, rielId: 'r2' },
+			{ dispositivoId: 'f1', x: 180, y: 245, ancho: 18, alto: 70, rielId: 'r2' },
+			{ dispositivoId: 'kt', x: 240, y: 240, ancho: 22, alto: 80, rielId: 'r2' },
+			{ dispositivoId: 'x1', x: 80, y: 445, ancho: 130, alto: 50, rielId: 'r3' },
+			{ dispositivoId: 'x2', x: 280, y: 445, ancho: 110, alto: 50, rielId: 'r3' },
 		],
 	};
 	return p;
@@ -313,6 +514,35 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'Mira que la bobina A2 vuelve al neutro pasando por el automático: todo el mando queda protegido.',
 		],
 		crear: bombaConBoya,
+	},
+	{
+		id: 'estrella-triangulo',
+		titulo: 'Arranque estrella-triángulo con temporizador',
+		resumen: 'Arrancar un motor grande sin que dé el tirón: primero en estrella, luego en triángulo.',
+		queHace: 'Pone en marcha un ventilador de 4 kW en dos tiempos. Arranca con los bobinados en '
+			+ 'estrella (cada uno a 220 V, un tercio de la punta de corriente) y a los 6 segundos, '
+			+ 'cuando ya tiene vueltas, pasa a triángulo y queda a plena potencia.',
+		comoFunciona: [
+			'Al apretar MARCHA (S1) entra la bobina de KM1 (línea) y, a la vez, la del temporizador KT.',
+			'KM1 se autorretiene por su contacto 13-14 y alimenta las cabezas U1 V1 W1 del motor.',
+			'El temporizador NO conmuta todavía: sus contactos siguen en reposo, o sea 11-12 cerrado, '
+			+ 'y por ahí entra KM2, que junta las tres colas en un punto. Eso es la ESTRELLA.',
+			'Pasados los 6 segundos KT da vuelta sus contactos: abre 11-12 y KM2 se cae; cierra 13-14 '
+			+ 'y entra KM3, que alimenta las colas CRUZADAS. Eso es el TRIÁNGULO.',
+			'Los contactos 21-22 de KM2 y KM3 se bloquean mutuamente: si los dos cerraran a la vez, '
+			+ 'la estrella y el triángulo juntos serían un cortocircuito entre fases.',
+			'PARO (S0) corta todo el mando de golpe, y el térmico F2 hace lo mismo si hay sobrecarga.',
+		],
+		aprender: [
+			'Energiza y aprieta MARCHA con el panel de simulación abierto: verás la cuenta atrás de KT '
+			+ 'correr y a KM2 apagarse y KM3 encenderse solos, sin tocar nada.',
+			'Sigue los seis hilos del bornero X1 al motor: U1 V1 W1 son las cabezas, U2 V2 W2 las colas. '
+			+ 'Un motor de 380/660 V se conecta así; uno de 220/380 no admite este arranque a 380 V.',
+			'Mira el cruce de KM3: su salida 2/T1 va a V2, no a U2. Ese cruce es el triángulo.',
+			'El puente azul entre las tres salidas de KM2 es el punto de estrella; en el tablero real '
+			+ 'suele ser una pletina o tres pontets, no cable.',
+		],
+		crear: estrellaTriangulo,
 	},
 	{
 		id: 'control-24v',

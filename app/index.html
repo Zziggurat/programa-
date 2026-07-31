@@ -236,6 +236,25 @@
 	#sim-avisos .aviso-sim { font-size: 12.5px; line-height: 1.5; color: var(--aviso);
 		background: #2a2418; border-radius: 8px; padding: 8px 10px; margin-top: 6px; }
 	#sim-funcionando .nada-sim { color: var(--texto-suave); font-size: 12.5px; }
+	.fila-sim.contando .punto-sim { background: #4dabf7; box-shadow: 0 0 7px #4dabf7; }
+
+	/* Lo que consume el tablero: total e intensidad por protección, con su barra de carga.
+	   La barra es lo que se lee de un vistazo — verde va sobrado, ámbar va justo, rojo se pasa. */
+	.total-sim { font-size: 13px; background: #1d2a1f; border: 1px solid #2f5a37; color: #b8e6c4;
+		border-radius: 8px; padding: 7px 10px; margin-bottom: 8px; }
+	.titulo-sim { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+		color: var(--texto-suave); margin: 12px 0 5px; }
+	.fila-carga { display: grid; grid-template-columns: 54px 1fr auto; align-items: center; gap: 8px;
+		padding: 5px 8px; border-radius: 8px; background: var(--panel-2); margin-bottom: 4px;
+		font-size: 12px; cursor: pointer; }
+	.fila-carga:hover { background: #22282f; }
+	.fila-carga .barra-carga { height: 6px; border-radius: 3px; background: #10151a; overflow: hidden; }
+	.fila-carga .barra-carga i { display: block; height: 100%; background: var(--ok); }
+	.fila-carga.justo .barra-carga i { background: var(--aviso); }
+	.fila-carga.malo .barra-carga i { background: var(--error); }
+	.fila-carga .cifra-carga { color: var(--texto-suave); font-variant-numeric: tabular-nums;
+		white-space: nowrap; }
+	.fila-carga.malo .cifra-carga { color: var(--error); }
 
 	/* «¿Cómo se conecta?»: la chuleta de cableado de cada aparato, plegada en la ficha */
 	.como-conectar { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 10px;
@@ -638,10 +657,12 @@
 			<div class="sub" style="color:var(--texto-suave);margin-bottom:8px">Haz clic en un
 			<b>pulsador</b> para pulsarlo, en un <b>sensor</b> o una <b>boya</b> para activarlo, y en una
 			<b>protección</b> para abrirla o cerrarla. Los cables con tensión se iluminan.</div>
+			<div id="sim-consumo"></div>
 			<div id="sim-funcionando"></div>
+			<div id="sim-carga"></div>
 			<div id="sim-avisos"></div>
 			<div class="botonera" style="margin-top:10px">
-				<button class="boton" id="btn-sim-reposo" title="Soltar todos los pulsadores y rearmar todo">↺ Volver al reposo</button>
+				<button class="boton" id="btn-sim-reposo" title="Soltar todos los pulsadores, rearmar las protecciones y poner el reloj a cero">↺ Volver al reposo</button>
 			</div>
 		</div>
 	</details>

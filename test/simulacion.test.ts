@@ -13,7 +13,9 @@ import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import { Conductor, Proyecto } from '../src/modelo/tipos.js';
 import { numerarDispositivos } from '../src/motores/numeracion.js';
-import { contactosAuxiliaresIEC, simular } from '../src/motores/simulacion.js';
+import {
+	contactosAuxiliaresIEC, contactosCerrados, memoriaVacia, polosDe, simular, tiempoDeDisparo,
+} from '../src/motores/simulacion.js';
 
 /**
  * Un ejemplo tal como lo ve la aplicación: numerado. Los ejemplos se construyen sin designaciones
@@ -46,6 +48,25 @@ test('los contactos se deducen de la numeración IEC: 11-12 es NC y 13-14 es NA'
 test('un borne sin su pareja no se toma por un contacto', () => {
 	const d = { id: 'k', tipo: 'rele' as const, bornes: [{ id: '13' }, { id: 'A1' }, { id: 'A2' }] };
 	assert.deepEqual(contactosAuxiliaresIEC(d), []);
+});
+
+test('un bloque auxiliar 11-12 NO es un polo de potencia', () => {
+	// Los polos llegan al 7-8; del 11 en adelante son contactos auxiliares. Confundirlos hacía que
+	// un relé auxiliar condujera por su NC justo cuando la bobina estaba metida, o sea al revés.
+	const rele = {
+		id: 'kt', tipo: 'rele' as const,
+		bornes: [{ id: 'A1' }, { id: 'A2' }, { id: '11' }, { id: '12' }, { id: '13' }, { id: '14' }],
+	};
+	assert.deepEqual(polosDe(rele), [], 'un relé auxiliar no tiene polos de potencia');
+	assert.deepEqual(contactosCerrados(rele, {}, false), [['11', '12']], 'en reposo, cerrado el NC');
+	assert.deepEqual(contactosCerrados(rele, {}, true), [['13', '14']], 'metido, cerrado el NA');
+
+	// Y un automático de cuatro polos sí los conserva todos.
+	const q = {
+		id: 'q', tipo: 'disyuntor' as const,
+		bornes: ['1', '2', '3', '4', '5', '6', '7', '8'].map((id) => ({ id })),
+	};
+	assert.equal(polosDe(q).length, 4, 'un tetrapolar tiene cuatro polos');
 });
 
 /* --------------------------------- Sin tablero --------------------------------- */
@@ -240,4 +261,352 @@ test('un detector PNP no da señal en reposo y sí al detectar', () => {
 	assert.ok(!gira(simular(p), '-H1'), 'el detector da señal sin detectar nada');
 	assert.ok(gira(simular(p, { s1: { activo: true } }), '-H1'),
 		'el detector no entrega +24 V por su salida al detectar');
+});
+
+/* ============================ INTENSIDADES, FALTAS Y DISPAROS ============================
+ *
+ * Hasta aquí la simulación decía QUÉ funciona. Estas pruebas son de lo que dice ahora: CUÁNTO
+ * consume, por dónde pasa esa corriente, y qué salta cuando algo está mal. Es la diferencia
+ * entre ver una lámpara encendida y saber si el automático que la protege va sobrado.
+ */
+
+/** Tablero mínimo: red → protección → carga, para medir con todo a la vista. */
+function tableroSimple(opciones: {
+	calibre: number;
+	consumo: number;
+	curva?: 'B' | 'C' | 'D';
+	corto?: boolean;
+}): Proyecto {
+	const p = crearProyecto('t');
+	p.hojas = [{ id: 'h1', numero: 1, titulo: 'H' }];
+	p.dispositivos = [
+		{
+			id: 'red', tipo: 'otro', clase: 'W', descripcion: 'Acometida 220 V', campo: true,
+			tensionNominal: 220, bornes: [{ id: 'L', tipo: 'L' }, { id: 'N', tipo: 'N' }],
+		},
+		{
+			id: 'q1', tipo: 'disyuntor', designacion: '-Q1', corrienteNominal: opciones.calibre,
+			curvaDisparo: opciones.curva ?? 'C',
+			bornes: [{ id: '1', tipo: 'L' }, { id: '2', tipo: 'L' }, { id: '3', tipo: 'N' }, { id: '4', tipo: 'N' }],
+		},
+		{
+			id: 'm1', tipo: 'motor', designacion: '-M1', campo: true, corrienteNominal: opciones.consumo,
+			bornes: [{ id: 'U1', tipo: 'L' }, { id: 'N', tipo: 'N' }],
+		},
+	];
+	const cable = (de: [string, string], a: [string, string], id: string): Conductor =>
+		({ id, de: { dispositivoId: de[0], borneId: de[1] }, a: { dispositivoId: a[0], borneId: a[1] } });
+	p.conductores = [
+		cable(['red', 'L'], ['q1', '1'], 'c1'),
+		cable(['red', 'N'], ['q1', '3'], 'c2'),
+		cable(['q1', '2'], ['m1', 'U1'], 'c3'),
+		cable(['q1', '4'], ['m1', 'N'], 'c4'),
+	];
+	// El corto: un puente de la salida de fase al neutro, sin carga por medio.
+	if (opciones.corto) p.conductores.push(cable(['q1', '2'], ['q1', '4'], 'cx'));
+	return p;
+}
+
+test('una carga en marcha declara la corriente que consume', () => {
+	const r = simular(tableroSimple({ calibre: 10, consumo: 3.5 }));
+	assert.equal(r.consumos.length, 1, 'no se ve ninguna carga consumiendo');
+	assert.equal(r.consumos[0].corriente, 3.5);
+	assert.equal(r.corrienteTotal, 3.5);
+	assert.ok(r.funcionando[0].que.includes('3.5 A'), r.funcionando[0].que);
+});
+
+test('la corriente de la carga atraviesa la protección que tiene delante', () => {
+	const r = simular(tableroSimple({ calibre: 10, consumo: 3.5 }));
+	const q1 = r.cargaPorAparato.get('q1');
+	assert.ok(q1, 'la protección no aparece en el reparto de corriente');
+	assert.equal(q1!.corriente, 3.5, 'por el automático no pasa la corriente del motor');
+	assert.equal(q1!.porcentaje, 35, 'un motor de 3,5 A en un automático de 10 A es el 35 %');
+});
+
+test('y también los cables de esa rama, uno por uno', () => {
+	const r = simular(tableroSimple({ calibre: 10, consumo: 3.5 }));
+	assert.equal(r.corrientePorConductor.get('c1'), 3.5, 'la acometida no lleva la corriente');
+	assert.equal(r.corrientePorConductor.get('c3'), 3.5, 'el cable a la carga no lleva la corriente');
+});
+
+test('un automático holgado no dispara', () => {
+	const r = simular(tableroSimple({ calibre: 10, consumo: 3.5 }));
+	assert.equal(r.disparos.length, 0, r.disparos.map((d) => d.explicacion).join(' | '));
+});
+
+test('SOBRECARGA: con más corriente que calibre, la protección dispara', () => {
+	const r = simular(tableroSimple({ calibre: 6, consumo: 9 }));
+	const d = r.disparos.find((x) => x.dispositivoId === 'q1');
+	assert.ok(d, 'un automático de 6 A con 9 A encima no dispara');
+	assert.equal(d!.motivo, 'sobrecarga');
+	assert.ok(d!.segundos > 0 && d!.segundos < 3600, `tiempo de disparo raro: ${d!.segundos} s`);
+	assert.ok(r.avisos.some((a) => /sobrecarg/i.test(a)), r.avisos.join(' | '));
+});
+
+test('y a mayor exceso, antes dispara (es una curva, no un umbral)', () => {
+	const poco = simular(tableroSimple({ calibre: 6, consumo: 8 })).disparos[0];
+	const mucho = simular(tableroSimple({ calibre: 6, consumo: 20 })).disparos[0];
+	assert.ok(poco.segundos > mucho.segundos,
+		`con más corriente tendría que tardar menos: ${poco.segundos} s vs ${mucho.segundos} s`);
+});
+
+test('la curva importa: una D aguanta el arranque que a una B la haría saltar', () => {
+	const b = tiempoDeDisparo(30, 6, 'B');   // 5·In: ya es magnético en curva B
+	const d = tiempoDeDisparo(30, 6, 'D');   // 5·In: todavía es térmico en curva D
+	assert.equal(b, 0.01, 'la curva B tiene que cortar al instante a 5 veces el calibre');
+	assert.ok(d! > 0.01, 'la curva D no puede cortar al instante a 5 veces el calibre');
+});
+
+test('por debajo del calibre no dispara nunca, por mucho que se acerque', () => {
+	assert.equal(tiempoDeDisparo(6, 6, 'C'), undefined);
+	assert.equal(tiempoDeDisparo(6.5, 6, 'C'), undefined, '1,08·In no es disparo');
+});
+
+test('CORTOCIRCUITO: un puente fase-neutro se ve y dispara la protección de delante', () => {
+	const r = simular(tableroSimple({ calibre: 10, consumo: 3.5, corto: true }));
+	assert.equal(r.cortocircuitos.length, 1, 'no se detecta el cortocircuito');
+	assert.ok(/retorno/i.test(r.cortocircuitos[0].que), r.cortocircuitos[0].que);
+	assert.deepEqual(r.cortocircuitos[0].proteccionesAguasArriba, ['q1'],
+		'no se identifica el automático que ve la falta');
+	const d = r.disparos.find((x) => x.motivo === 'cortocircuito');
+	assert.ok(d, 'el cortocircuito no dispara nada');
+	assert.equal(d!.segundos, 0.01, 'un cortocircuito no se corta en segundos, se corta al instante');
+	assert.ok(r.avisos[0].includes('CORTOCIRCUITO'), r.avisos.join(' | '));
+});
+
+test('un tablero bien cableado NO tiene cortocircuitos', () => {
+	for (const id of ['arranque-directo', 'bomba-boya', 'control-24v', 'estrella-triangulo']) {
+		const r = simular(ejemplo(id));
+		assert.equal(r.cortocircuitos.length, 0,
+			`el ejemplo «${id}» sale con un cortocircuito: ${r.cortocircuitos.map((c) => c.que).join(', ')}`);
+	}
+});
+
+test('los ejemplos tampoco disparan sus protecciones al funcionar', () => {
+	const p = ejemplo('arranque-directo');
+	const marcha = p.dispositivos.find((d) => /MARCHA/i.test(d.descripcion ?? ''))!;
+	const r = simular(p, { [marcha.id]: { activo: true } });
+    assert.ok(gira(r, '-M1'), 'el motor ni siquiera arranca');
+	assert.equal(r.disparos.length, 0,
+		`el arranque hace saltar algo: ${r.disparos.map((d) => d.explicacion).join(' | ')}`);
+	assert.ok(r.corrienteTotal > 0, 'con el motor girando el tablero no consume nada');
+});
+
+/* ================================ TEMPORIZADORES ================================
+ *
+ * Un temporizador no es función del estado actual: depende de CUÁNDO cambió la cosa. Estas
+ * pruebas mueven un reloj simulado, así que no dependen de esperas reales ni son lentas.
+ */
+
+/** Red 24 V → pulsador → bobina del relé temporizado → su contacto NA → piloto. */
+function tableroTemporizado(tipo: 'trabajo' | 'reposo', segundos: number): Proyecto {
+	const p = crearProyecto('t');
+	p.hojas = [{ id: 'h1', numero: 1, titulo: 'H' }];
+	p.dispositivos = [
+		{
+			id: 'red', tipo: 'otro', clase: 'W', descripcion: 'Acometida 24 V', campo: true,
+			tensionNominal: 24, bornes: [{ id: 'L', tipo: 'L' }, { id: 'N', tipo: 'N' }],
+		},
+		{
+			id: 's1', tipo: 'pulsador', designacion: '-S1', descripcion: 'MARCHA',
+			bornes: [{ id: '13', tipo: 'control' }, { id: '14', tipo: 'control' }],
+		},
+		{
+			id: 'kt', tipo: 'rele', designacion: '-KT1', temporizacion: { tipo, segundos },
+			bornes: [
+				{ id: 'A1', tipo: 'control' }, { id: 'A2', tipo: 'control' },
+				{ id: '13', tipo: 'control' }, { id: '14', tipo: 'control' },
+			],
+		},
+		{ id: 'h', tipo: 'piloto', designacion: '-H1', bornes: [{ id: 'X1', tipo: 'control' }, { id: 'X2', tipo: 'control' }] },
+	];
+	const cable = (de: [string, string], a: [string, string], id: string): Conductor =>
+		({ id, de: { dispositivoId: de[0], borneId: de[1] }, a: { dispositivoId: a[0], borneId: a[1] } });
+	p.conductores = [
+		cable(['red', 'L'], ['s1', '13'], 'c1'),
+		cable(['s1', '14'], ['kt', 'A1'], 'c2'),
+		cable(['red', 'N'], ['kt', 'A2'], 'c3'),
+		cable(['red', 'L'], ['kt', '13'], 'c4'),
+		cable(['kt', '14'], ['h', 'X1'], 'c5'),
+		cable(['red', 'N'], ['h', 'X2'], 'c6'),
+	];
+	return p;
+}
+
+test('TEMPORIZADO A LA CONEXIÓN: la bobina se mete ya, pero el contacto espera', () => {
+	const p = tableroTemporizado('trabajo', 5);
+	const memoria = memoriaVacia();
+	const pulsado = { s1: { activo: true } };
+
+	// t = 0: se pulsa. La bobina entra, pero el piloto todavía NO se enciende.
+	let r = simular(p, pulsado, undefined, { ahora: 0, memoria });
+	assert.ok(r.funcionando.some((f) => f.designacion === '-KT1' && /contando/.test(f.que)),
+		`el relé no está contando: ${r.funcionando.map((f) => f.que).join(' | ')}`);
+	assert.ok(!gira(r, '-H1'), 'el piloto se enciende antes de tiempo: el temporizador no temporiza');
+
+	// t = 3 s: todavía no.
+	r = simular(p, pulsado, r.activos, { ahora: 3000, memoria });
+	assert.ok(!gira(r, '-H1'), 'a los 3 s de un temporizador de 5 s ya está encendido');
+	const cuenta = r.temporizadores.find((t) => t.dispositivoId === 'kt');
+	assert.ok(cuenta?.contando, 'no se ve la cuenta atrás');
+	assert.ok(cuenta!.restan > 1 && cuenta!.restan <= 2.1, `quedan ${cuenta!.restan} s, esperaba ~2`);
+
+	// t = 6 s: ya pasó el tiempo, el piloto enciende.
+	r = simular(p, pulsado, r.activos, { ahora: 6000, memoria });
+	assert.ok(gira(r, '-H1'), 'pasados los 5 s el contacto sigue sin cerrar');
+});
+
+test('TEMPORIZADO A LA DESCONEXIÓN: conmuta al instante y suelta tarde', () => {
+	const p = tableroTemporizado('reposo', 4);
+	const memoria = memoriaVacia();
+
+	// Pulsado: conmuta en el acto, sin esperar.
+	let r = simular(p, { s1: { activo: true } }, undefined, { ahora: 0, memoria });
+	assert.ok(gira(r, '-H1'), 'un temporizado a la desconexión tiene que actuar al instante');
+
+	// Se suelta el pulsador: aguanta.
+	r = simular(p, {}, r.activos, { ahora: 1000, memoria });
+	assert.ok(gira(r, '-H1'), 'al soltar debería aguantar sus 4 s, y se ha soltado ya');
+
+	// Pasados los 4 s, suelta.
+	r = simular(p, {}, r.activos, { ahora: 6000, memoria });
+	assert.ok(!gira(r, '-H1'), 'pasados los 4 s sigue enganchado: no suelta nunca');
+});
+
+test('sin reloj, un temporizado se comporta como instantáneo (para responder «¿esto funciona?»)', () => {
+	const p = tableroTemporizado('trabajo', 30);
+	const r = simular(p, { s1: { activo: true } });
+	assert.ok(gira(r, '-H1'), 'sin reloj no se puede comprobar un circuito con temporizadores');
+});
+
+test('un relé sin temporización sigue conmutando al instante', () => {
+	const p = tableroTemporizado('trabajo', 0);
+	const r = simular(p, { s1: { activo: true } }, undefined, { ahora: 0, memoria: memoriaVacia() });
+	assert.ok(gira(r, '-H1'), 'un relé normal se ha vuelto lento');
+});
+
+test('un motor TRIFÁSICO carga cada polo con su corriente, no con la suma de las tres', () => {
+	// El fallo que tenía: sumar las tres fases daba el triple y hacía «disparar» aparatos que van
+	// sobrados. Un guardamotor se elige por la corriente POR FASE, que es la que ve cada polo.
+	const p = ejemplo('arranque-directo');
+	const marcha = p.dispositivos.find((d) => /MARCHA/i.test(d.descripcion ?? ''))!;
+	const r = simular(p, { [marcha.id]: { activo: true } });
+	const motor = p.dispositivos.find((d) => d.tipo === 'motor')!;
+	const q1 = r.cargaPorAparato.get('q1');
+	assert.ok(q1, 'el guardamotor no aparece en el reparto');
+	assert.equal(q1!.corriente, motor.corrienteNominal,
+		`por el guardamotor pasa ${q1!.corriente} A y el motor consume ${motor.corrienteNominal} A por fase`);
+	assert.equal(r.corrienteTotal, motor.corrienteNominal);
+	assert.equal(q1!.porcentaje, 85, 'un motor de 3,4 A en un guardamotor regulado a 4 A es el 85 %');
+});
+
+test('los ejemplos declaran el calibre de sus protecciones (si no, no se puede verificar nada)', () => {
+	// Un contactor, un relé o una borna dejan pasar la corriente pero no la limitan: no tienen
+	// calibre que comprobar. Lo que sí ha de estar declarado es el de todo lo que protege.
+	const PROTEGE = new Set(['disyuntor', 'diferencial', 'guardamotor', 'fusible']);
+	for (const id of ['arranque-directo', 'bomba-boya', 'control-24v', 'estrella-triangulo']) {
+		const p = ejemplo(id);
+		const r = simular(p);
+		for (const c of r.cargaPorAparato.values()) {
+			const d = p.dispositivos.find((x) => x.id === c.dispositivoId)!;
+			if (!PROTEGE.has(d.tipo)) continue;
+			assert.ok(c.nominal !== undefined,
+				`en «${id}», ${c.designacion} (${d.tipo}) no declara calibre ni rango de regulación`);
+		}
+	}
+});
+
+test('los consumos de los ejemplos declaran lo que gastan (si no, la carga sale a cero)', () => {
+	// Sin corriente de empleo declarada la barra de carga miente: dice 0 % en un circuito lleno.
+	// Los sensores quedan fuera a propósito: un «sensor» puede ser un detector alimentado o un
+	// contacto seco —una boya de nivel— que no consume nada.
+	const CONSUME = new Set(['motor', 'piloto', 'valvula', 'resistencia', 'plc']);
+	for (const id of ['arranque-directo', 'bomba-boya', 'control-24v', 'estrella-triangulo']) {
+		const p = ejemplo(id);
+		for (const d of p.dispositivos) {
+			if (!CONSUME.has(d.tipo)) continue;
+			assert.ok(d.corrienteNominal !== undefined && d.corrienteNominal > 0,
+				`en «${id}», ${d.descripcion ?? d.id} (${d.tipo}) no declara corriente de empleo`);
+		}
+	}
+});
+
+/* ---------------- La maniobra completa: el ejemplo estrella-triángulo ---------------- */
+
+/**
+ * Esta es la prueba que de verdad justifica los temporizadores: no un circuito de laboratorio,
+ * sino el tablero de ejemplo entero, con sus bloqueos, su autorretención y su térmico, corriendo
+ * contra un reloj. Si el relevo estrella→triángulo no ocurre solo, aquí se ve.
+ */
+const activo = (r: ReturnType<typeof simular>, id: string) => r.activos.has(id);
+
+test('ESTRELLA-TRIÁNGULO: el relevo ocurre solo al cumplirse el tiempo', () => {
+	const p = ejemplo('estrella-triangulo');
+	const memoria = memoriaVacia();
+	const marcha = p.dispositivos.find((d) => /MARCHA/i.test(d.descripcion ?? ''))!;
+
+	// t = 0, sin tocar nada: todo parado.
+	let r = simular(p, {}, undefined, { ahora: 0, memoria });
+	assert.ok(!activo(r, 'km1'), 'el contactor de línea entra sin apretar marcha');
+	assert.ok(!gira(r, '-M1'), 'el motor gira sin apretar marcha');
+
+	// t = 0, apretando MARCHA: línea + ESTRELLA, y el triángulo fuera.
+	const pulsado = { [marcha.id]: { activo: true } };
+	r = simular(p, pulsado, r.activos, { ahora: 0, memoria });
+	assert.ok(activo(r, 'km1'), 'no entra el contactor de línea');
+	assert.ok(activo(r, 'km2'), 'no entra la estrella: el motor arrancaría directo');
+	assert.ok(!activo(r, 'km3'), 'entra el triángulo desde el arranque: no hay arranque suave');
+	assert.ok(gira(r, '-M1'), 'el motor no arranca con las tres fases puestas');
+
+	// t = 3 s: sigue en estrella y se ve la cuenta atrás.
+	r = simular(p, pulsado, r.activos, { ahora: 3000, memoria });
+	assert.ok(activo(r, 'km2') && !activo(r, 'km3'), 'a los 3 s de 6 ya ha pasado a triángulo');
+	const cuenta = r.temporizadores.find((t) => t.dispositivoId === 'kt');
+	assert.ok(cuenta?.contando && cuenta.restan > 2 && cuenta.restan <= 3.1,
+		`la cuenta atrás marca ${cuenta?.restan} s, esperaba ~3`);
+
+	// t = 7 s: TRIÁNGULO. La estrella tiene que haberse caído: las dos juntas son un cortocircuito.
+	r = simular(p, pulsado, r.activos, { ahora: 7000, memoria });
+	assert.ok(activo(r, 'km3'), 'pasados los 6 s no entra el triángulo');
+	assert.ok(!activo(r, 'km2'), 'la estrella sigue metida con el triángulo: cortocircuito entre fases');
+	assert.ok(activo(r, 'km1'), 'se ha caído la línea al pasar a triángulo');
+	assert.ok(gira(r, '-M1'), 'el motor se ha parado en el cambio');
+
+	// Se suelta el pulsador: la autorretención de KM1 mantiene el motor en marcha.
+	r = simular(p, {}, r.activos, { ahora: 8000, memoria });
+	assert.ok(activo(r, 'km1') && activo(r, 'km3') && gira(r, '-M1'),
+		'sin autorretención el motor se para al soltar el botón');
+});
+
+test('ESTRELLA-TRIÁNGULO: el paro tira todo y el temporizador vuelve a cero', () => {
+	const p = ejemplo('estrella-triangulo');
+	const memoria = memoriaVacia();
+	const marcha = p.dispositivos.find((d) => /MARCHA/i.test(d.descripcion ?? ''))!;
+	const paro = p.dispositivos.find((d) => /PARO/i.test(d.descripcion ?? ''))!;
+
+	let r = simular(p, { [marcha.id]: { activo: true } }, undefined, { ahora: 0, memoria });
+	r = simular(p, {}, r.activos, { ahora: 7000, memoria });
+	assert.ok(activo(r, 'km3'), 'no llegó a triángulo');
+
+	// PARO es NC: activarlo lo ABRE y corta el mando entero.
+	r = simular(p, { [paro.id]: { activo: true } }, r.activos, { ahora: 7100, memoria });
+	assert.ok(!activo(r, 'km1') && !activo(r, 'km3'), 'el paro no corta el mando');
+	assert.ok(!gira(r, '-M1'), 'el motor sigue girando después del paro');
+
+	// Y al volver a arrancar, otra vez empieza en estrella: el temporizador se ha reiniciado.
+	r = simular(p, { [marcha.id]: { activo: true } }, r.activos, { ahora: 8000, memoria });
+	assert.ok(activo(r, 'km2') && !activo(r, 'km3'),
+		'al rearrancar entra directo en triángulo: el temporizador no se reinició');
+});
+
+test('ESTRELLA-TRIÁNGULO: por el térmico pasa la corriente del motor, no el triple', () => {
+	const p = ejemplo('estrella-triangulo');
+	const marcha = p.dispositivos.find((d) => /MARCHA/i.test(d.descripcion ?? ''))!;
+	const r = simular(p, { [marcha.id]: { activo: true } });
+	const f2 = r.cargaPorAparato.get('f2');
+	assert.ok(f2, 'el relé térmico no aparece en el reparto de corrientes');
+	assert.equal(f2!.corriente, 8.5, `por el térmico pasan ${f2!.corriente} A y el motor consume 8,5 A`);
+	assert.equal(r.corrienteTotal, 8.5);
+	const q1 = r.cargaPorAparato.get('q1');
+	assert.equal(q1!.porcentaje, 53, 'un motor de 8,5 A en un automático de 16 A es el 53 %');
 });

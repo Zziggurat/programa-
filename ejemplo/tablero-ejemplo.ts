@@ -36,6 +36,7 @@ export function tableroEjemplo(): Proyecto {
 		{
 			id: 'q1', tipo: 'disyuntor', descripcion: 'Interruptor automático 2P 6 A',
 			fabricante: 'Schneider Electric', referencia: 'iC60N 2P C6', tensionNominal: 220,
+			corrienteNominal: 6, curvaDisparo: 'C',
 			poderCorteKA: 6, disipacionW: 2.5, poderCorteEstimado: true, disipacionEstimada: true,
 			hojaId: 'h1', posicion: { x: 2, y: 0 },
 			bornes: [
@@ -55,12 +56,14 @@ export function tableroEjemplo(): Proyecto {
 		{
 			id: 'f1', tipo: 'fusible', descripcion: 'Portafusible 24 V 3 A',
 			fabricante: 'Phoenix Contact', referencia: 'UT 4-HESI', tensionNominal: 24,
+			corrienteNominal: 3, curvaDisparo: 'gG',
 			hojaId: 'h1', posicion: { x: 6, y: 0 },
 			bornes: [{ id: '1', tipo: 'control' }, { id: '2', tipo: 'control' }],
 		},
 		{
 			id: 'a1', tipo: 'plc', descripcion: 'Controlador programable 24 V',
 			fabricante: 'Genérico', referencia: 'CTRL-24DC', tensionNominal: 24,
+			corrienteNominal: 0.15, disipacionW: 3.6, disipacionEstimada: true,
 			hojaId: 'h2', posicion: { x: 1, y: 0 },
 			bornes: [
 				{ id: '+24', tipo: 'control', obligatorio: true },
@@ -73,6 +76,7 @@ export function tableroEjemplo(): Proyecto {
 		{
 			id: 'k1', tipo: 'rele', descripcion: 'Relé auxiliar 24 V', rol: { tipo: 'maestro' },
 			fabricante: 'Finder', referencia: '40.52 24VDC', tensionNominal: 24,
+			corrienteNominal: 0.017, disipacionW: 0.4,
 			hojaId: 'h2', posicion: { x: 3, y: 2 },
 			bornes: [{ id: 'A1', tipo: 'control' }, { id: 'A2', tipo: 'control' }],
 		},
@@ -96,7 +100,7 @@ export function tableroEjemplo(): Proyecto {
 		},
 		{
 			id: 's1', tipo: 'sensor', descripcion: 'Sensor inductivo 24 V PNP', campo: true,
-			fabricante: 'ifm', referencia: 'IFT200', tensionNominal: 24,
+			fabricante: 'ifm', referencia: 'IFT200', tensionNominal: 24, corrienteNominal: 0.01,
 			hojaId: 'h2', posicion: { x: 7, y: 2 },
 			bornes: [
 				{ id: '+', tipo: 'control' }, { id: '-', tipo: 'control' }, { id: 'OUT', tipo: 'senal' },
@@ -104,7 +108,7 @@ export function tableroEjemplo(): Proyecto {
 		},
 		{
 			id: 'y1', tipo: 'valvula', descripcion: 'Electroválvula 24 V', campo: true,
-			fabricante: 'SMC', referencia: 'SY5120', tensionNominal: 24,
+			fabricante: 'SMC', referencia: 'SY5120', tensionNominal: 24, corrienteNominal: 0.042,
 			hojaId: 'h2', posicion: { x: 7, y: 3 },
 			bornes: [{ id: '+', tipo: 'control' }, { id: '-', tipo: 'control' }],
 		},

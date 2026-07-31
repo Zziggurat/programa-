@@ -161,6 +161,17 @@ export interface Dispositivo {
 	claseDiferencial?: 'AC' | 'A' | 'F' | 'B';
 	/** Rango de regulación de un guardamotor o relé térmico, en A: [mínimo, máximo]. */
 	rangoRegulacionA?: [number, number];
+	/**
+	 * Temporización de un relé, si la tiene. Sin esto un relé conmuta al instante; con esto se
+	 * pueden montar las maniobras que de verdad se usan: una estrella-triángulo, o el arranque
+	 * escalonado de una UMA —primero abre la compuerta y unos segundos después arranca el
+	 * ventilador—, que es justo lo que gobiernan los tableros de la cubierta.
+	 *
+	 *  - `trabajo` (a la conexión, TON): al alimentar la bobina espera `segundos` y CIERRA.
+	 *  - `reposo`  (a la desconexión, TOF): al alimentarla actúa ya, y al quitarle tensión
+	 *    aguanta `segundos` antes de soltar.
+	 */
+	temporizacion?: { tipo: 'trabajo' | 'reposo'; segundos: number };
 	/** True si el aparato está fuera del gabinete (campo): motores, sensores, etc. */
 	campo?: boolean;
 	/**

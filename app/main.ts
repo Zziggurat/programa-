@@ -32,7 +32,9 @@ import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
 import { huellaMinima, leerRotulos } from '../src/motores/terminales.js';
 import { calcularBalanceTermico } from '../src/motores/termico.js';
-import { EstadoTablero, ResultadoSimulacion, simular } from '../src/motores/simulacion.js';
+import {
+	EstadoTablero, MemoriaTiempos, ResultadoSimulacion, formatearA, memoriaVacia, simular,
+} from '../src/motores/simulacion.js';
 import { comoSeConecta } from './como-se-conecta.js';
 import { avisar, confirmar, descargar, pedirTexto, responderDialogo } from './dialogos.js';
 import { HojaEsq, montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
@@ -1174,7 +1176,20 @@ function pintarSeleccion(): void {
 					${['', 'AC', 'A', 'F', 'B'].map((v) =>
 						`<option value="${v}" ${(d.claseDiferencial ?? '') === v ? 'selected' : ''}>${v === '' ? '—' : v}</option>`).join('')}
 				</select></label>` : ''}
+			${d.tipo === 'rele' || d.tipo === 'contactor' ? `
+			<label>Temporización
+				<select id="dev-temp-tipo">
+					<option value="" ${!d.temporizacion ? 'selected' : ''}>instantáneo</option>
+					<option value="trabajo" ${d.temporizacion?.tipo === 'trabajo' ? 'selected' : ''}>a la conexión</option>
+					<option value="reposo" ${d.temporizacion?.tipo === 'reposo' ? 'selected' : ''}>a la desconexión</option>
+				</select></label>
+			<label>Retardo (s)<input id="dev-temp-seg" type="number" step="0.5" min="0" max="3600"
+				value="${num(d.temporizacion?.segundos)}" placeholder="5" ${d.temporizacion ? '' : 'disabled'}></label>` : ''}
 		</div>
+		${d.temporizacion ? `<p class="pista">Con el tablero energizado se ve la cuenta atrás.
+		${d.temporizacion.tipo === 'trabajo'
+			? 'A la conexión: al meter la bobina espera y luego conmuta (el de una estrella-triángulo).'
+			: 'A la desconexión: conmuta al instante y aguanta al soltar (el de una parada retardada).'}</p>` : ''}
 		${d.poderCorteEstimado || d.disipacionEstimada ? `<p class="pista" style="color:var(--aviso)">
 		Los campos con <b>~</b> son el valor corriente de esa familia de aparatos, no el de la hoja de
 		datos de este modelo. Cópialos de la hoja del fabricante y el dossier dejará de marcarlos
@@ -1387,6 +1402,18 @@ function pintarSeleccion(): void {
 		(panel.querySelector('#dev-clase-dif') as HTMLSelectElement | null)?.addEventListener('change', (e) => {
 			const v = (e.target as HTMLSelectElement).value;
 			aplicar(() => { d.claseDiferencial = (v || undefined) as Dispositivo['claseDiferencial']; });
+		});
+		// Temporización: al elegir un tipo se estrena con 5 s, que es un retardo de los de siempre
+		// y así el campo no se queda en blanco sin hacer nada.
+		(panel.querySelector('#dev-temp-tipo') as HTMLSelectElement | null)?.addEventListener('change', (e) => {
+			const v = (e.target as HTMLSelectElement).value as 'trabajo' | 'reposo' | '';
+			aplicar(() => {
+				d.temporizacion = v ? { tipo: v, segundos: d.temporizacion?.segundos || 5 } : undefined;
+			});
+		});
+		(panel.querySelector('#dev-temp-seg') as HTMLInputElement | null)?.addEventListener('change', (e) => {
+			const s = Math.max(0, Math.min(3600, Number((e.target as HTMLInputElement).value) || 0));
+			aplicar(() => { if (d.temporizacion) d.temporizacion.segundos = s; });
 		});
 
 		// Medidas de la huella: se rechaza el cambio si dejaría el aparato encima de otro.
@@ -3307,11 +3334,70 @@ const AYUDA: Record<Modo, string> = {
  * MEMORIA del circuito: qué bobinas estaban metidas. Esa memoria es la que hace que un
  * enclavamiento se sostenga al soltar el pulsador de marcha en vez de caerse.
  */
+/*
+ * EL RELOJ DEL TABLERO.
+ *
+ * Mientras está energizado corre un reloj y la simulación se rehace cinco veces por segundo. No
+ * es un adorno: sin reloj no hay temporizadores —y sin temporizadores no hay estrella-triángulo
+ * ni arranque escalonado de una UMA, que son la mitad de los tableros que se montan—. También es
+ * lo que permite que una protección dispare DESPUÉS de un rato, como dispara de verdad, en vez de
+ * saltar en el mismo instante en que se cierra el circuito.
+ */
+let relojSim: { ahora: number; memoria: MemoriaTiempos } | undefined;
+let tickSim: number | undefined;
+/** Instantes en que cada protección empezó a ver corriente de más, para cronometrar su disparo. */
+let sobrecargaDesde: Record<string, number> = {};
+
 function recalcularSimulacion(): void {
 	if (!energizado) return;
-	ultimaSim = simular(proyecto, estadoSim, activosPrevios);
+	if (!relojSim) relojSim = { ahora: 0, memoria: memoriaVacia() };
+	ultimaSim = simular(proyecto, estadoSim, activosPrevios, relojSim);
 	activosPrevios = ultimaSim.activos;
+	aplicarDisparos();
 	pintarSimulacion();
+}
+
+/**
+ * Hace saltar las protecciones que llevan disparadas el tiempo que dice su curva.
+ *
+ * Un cortocircuito corta al instante; una sobrecarga tarda, y ese tiempo se cronometra con el
+ * reloj de la simulación. Así se ve lo que pasa de verdad: el motor arranca, el automático
+ * aguanta unos segundos y luego salta, en vez de no dejarlo arrancar nunca.
+ */
+function aplicarDisparos(): void {
+	if (!ultimaSim || !relojSim) return;
+	const ahora = relojSim.ahora;
+	const activos = new Set<string>();
+	for (const d of ultimaSim.disparos) {
+		activos.add(d.dispositivoId);
+		if (sobrecargaDesde[d.dispositivoId] === undefined) sobrecargaDesde[d.dispositivoId] = ahora;
+		const llevaS = (ahora - sobrecargaDesde[d.dispositivoId]) / 1000;
+		if (llevaS < d.segundos) continue;
+		estadoSim[d.dispositivoId] = { ...(estadoSim[d.dispositivoId] ?? {}), disparado: true };
+		delete sobrecargaDesde[d.dispositivoId];
+		avisar(`⚡ ${d.designacion} ha DISPARADO — ${d.explicacion}`, 'error');
+		// Al abrirse cambia el circuito entero: se vuelve a resolver con la protección abierta.
+		ultimaSim = simular(proyecto, estadoSim, activosPrevios, relojSim);
+		activosPrevios = ultimaSim.activos;
+		return;
+	}
+	// La falta desapareció antes de que saltara: el cronómetro se olvida (como el bimetal, que se enfría).
+	for (const id of Object.keys(sobrecargaDesde)) if (!activos.has(id)) delete sobrecargaDesde[id];
+}
+
+/** Arranca o para el reloj según esté el tablero energizado. */
+function ajustarRelojSim(): void {
+	if (tickSim !== undefined) { clearInterval(tickSim); tickSim = undefined; }
+	if (!energizado) { relojSim = undefined; sobrecargaDesde = {}; return; }
+	relojSim = { ahora: 0, memoria: memoriaVacia() };
+	tickSim = window.setInterval(() => {
+		if (!energizado || !relojSim) return;
+		relojSim.ahora += 200;
+		// Solo se rehace si hay algo que dependa del tiempo; si no, es gastar por gastar.
+		const hayTiempo = proyecto.dispositivos.some((d) => d.temporizacion?.segundos)
+			|| Object.keys(sobrecargaDesde).length > 0;
+		if (hayTiempo) recalcularSimulacion();
+	}, 200);
 }
 
 /** Enciende lo que está vivo: cables con tensión y aparatos funcionando. */
@@ -3347,8 +3433,50 @@ function pintarPanelSimulacion(): void {
 	const r = ultimaSim;
 	cont.innerHTML = '';
 	avisos.innerHTML = '';
+	$('sim-consumo').innerHTML = '';
+	$('sim-carga').innerHTML = '';
 	if (!r) return;
-	if (r.funcionando.length === 0) cont.innerHTML = '<div class="nada-sim">Nada está funcionando todavía.</div>';
+
+	/*
+	 * LO QUE CONSUME EL TABLERO. Antes esto solo decía qué estaba encendido, y un tablero se
+	 * dimensiona con números: ahora dice cuánto pasa y por dónde. La cabecera da el total, y el
+	 * detalle dice a qué porcentaje de su calibre va cada protección — que es la pregunta de
+	 * verdad al montar: «¿este automático me vale o se me va a quedar corto?».
+	 */
+	if (r.corrienteTotal > 0) {
+		$('sim-consumo').innerHTML = '<div class="total-sim">⚡ El tablero consume '
+			+ `<b>${escaparHtml(formatearA(r.corrienteTotal))}</b>`
+			+ (r.consumos.length > 1 ? ` en ${r.consumos.length} cargas` : '') + '</div>';
+	}
+	const cargas = [...r.cargaPorAparato.values()]
+		.filter((c) => c.corriente > 0 && c.nominal)
+		.sort((a, b) => (b.porcentaje ?? 0) - (a.porcentaje ?? 0));
+	if (cargas.length) {
+		$('sim-carga').innerHTML = '<h3 class="titulo-sim">Carga de las protecciones</h3>'
+			+ cargas.map((c) => {
+				const pct = c.porcentaje ?? 0;
+				const nivel = pct > 100 ? 'malo' : pct > 80 ? 'justo' : 'bien';
+				return `<div class="fila-carga ${nivel}" data-id="${escaparHtml(c.dispositivoId)}">`
+					+ `<span class="des-sim">${escaparHtml(c.designacion)}</span>`
+					+ `<span class="barra-carga"><i style="width:${Math.min(100, pct)}%"></i></span>`
+					+ `<span class="cifra-carga">${escaparHtml(formatearA(c.corriente))} / ${c.nominal} A · ${pct} %</span>`
+					+ '</div>';
+			}).join('');
+		for (const fila of $('sim-carga').querySelectorAll('.fila-carga')) {
+			(fila as HTMLElement).onclick = () => seleccionar((fila as HTMLElement).dataset.id!);
+		}
+	}
+	// Cuentas atrás en marcha: se ve el temporizador contando, que es media gracia de tenerlo.
+	for (const t of r.temporizadores.filter((x) => x.contando)) {
+		const fila = document.createElement('div');
+		fila.className = 'fila-sim contando';
+		fila.innerHTML = `<span class="punto-sim"></span><span class="des-sim">${escaparHtml(t.designacion)}</span>`
+			+ `<span class="que-sim">⏳ ${t.restan.toFixed(1)} s de ${t.total} s `
+			+ `(${t.tipo === 'trabajo' ? 'a la conexión' : 'a la desconexión'})</span>`;
+		fila.onclick = () => seleccionar(t.dispositivoId);
+		cont.appendChild(fila);
+	}
+	if (r.funcionando.length === 0 && cont.children.length === 0) cont.innerHTML = '<div class="nada-sim">Nada está funcionando todavía.</div>';
 	for (const f of r.funcionando) {
 		const fila = document.createElement('div');
 		fila.className = 'fila-sim';
@@ -3419,11 +3547,16 @@ function aplicarEnergizado(activo: boolean): void {
 	($('seccion-simulacion') as HTMLElement).hidden = !activo;
 	if (activo) {
 		($('seccion-simulacion') as HTMLDetailsElement).open = true;
+		// El panel vive debajo de la lista de cables, y en un tablero con treinta cables se queda
+		// fuera de la pantalla: energizabas y no veías lo que acababas de encender.
+		$('seccion-simulacion').scrollIntoView({ block: 'start', behavior: 'smooth' });
 		activosPrevios = new Set();
+		ajustarRelojSim();
 		recalcularSimulacion();
 		avisar('Tablero energizado. Haz clic en un pulsador para accionarlo.', 'ok');
 	} else {
 		ultimaSim = undefined;
+		ajustarRelojSim();   // para el reloj y olvida las cuentas atrás
 		pintarSimulacion();
 		avisar('Tablero sin tensión.', 'info');
 	}
@@ -3447,8 +3580,11 @@ async function irAPlanta(): Promise<void> {
 ($('btn-sim-reposo') as HTMLButtonElement).onclick = () => {
 	estadoSim = {};
 	activosPrevios = new Set();
+	// El reloj también vuelve a cero: si no, los temporizadores seguirían con la cuenta de antes
+	// y un relé a la desconexión se quedaría enganchado sin motivo.
+	ajustarRelojSim();
 	recalcularSimulacion();
-	avisar('Todo en reposo: pulsadores soltados y protecciones rearmadas.', 'ok');
+	avisar('Todo en reposo: pulsadores soltados, protecciones rearmadas y reloj a cero.', 'ok');
 };
 
 /* ------------------------------- Modo Visualización ------------------------------- */
