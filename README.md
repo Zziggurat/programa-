@@ -8,7 +8,7 @@ totalmente personalizable.
 ## Qué hace ya (núcleo v0.1)
 
 El núcleo es una librería TypeScript **sin interfaz gráfica**, con un modelo de datos JSON y
-doce motores independientes y testeados:
+catorce motores independientes y testeados:
 
 | Motor | Archivo | Qué resuelve |
 |---|---|---|
@@ -22,7 +22,9 @@ doce motores independientes y testeados:
 | Documentación | `src/motores/documentacion.ts` | BOM, lista de conductores, planes de borneros, informe HTML completo, exportación CSV |
 | Terminales | `src/motores/terminales.ts` | Geometría de las borneras declaradas por ficha de datos: es la única fuente de verdad que comparten el modelo 3D y el anclaje de los cables |
 | Ficha del tablero | `src/motores/ficha-tablero.ts` | Las cifras del conjunto: recuento de aparatos por familia, medidas de caja y placa, metros de riel y canaleta, cable por sección, ocupación de la placa |
-| Simulación | `src/motores/simulacion.ts` | Energizar el tablero y verlo funcionar: contactos según el estado de cada mando, propagación de la tensión y iteración a punto fijo para que el enclavamiento de un contactor se sostenga |
+| Simulación | `src/motores/simulacion.ts` | Energizar el tablero y verlo funcionar: contactos según el estado de cada mando, propagación de la tensión e iteración a punto fijo para que el enclavamiento se sostenga. Y con qué **corriente**: intensidades por rama contadas **por fase**, cortocircuitos fase-neutro y fase-fase con la protección que los ve, **tiempo de disparo** según la curva (B/C/D/K/Z y gG), sobrecarga cronometrada y **temporizadores** a la conexión y a la desconexión |
+| Consulta de planta | `src/motores/planta.ts` | Buscar una máquina entre 129 como se escribe de verdad (sin guiones ni tildes), filtrar por tipo/controlador/señales, colorear por cuatro criterios, y **medir una tirada de cable**: recta, recorrido ortogonal por bandeja, subida y bajada, y los metros a pedir con su reserva |
+| Del mundo al tablero | `src/motores/planta-tablero.ts` | Convertir las máquinas elegidas en la cubierta en el tablero que las gobierna: lista de señales, bornera por máquina con sus comunes puenteados, peine de comunes, controlador dimensionado a la E/S real, alimentación y todo el cableado |
 | Balance térmico | `src/motores/termico.ts` | Temperatura interior del armario por el método simplificado de IEC 60890: disipación de cada aparato, superficie efectiva según el montaje y veredicto (natural / rejilla / ventilador / climatizador) |
 | Apertura de archivo | `src/modelo/cargar.ts` | Validación real del proyecto que se abre, reparación de lo recuperable (cables huérfanos, colocaciones fantasma) y punto de enganche para migrar formatos antiguos |
 
@@ -77,6 +79,7 @@ Además de los tests del núcleo, hay varias suites que manejan el editor 3D de 
 | `npm run qa:planta` | La segunda herramienta: el visor se abre aparte del editor, los datos salen del plano, se consultan los puntos del BMS de una máquina, se recorre a pie, está montada la obra de la cubierta y **el ratón mira hacia donde se arrastra** (comprobado con números, no a ojo) |
 | `npm run qa:inicio` | La **ventana de inicio**; el **alzado 2D**, que es ortográfico de verdad —la escala no cambia con la profundidad, y en 3D sí—; que al agrandar la caja el tablero **no atraviese el suelo**; y que ninguna cara del frente de un aparato quede a menos de 0,5 mm de otra, que es lo que hacía **parpadear** las letras |
 | `npm run qa:prender` | **De cero a encender**: placa en blanco → sacar del catálogo la acometida, el disyuntor y la ampolleta → cablearlos a clics → Energizar → la ampolleta prende, y se apaga al abrir el disyuntor. Y el arranque de un motor trifásico con su contactor y su pulsador |
+| `npm run qa:planta-trabajo` | La planta **como herramienta de trabajo**: buscar entre las 129 máquinas, filtrar, colorear, **medir una tirada** (30 y 40 m: recta 50, recorrido 70, a pedir 85) y el puente entero **del plano al tablero** — elegir tres UMAs, revisar su lista de señales y comprobar que el tablero llega al editor con sus borneras rotuladas y **sin un error de DRC** |
 | `npm run qa:empaquetado` | **El archivo que se entrega**: abre `dist-final/TableroStudio.html` con `file://`, sin servidor, y comprueba que arranca en la ventana de inicio, que se puede trabajar y que salen el dossier y el proyecto guardado |
 
 Se apoyan en una sonda que solo existe abriendo la página con `?qa=1`; en el uso normal
@@ -109,6 +112,51 @@ las de obra, así que las alturas de conductos, máquinas, barandas, muros y pil
 proyecto, no medidas. El visor lo dice y no deja de decirlo, porque quien lo mire va a tomar
 decisiones con lo que ve. Lo que **sí** es del plano es todo el recorrido en planta y el diámetro de
 cada pilar.
+
+#### Y sirve para trabajar, no solo para mirar
+
+Un visor bonito de 129 máquinas no vale de nada si para encontrar la tuya hay que pasear entre
+todas. El panel izquierdo es el que convierte la maqueta en herramienta:
+
+- **Buscar** por marcado, por controlador o por lo que hace la señal. Se escribe como se escribe de
+  verdad —`uma3343`, `UMA 3 343`, `uma-3-343` encuentran lo mismo—, y buscar «válvula» saca las 83
+  máquinas que llevan una. Lo que no encaja **no se esconde: se apaga**, para no perder la
+  referencia de dónde está uno en la cubierta.
+- **Filtrar** por tipo de máquina, por si tiene controlador rotulado, por si trae su diagrama de
+  señales, o por si está situada en planta.
+- **Colorear** por cuatro criterios: tipo de máquina, **canal del controlador** (CH5, CH6, CH8…,
+  que es el color que importa para cablear, porque las de un mismo canal comparten bus), número de
+  señales, o si van cableadas en el tablero. La leyenda dice además cuántas de las 129 sitúa el
+  plano en planta: elegir «Controlador» y ver dos colores donde la leyenda enumera seis canales
+  parecería un fallo del programa, y no lo es.
+- **📏 Medir** una tirada de cable. Se marcan puntos en la cubierta y sale la recta, el **recorrido
+  ortogonal** —que es por donde va la bandeja, y el que de verdad se pide—, la subida y la bajada a
+  los 3,2 m de la bandeja, y los metros a pedir con un 10 % de reserva. Entre dos puntos separados
+  30 y 40 m, la recta son 50 m y lo que hay que pedir son 85: quien pida por la recta se queda
+  corto.
+
+#### 🔌 Del plano al tablero
+
+El puente entre las dos herramientas, y la razón de que el visor 3D valga para trabajar. Se marcan
+en la lista las máquinas del tablero que toca armar y sale, ya montado y cableado:
+
+- una **bornera por máquina**, rotulada con su marcado, con dos bornas por señal —hilo y común— y
+  los comunes puenteados **por familia** (el común de las entradas analógicas y el de las salidas
+  digitales son terminales distintos del controlador: unirlos aquí sería puentearlos por detrás);
+- un **peine de comunes**, porque en una borna caben dos hilos y no cuatro: los comunes de todas
+  las máquinas se juntan ahí y de ahí sale **uno** a cada terminal del controlador;
+- el **controlador dimensionado a la E/S real** —tantas UI, DI, AO y DO como pidan las señales,
+  redondeado al bloque de cuatro en que se venden—;
+- la **alimentación** (automático, fuente de 24 V) y todo el cableado, con la masa del controlador
+  puesta a tierra.
+
+Antes de armar nada se enseña **la lista de señales entera** —máquina, sigla, qué es, familia de
+E/S, terminal, bornas y sección— y las notas de lo que ha decidido el programa. El controlador es
+**genérico** a propósito: se cambia luego por el del proyecto en el catálogo, y las bornas y el
+cableado se conservan. Lo que sale es un **punto de partida sacado del plano**, y se dice.
+
+Tres UMAs completas de la cubierta dan 27 señales, 70 bornas, 11 aparatos y 105 conductores, y el
+tablero resultante **pasa el DRC sin un solo error**.
 
 El plano se procesa **una vez, fuera de la aplicación**, con `herramientas/extraer-planta.py`: los
 21 MB de DWG se convierten a DXF (164 MB, 331.000 entidades en 153 capas) y de ahí sale un JSON de
@@ -154,8 +202,23 @@ Designer, conectado en vivo con los motores del núcleo:
   ahora la acometida solo existía dentro de los tableros de ejemplo, así que quien empezaba con la
   placa en blanco no tenía por dónde meter la tensión.
 
+- **Modo Energizar con corriente de verdad** (botón «⚡ Energizar»): además de decir qué
+  funciona, dice **cuánto pasa por cada rama** y **qué pasa cuando algo va mal**. Las
+  intensidades se cuentan **por fase**, no sumadas: un motor trifásico de 3,4 A hace pasar
+  3,4 A por cada polo de su guardamotor, no 10,2 — sumarlas era el error que inflaba la carga
+  al triple. Cada protección enseña su barra de carga contra el calibre declarado (un motor de
+  3,4 A en un guardamotor regulado a 4 A va al 85 %). Un cortocircuito fase-neutro o fase-fase
+  se detecta con **la protección que lo ve** y **el tiempo que tarda en disparar** según su
+  curva (B, C, D, K, Z y fusibles gG); una sobrecarga se cronometra contra el reloj de la
+  simulación y **el aparato dispara solo**, como en el tablero. Y hay **temporizadores**: un
+  relé a la conexión cuenta sus segundos con la bobina metida y los contactos en reposo, uno a
+  la desconexión aguanta al soltarla, y la cuenta atrás se ve correr en pantalla.
 - **Tableros de ejemplo explicados** (botón «📚 Ejemplos»): arranque directo de motor,
-  bomba de agua con boya de nivel y tablero de control con PLC a 24 V. Cada uno se abre
+  bomba de agua con boya de nivel, **arranque estrella-triángulo con temporizador** y tablero
+  de control con PLC a 24 V. El estrella-triángulo es el que hace visible el reloj: se energiza,
+  se aprieta MARCHA y el ventilador arranca en estrella; a los 6 segundos el temporizador da
+  vuelta sus contactos, se cae la estrella y entra el triángulo **solo, sin tocar nada**, con
+  los bloqueos mutuos que impiden que los dos cierren a la vez. Cada uno se abre
   armado y cableado, con una ficha que cuenta **qué hace**, **cómo funciona paso a paso**
   (la secuencia de maniobra real) y **en qué fijarse** en el 3D para estudiarlo. La ficha
   se puede volver a abrir cuando quieras con «📖 Cómo funciona».
@@ -298,7 +361,10 @@ dibuja igual, con sus borneras y listo para cablear.
 5. ~~v0.5 — Exportaciones~~ ✔ dossier PDF fiel al tablero (con plano de la placa a escala,
    balance térmico y placa de características IEC 61439), esquema en PDF/SVG con cajetín,
    rótulos de bornes y DXF de placa y esquema.
-6. **v1.0 — Empaquetado** como aplicación de escritorio (Tauri/Electron). El archivo único
+6. **v0.6 — Más planta, más terreno**: llevarse al tablero también las máquinas que el plano
+   **no sitúa en planta** (88 de las 129 solo salen en la lista), y guardar en el proyecto de
+   dónde vino cada bornera para poder volver del tablero a su máquina en la cubierta.
+7. **v1.0 — Empaquetado** como aplicación de escritorio (Tauri/Electron). El archivo único
    `dist-final/TableroStudio.html` ya funciona sin servidor ni internet, y lo verifica
    `npm run qa:empaquetado`.
 

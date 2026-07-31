@@ -11,7 +11,7 @@
     "editor": "vite app",
     "editor:build": "vite build app",
     "empaquetar": "vite build app && node app/empaquetar.mjs",
-    "qa": "QA=1 vite build app && node qa/controladores.mjs && node qa/dossier.mjs && node qa/cables.mjs && node qa/cables-fusion.mjs && node qa/agarre.mjs && node qa/riel.mjs && node qa/riel-ejemplos-vista.mjs && node qa/general.mjs && node qa/tablero-desde-cero.mjs && node qa/mejoras.mjs && node qa/profesional.mjs && node qa/entregables.mjs && node qa/correcciones.mjs && node qa/estres.mjs && node qa/energizar.mjs && node qa/planta.mjs && node qa/inicio-vistas.mjs && node qa/prender-desde-cero.mjs",
+    "qa": "QA=1 vite build app && node qa/controladores.mjs && node qa/dossier.mjs && node qa/cables.mjs && node qa/cables-fusion.mjs && node qa/agarre.mjs && node qa/riel.mjs && node qa/riel-ejemplos-vista.mjs && node qa/general.mjs && node qa/tablero-desde-cero.mjs && node qa/mejoras.mjs && node qa/profesional.mjs && node qa/entregables.mjs && node qa/correcciones.mjs && node qa/estres.mjs && node qa/energizar.mjs && node qa/planta.mjs && node qa/inicio-vistas.mjs && node qa/prender-desde-cero.mjs && node qa/planta-trabajo.mjs",
     "qa:cables": "node qa/cables.mjs",
     "qa:fusion": "node qa/cables-fusion.mjs",
     "qa:agarre": "node qa/agarre.mjs",
@@ -29,6 +29,7 @@
     "qa:planta": "node qa/planta.mjs",
     "qa:inicio": "node qa/inicio-vistas.mjs",
     "qa:prender": "node qa/prender-desde-cero.mjs",
+    "qa:planta-trabajo": "node qa/planta-trabajo.mjs",
     "extraer-planta": "python3 herramientas/extraer-planta.py",
     "qa:empaquetado": "npm run empaquetar && node qa/empaquetado.mjs",
     "check": "tsc --noEmit -p tsconfig.app.json"

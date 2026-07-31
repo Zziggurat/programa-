@@ -152,6 +152,44 @@ test('R9: sin calibre declarado no inventa un hallazgo', () => {
 	assert.ok(!reglas(verificar(p)).includes('R9-proteccion-sobredimensionada'));
 });
 
+test('R9: un DIFERENCIAL puro no es una protección contra sobreintensidad', () => {
+	// Un RCCB (IEC 61008) vigila la fuga a tierra, no la sobrecarga: sus 25 A son la corriente que
+	// aguanta pasando, no un umbral de disparo. Tomarlo por protección hacía que el programa
+	// mandara engordar a 4 mm² un cable que ya protegía el automático que va detrás.
+	const p = circuito(25, 2.5);
+	p.dispositivos[0].tipo = 'diferencial';
+	p.dispositivos[0].sensibilidadMA = 30;
+	assert.ok(!reglas(verificar(p)).includes('R9-proteccion-sobredimensionada'));
+});
+
+test('R9: un magnetotérmico-diferencial SÍ protege, y se le exige coordinación', () => {
+	// Un RCBO (IEC 61009) es diferencial Y automático: declara curva, y con ella dispara también
+	// por sobrecarga. La diferencia con el de arriba es exactamente esa curva.
+	const p = circuito(25, 2.5);
+	p.dispositivos[0].tipo = 'diferencial';
+	p.dispositivos[0].sensibilidadMA = 30;
+	p.dispositivos[0].curvaDisparo = 'C';
+	assert.ok(reglas(verificar(p)).includes('R9-proteccion-sobredimensionada'));
+});
+
+test('R9: un SECCIONADOR tampoco protege: abre en carga, pero no dispara solo', () => {
+	const p = circuito(25, 2.5);
+	p.dispositivos[0].tipo = 'seccionador';
+	assert.ok(!reglas(verificar(p)).includes('R9-proteccion-sobredimensionada'));
+});
+
+test('R13: el poder de corte sí se le exige a un seccionador y a un diferencial', () => {
+	// No despejan ellos la falta, pero el cortocircuito les pasa por encima igual y tienen que
+	// aguantarlo. Que no protejan contra sobrecarga no los libra de eso.
+	for (const tipo of ['seccionador', 'diferencial'] as const) {
+		const p = circuito(25, 4);
+		p.dispositivos[0].tipo = tipo;
+		p.opciones = { iccPresuntaKA: 10 };
+		assert.ok(reglas(verificar(p)).includes('R13-sin-poder-de-corte'),
+			`a un ${tipo} no se le pide el poder de corte`);
+	}
+});
+
 test('R10: sin longitudes reales NO se calcula la caída de tensión (no se inventa)', () => {
 	const p = circuito(16, 1.5);
 	assert.ok(!reglas(verificar(p)).includes('R10-caida-tension'));

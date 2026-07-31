@@ -221,7 +221,86 @@
 	#mundo-invertir-caja { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
 		margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--borde); }
 	#mundo-invertir-caja:hover { color: var(--texto); }
-	@media (max-width: 900px) { #mundo-panel { display: none; } }
+	@media (max-width: 900px) { #mundo-panel, #mundo-buscador, #mundo-cinta { display: none; } }
+
+	/* ---- Buscar, filtrar y colorear la planta (panel izquierdo) ---- */
+	#mundo-buscador { position: absolute; top: 58px; left: 12px; width: 300px;
+		max-height: calc(100vh - 76px); display: flex; flex-direction: column;
+		background: #12171cF2; border: 1px solid var(--borde); border-radius: 12px;
+		padding: 12px 13px; backdrop-filter: blur(6px); }
+	#mundo-buscador h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+		color: var(--texto-suave); margin: 12px 0 6px; }
+	#mundo-buscador h3:first-child { margin-top: 0; }
+	#mundo-q { width: 100%; box-sizing: border-box; background: var(--panel-2);
+		border: 1px solid var(--borde); border-radius: 9px; color: var(--texto);
+		padding: 8px 10px; font-size: 13.5px; font-family: inherit; }
+	#mundo-q:focus { outline: none; border-color: #3b82f6; }
+	#mundo-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+	.chip-mundo { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 999px;
+		color: var(--texto-suave); font-size: 11.5px; padding: 4px 10px; cursor: pointer;
+		font-family: inherit; }
+	.chip-mundo:hover { color: var(--texto); border-color: #4b5563; }
+	.chip-mundo.activo { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+	#mundo-color { width: 100%; box-sizing: border-box; background: var(--panel-2);
+		border: 1px solid var(--borde); border-radius: 9px; color: var(--texto);
+		padding: 6px 8px; font-size: 12.5px; font-family: inherit; }
+	#mundo-leyenda-color { margin-top: 7px; }
+	#mundo-cuenta { font-size: 11.5px; color: var(--texto-suave); margin: 10px 0 4px;
+		display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+	#mundo-lista { overflow-y: auto; flex: 1 1 auto; min-height: 60px; margin: 0 -4px;
+		padding: 0 4px; }
+	.fila-eq { display: grid; grid-template-columns: 18px 1fr auto; gap: 7px; align-items: center;
+		padding: 5px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px; }
+	.fila-eq:hover { background: var(--panel-2); }
+	.fila-eq.sel { background: #17325a; }
+	.fila-eq input { margin: 0; cursor: pointer; }
+	.fila-eq .nom { color: var(--texto); font-family: ui-monospace, monospace; overflow: hidden;
+		text-overflow: ellipsis; white-space: nowrap; }
+	.fila-eq .nom .sin { color: var(--texto-suave); }
+	.fila-eq .np { font-size: 11px; color: var(--texto-suave); background: var(--panel-2);
+		border-radius: 999px; padding: 1px 7px; }
+	.fila-eq .np.cero { opacity: .45; }
+	#mundo-elegidas { border-top: 1px solid var(--borde); margin-top: 10px; padding-top: 10px; }
+	#mundo-elegidas .resumen { font-size: 12px; color: var(--texto-suave); margin-bottom: 7px; }
+	#mundo-elegidas .resumen b { color: var(--texto); }
+	#mundo-acciones { display: flex; gap: 6px; }
+	#mundo-acciones .boton { flex: 1 1 0; justify-content: center; }
+	#mundo-vacio { color: var(--texto-suave); font-size: 12.5px; padding: 14px 4px; }
+
+	/* ---- Cinta métrica ---- */
+	#mundo-medir.activo { background: #7a5c00; border-color: #d9a400; color: #fff2cc; }
+	#mundo-cinta { position: absolute; bottom: 16px; left: 12px; width: 300px; box-sizing: border-box;
+		background: #12171cF2; border: 1px solid #d9a40066; border-radius: 12px; padding: 12px 13px;
+		backdrop-filter: blur(6px); }
+	#mundo-cinta h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+		color: #d9a400; margin: 0 0 7px; }
+	#mundo-cinta .ayuda { font-size: 11.5px; color: var(--texto-suave); line-height: 1.5; }
+	#mundo-cinta .cifras { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 9px 0; }
+	#mundo-cinta .cifras div { background: var(--panel-2); border-radius: 8px; padding: 6px 8px; }
+	#mundo-cinta .cifra { font-size: 15px; font-weight: 700; color: var(--texto); }
+	#mundo-cinta .rotulo { font-size: 10px; color: var(--texto-suave); text-transform: uppercase;
+		letter-spacing: .04em; }
+	#mundo-cinta .pedir { grid-column: 1 / -1; background: #2a2418; }
+	#mundo-cinta .pedir .cifra { color: #ffd43b; }
+	#mundo-cinta .botones { display: flex; gap: 6px; }
+	#mundo-cinta .botones .boton { flex: 1 1 0; justify-content: center; font-size: 11.5px; }
+
+	/* ---- Del mundo al tablero ---- */
+	#modal-puente .caja-modal { max-width: 720px; }
+	#puente-notas { margin: 0 0 14px; padding: 0; list-style: none; }
+	#puente-notas li { font-size: 12.5px; color: var(--texto-suave); line-height: 1.5;
+		padding: 5px 0 5px 18px; position: relative; }
+	#puente-notas li::before { content: '·'; position: absolute; left: 6px; color: var(--aviso);
+		font-weight: 700; }
+	#puente-tabla { max-height: 44vh; overflow-y: auto; border: 1px solid var(--borde);
+		border-radius: 10px; }
+	#puente-tabla table { width: 100%; border-collapse: collapse; font-size: 12px; }
+	#puente-tabla th { position: sticky; top: 0; background: var(--panel-2); text-align: left;
+		padding: 7px 9px; color: var(--texto-suave); font-weight: 600; font-size: 11px;
+		text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--borde); }
+	#puente-tabla td { padding: 5px 9px; border-bottom: 1px solid #ffffff0d; color: var(--texto); }
+	#puente-tabla td.mono { font-family: ui-monospace, monospace; color: #7cc0ff; }
+	#puente-tabla td.que { color: var(--texto-suave); }
 
 	/* Modo Energizar */
 	#btn-energizar.activo { background: #7a5c00; border-color: #d9a400; color: #fff2cc; }
@@ -390,15 +469,15 @@
 	#bienvenida .pasos b { color: var(--acento); }
 
 	/* Modal de ayuda */
-	#modal-drc, #modal-controlador, #modal-proyecto { position: fixed; inset: 0; z-index: 46; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
-	#modal-drc .caja-modal, #modal-controlador .caja-modal, #modal-proyecto .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 24px 28px; max-width: 720px; width: 100%; max-height: 82vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
-	#modal-drc .cerrar, #modal-controlador .cerrar, #modal-proyecto .cerrar { position: absolute; top: 14px; right: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px; height: 30px; border-radius: 8px; }
-	#modal-drc h2, #modal-controlador h2, #modal-proyecto h2 { margin: 0 0 4px; font-size: 20px; }
+	#modal-drc, #modal-controlador, #modal-proyecto, #modal-puente { position: fixed; inset: 0; z-index: 46; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-drc .caja-modal, #modal-controlador .caja-modal, #modal-proyecto .caja-modal, #modal-puente .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 24px 28px; max-width: 720px; width: 100%; max-height: 82vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
+	#modal-drc .cerrar, #modal-controlador .cerrar, #modal-proyecto .cerrar, #modal-puente .cerrar { position: absolute; top: 14px; right: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px; height: 30px; border-radius: 8px; }
+	#modal-drc h2, #modal-controlador h2, #modal-proyecto h2, #modal-puente h2 { margin: 0 0 4px; font-size: 20px; }
 	.rejilla-ctrl { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; }
 	.rejilla-ctrl label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--texto-suave); }
 	.rejilla-ctrl input, .rejilla-ctrl select { padding: 7px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 13px; }
 	#modal-controlador code { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 5px; padding: 1px 5px; }
-	#modal-controlador .sub, #modal-proyecto .sub, #modal-ejemplos .sub { color: var(--texto-suave); font-size: 12.5px; margin: 2px 0 12px; }
+	#modal-controlador .sub, #modal-proyecto .sub, #modal-ejemplos .sub, #modal-puente .sub { color: var(--texto-suave); font-size: 12.5px; margin: 2px 0 12px; }
 	#ctrl-aviso { color: #ff9d9d; margin-top: 12px; }
 	#modal-drc .pie { color: var(--texto-suave); font-size: 12.5px; margin-top: 14px; border-top: 1px solid var(--borde); padding-top: 12px; }
 	#drc-detalle { list-style: none; margin: 12px 0 0; padding: 0; }
@@ -761,6 +840,23 @@
 	</div>
 </div>
 
+<!-- Del mundo al tablero: la lista de señales de las máquinas elegidas, ANTES de armar nada.
+     Lo que sale de aquí es un punto de partida sacado del plano, y quien lo recibe tiene derecho
+     a ver qué ha decidido el programa antes de aceptarlo. -->
+<div id="modal-puente" hidden>
+	<div class="caja-modal">
+		<button class="cerrar" id="btn-cerrar-puente" title="Cerrar">✕</button>
+		<h2>Del plano al tablero</h2>
+		<p class="sub" id="puente-sub"></p>
+		<ul id="puente-notas"></ul>
+		<div id="puente-tabla"></div>
+		<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+			<button class="boton" id="btn-puente-cancelar">Cancelar</button>
+			<button class="boton primario" id="btn-puente-crear">Armar el tablero</button>
+		</div>
+	</div>
+</div>
+
 <!-- Datos del proyecto: lo que lleva el cajetín del plano y la portada del dossier -->
 <div id="modal-proyecto" hidden>
 	<div class="caja-modal">
@@ -867,9 +963,38 @@
 			<button id="mundo-sims" class="activo" title="Vista general desde arriba, como en Los Sims">🏙️ Vista general</button>
 			<button id="mundo-paseo" title="Recorrerla a pie: WASD para andar, arrastra para mirar, Shift para correr">🚶 Pasear</button>
 		</div>
+		<button class="boton" id="mundo-medir" title="Marcar puntos en la cubierta y saber cuánto cable pedir">📏 Medir</button>
 		<button class="boton" id="mundo-inicio" title="Volver a la ventana de inicio">🏠 Inicio</button>
 		<button class="boton peligro" id="mundo-salir" title="Ir al editor de tableros">✕ Salir</button>
 	</header>
+
+	<!-- Buscar, filtrar, colorear y elegir máquinas para llevarlas al tablero. -->
+	<div id="mundo-buscador">
+		<h3>Buscar máquina</h3>
+		<input id="mundo-q" type="search" placeholder="marcado, controlador o señal…"
+			autocomplete="off" spellcheck="false">
+		<div id="mundo-chips"></div>
+		<h3>Colorear por</h3>
+		<select id="mundo-color"></select>
+		<div id="mundo-leyenda-color"></div>
+		<div id="mundo-cuenta"><span id="mundo-cuenta-txt"></span>
+			<button class="chip-mundo" id="mundo-todas" title="Marcar o desmarcar todo lo que se ve">Todas</button></div>
+		<div id="mundo-lista"></div>
+		<div id="mundo-elegidas">
+			<div class="resumen" id="mundo-elegidas-txt"></div>
+			<div id="mundo-acciones">
+				<button class="boton primario" id="mundo-a-tablero" disabled>🔌 Llevar al tablero</button>
+				<button class="boton" id="mundo-limpiar" title="Quitar la selección">Vaciar</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Cinta métrica: sale solo cuando se activa el modo Medir. -->
+	<div id="mundo-cinta" hidden>
+		<h3>📏 Cinta métrica</h3>
+		<div id="mundo-cinta-cuerpo"></div>
+	</div>
+
 	<div id="mundo-panel">
 		<div id="mundo-resumen"></div>
 		<div id="mundo-ficha"></div>

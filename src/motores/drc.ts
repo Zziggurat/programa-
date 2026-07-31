@@ -4,7 +4,7 @@
  * QElectroTech no tiene nada equivalente; estas reglas operan sobre el modelo puro
  * y el resultado del motor de potenciales.
  */
-import { Proyecto } from '../modelo/tipos.js';
+import { Dispositivo, Proyecto } from '../modelo/tipos.js';
 import { conductoresEn, dispositivo, opcionesDe } from '../modelo/proyecto.js';
 import { ResultadoPotenciales } from './potenciales.js';
 import { ampacidad, caidaTensionPct, CAIDA_MAX_PCT, seccionMinima } from './electrico.js';
@@ -210,9 +210,25 @@ export function verificarProyecto(
 
 	/* ------------------------ Reglas ELÉCTRICAS (la física) ------------------------ */
 
-	// Protecciones del proyecto con su calibre. Es lo que permite comprobar de verdad si un
-	// conductor está protegido, que es la diferencia entre un dibujo bonito y un tablero seguro.
-	const ES_PROTECCION = new Set(['disyuntor', 'guardamotor', 'fusible', 'diferencial', 'seccionador']);
+	/**
+	 * ¿Este aparato protege de verdad el conductor contra SOBREINTENSIDAD?
+	 *
+	 * No basta con que corte. Un seccionador abre en carga pero no dispara nunca solo, y un
+	 * diferencial puro (IEC 61008) tampoco: su In es la corriente que aguanta pasando, no un
+	 * umbral de disparo —vigila la fuga a tierra, no la sobrecarga—. Tomarlos por protecciones
+	 * hacía que el programa exigiera 4 mm² detrás de un diferencial de 25 A que iba seguido de su
+	 * automático de 10, o sea, mandaba engordar un cable que ya estaba bien protegido.
+	 *
+	 * Un diferencial que SÍ declara curva de disparo es un magnetotérmico-diferencial
+	 * (IEC 61009, un RCBO): ese protege, y cuenta.
+	 */
+	const protegeContraSobreintensidad = (d: Dispositivo): boolean =>
+		d.tipo === 'disyuntor' || d.tipo === 'guardamotor' || d.tipo === 'fusible'
+		|| (d.tipo === 'diferencial' && !!d.curvaDisparo);
+	// Para el poder de corte, en cambio, cuentan TODOS los aparatos de corte: un seccionador o un
+	// diferencial puro también tienen que aguantar el cortocircuito del sitio donde se instalan,
+	// aunque no sean ellos los que lo despejen.
+	const ES_APARATO_DE_CORTE = new Set(['disyuntor', 'guardamotor', 'fusible', 'diferencial', 'seccionador']);
 	const conductorDe = new Map(proyecto.conductores.map((c) => [c.id, c]));
 
 	// R9 — Coordinación protección ↔ sección. Regla de oro: In ≤ Iz. Si el calibre supera la
@@ -223,7 +239,7 @@ export function verificarProyecto(
 		let proteccion: string | undefined;
 		for (const clave of p.bornes) {
 			const d = proyecto.dispositivos.find((x) => x.id === clave.split('::')[0]);
-			if (!d || d.imagen || !ES_PROTECCION.has(d.tipo) || !d.corrienteNominal) continue;
+			if (!d || d.imagen || !protegeContraSobreintensidad(d) || !d.corrienteNominal) continue;
 			if (d.corrienteNominal > mayorIn) { mayorIn = d.corrienteNominal; proteccion = d.id; }
 		}
 		if (!mayorIn || !proteccion) continue;
@@ -328,7 +344,7 @@ export function verificarProyecto(
 	// Con holgura: 380, 400 y 415 V son la misma red y tienen que contar todas como lado de red.
 	// Lo que se quiere dejar fuera es el salto de verdad (400 → 24 V), no el redondeo del catálogo.
 	const umbralRed = tensionMaxima * 0.8;
-	const protecciones = aparatos.filter((d) => ES_PROTECCION.has(d.tipo)
+	const protecciones = aparatos.filter((d) => ES_APARATO_DE_CORTE.has(d.tipo)
 		&& (d.tensionNominal === undefined || d.tensionNominal >= umbralRed));
 	if (icc > 0) {
 		for (const d of protecciones) {

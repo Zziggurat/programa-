@@ -22,6 +22,7 @@ import {
 	ColumnaPlanta, EquipoPlanta, FamiliaObra, Infraestructura, OBRA, ObraPlanta, SISTEMAS,
 	TrazaPlanta,
 } from '../src/modelo/infraestructura.js';
+import { ModoColor, canalesDe, colorDeEquipo, medirTirada } from '../src/motores/planta.js';
 
 /* --------------------------------- Construcción --------------------------------- */
 
@@ -42,11 +43,15 @@ interface Mundo {
 	instalaciones: THREE.Group;
 	/** Barandas, petos, muros, lucernarios, escaleras y pilares de la cubierta. */
 	obra: THREE.Group;
+	/** La losa: el suelo sobre el que se mide y se pincha. */
+	losa: THREE.Mesh;
 	/** Tramos de obra que llegan a la altura de una persona, en coordenadas de escena. */
 	obstaculos: Obstaculo[];
 	/** Centro de la planta en coordenadas de escena, para encuadrar. */
 	centro: THREE.Vector3;
 	tamano: { ancho: number; fondo: number };
+	/** Los datos de los que salió, para poder recolorear sin volver a montarla. */
+	inf: Infraestructura;
 }
 
 /**
@@ -267,10 +272,24 @@ function construirEquipo(e: EquipoPlanta, aEscena: ReturnType<typeof hacerConver
 	);
 	franja.position.set(0, al * 0.78, fo / 2 + 0.02);
 	g.add(franja);
-	g.add(cartel(e.tag, al + 0.9, e.tagSeguro));
+	const rotulo = cartel(e.tag, al + 0.9, e.tagSeguro);
+	g.add(rotulo);
+	// Anillo en el suelo: se enciende cuando la máquina está elegida para llevarla al tablero. Un
+	// resalte en el cuerpo se pierde entre las demás; un aro en la losa se ve desde arriba.
+	const aro = new THREE.Mesh(
+		new THREE.RingGeometry(Math.max(an, fo) * 0.62, Math.max(an, fo) * 0.62 + 0.35, 28),
+		new THREE.MeshBasicMaterial({ color: 0x4dabf7, transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
+	);
+	aro.rotation.x = -Math.PI / 2;
+	aro.position.y = 0.08;
+	aro.visible = false;
+	g.add(aro);
 	g.position.copy(aEscena(e.x, e.y, 0));
 	g.userData.tag = e.tag;
 	g.userData.equipo = e;
+	g.userData.cuerpo = cuerpo;
+	g.userData.rotulo = rotulo;
+	g.userData.aro = aro;
 	return g;
 }
 
@@ -390,8 +409,172 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
 	orbita.dampingFactor = 0.09;
 	orbita.maxPolarAngle = Math.PI / 2.05;   // no meter la cámara bajo la losa
 
-	return { escena, camara, orbita, equipos, instalaciones, obra, obstaculos,
-		centro: new THREE.Vector3(0, 0, 0), tamano: { ancho, fondo } };
+	return { escena, camara, orbita, equipos, instalaciones, obra, losa, obstaculos,
+		centro: new THREE.Vector3(0, 0, 0), tamano: { ancho, fondo }, inf };
+}
+
+/* --------------------- Buscar, filtrar y colorear las máquinas --------------------- */
+
+/**
+ * Pinta cada máquina por el criterio elegido. No reconstruye nada: cada equipo tiene su propio
+ * material, así que basta con cambiarle el color —de otro modo, recolorear 129 máquinas obligaría
+ * a rehacer la escena entera y el visor daría un tirón cada vez que se toca el selector.
+ */
+export function pintarPorModo(m: Mundo, modo: ModoColor): void {
+	const canales = canalesDe(m.inf);
+	for (const g of m.equipos.children) {
+		const e = g.userData.equipo as EquipoPlanta;
+		const cuerpo = g.userData.cuerpo as THREE.Mesh | undefined;
+		if (!e || !cuerpo) continue;
+		const color = colorDeEquipo(e, modo, canales);
+		(cuerpo.material as THREE.MeshStandardMaterial).color.setHex(color);
+		cuerpo.userData.baseColor = color;
+	}
+}
+
+/**
+ * Enseña solo lo que se ha buscado. Las que no encajan NO se esconden: se apagan.
+ *
+ * Esconderlas dejaría huecos en la cubierta y quien mira perdería la referencia de dónde está;
+ * apagarlas —translúcidas, sin rótulo— deja el sitio reconocible y hace que las que se buscan
+ * salten a la vista. `visibles` a undefined significa «sin filtro»: todo vuelve a la normalidad.
+ */
+export function filtrarEquipos(m: Mundo, visibles?: ReadonlySet<string>): void {
+	for (const g of m.equipos.children) {
+		const dentro = !visibles || visibles.has(g.userData.tag as string);
+		const rotulo = g.userData.rotulo as THREE.Sprite | undefined;
+		if (rotulo) rotulo.visible = dentro;
+		g.traverse((o) => {
+			if (!(o instanceof THREE.Mesh)) return;
+			const mat = o.material as THREE.Material & { opacity: number; transparent: boolean };
+			if (o === g.userData.aro) return;
+			mat.transparent = !dentro;
+			mat.opacity = dentro ? 1 : 0.16;
+			mat.depthWrite = dentro;
+			mat.needsUpdate = true;
+		});
+	}
+}
+
+/** Enciende el aro de suelo de las máquinas elegidas para llevar al tablero. */
+export function marcarElegidos(m: Mundo, tags: ReadonlySet<string>): void {
+	for (const g of m.equipos.children) {
+		const aro = g.userData.aro as THREE.Mesh | undefined;
+		if (aro) aro.visible = tags.has(g.userData.tag as string);
+	}
+}
+
+/* ------------------------------- La cinta métrica ------------------------------- */
+
+/** Punto de la cubierta bajo el puntero: sobre una máquina, sobre la obra o sobre la losa. */
+export function puntoEnPixel(
+	m: Mundo, lienzo: HTMLCanvasElement, cx: number, cy: number,
+): THREE.Vector3 | undefined {
+	const r = lienzo.getBoundingClientRect();
+	const puntero = new THREE.Vector2(
+		((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1,
+	);
+	const rayo = new THREE.Raycaster();
+	rayo.setFromCamera(puntero, m.camara);
+	const golpes = rayo.intersectObjects([m.equipos, m.obra, m.losa], true);
+	return golpes[0]?.point.clone();
+}
+
+/**
+ * Cinta métrica: marcar puntos en la cubierta y saber cuánto cable hay que pedir.
+ *
+ * Es lo que se hace subiendo con una cinta y una libreta, y de lo que sale el número que se pide
+ * a bodega. Por eso no da solo la recta: da también el recorrido en ortogonal, que es por donde
+ * va la bandeja, la subida y la bajada, y el total con su reserva. La recta sola engaña, y quien
+ * pide por la recta se queda corto.
+ */
+export function crearCinta(m: Mundo) {
+	const grupo = new THREE.Group();
+	grupo.name = 'cinta';
+	m.escena.add(grupo);
+	const puntos: THREE.Vector3[] = [];
+
+	function limpiar(): void {
+		for (const o of [...grupo.children]) {
+			grupo.remove(o);
+			if (o instanceof THREE.Mesh) { o.geometry.dispose(); (o.material as THREE.Material).dispose(); }
+			if (o instanceof THREE.Sprite) { o.material.map?.dispose(); o.material.dispose(); }
+		}
+	}
+
+	function redibujar(): void {
+		limpiar();
+		const matHito = new THREE.MeshBasicMaterial({ color: 0xffd43b, depthTest: false });
+		for (const p of puntos) {
+			const hito = new THREE.Mesh(new THREE.SphereGeometry(0.45, 12, 10), matHito);
+			hito.position.copy(p);
+			hito.renderOrder = 3;
+			grupo.add(hito);
+		}
+		for (let i = 1; i < puntos.length; i++) {
+			const a = puntos[i - 1];
+			const b = puntos[i];
+			// El tramo se dibuja EN ORTOGONAL, como iría la bandeja, no en diagonal: así se ve por
+			// dónde se ha contado el metraje y el número de la etiqueta no sale de la nada.
+			const codo = new THREE.Vector3(b.x, (a.y + b.y) / 2, a.z);
+			for (const [p, q] of [[a, codo], [codo, b]] as [THREE.Vector3, THREE.Vector3][]) {
+				if (p.distanceTo(q) < 0.05) continue;
+				grupo.add(tramoDeCinta(p, q));
+			}
+			grupo.add(etiquetaCinta(
+				`${(Math.abs(b.x - a.x) + Math.abs(b.z - a.z)).toFixed(1)} m`,
+				codo.clone().lerp(b, 0.5).setY(Math.max(a.y, b.y) + 1.2),
+			));
+		}
+		const med = medirTirada(puntos);
+		if (med) {
+			grupo.add(etiquetaCinta(
+				`total ${med.recorrido.toFixed(1)} m · pedir ${med.cablePedido} m`,
+				puntos[puntos.length - 1].clone().setY(puntos[puntos.length - 1].y + 3),
+				true,
+			));
+		}
+	}
+
+	return {
+		anadir(p: THREE.Vector3): void { puntos.push(p); redibujar(); },
+		deshacer(): void { puntos.pop(); redibujar(); },
+		reiniciar(): void { puntos.length = 0; limpiar(); },
+		medida: () => medirTirada(puntos),
+		cuantos: () => puntos.length,
+		visible(v: boolean): void { grupo.visible = v; },
+	};
+}
+
+/** Un tramo de la cinta: un tubo fino y amarillo que se ve por delante de todo. */
+function tramoDeCinta(a: THREE.Vector3, b: THREE.Vector3): THREE.Mesh {
+	const largo = a.distanceTo(b);
+	const g = new THREE.CylinderGeometry(0.13, 0.13, largo, 8);
+	const malla = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xffd43b, depthTest: false }));
+	malla.position.copy(a).lerp(b, 0.5);
+	malla.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+	malla.renderOrder = 3;
+	return malla;
+}
+
+/** Etiqueta flotante de la cinta, con el número que se lee desde cualquier ángulo. */
+function etiquetaCinta(texto: string, donde: THREE.Vector3, destacada = false): THREE.Sprite {
+	const lienzo = document.createElement('canvas');
+	lienzo.width = 512; lienzo.height = 128;
+	const c = lienzo.getContext('2d')!;
+	c.fillStyle = destacada ? 'rgba(255,212,59,.94)' : 'rgba(12,16,20,.88)';
+	c.beginPath(); c.roundRect(6, 30, 500, 68, 12); c.fill();
+	c.strokeStyle = '#ffd43b'; c.lineWidth = 3; c.stroke();
+	c.fillStyle = destacada ? '#1b1400' : '#ffd43b';
+	c.font = `bold ${destacada ? 40 : 44}px system-ui, sans-serif`;
+	c.textAlign = 'center'; c.textBaseline = 'middle';
+	c.fillText(texto, 256, 64);
+	const tex = new THREE.CanvasTexture(lienzo);
+	const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+	sp.scale.set(destacada ? 6 : 4.4, destacada ? 1.5 : 1.1, 1);
+	sp.position.copy(donde);
+	sp.renderOrder = 4;
+	return sp;
 }
 
 /* ------------------------------- Las dos vistas ------------------------------- */
@@ -624,16 +807,20 @@ export function equipoEnPixel(
 	return undefined;
 }
 
-/** Resalta la máquina seleccionada y apaga las demás. */
+/**
+ * Resalta la máquina seleccionada.
+ *
+ * Toca SOLO el cuerpo del equipo, no todo lo que cuelgue de él. Antes recorría el grupo entero y
+ * apagaba de paso la franja verde que dice si la máquina tiene señales, con lo que seleccionar una
+ * borraba un dato de la pantalla.
+ */
 export function resaltarEquipo(m: Mundo, tag: string | undefined): void {
 	for (const g of m.equipos.children) {
+		const cuerpo = g.userData.cuerpo as THREE.Mesh | undefined;
+		if (!cuerpo || !(cuerpo.material instanceof THREE.MeshStandardMaterial)) continue;
 		const activo = g.userData.tag === tag;
-		g.traverse((o) => {
-			if (!(o instanceof THREE.Mesh) || !(o.material instanceof THREE.MeshStandardMaterial)) return;
-			if (o.userData.baseColor === undefined) o.userData.baseColor = o.material.color.getHex();
-			o.material.emissive.setHex(activo ? 0x2b6cb0 : (o.material.emissive.getHex() && !activo ? o.material.emissive.getHex() : 0x000000));
-			o.material.emissiveIntensity = activo ? 0.55 : (o.userData.emisivo ?? 0);
-		});
+		cuerpo.material.emissive.setHex(activo ? 0x2b6cb0 : 0x000000);
+		cuerpo.material.emissiveIntensity = activo ? 0.55 : 0;
 	}
 }
 

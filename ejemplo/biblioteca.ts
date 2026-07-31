@@ -397,10 +397,11 @@ function estrellaTriangulo(): Proyecto {
 		cable(['km3', '2/T1'], ['x1', 'V2'], 4, 'marrón'),
 		cable(['km3', '4/T2'], ['x1', 'W2'], 4, 'negro'),
 		cable(['km3', '6/T3'], ['x1', 'U2'], 4, 'gris'),
-		// KM2 junta las tres colas en un punto: eso es la estrella.
-		cable(['x1', 'U2'], ['km2', '1/L1'], 4, 'marrón'),
-		cable(['x1', 'V2'], ['km2', '3/L2'], 4, 'negro'),
-		cable(['x1', 'W2'], ['km2', '5/L3'], 4, 'gris'),
+		// KM2 junta las tres colas en un punto: eso es la estrella. Se cuelga de las salidas de
+		// KM3 —que son las mismas colas— y no de las bornas: en una borna no caben tres hilos.
+		cable(['km3', '6/T3'], ['km2', '1/L1'], 4, 'marrón'),   // el nudo U2
+		cable(['km3', '2/T1'], ['km2', '3/L2'], 4, 'negro'),    // el nudo V2
+		cable(['km3', '4/T2'], ['km2', '5/L3'], 4, 'gris'),     // el nudo W2
 		cable(['km2', '2/T1'], ['km2', '4/T2'], 4, 'azul'),   // puente de estrella
 		cable(['km2', '4/T2'], ['km2', '6/T3'], 4, 'azul'),
 		// Los seis hilos hasta el motor, más la tierra.
@@ -413,29 +414,32 @@ function estrellaTriangulo(): Proyecto {
 		cable(['red', 'PE'], ['x1', 'PE'], 4, 'verde/amarillo'),
 		cable(['x1', 'PE'], ['m1', 'PE'], 4, 'verde/amarillo'),
 		// --- Mando 220 V: fase → fusible → paro → marcha → bobinas → térmico → neutro ---
-		cable(['red', 'L1'], ['f1', '1'], 1, 'marrón'),
+		// El mando se saca de la SALIDA del automático, no de la acometida pelada: así el tramo
+		// hasta el fusible ya va protegido, y de F1 para abajo protege el fusible de 2 A.
+		cable(['q1', '2'], ['f1', '1'], 2.5, 'marrón'),
 		cable(['f1', '2'], ['x2', '1'], 1, 'marrón'),
 		cable(['x2', '1'], ['s0', '11'], 1, 'marrón'),
 		cable(['s0', '12'], ['x2', '2'], 1, 'negro'),
 		cable(['x2', '2'], ['s1', '13'], 1, 'negro'),
 		cable(['s1', '14'], ['x2', '3'], 1, 'negro'),
-		// Desde aquí, el punto de mando: alimenta KM1 y el temporizador a la vez.
+		// Desde aquí, el punto de mando: alimenta KM1 y el temporizador. Va EN CADENA de un borne
+		// al siguiente y no todo al mismo: en una borna caben dos hilos, no cuatro.
 		cable(['x2', '3'], ['km1', 'A1'], 1, 'negro'),
 		cable(['km1', 'A1'], ['kt', 'A1'], 1, 'negro'),
 		cable(['km1', '13'], ['x2', '5'], 1, 'negro'),   // autorretención por las bornas puenteadas
 		cable(['km1', '14'], ['x2', '6'], 1, 'negro'),
 		// El temporizador reparte: 11-12 (cerrado en reposo) → estrella; 13-14 → triángulo.
-		cable(['km1', 'A1'], ['kt', '11'], 1, 'negro'),
+		cable(['kt', 'A1'], ['kt', '11'], 1, 'negro'),
+		cable(['kt', '11'], ['kt', '13'], 1, 'negro'),
 		cable(['kt', '12'], ['km3', '21'], 1, 'negro'),  // pasando por el bloqueo del triángulo
 		cable(['km3', '22'], ['km2', 'A1'], 1, 'negro'),
-		cable(['km1', 'A1'], ['kt', '13'], 1, 'negro'),
 		cable(['kt', '14'], ['km2', '21'], 1, 'negro'),  // pasando por el bloqueo de la estrella
 		cable(['km2', '22'], ['km3', 'A1'], 1, 'negro'),
-		// Los tres retornos de bobina se juntan y vuelven por el contacto del térmico.
-		cable(['km1', 'A2'], ['f2', '95'], 1, 'azul'),
-		cable(['km2', 'A2'], ['km1', 'A2'], 1, 'azul'),
-		cable(['km3', 'A2'], ['km1', 'A2'], 1, 'azul'),
+		// Los cuatro retornos de bobina se encadenan y vuelven por el contacto del térmico.
+		cable(['km2', 'A2'], ['km3', 'A2'], 1, 'azul'),
+		cable(['km3', 'A2'], ['kt', 'A2'], 1, 'azul'),
 		cable(['kt', 'A2'], ['km1', 'A2'], 1, 'azul'),
+		cable(['km1', 'A2'], ['f2', '95'], 1, 'azul'),
 		cable(['f2', '96'], ['red', 'N'], 1, 'azul'),
 	];
 

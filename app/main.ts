@@ -3569,12 +3569,33 @@ async function irAPlanta(): Promise<void> {
 		const { abrirMundo, cerrarMundo } = await import('./mundo-ui.js');
 		($('mundo-salir') as HTMLButtonElement).onclick = () => cerrarMundo();
 		($('mundo-inicio') as HTMLButtonElement).onclick = () => { cerrarMundo(); mostrarInicio(); };
-		abrirMundo();
+		abrirMundo(abrirTableroDesdeLaPlanta);
 	} catch (e) {
 		avisar(`No se pudo abrir el visor de la planta: ${(e as Error).message}`, 'error');
 	}
 }
 ($('btn-planta') as HTMLButtonElement).onclick = irAPlanta;
+
+/**
+ * Recibe el tablero armado con las máquinas que se han elegido en la cubierta.
+ *
+ * Se abre en modo EDITOR a propósito: lo que llega es un punto de partida sacado del plano —hay
+ * que colocar los aparatos, cambiar el controlador genérico por el del proyecto y repasar las
+ * secciones—, no un tablero terminado que se recorra tal cual.
+ */
+function abrirTableroDesdeLaPlanta(nuevo: Proyecto, resumen: string): void {
+	capturar();
+	proyecto = nuevo;
+	numerarDispositivos(proyecto);
+	ejemploAbierto = undefined;
+	($('btn-explicacion') as HTMLElement).hidden = true;
+	seleccionExtra = [];
+	aplicarSeleccion(undefined);
+	aplicarModo('editor');
+	trasCambiarProyecto();
+	encuadrar();
+	avisar(`Tablero armado desde el plano: ${resumen}. Revisa el controlador y las secciones.`, 'ok');
+}
 
 ($('btn-energizar') as HTMLButtonElement).onclick = () => aplicarEnergizado(!energizado);
 ($('btn-sim-reposo') as HTMLButtonElement).onclick = () => {
@@ -4893,5 +4914,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			completarCableado({ dispositivoId: aId, borneId: aBorne });
 		},
 		proyecto: () => proyecto,
+		/** Hallazgos del DRC del proyecto abierto, tal como los ve el panel de verificación. */
+		drc: () => hallazgos,
 	};
 }
