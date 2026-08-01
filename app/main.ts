@@ -10,7 +10,6 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-import { EJEMPLOS, EjemploTablero } from '../ejemplo/biblioteca.js';
 import { BloqueTerminales, CLASE_POR_TIPO, Colocacion, Conductor, Dispositivo, OpcionesProyecto, Proyecto } from '../src/modelo/tipos.js';
 import { crearProyecto, declarado, extremoTexto, opcionesDe } from '../src/modelo/proyecto.js';
 import {
@@ -41,8 +40,10 @@ import {
 } from '../src/motores/simulacion.js';
 import { comoSeConecta } from './como-se-conecta.js';
 import {
-	avisar, confirmar, descargar, nombreSeguroDeArchivo, pedirTexto, responderDialogo,
+	avisar, confirmar, descargar, nombreSeguroDeArchivo, pedirTexto,
 } from './dialogos.js';
+import { instalarDossier } from './ui-dossier.js';
+import { instalarInicio } from './ui-inicio.js';
 import {
 	anchoColumna, filaDeAltura, HOJA_A3, HojaEsq, MARGEN, montarEsquema, posicionesEnEsquema,
 } from '../src/motores/esquema.js';
@@ -3374,7 +3375,7 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 ($('archivo-abrir') as HTMLInputElement).onchange = async (e) => {
 	const archivo = (e.target as HTMLInputElement).files?.[0];
 	if (!archivo) return;
-	if (!(await puedoReemplazarElTablero('otro proyecto'))) {
+	if (!(await panelInicio.puedoReemplazarElTablero('otro proyecto'))) {
 		(e.target as HTMLInputElement).value = '';
 		return;
 	}
@@ -3448,290 +3449,10 @@ function programaDeControlador(d: Dispositivo): string {
 /* ==================== Vista previa del dossier, con su editor ==================== */
 
 /**
- * El dossier ya no se descarga a ciegas: primero se VE, y mientras se ve se puede retocar.
+ * Una foto del tablero tal como se ve ahora, para meterla en el dossier.
  *
- * Lo que se enseña no es una maqueta parecida al PDF: es EL PDF, metido en un visor del propio
- * navegador. Así no hay dos verdades —lo que se ve y lo que se descarga— que puedan separarse.
- *
- * Lo que se puede tocar es lo que tiene sentido tocar: qué apartados lleva, y lo que uno añade de
- * su cosecha (una carta de presentación, fotos de la obra, el alzado del tablero). Las tablas y
- * las cifras NO se editan a mano a propósito: salen del tablero, y un dossier donde se pudieran
- * escribir a dedo dejaría de valer para lo único que vale, que es ser fiel.
- */
-let urlDossier: string | undefined;
-let generandoDossier = false;
-
-function ajustesDossier(): AjustesDossier {
-	if (!proyecto.dossier) proyecto.dossier = {};
-	return proyecto.dossier;
-}
-
-/** Vuelve a generar el PDF y lo enseña. Se llama cada vez que se toca algo del editor. */
-async function refrescarDossier(): Promise<void> {
-	if (generandoDossier) return;
-	generandoDossier = true;
-	$('dos-estado').textContent = 'Generando…';
-	try {
-		const { dossierComoBlob } = await import('./pdf.js');
-		// Un respiro para que el navegador pinte el «Generando…» antes de bloquearse con el PDF.
-		await new Promise((r) => setTimeout(r, 0));
-		const blob = dossierComoBlob(proyecto);
-        if (urlDossier) URL.revokeObjectURL(urlDossier);
-		urlDossier = URL.createObjectURL(blob);
-		// `#toolbar=1` deja los controles del visor; `#view=FitH` abre la página entera a lo ancho.
-		$('dos-vista').innerHTML = `<iframe src="${urlDossier}#view=FitH" title="Vista previa del dossier"></iframe>`;
-		$('dos-estado').textContent = `${Math.round(blob.size / 1024)} KB`;
-	} catch (e) {
-		$('dos-vista').innerHTML = '<div class="cargando">No se pudo generar el dossier: '
-			+ escaparHtml((e as Error).message) + '</div>';
-		$('dos-estado').textContent = '';
-	} finally {
-		generandoDossier = false;
-	}
-}
-
-/** Repinta el editor lateral y vuelve a generar el PDF. */
-function actualizarDossier(): void {
-	marcarSucio();
-	pintarEditorDossier();
-	void refrescarDossier();
-}
-
-function pintarEditorDossier(): void {
-	const a = ajustesDossier();
-	$('dos-secciones').innerHTML = SECCIONES_DOSSIER.map((sec) => {
-		const marcado = saleSeccion(a, sec.id) ? ' checked' : '';
-		return `<label class="dos-sec${sec.fijo ? ' fijo' : ''}">`
-			+ `<input type="checkbox" data-sec="${escaparHtml(sec.id)}"${marcado}${sec.fijo ? ' disabled' : ''}>`
-			+ `${escaparHtml(sec.nombre)}`
-			+ (sec.fijo ? '<span class="candado" title="No se puede quitar: es lo que hace defendible el documento">🔒</span>' : '')
-			+ '</label>';
-	}).join('');
-	for (const c of $('dos-secciones').querySelectorAll<HTMLInputElement>('[data-sec]')) {
-		c.onchange = () => {
-			a.secciones = { ...a.secciones, [c.dataset.sec!]: c.checked };
-			actualizarDossier();
-		};
-	}
-	pintarBloquesDossier();
-}
-
-function pintarBloquesDossier(): void {
-	const a = ajustesDossier();
-	const bloques = a.bloques ?? [];
-	const cont = $('dos-bloques');
-	if (bloques.length === 0) {
-		cont.innerHTML = '<div id="dos-vacio">Todavía no has añadido nada. Con los botones de abajo '
-			+ 'puedes meter una carta de presentación, una foto de la obra o el alzado del tablero.</div>';
-		return;
-	}
-	const DONDE: [string, string][] = [
-		['portada', 'En la portada'], ['principio', 'Al principio'], ['final', 'Al final'],
-	];
-	cont.innerHTML = bloques.map((b, i) => {
-		const opciones = DONDE.map(([v, t]) =>
-			`<option value="${v}"${b.donde === v ? ' selected' : ''}>${t}</option>`).join('');
-		const cuerpo = b.tipo === 'imagen'
-			? `<img class="dos-imagen" src="${escaparHtml(b.imagen ?? '')}" alt="">`
-				+ `<input type="text" data-pie="${i}" placeholder="Pie de foto (opcional)" value="${escaparHtml(b.pie ?? '')}">`
-				+ `<div class="dos-mini"><span style="font-size:11.5px;color:var(--texto-suave)">Ancho</span>`
-				+ `<select data-ancho="${i}">${[40, 55, 70, 85, 100].map((v) =>
-					`<option value="${v}"${(b.anchoPct ?? 100) === v ? ' selected' : ''}>${v} %</option>`).join('')}</select></div>`
-			: barraDeFormato(i)
-				+ `<div class="dos-texto" contenteditable="true" data-texto="${i}">${htmlDeTrozos(b.trozos)}</div>`;
-		return `<div class="dos-bloque">`
-			+ `<div class="cab"><span class="que">${b.tipo === 'imagen' ? '🖼️ Imagen' : '✏️ Texto'}</span>`
-			+ `<button data-subir="${i}" title="Subir">▲</button>`
-			+ `<button data-bajar="${i}" title="Bajar">▼</button>`
-			+ `<button data-borrar="${i}" title="Quitar del dossier">✕</button></div>`
-			+ `<input type="text" data-titulo="${i}" placeholder="Título del apartado (opcional)" value="${escaparHtml(b.titulo ?? '')}">`
-			+ `<div class="dos-mini"><select data-donde="${i}">${opciones}</select></div>`
-			+ cuerpo + '</div>';
-	}).join('');
-	engancharBloquesDossier();
-}
-
-/** La barra tipo Word: negrita, cursiva, tamaño y fuente. */
-function barraDeFormato(i: number): string {
-	return '<div class="dos-formato">'
-		+ `<button data-fmt="bold" data-b="${i}" class="negrita" title="Negrita (Ctrl+B)">B</button>`
-		+ `<button data-fmt="italic" data-b="${i}" class="cursiva" title="Cursiva (Ctrl+I)">I</button>`
-		+ `<select data-tam="${i}" title="Tamaño de letra"><option value="">Tamaño</option>`
-		+ TAMANOS.map((t) => `<option value="${t}">${t} pt</option>`).join('') + '</select>'
-		+ `<select data-fuente="${i}" title="Tipo de letra"><option value="">Fuente</option>`
-		+ FUENTES.map((f) => `<option value="${f.id}">${escaparHtml(f.nombre.split(' ')[0])}</option>`).join('')
-		+ '</select></div>';
-}
-
-function engancharBloquesDossier(): void {
-	const a = ajustesDossier();
-	const bloques = a.bloques ?? [];
-	const cont = $('dos-bloques');
-	const idx = (el: Element, attr: string): number => Number((el as HTMLElement).dataset[attr]);
-
-	for (const el of cont.querySelectorAll<HTMLButtonElement>('[data-borrar]')) {
-		el.onclick = () => { bloques.splice(idx(el, 'borrar'), 1); actualizarDossier(); };
-	}
-	for (const el of cont.querySelectorAll<HTMLButtonElement>('[data-subir]')) {
-		el.onclick = () => {
-			const i = idx(el, 'subir');
-			if (i === 0) return;
-			[bloques[i - 1], bloques[i]] = [bloques[i], bloques[i - 1]];
-			actualizarDossier();
-		};
-	}
-	for (const el of cont.querySelectorAll<HTMLButtonElement>('[data-bajar]')) {
-		el.onclick = () => {
-			const i = idx(el, 'bajar');
-			if (i >= bloques.length - 1) return;
-			[bloques[i + 1], bloques[i]] = [bloques[i], bloques[i + 1]];
-			actualizarDossier();
-		};
-	}
-	for (const el of cont.querySelectorAll<HTMLInputElement>('[data-titulo]')) {
-		el.onchange = () => { bloques[idx(el, 'titulo')].titulo = el.value.trim() || undefined; actualizarDossier(); };
-	}
-	for (const el of cont.querySelectorAll<HTMLInputElement>('[data-pie]')) {
-		el.onchange = () => { bloques[idx(el, 'pie')].pie = el.value.trim() || undefined; actualizarDossier(); };
-	}
-	for (const el of cont.querySelectorAll<HTMLSelectElement>('[data-donde]')) {
-		el.onchange = () => {
-			bloques[idx(el, 'donde')].donde = el.value as BloqueDossier['donde'];
-			actualizarDossier();
-		};
-	}
-	for (const el of cont.querySelectorAll<HTMLSelectElement>('[data-ancho]')) {
-		el.onchange = () => { bloques[idx(el, 'ancho')].anchoPct = Number(el.value); actualizarDossier(); };
-	}
-	// Formato: se aplica sobre lo SELECCIONADO, como en cualquier procesador de textos.
-	for (const el of cont.querySelectorAll<HTMLButtonElement>('[data-fmt]')) {
-		el.onmousedown = (ev) => ev.preventDefault();   // no perder la selección al pulsar
-		el.onclick = () => { document.execCommand(el.dataset.fmt!); guardarTexto(idx(el, 'b')); };
-	}
-	for (const el of cont.querySelectorAll<HTMLSelectElement>('[data-tam]')) {
-		el.onchange = () => {
-			if (el.value) aplicarEstiloASeleccion('font-size', `${el.value}pt`);
-			el.value = '';
-			guardarTexto(idx(el, 'tam'));
-		};
-	}
-	for (const el of cont.querySelectorAll<HTMLSelectElement>('[data-fuente]')) {
-		el.onchange = () => {
-			if (el.value) aplicarEstiloASeleccion('font-family', el.value);
-			el.value = '';
-			guardarTexto(idx(el, 'fuente'));
-		};
-	}
-	for (const el of cont.querySelectorAll<HTMLElement>('[data-texto]')) {
-		// Se guarda al salir del recuadro y no en cada tecla: regenerar el PDF con cada letra
-		// dejaría el programa a tirones.
-		el.onblur = () => guardarTexto(idx(el, 'texto'));
-		el.onkeydown = (ev) => {
-			if (!(ev.ctrlKey || ev.metaKey)) return;
-			const k = ev.key.toLowerCase();
-			if (k !== 'b' && k !== 'i') return;
-			ev.preventDefault();
-			document.execCommand(k === 'b' ? 'bold' : 'italic');
-		};
-	}
-}
-
-/** Envuelve lo seleccionado en un <span> con el estilo pedido. */
-function aplicarEstiloASeleccion(propiedad: string, valor: string): void {
-	const sel = window.getSelection();
-	if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-		avisar('Selecciona antes el texto que quieres cambiar.', 'info');
-		return;
-	}
-	const span = document.createElement('span');
-	span.style.setProperty(propiedad, valor);
-	try {
-		span.appendChild(sel.getRangeAt(0).extractContents());
-		sel.getRangeAt(0).insertNode(span);
-	} catch {
-		avisar('No se pudo aplicar el formato a esa selección.', 'info');
-	}
-}
-
-/** Lee el recuadro editable y guarda su contenido con formato en el proyecto. */
-function guardarTexto(i: number): void {
-	const bloques = ajustesDossier().bloques ?? [];
-	const caja = $('dos-bloques').querySelector<HTMLElement>(`[data-texto="${i}"]`);
-	if (!caja || !bloques[i]) return;
-	const nuevos = trozosDelDom(caja);
-	if (JSON.stringify(nuevos) === JSON.stringify(bloques[i].trozos)) return;   // nada que hacer
-	bloques[i].trozos = nuevos;
-	marcarSucio();
-	void refrescarDossier();
-}
-
-/**
- * Convierte lo que hay en un recuadro editable en trozos con formato.
- *
- * Se recorre el DOM en vez de leer el HTML como texto porque el navegador escribe lo que quiere
- * —<b>, <strong>, <span style="font-weight:700">, todo mezclado— y lo único que se puede dar por
- * bueno es el estilo YA CALCULADO de cada nodo, que es lo que se pregunta aquí.
- */
-function trozosDelDom(raiz: HTMLElement): TrozoTexto[] {
-	const trozos: TrozoTexto[] = [];
-	const anadir = (texto: string, el: HTMLElement | null): void => {
-		if (!texto) return;
-		const est = el ? getComputedStyle(el) : undefined;
-		const familia = (est?.fontFamily ?? '').toLowerCase();
-		const tam = est ? Math.round(parseFloat(est.fontSize) * 0.75) : undefined;   // px → pt
-		trozos.push({
-			texto,
-			negrita: est ? Number(est.fontWeight) >= 600 || est.fontWeight === 'bold' : undefined,
-			cursiva: est ? est.fontStyle === 'italic' : undefined,
-			// Solo se guarda el tamaño si NO es el del recuadro: así el bloque manda por defecto.
-			tam: tam && tam !== 13 ? tam : undefined,
-			fuente: familia.includes('times') ? 'times' : familia.includes('courier') ? 'courier' : undefined,
-		});
-	};
-	const recorrer = (nodo: Node, padre: HTMLElement | null): void => {
-		for (const hijo of Array.from(nodo.childNodes)) {
-			if (hijo.nodeType === Node.TEXT_NODE) { anadir(hijo.textContent ?? '', padre); continue; }
-			if (!(hijo instanceof HTMLElement)) continue;
-			if (hijo.tagName === 'BR') { trozos.push({ texto: '\n' }); continue; }
-			// Un <div> o un <p> dentro del editable son párrafos: llevan salto delante.
-			if ((hijo.tagName === 'DIV' || hijo.tagName === 'P') && trozos.length) trozos.push({ texto: '\n' });
-			recorrer(hijo, hijo);
-		}
-	};
-	recorrer(raiz, null);
-	return trozos.filter((t) => t.texto !== '');
-}
-
-/** Y al revés: los trozos guardados vuelven a HTML para poderlos editar. */
-function htmlDeTrozos(trozos: TrozoTexto[] | undefined): string {
-	if (!trozos?.length) return '';
-	return trozos.map((t) => {
-		if (t.texto === '\n') return '<br>';
-		const estilos = [
-			t.negrita ? 'font-weight:700' : '',
-			t.cursiva ? 'font-style:italic' : '',
-			t.tam ? `font-size:${t.tam}pt` : '',
-			t.fuente ? `font-family:${t.fuente}` : '',
-		].filter(Boolean).join(';');
-		const texto = escaparHtml(t.texto).replace(/\n/g, '<br>');
-		return estilos ? `<span style="${estilos}">${texto}</span>` : texto;
-	}).join('');
-}
-
-/** Añade un bloque nuevo al final y repinta. */
-function anadirBloque(b: Omit<BloqueDossier, 'id'>): void {
-	capturar();
-	const a = ajustesDossier();
-	a.bloques = [...(a.bloques ?? []), { ...b, id: `b${Date.now().toString(36)}` }];
-	actualizarDossier();
-}
-
-/**
- * Una foto del tablero tal como se está viendo, para meterla en el dossier.
- *
- * El lienzo se dibuja a propósito justo antes de leerlo: con `preserveDrawingBuffer` el contenido
- * sobrevive al fotograma, pero si la escena cambió y aún no se ha repintado, se copiaría la de
- * antes. Para el alzado se cambia a 2D, se dibuja, se lee y se deja la vista como estaba.
+ * Se queda aquí y no en `ui-dossier.ts` porque es cosa de la ESCENA: hay que cambiar de vista,
+ * renderizar y volver a dejarla como estaba. El editor del dossier solo pide la foto.
  */
 function fotoDelTablero(en2D: boolean): string {
 	const antes = vista2D;
@@ -3742,54 +3463,20 @@ function fotoDelTablero(en2D: boolean): string {
 	return datos;
 }
 
-function abrirDossier(abrir: boolean): void {
-	($('panel-dossier') as HTMLElement).hidden = !abrir;
-	if (!abrir) {
-		if (urlDossier) { URL.revokeObjectURL(urlDossier); urlDossier = undefined; }
-		$('dos-vista').innerHTML = '<div class="cargando">Generando el dossier…</div>';
-		return;
-	}
-	pintarEditorDossier();
-	void refrescarDossier();
-}
 
-($('btn-pdf') as HTMLButtonElement).onclick = () => abrirDossier(true);
-($('dos-cerrar') as HTMLButtonElement).onclick = () => abrirDossier(false);
-($('dos-refrescar') as HTMLButtonElement).onclick = () => { void refrescarDossier(); };
-($('dos-descargar') as HTMLButtonElement).onclick = async () => {
-	try {
-		const { exportarPDF } = await import('./pdf.js');
-		exportarPDF(proyecto);
-		avisar('Dossier descargado', 'ok');
-	} catch (e) {
-		avisar('No se pudo generar el PDF: ' + (e as Error).message, 'error');
-	}
-};
-($('dos-add-texto') as HTMLButtonElement).onclick = () => anadirBloque({
-	tipo: 'texto', donde: 'principio', titulo: 'Presentación',
-	trozos: [{ texto: 'Escribe aquí lo que quieras contarle al cliente. Selecciona un trozo y usa '
-		+ 'B, I, el tamaño o la fuente para darle formato.' }],
+/*
+ * El editor del dossier vive en su propio archivo y no sabe nada de este: se le pasa lo que
+ * necesita y devuelve la única puerta que hace falta desde fuera, abrir y cerrar el panel.
+ */
+const panelDossier = instalarDossier({
+	proyecto: () => proyecto,
+	avisar,
+	marcarSucio,
+	capturar,
+	escaparHtml,
+	fotoDelTablero,
 });
-($('dos-add-imagen') as HTMLButtonElement).onclick = () => ($('dos-archivo') as HTMLInputElement).click();
-($('dos-archivo') as HTMLInputElement).onchange = (ev) => {
-	const archivo = (ev.target as HTMLInputElement).files?.[0];
-	(ev.target as HTMLInputElement).value = '';
-	if (!archivo) return;
-	const lector = new FileReader();
-	lector.onload = () => anadirBloque({
-		tipo: 'imagen', donde: 'final', imagen: String(lector.result), anchoPct: 100,
-		pie: archivo.name.replace(/\.[^.]+$/, ''),
-	});
-	lector.readAsDataURL(archivo);
-};
-($('dos-add-3d') as HTMLButtonElement).onclick = () => anadirBloque({
-	tipo: 'imagen', donde: 'final', imagen: fotoDelTablero(false), anchoPct: 100,
-	titulo: 'El tablero en 3D', pie: 'Vista del tablero tal como queda montado.',
-});
-($('dos-add-2d') as HTMLButtonElement).onclick = () => anadirBloque({
-	tipo: 'imagen', donde: 'final', imagen: fotoDelTablero(true), anchoPct: 100,
-	titulo: 'Alzado del tablero', pie: 'Alzado de frente, sin perspectiva: las medidas se comparan.',
-});
+($('btn-pdf') as HTMLButtonElement).onclick = () => panelDossier.abrir(true);
 
 /* ------------------------------- Modos ------------------------------- */
 
@@ -4178,7 +3865,7 @@ async function irAPlanta(): Promise<void> {
 	try {
 		const { abrirMundo, cerrarMundo } = await import('./mundo-ui.js');
 		($('mundo-salir') as HTMLButtonElement).onclick = () => cerrarMundo();
-		($('mundo-inicio') as HTMLButtonElement).onclick = () => { cerrarMundo(); mostrarInicio(); };
+		($('mundo-inicio') as HTMLButtonElement).onclick = () => { cerrarMundo(); panelInicio.mostrar(); };
 		abrirMundo(abrirTableroDesdeLaPlanta);
 	} catch (e) {
 		avisar(`No se pudo abrir el visor de la planta: ${(e as Error).message}`, 'error');
@@ -4198,7 +3885,7 @@ function abrirTableroDesdeLaPlanta(nuevo: Proyecto, resumen: string): void {
 	// demás que lo reemplaza. Se hace aquí dentro porque el visor ya se cerró al pulsar «Armar».
 	if (hayCambiosSinExportar) {
 		void (async () => {
-			if (await puedoReemplazarElTablero('el tablero armado desde el plano')) {
+			if (await panelInicio.puedoReemplazarElTablero('el tablero armado desde el plano')) {
 				abrirTableroDesdeLaPlantaSinPreguntar(nuevo, resumen);
 			} else {
 				avisar('No se abrió el tablero del plano: el tuyo sigue como estaba.', 'info');
@@ -4213,9 +3900,7 @@ function abrirTableroDesdeLaPlantaSinPreguntar(nuevo: Proyecto, resumen: string)
 	capturar();
 	proyecto = nuevo;
 	numerarDispositivos(proyecto);
-	ejemploAbierto = undefined;
-	($('btn-explicacion') as HTMLElement).hidden = true;
-	seleccionExtra = [];
+	panelInicio.olvidarEjemplo();
 	aplicarSeleccion(undefined);
 	aplicarModo('editor');
 	trasCambiarProyecto();
@@ -4561,54 +4246,7 @@ function renumerar(d: Dispositivo): Dispositivo {
 	};
 }
 
-/* ---------------------------- Plantillas de tablero ---------------------------- */
-
-interface PlantillaTablero { nombre: string; fecha: string; proyecto: Proyecto }
-
-function plantillasGuardadas(): PlantillaTablero[] {
-	try {
-		return JSON.parse(localStorage.getItem(CLAVE_PLANTILLAS) ?? '[]') as PlantillaTablero[];
-	} catch { return []; }
-}
-
-/**
- * Guarda el tablero entero como plantilla reutilizable. En una empresa el 80 % de los tableros
- * se parecen entre sí: partir de «mi arranque estrella-triángulo» ahorra media jornada.
- */
-async function guardarComoPlantilla(): Promise<void> {
-	const nombre = (await pedirTexto('¿Cómo se llama esta plantilla?', proyecto.nombre))?.trim();
-	if (!nombre) return;
-	const lista = plantillasGuardadas().filter((p) => p.nombre !== nombre);
-	lista.push({ nombre, fecha: new Date().toISOString(), proyecto: structuredClone(proyecto) });
-	try {
-		localStorage.setItem(CLAVE_PLANTILLAS, JSON.stringify(lista));
-		avisar(`Plantilla «${nombre}» guardada`, 'ok');
-	} catch {
-		avisar('No se pudo guardar la plantilla (falta espacio en el navegador).', 'error');
-	}
-}
-
-/** Lista las plantillas propias dentro de la biblioteca de ejemplos. */
-function pintarPlantillasPropias(): string {
-	const lista = plantillasGuardadas();
-	if (lista.length === 0) return '';
-	return `<h3 class="titulo-biblioteca">Tus plantillas</h3><div class="rejilla-ejemplos">`
-		+ lista.map((p, i) => `
-			<article class="tarjeta-ejemplo">
-				<h4>${p.nombre}</h4>
-				<p>Guardada el ${new Date(p.fecha).toLocaleDateString('es-CL')} · `
-				+ `${p.proyecto.dispositivos.length} aparatos, ${p.proyecto.conductores.length} cables</p>
-				<div class="acciones-ejemplo">
-					<button class="boton primario" data-plantilla="${i}">Abrir</button>
-					<button class="boton peligro" data-borrar-plantilla="${i}" title="Eliminar esta plantilla">🗑️</button>
-				</div>
-			</article>`).join('')
-		+ `</div>`;
-}
-
 /* ------------------------ Entregables: rótulos y DXF ------------------------ */
-
-($('btn-plantilla') as HTMLButtonElement).onclick = () => { void guardarComoPlantilla(); };
 
 ($('btn-etiquetas') as HTMLButtonElement).onclick = () => {
 	try {
@@ -4990,199 +4628,22 @@ $('modal-controlador').addEventListener('click', (e) => {
 	if (e.target === $('modal-controlador')) cerrarControladorAMedida();
 });
 
-/* --------------------- Ayuda, centrar vista y ejemplo --------------------- */
+/* --------------- Ventana de inicio, ejemplos y plantillas propias --------------- */
 
-($('btn-centrar') as HTMLButtonElement).onclick = () => encuadrar();
-
-
-($('btn-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = false; };
-($('btn-cerrar-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = true; };
-$('modal-ayuda').addEventListener('click', (e) => {
-	if (e.target === $('modal-ayuda')) ($('modal-ayuda') as HTMLElement).hidden = true;
+const panelInicio = instalarInicio({
+	proyecto: () => proyecto,
+	ponerProyecto: (p) => { proyecto = p; },
+	capturar,
+	limpiarSeleccion: () => aplicarSeleccion(undefined),
+	descartarBienvenida: () => { bienvenidaDescartada = true; },
+	aplicarModo,
+	trasCambiarProyecto,
+	encuadrar,
+	hayCambiosSinExportar: () => hayCambiosSinExportar,
+	ajustarTamano: () => ajustarTamano(),
+	encuadrePendiente: () => encuadrePendiente,
+	irAPlanta,
 });
-
-// Botones del diálogo in-app.
-($('dialogo-ok') as HTMLButtonElement).onclick = () => {
-	const input = $('dialogo-input') as HTMLInputElement;
-	responderDialogo(input.hidden ? 'ok' : input.value);
-};
-($('dialogo-cancelar') as HTMLButtonElement).onclick = () => responderDialogo(null);
-$('modal-dialogo').addEventListener('keydown', (e) => {
-	const ev = e as KeyboardEvent;
-	if (ev.key === 'Enter') { e.preventDefault(); ($('dialogo-ok') as HTMLButtonElement).click(); }
-	if (ev.key === 'Escape') { e.preventDefault(); responderDialogo(null); }
-});
-
-/* ------------------- Biblioteca de tableros de ejemplo (para estudiar) ------------------- */
-
-/** Abre un tablero de ejemplo y ofrece su explicación. */
-/**
- * ¿Se puede tirar lo que hay en pantalla?
- *
- * El botón «Nuevo» ya preguntaba, pero abrir un ejemplo o una plantilla NO: reemplazaban el
- * tablero sin decir nada y el guardado automático pisaba la única copia acto seguido. O sea que
- * ir a mirar cómo era el estrella-triángulo, a media UMA, costaba la mañana. Ctrl+Z lo recupera
- * mientras la pestaña siga abierta; al cerrarla, no.
- *
- * Solo pregunta si hay trabajo sin descargar: en un tablero recién abierto no estorba.
- */
-async function puedoReemplazarElTablero(que: string): Promise<boolean> {
-	if (!hayCambiosSinExportar) return true;
-	return confirmar(
-		`Tienes cambios sin guardar en «${proyecto.nombre}». Si abres ${que} se reemplaza lo que hay.`,
-		{ ok: 'Abrir de todas formas', peligro: true },
-	);
-}
-
-function abrirEjemplo(ej: EjemploTablero): void {
-	capturar();
-	proyecto = ej.crear();
-	numerarDispositivos(proyecto);
-	aplicarSeleccion(undefined);
-	bienvenidaDescartada = true;
-	aplicarModo('trabajo'); // se abre listo para recorrer el cableado
-	trasCambiarProyecto();
-	encuadrar();
-	($('modal-ejemplos') as HTMLElement).hidden = true;
-	ejemploAbierto = ej;
-	($('btn-explicacion') as HTMLElement).hidden = false; // queda a mano para releerla
-	mostrarExplicacion(ej);
-}
-
-let ejemploAbierto: EjemploTablero | undefined;
-
-/** Ventana con qué hace el tablero, cómo funciona y en qué fijarse. */
-function mostrarExplicacion(ej: EjemploTablero): void {
-	$('texto-explicacion').innerHTML = `
-		<h2>${ej.titulo}</h2>
-		<p><b>${ej.resumen}</b></p>
-		<h3>Qué hace</h3>
-		<p>${ej.queHace}</p>
-		<h3>Cómo funciona, paso a paso</h3>
-		<ol>${ej.comoFunciona.map((x) => `<li>${x}</li>`).join('')}</ol>
-		<h3>Para estudiarlo en el 3D</h3>
-		<ul>${ej.aprender.map((x) => `<li>${x}</li>`).join('')}</ul>
-	`;
-	($('modal-explicacion') as HTMLElement).hidden = false;
-}
-
-/** Pinta la biblioteca de ejemplos y la abre. */
-function abrirBibliotecaEjemplos(): void {
-	const cont = $('lista-ejemplos');
-	cont.innerHTML = '';
-	for (const ej of EJEMPLOS) {
-		const div = document.createElement('div');
-		div.className = 'tarjeta-ejemplo';
-		div.innerHTML = `<h3>${ej.titulo}</h3><p>${ej.resumen}</p>`;
-		const b = document.createElement('button');
-		b.className = 'boton primario';
-		b.textContent = 'Abrir y estudiar';
-		b.onclick = () => { void (async () => {
-			if (await puedoReemplazarElTablero('este ejemplo')) abrirEjemplo(ej);
-		})(); };
-		div.appendChild(b);
-		cont.appendChild(div);
-	}
-	// Tras los ejemplos, las plantillas que ha guardado el propio usuario.
-	cont.insertAdjacentHTML('beforeend', pintarPlantillasPropias());
-	for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-plantilla]')) {
-		b.onclick = () => { void (async () => {
-			if (await puedoReemplazarElTablero('esta plantilla')) abrirPlantilla(Number(b.dataset.plantilla));
-		})(); };
-	}
-	for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-borrar-plantilla]')) {
-		b.onclick = () => { void borrarPlantilla(Number(b.dataset.borrarPlantilla)); };
-	}
-	($('modal-ejemplos') as HTMLElement).hidden = false;
-}
-
-/** Abre una plantilla guardada como si fuera un proyecto nuevo. */
-function abrirPlantilla(indice: number): void {
-	const p = plantillasGuardadas()[indice];
-	if (!p) return;
-	capturar();
-	proyecto = structuredClone(p.proyecto);
-	proyecto.nombre = p.nombre;
-	ejemploAbierto = undefined;
-	($('btn-explicacion') as HTMLElement).hidden = true;
-	($('modal-ejemplos') as HTMLElement).hidden = true;
-	seleccionExtra = [];
-	aplicarSeleccion(undefined);
-	trasCambiarProyecto();
-	avisar(`Plantilla «${p.nombre}» abierta`, 'ok');
-}
-
-async function borrarPlantilla(indice: number): Promise<void> {
-	const lista = plantillasGuardadas();
-	const p = lista[indice];
-	if (!p) return;
-	if (!(await confirmar(`¿Eliminar la plantilla «${p.nombre}»?`, { ok: 'Eliminar', peligro: true }))) return;
-	lista.splice(indice, 1);
-	try { localStorage.setItem(CLAVE_PLANTILLAS, JSON.stringify(lista)); } catch { /* sin storage */ }
-	abrirBibliotecaEjemplos();
-	avisar('Plantilla eliminada', 'ok');
-}
-
-($('btn-empezar-ejemplo') as HTMLButtonElement).onclick = () => abrirBibliotecaEjemplos();
-($('btn-ejemplos') as HTMLButtonElement).onclick = () => abrirBibliotecaEjemplos();
-($('btn-explicacion') as HTMLButtonElement).onclick = () => { if (ejemploAbierto) mostrarExplicacion(ejemploAbierto); };
-($('btn-cerrar-ejemplos') as HTMLButtonElement).onclick = () => { ($('modal-ejemplos') as HTMLElement).hidden = true; };
-($('btn-cerrar-explicacion') as HTMLButtonElement).onclick = () => { ($('modal-explicacion') as HTMLElement).hidden = true; };
-for (const id of ['modal-ejemplos', 'modal-explicacion']) {
-	$(id).addEventListener('click', (e) => { if (e.target === $(id)) ($(id) as HTMLElement).hidden = true; });
-}
-
-// «Empezar en blanco»: cierra la tarjeta y deja el modo Editor listo para añadir aparatos.
-($('btn-empezar-blanco') as HTMLButtonElement).onclick = () => {
-	bienvenidaDescartada = true;
-	aplicarModo('editor');
-	($('bienvenida') as HTMLElement).hidden = true;
-	encuadrar();
-	avisar('Placa en blanco. Haz clic en un aparato del catálogo (izquierda) para colocarlo.', 'ok');
-};
-
-/* ---------------------------- Ventana de inicio ----------------------------
- *
- * El programa abre aquí, no en el gabinete: son dos herramientas y la elección es del que
- * trabaja, no del programa. El editor sigue montado por debajo —no se destruye ni se vuelve a
- * construir— así que entrar y salir del inicio no cuesta nada ni pierde el trabajo a medias.
- */
-function mostrarInicio(): void {
-	($('inicio') as HTMLElement).hidden = false;
-}
-function ocultarInicio(): void {
-	($('inicio') as HTMLElement).hidden = true;
-	// El lienzo ha estado tapado: puede haber cambiado de tamaño mientras tanto.
-	ajustarTamano();
-	if (encuadrePendiente) encuadrar();
-}
-
-($('btn-inicio') as HTMLButtonElement).onclick = mostrarInicio;
-($('inicio-tableros') as HTMLButtonElement).onclick = ocultarInicio;
-($('inicio-terreno') as HTMLButtonElement).onclick = () => { ocultarInicio(); void irAPlanta(); };
-($('inicio-abrir') as HTMLButtonElement).onclick = () => { ocultarInicio(); $('btn-abrir').click(); };
-($('inicio-ejemplos') as HTMLButtonElement).onclick = () => { ocultarInicio(); abrirBibliotecaEjemplos(); };
-($('inicio-guia') as HTMLButtonElement).onclick = () => {
-	ocultarInicio();
-	($('modal-ayuda') as HTMLElement).hidden = false;
-};
-
-/*
- * `?inicio=0` entra directo al editor. Lo usan las pruebas automáticas —que abren cientos de
- * veces la aplicación y no vienen a elegir herramienta— y sirve además para enlazar el editor
- * desde fuera. Sin el parámetro, siempre se ve el inicio.
- */
-const saltarInicio = new URLSearchParams(location.search).get('inicio') === '0';
-if (saltarInicio) ocultarInicio();
-
-// Primera visita: abrir la guía automáticamente una sola vez. Nunca por debajo del inicio:
-// ahí no se ve, y el usuario se encuentra un modal abierto al entrar al editor sin saber por qué.
-try {
-	if (!localStorage.getItem('tablerostudio-visto')) {
-		if (saltarInicio) ($('modal-ayuda') as HTMLElement).hidden = false;
-		localStorage.setItem('tablerostudio-visto', '1');
-	}
-} catch { /* sin localStorage */ }
 
 function ajustarTamano(): void {
 	const r = contenedor.getBoundingClientRect();
