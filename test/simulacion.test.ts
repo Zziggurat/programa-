@@ -13,6 +13,7 @@ import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import { Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { numerarDispositivos } from '../src/motores/numeracion.js';
+import { memoriaLogicaVacia } from '../src/motores/logica.js';
 import {
 	contactosAuxiliaresIEC, contactosCerrados, memoriaVacia, polosDe, simular,
 	tensionSecundariaDe, tiempoDeDisparo,
@@ -376,7 +377,7 @@ test('CORTOCIRCUITO: un puente fase-neutro se ve y dispara la protección de del
 });
 
 test('un tablero bien cableado NO tiene cortocircuitos', () => {
-	for (const id of ['arranque-directo', 'bomba-boya', 'control-24v', 'estrella-triangulo']) {
+	for (const id of ['arranque-directo', 'bomba-boya', 'control-24v', 'estrella-triangulo', 'uma-cubierta']) {
 		const r = simular(ejemplo(id));
 		assert.equal(r.cortocircuitos.length, 0,
 			`el ejemplo «${id}» sale con un cortocircuito: ${r.cortocircuitos.map((c) => c.que).join(', ')}`);
@@ -505,7 +506,7 @@ test('los ejemplos declaran el calibre de sus protecciones (si no, no se puede v
 	// Un contactor, un relé o una borna dejan pasar la corriente pero no la limitan: no tienen
 	// calibre que comprobar. Lo que sí ha de estar declarado es el de todo lo que protege.
 	const PROTEGE = new Set(['disyuntor', 'diferencial', 'guardamotor', 'fusible']);
-	for (const id of ['arranque-directo', 'bomba-boya', 'control-24v', 'estrella-triangulo']) {
+	for (const id of ['arranque-directo', 'bomba-boya', 'control-24v', 'estrella-triangulo', 'uma-cubierta']) {
 		const p = ejemplo(id);
 		const r = simular(p);
 		for (const c of r.cargaPorAparato.values()) {
@@ -522,7 +523,7 @@ test('los consumos de los ejemplos declaran lo que gastan (si no, la carga sale 
 	// Los sensores quedan fuera a propósito: un «sensor» puede ser un detector alimentado o un
 	// contacto seco —una boya de nivel— que no consume nada.
 	const CONSUME = new Set(['motor', 'piloto', 'valvula', 'resistencia', 'plc']);
-	for (const id of ['arranque-directo', 'bomba-boya', 'control-24v', 'estrella-triangulo']) {
+	for (const id of ['arranque-directo', 'bomba-boya', 'control-24v', 'estrella-triangulo', 'uma-cubierta']) {
 		const p = ejemplo(id);
 		for (const d of p.dispositivos) {
 			if (!CONSUME.has(d.tipo)) continue;
@@ -753,4 +754,329 @@ test('EL SECUNDARIO DEL TRANSFORMADOR no es siempre 24 V', () => {
 	assert.equal(tensionSecundariaDe({ id: 't', tipo: 'transformador', bornes: [], tensionSecundariaV: 48 }), 48,
 		'el dato declarado manda sobre la descripción');
 	assert.equal(tensionSecundariaDe({ id: 't', tipo: 'fuente', bornes: [] }), 24, 'sin nada, lo más común');
+});
+
+/* ============== EL CONTROLADOR EJECUTA SU PROGRAMA EN EL TABLERO ============== */
+
+/**
+ * Red 24 V → controlador con programa → contactor → motor. Y una sonda cableada a UI1.
+ *
+ * Es la prueba que de verdad justifica el lenguaje: no que el parser funcione —eso está en
+ * `logica.test.ts`— sino que lo que decide el programa MUEVA el tablero, y que lo que pasa en el
+ * tablero vuelva a entrar por las entradas del controlador.
+ */
+function tableroConPLC(programa: string): Proyecto {
+	const p = crearProyecto('t');
+	p.dispositivos = [
+		{
+			id: 'red', tipo: 'otro', clase: 'W', descripcion: 'Acometida 24 V', campo: true,
+			tensionNominal: 24, bornes: [{ id: 'L', tipo: 'L' }, { id: 'N', tipo: 'N' }],
+		},
+		{
+			id: 's1', tipo: 'pulsador', designacion: '-S1', descripcion: 'MARCHA',
+			bornes: [{ id: '13', tipo: 'control' }, { id: '14', tipo: 'control' }],
+		},
+		{
+			id: 's2', tipo: 'pulsador', designacion: '-S2', descripcion: 'ALARMA',
+			bornes: [{ id: '13', tipo: 'control' }, { id: '14', tipo: 'control' }],
+		},
+		{
+			id: 'b1', tipo: 'sensor', designacion: '-B1', descripcion: 'Sonda de temperatura',
+			bornes: [{ id: 'S', tipo: 'senal' }],
+		},
+		{
+			id: 'a1', tipo: 'plc', designacion: '-A1', tensionNominal: 24, programa,
+			bornes: [
+				{ id: '+24', tipo: 'control' }, { id: '0V', tipo: 'control' },
+				{ id: 'DI1', tipo: 'senal' }, { id: 'DI2', tipo: 'senal' }, { id: 'UI1', tipo: 'senal' },
+				{ id: 'DO1', tipo: 'senal' }, { id: 'DO2', tipo: 'senal' },
+			],
+		},
+		{
+			id: 'k1', tipo: 'rele', designacion: '-K1', rol: { tipo: 'maestro' },
+			bornes: [{ id: 'A1', tipo: 'control' }, { id: 'A2', tipo: 'control' }],
+		},
+		{
+			id: 'h1', tipo: 'piloto', designacion: '-H1', tensionNominal: 24, corrienteNominal: 0.02,
+			bornes: [{ id: 'X1', tipo: 'control' }, { id: 'X2', tipo: 'control' }],
+		},
+	];
+	const c = (de: [string, string], a: [string, string], id: string): Conductor =>
+		({ id, de: { dispositivoId: de[0], borneId: de[1] }, a: { dispositivoId: a[0], borneId: a[1] } });
+	p.conductores = [
+		c(['red', 'L'], ['a1', '+24'], 'c1'),
+		c(['red', 'N'], ['a1', '0V'], 'c2'),
+		// Entradas: los pulsadores llevan tensión a DI1 y DI2.
+		c(['red', 'L'], ['s1', '13'], 'c3'), c(['s1', '14'], ['a1', 'DI1'], 'c4'),
+		c(['red', 'L'], ['s2', '13'], 'c5'), c(['s2', '14'], ['a1', 'DI2'], 'c6'),
+		// La sonda, cableada a la entrada universal.
+		c(['b1', 'S'], ['a1', 'UI1'], 'c7'),
+		// Salidas: DO1 mueve la bobina de K1; DO2 enciende el piloto.
+		c(['a1', 'DO1'], ['k1', 'A1'], 'c8'), c(['k1', 'A2'], ['red', 'N'], 'c9'),
+		c(['a1', 'DO2'], ['h1', 'X1'], 'c10'), c(['h1', 'X2'], ['red', 'N'], 'c11'),
+	];
+	return p;
+}
+
+test('PLC: sin programa, sus salidas no hacen nada (como hasta ahora)', () => {
+	const r = simular(tableroConPLC(''), { s1: { activo: true } });
+	assert.equal(r.controladores.length, 0);
+	assert.ok(!r.activos.has('k1'), 'el contactor se movió sin programa que lo mandara');
+});
+
+test('PLC: con programa, una entrada mueve DE VERDAD el tablero', () => {
+	const p = tableroConPLC('DO1 = DI1');
+	const parado = simular(p);
+	assert.ok(!parado.activos.has('k1'), 'K1 metido sin pulsar nada');
+
+	const enMarcha = simular(p, { s1: { activo: true } });
+	assert.deepEqual(enMarcha.controladores[0].salidas, ['DO1']);
+	assert.ok(enMarcha.activos.has('k1'), 'el programa encendió DO1 pero K1 no se movió');
+});
+
+test('PLC: el programa lee lo que pasa en el tablero, no un mundo aparte', () => {
+	const p = tableroConPLC('DO1 = DI1 Y NO DI2');
+	const c = simular(p, { s1: { activo: true } }).controladores[0];
+	assert.deepEqual(c.entradas.filter((e) => e.startsWith('DI')), ['DI1'],
+		'el controlador no ve la entrada que tiene con tensión');
+
+	const conAlarma = simular(p, { s1: { activo: true }, s2: { activo: true } });
+	assert.deepEqual(conAlarma.controladores[0].salidas, [], 'la alarma no paró la salida');
+	assert.ok(!conAlarma.activos.has('k1'));
+});
+
+test('PLC: una sonda cableada da su valor, y el programa decide con él', () => {
+	const p = tableroConPLC('DO2 = UI1 < 21   ; enciende el piloto si hace frío');
+	const frio = simular(p, { b1: { valor: 18 } });
+	assert.equal(frio.controladores[0].sondas.UI1, 18, 'el controlador no lee su sonda');
+	assert.ok(gira(frio, '-H1'), 'con 18 °C el piloto tenía que encender');
+
+	const calor = simular(p, { b1: { valor: 25 } });
+	assert.ok(!gira(calor, '-H1'), 'con 25 °C sigue encendido');
+});
+
+test('PLC: sin sonda cableada no se inventa una temperatura', () => {
+	// Un controlador sin sonda no puede decidir por temperatura, y tiene que notarse.
+	const p = tableroConPLC('DO2 = UI1 < 21');
+	const r = simular(p, {});
+	assert.deepEqual(r.controladores[0].sondas, {});
+	assert.ok(!gira(r, '-H1'), 'ha decidido con una temperatura que nadie le ha dado');
+});
+
+test('PLC: la salida se puede realimentar, y queda un enclavamiento SIN relés', () => {
+	// Es lo que hace un controlador de verdad: la marcha se sostiene en el programa.
+	const p = tableroConPLC('DO1 = (DI1 O DO1) Y NO DI2');
+	const arranca = simular(p, { s1: { activo: true } });
+	assert.ok(arranca.activos.has('k1'));
+	const soltado = simular(p, {}, arranca.activos);
+	assert.ok(soltado.controladores[0].salidas.includes('DO1'),
+		'al soltar la marcha el programa dejó caer la salida: no hay enclavamiento');
+	const conParo = simular(p, { s2: { activo: true } }, soltado.activos);
+	assert.deepEqual(conParo.controladores[0].salidas, [], 'el paro no lo tiró');
+});
+
+test('PLC: el retardo del programa cuenta contra el reloj de la simulación', () => {
+	const p = tableroConPLC('DO1 = DI1 retardo 5');
+	const memoria = memoriaVacia();
+	const logica = memoriaLogicaVacia();
+	const pulsado = { s1: { activo: true } };
+
+	let r = simular(p, pulsado, undefined, { ahora: 0, memoria, logica });
+	assert.ok(!r.activos.has('k1'), 'ha encendido en el acto teniendo 5 s de retardo');
+	assert.equal(r.controladores[0].esperas[0]?.motivo, 'retardo');
+
+	r = simular(p, pulsado, r.activos, { ahora: 6000, memoria, logica });
+	assert.ok(r.activos.has('k1'), 'pasados los 5 s no ha encendido');
+});
+
+test('PLC: un renglón mal escrito se avisa, y los demás siguen funcionando', () => {
+	const p = tableroConPLC('DO1 = DI1\nesto no es nada\nDO2 = DI1');
+	const r = simular(p, { s1: { activo: true } });
+	assert.equal(r.controladores[0].reglas, 2, 'un renglón malo se llevó a los buenos');
+	assert.equal(r.controladores[0].errores.length, 1);
+	assert.ok(r.avisos.some((a) => /rengl[oó]n 2/.test(a)), r.avisos.join(' | '));
+	assert.ok(r.activos.has('k1'), 'el renglón bueno dejó de funcionar');
+});
+
+test('PLC: lo que se fuerza a mano se suma a lo que pide el programa', () => {
+	// Forzar una salida es lo que hace un técnico para probar un actuador sin esperar la maniobra.
+	const p = tableroConPLC('DO1 = DI1');
+	const r = simular(p, { a1: { salidas: ['DO2'] } });
+	assert.ok(gira(r, '-H1'), 'no se pudo forzar la salida a mano');
+	assert.ok(!r.activos.has('k1'), 'forzar DO2 encendió también lo que manda el programa');
+});
+
+/* ========== LA UMA DE CUBIERTA: la secuencia entera contra el reloj ========== */
+
+/**
+ * Este es el ejemplo que justifica el lenguaje del controlador: no un circuito de laboratorio,
+ * sino el tablero de clima que se monta de verdad, con su compuerta, su retardo, su tiempo mínimo
+ * y su sonda. Si la secuencia no ocurre sola aquí, el programa no sirve para trabajar.
+ */
+const salidasDe = (r: ReturnType<typeof simular>): string[] => r.controladores[0]?.salidas ?? [];
+
+test('UMA: al pedir marcha abre la compuerta ANTES de arrancar el ventilador', () => {
+	const p = ejemplo('uma-cubierta');
+	const memoria = memoriaVacia();
+	const logica = memoriaLogicaVacia();
+	const marcha = { s0: { activo: true } };
+
+	let r = simular(p, marcha, undefined, { ahora: 0, memoria, logica });
+	assert.deepEqual(salidasDe(r), ['DO2'], 'nada más pedir marcha solo tenía que abrir la compuerta');
+	assert.ok(gira(r, '-Y1'), 'el servomotor de la compuerta no se mueve');
+	assert.ok(!r.activos.has('km1'), 'el ventilador ha arrancado con la compuerta a medio abrir');
+	const espera = r.controladores[0].esperas.find((e) => e.salida === 'DO1');
+	assert.equal(espera?.motivo, 'retardo');
+	assert.ok(espera!.restan > 7 && espera!.restan <= 8, `quedan ${espera!.restan} s de 8`);
+
+	// Pasados los 8 s el ventilador entra solo, sin que nadie toque nada.
+	r = simular(p, marcha, r.activos, { ahora: 9000, memoria, logica });
+	assert.ok(salidasDe(r).includes('DO1'), 'cumplido el retardo el ventilador sigue parado');
+	assert.ok(r.activos.has('k1'), 'la salida no llegó al relé de interposición');
+	assert.ok(r.activos.has('km1'), 'el relé de interposición no metió el contactor');
+	assert.ok(gira(r, '-M1'), 'el ventilador no gira');
+	assert.equal(r.disparos.length, 0, `algo saltó: ${r.disparos.map((d) => d.explicacion).join(' | ')}`);
+});
+
+test('UMA: la válvula de calor sigue a la sonda de retorno', () => {
+	const p = ejemplo('uma-cubierta');
+	const memoria = memoriaVacia();
+	const logica = memoriaLogicaVacia();
+	// Con el ventilador ya en marcha y 18 °C de retorno, la batería de calor tiene que entrar.
+	let r = simular(p, { s0: { activo: true }, b1: { valor: 18 } }, undefined, { ahora: 0, memoria, logica });
+	r = simular(p, { s0: { activo: true }, b1: { valor: 18 } }, r.activos, { ahora: 9000, memoria, logica });
+	assert.equal(r.controladores[0].sondas.UI1, 18,
+		'el controlador no lee la sonda: va cableada por el bornero, como en un tablero de verdad');
+	assert.ok(salidasDe(r).includes('DO3'), 'con 18 °C la válvula de calor tenía que abrir');
+	assert.ok(gira(r, '-Y2'), 'la válvula no se mueve');
+
+	// Sube el retorno por encima de la consigna: cierra sola, y el ventilador sigue.
+	const caliente = simular(p, { s0: { activo: true }, b1: { valor: 25 } }, r.activos,
+		{ ahora: 20000, memoria, logica });
+	assert.ok(!salidasDe(caliente).includes('DO3'), 'con 25 °C la válvula sigue abierta');
+	assert.ok(salidasDe(caliente).includes('DO1'), 'al cerrar la válvula se ha parado el ventilador');
+});
+
+test('UMA: el filtro sucio cierra la compuerta, pero el ventilador cumple su tiempo mínimo', () => {
+	// El tiempo mínimo no es un adorno: un ventilador que arranca y para cada dos segundos se rompe.
+	const p = ejemplo('uma-cubierta');
+	const memoria = memoriaVacia();
+	const logica = memoriaLogicaVacia();
+	let r = simular(p, { s0: { activo: true } }, undefined, { ahora: 0, memoria, logica });
+	r = simular(p, { s0: { activo: true } }, r.activos, { ahora: 9000, memoria, logica });
+	assert.ok(salidasDe(r).includes('DO1'), 'no llegó a arrancar');
+
+	// Se ensucia el filtro: la compuerta cae en el acto, el ventilador aguanta sus 30 s.
+	const sucio = { s0: { activo: true }, s1: { activo: true } };
+	r = simular(p, sucio, r.activos, { ahora: 10000, memoria, logica });
+	assert.ok(!salidasDe(r).includes('DO2'), 'con alarma de filtro la compuerta sigue abierta');
+	assert.ok(salidasDe(r).includes('DO1'), 'el ventilador se paró de golpe, sin respetar el mínimo');
+	assert.equal(r.controladores[0].esperas.find((e) => e.salida === 'DO1')?.motivo, 'minimo');
+
+	r = simular(p, sucio, r.activos, { ahora: 45000, memoria, logica });
+	assert.deepEqual(salidasDe(r), [], 'cumplido el mínimo el ventilador tenía que parar');
+	assert.ok(!r.activos.has('km1'), 'el contactor sigue metido');
+});
+
+test('UMA: el térmico para el ventilador AUNQUE el programa siga diciendo que sí', () => {
+	// Una seguridad no se programa, se cablea: el contacto 95-96 está en serie con la bobina.
+	const p = ejemplo('uma-cubierta');
+	const memoria = memoriaVacia();
+	const logica = memoriaLogicaVacia();
+	let r = simular(p, { s0: { activo: true } }, undefined, { ahora: 0, memoria, logica });
+	r = simular(p, { s0: { activo: true } }, r.activos, { ahora: 9000, memoria, logica });
+	assert.ok(r.activos.has('km1'));
+
+	const conTermico = simular(p, { s0: { activo: true }, f2: { disparado: true } }, r.activos,
+		{ ahora: 10000, memoria, logica });
+	assert.ok(salidasDe(conTermico).includes('DO1'), 'el programa no tiene por qué enterarse');
+	assert.ok(!conTermico.activos.has('km1'), 'el térmico no cortó la bobina del contactor');
+	assert.ok(!gira(conTermico, '-M1'), 'el ventilador sigue girando con el térmico disparado');
+});
+
+/* ---------------- Bloques de contactos auxiliares (rol esclavo) ---------------- */
+
+/**
+ * Un bloque de contactos no tiene bobina: se clipa encima de su contactor y conmuta con él. En el
+ * esquema se dibuja aparte —muchas veces en otra hoja—, y hasta ahora la simulación lo trataba
+ * como un aparato independiente sin bobina, así que NO CERRABA NUNCA. Toda maniobra hecha con un
+ * contacto auxiliar suelto se quedaba muerta, que es justo como se dibuja un esquema de verdad.
+ */
+test('un bloque de contactos esclavo conmuta con la bobina de su MAESTRO', () => {
+	const p = crearProyecto('bloque esclavo');
+	p.dispositivos = [
+		{
+			id: 'red', tipo: 'otro', clase: 'W', descripcion: 'Acometida 220 V', campo: true,
+			tensionNominal: 220, bornes: [{ id: 'L', tipo: 'L' }, { id: 'N', tipo: 'N' }],
+		},
+		{
+			id: 's1', tipo: 'pulsador', descripcion: 'MARCHA',
+			bornes: [{ id: '13', tipo: 'control' }, { id: '14', tipo: 'control' }],
+		},
+		{
+			id: 'k1', tipo: 'rele', descripcion: 'Relé auxiliar', rol: { tipo: 'maestro' },
+			tensionNominal: 220, corrienteNominal: 0.02,
+			bornes: [{ id: 'A1', tipo: 'control' }, { id: 'A2', tipo: 'control' }],
+		},
+		{
+			id: 'k1na', tipo: 'rele', descripcion: 'Contacto NA de K1',
+			rol: { tipo: 'esclavo', maestroId: 'k1', contacto: 'NA' },
+			bornes: [{ id: '13', tipo: 'control' }, { id: '14', tipo: 'control' }],
+		},
+		{
+			id: 'h1', tipo: 'piloto', descripcion: 'Piloto', tensionNominal: 220, corrienteNominal: 0.01,
+			bornes: [{ id: 'X1', tipo: 'control' }, { id: 'X2', tipo: 'control' }],
+		},
+	];
+	const w = (de: [string, string], a: [string, string]): Conductor => ({
+		id: `${de.join('-')}>${a.join('-')}`,
+		de: { dispositivoId: de[0], borneId: de[1] },
+		a: { dispositivoId: a[0], borneId: a[1] },
+		seccion: 1,
+	});
+	p.conductores = [
+		w(['red', 'L'], ['s1', '13']), w(['s1', '14'], ['k1', 'A1']), w(['k1', 'A2'], ['red', 'N']),
+		w(['red', 'L'], ['k1na', '13']), w(['k1na', '14'], ['h1', 'X1']), w(['h1', 'X2'], ['red', 'N']),
+	];
+	numerarDispositivos(p);
+
+	assert.ok(!gira(simular(p), '-P1'), 'el piloto está encendido en reposo');
+	const r = simular(p, { s1: { activo: true } });
+	assert.ok(r.activos.has('k1'), 'la bobina del relé no entró');
+	assert.ok(gira(r, '-P1'), 'el contacto esclavo no cerró al meter la bobina de su maestro');
+});
+
+test('el ejemplo del PLC abre su electroválvula cuando el sensor detecta', () => {
+	// Extremo a extremo: sensor → entrada del controlador → programa → salida → relé → contacto
+	// esclavo → electroválvula en campo. Es la cadena entera de un tablero de control.
+	const p = ejemplo('control-24v');
+	assert.ok(!gira(simular(p), '-Y1'), 'la válvula está abierta sin que nadie detecte nada');
+	const r = simular(p, { s1: { activo: true } });
+	assert.deepEqual(r.controladores[0].salidas, ['DO1'], 'el programa no encendió su salida');
+	assert.ok(r.activos.has('k1'), 'la salida del controlador no llegó al relé');
+	assert.ok(gira(r, '-Y1'), 'el contacto del relé no alimentó la electroválvula');
+});
+
+test('UMA: el panel puede decir renglón a renglón por qué no entra una salida', () => {
+	// La única pregunta que se hace delante de un tablero que no arranca es «¿por qué no entra
+	// DO1?». Con la condición y el estado de cada renglón se responde sin adivinar.
+	const p = ejemplo('uma-cubierta');
+	const memoria = memoriaVacia();
+	const logica = memoriaLogicaVacia();
+	const r = simular(p, { s0: { activo: true } }, undefined, { ahora: 0, memoria, logica });
+	const renglon = (salida: string) => r.controladores[0].renglones.find((x) => x.salida === salida)!;
+
+	assert.equal(r.controladores[0].renglones.length, 3, 'no se ven los tres renglones');
+	assert.deepEqual(
+		{ pide: renglon('DO2').pide, encendida: renglon('DO2').encendida },
+		{ pide: true, encendida: true },
+		'la compuerta: condición cumplida y salida dada',
+	);
+	assert.deepEqual(
+		{ pide: renglon('DO1').pide, encendida: renglon('DO1').encendida },
+		{ pide: true, encendida: false },
+		'el ventilador: la condición ya se cumple pero le falta el retardo — eso es lo que hay que ver',
+	);
+	assert.equal(renglon('DO3').pide, false, 'sin ventilador la válvula no puede pedir');
+	assert.ok(renglon('DO1').fuente.startsWith('DO1 ='), renglon('DO1').fuente);
 });

@@ -45,11 +45,22 @@
  * Y los relés pueden ser TEMPORIZADOS, a la conexión o a la desconexión, que es lo que hace falta
  * para una estrella-triángulo o para el arranque escalonado de una UMA.
  *
- * Lo que esto sigue sin ser: no resuelve la red con impedancias ni ejecuta el programa de un PLC.
- * Las corrientes son las de empleo declaradas, no el resultado de un cálculo de cortocircuito.
+ * LOS CONTROLADORES EJECUTAN SU PROGRAMA. Un PLC del tablero ya no es un adorno: se le escribe la
+ * maniobra en renglones —«DO1 = DI1 Y NO DI2 retardo 5»— y sus salidas se encienden solas dentro
+ * del mismo punto fijo que todo lo demás. Tiene que ser dentro, y no antes: una salida del
+ * controlador mueve un contactor, y el contacto de ese contactor puede ser justo la entrada que el
+ * programa está mirando. El lenguaje está en `logica.ts`.
+ *
+ * Lo que esto sigue sin ser: no resuelve la red con impedancias, y el programa del controlador es
+ * lógica con tiempos, no IEC 61131-3 —no hay bloques de función ni PID—. Las corrientes son las de
+ * empleo declaradas, no el resultado de un cálculo de cortocircuito.
  */
 import { Conductor, Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tipos.js';
 import { claveBorne } from '../modelo/proyecto.js';
+import {
+	EsperaLogica, LecturaControlador, MemoriaLogica, ReglaLogica, esperasDe, evaluar, leerPrograma,
+	memoriaLogicaVacia, salidasActivas,
+} from './logica.js';
 
 /** Estado que el usuario controla de cada aparato. */
 export interface EstadoAparato {
@@ -61,6 +72,11 @@ export interface EstadoAparato {
 	activo?: boolean;
 	/** Salidas de un controlador que el usuario fuerza a ON, por su id de borne. */
 	salidas?: string[];
+	/**
+	 * Lo que marca una sonda analógica: grados, bar, %… Es el número con el que el programa del
+	 * controlador compara («UI1 > 24»), y lo mueve quien simula girando el mando de la sonda.
+	 */
+	valor?: number;
 }
 
 export type EstadoTablero = Record<string, EstadoAparato>;
@@ -195,6 +211,46 @@ export interface ResultadoSimulacion {
 	tensionesEquivocadas: TensionEquivocada[];
 	/** Punta de arranque de los motores en marcha y si la protección la aguanta. */
 	arranques: Arranque[];
+	/** Lo que están haciendo los controladores programados del tablero. */
+	controladores: EstadoControlador[];
+}
+
+/** Lo que hace un controlador con su programa: qué lee, qué enciende y qué está esperando. */
+export interface EstadoControlador {
+	dispositivoId: string;
+	designacion: string;
+	/** Nº de renglones del programa que se han podido leer. */
+	reglas: number;
+	/** Entradas con tensión ahora mismo. */
+	entradas: string[];
+	/** Valor de cada sonda cableada, por borne. */
+	sondas: Record<string, number>;
+	/** Salidas que el programa tiene encendidas. */
+	salidas: string[];
+	/** Salidas esperando su retardo o sostenidas por su tiempo mínimo. */
+	esperas: EsperaLogica[];
+	/** Renglones que no se han podido leer, con su explicación. */
+	errores: string[];
+	/** Renglón a renglón: qué pide cada uno y si se está cumpliendo AHORA. */
+	renglones: RenglonEnMarcha[];
+}
+
+/**
+ * Un renglón del programa visto en marcha.
+ *
+ * Es la respuesta a la única pregunta que se hace de verdad delante de un tablero que no arranca:
+ * «¿por qué no entra DO1?». Con `pide` se ve si la CONDICIÓN se cumple, y con `encendida` si la
+ * salida está de verdad dada — y cuando no coinciden, la culpa es de un tiempo, que sale en
+ * `esperas`. Sin esto había que deducirlo mirando entradas sueltas.
+ */
+export interface RenglonEnMarcha {
+	salida: string;
+	/** El renglón tal como está escrito, para poder señalarlo en la ficha. */
+	fuente: string;
+	/** True si la condición se cumple en este instante. */
+	pide: boolean;
+	/** True si la salida está encendida (puede diferir de `pide`: retardo o tiempo mínimo). */
+	encendida: boolean;
 }
 
 /** Una carga alimentada a una tensión que no es la suya. */
@@ -345,7 +401,8 @@ export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaM
 	// Todo lo demás (borneros, fuentes, transformadores, controladores, consumos) pasa por sus
 	// puentes internos tal cual: son uniones de verdad, no contactos.
 	for (const [a, b] of d.puentesInternos ?? []) pares.push([a, b]);
-	// Un controlador cierra la salida que el usuario haya forzado, contra su propio común.
+	// Un controlador cierra las salidas que pide su PROGRAMA, más las que el usuario fuerce a
+	// mano. `salidas` llega ya resuelta: la calcula el motor en cada pasada de la simulación.
 	if (d.tipo === 'plc' && estado.salidas?.length) {
 		const comun = d.bornes.find((b) => b.id === '+24' || b.id === '+V')?.id;
 		if (comun) for (const s of estado.salidas) if (idsBornes.has(s)) pares.push([comun, s]);
@@ -497,6 +554,95 @@ function primarioAlimentado(d: Dispositivo, vivos: Map<string, BorneVivo>): bool
 	return hayFase && hayRetorno;
 }
 
+/**
+ * Lo que un controlador VE de su tablero: qué entradas tienen tensión y qué marcan sus sondas.
+ *
+ * Una entrada digital está activa si a su borne le llega tensión, que es literalmente lo que ve un
+ * DDC. Una analógica toma el valor de la SONDA QUE TIENE CABLEADA: no se inventa un número, se
+ * busca de verdad qué aparato hay al otro lado del hilo, y si no hay ninguno la comparación no se
+ * cumple —un controlador sin sonda no puede decidir por temperatura, y así se nota—.
+ */
+function leerControlador(
+	d: Dispositivo,
+	proyecto: Proyecto,
+	vivos: Map<string, BorneVivo>,
+	estado: EstadoTablero,
+	salidasPrevias: Set<string>,
+): LecturaControlador {
+	const activos = new Set<string>();
+	const valores: Record<string, number> = {};
+	for (const b of d.bornes) {
+		if (vivos.has(`${d.id}::${b.id}`)) activos.add(b.id);
+		if (esBorneDeAlimentacion(b)) continue;
+		const v = sondaCableadaA(d.id, b.id, proyecto, estado);
+		if (v !== undefined) valores[b.id] = v;
+	}
+	return { activos, valores, salidasPrevias };
+}
+
+const COMUNES = new Set(['+24', '0V', '+V', '-V', '+', '-', 'A1', 'A2', '24V', 'GND']);
+
+/**
+ * ¿Este borne del controlador es de alimentación y no de señal?
+ *
+ * Importa porque el 0 V es común a TODO: si se buscara la sonda también desde ahí, el común
+ * acabaría «midiendo» la temperatura de retorno solo porque la sonda cierra por él.
+ */
+function esBorneDeAlimentacion(b: { id: string; tipo?: string }): boolean {
+	return b.tipo === 'L' || b.tipo === 'N' || b.tipo === 'PE' || COMUNES.has(b.id);
+}
+
+/**
+ * Qué sonda hay al final del hilo de esta entrada, ATRAVESANDO LOS BORNEROS.
+ *
+ * Antes esto miraba solo el aparato que había al otro lado del conductor, y en un tablero de
+ * verdad al otro lado NUNCA hay una sonda: hay una borna. Todo lo que va a campo pasa por el
+ * bornero —para eso está—, así que el controlador se quedaba sin lectura en cuanto el tablero se
+ * cableaba como se cablea. Ahora se sigue el hilo de borna en borna, incluidos los puentes del
+ * peine, hasta dar con un aparato que entregue un número.
+ *
+ * Solo se atraviesan borneros: un contacto o una bobina en medio cortan la búsqueda, porque
+ * eléctricamente ya no es el mismo hilo de señal.
+ */
+function sondaCableadaA(
+	dispositivoId: string,
+	borneId: string,
+	proyecto: Proyecto,
+	estado: EstadoTablero,
+): number | undefined {
+	const inicio = `${dispositivoId}::${borneId}`;
+	const vistos = new Set<string>([inicio]);
+	const cola = [inicio];
+	const porId = new Map(proyecto.dispositivos.map((x) => [x.id, x]));
+	while (cola.length && vistos.size < 400) {
+		const aqui = cola.shift()!;
+		const [dueño, borne] = aqui.split('::');
+		if (dueño !== dispositivoId) {
+			const v = estado[dueño]?.valor;
+			if (v !== undefined) return v;
+			// Un bornero es un trozo de cable con tornillos: se sigue de largo. Cualquier otra cosa
+			// (un relé, un contactor, una fuente) corta el hilo de señal.
+			if (porId.get(dueño)?.tipo !== 'bornero') continue;
+			for (const grupo of porId.get(dueño)?.puentes ?? []) {
+				if (!grupo.includes(borne)) continue;
+				for (const otro of grupo) {
+					const clave = `${dueño}::${otro}`;
+					if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
+				}
+			}
+		}
+		for (const c of proyecto.conductores) {
+			const mio = c.de.dispositivoId === dueño && c.de.borneId === borne;
+			const suyo = c.a.dispositivoId === dueño && c.a.borneId === borne;
+			if (!mio && !suyo) continue;
+			const otro = mio ? c.a : c.de;
+			const clave = `${otro.dispositivoId}::${otro.borneId}`;
+			if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
+		}
+	}
+	return undefined;
+}
+
 /* --------------------------------- La simulación --------------------------------- */
 
 /**
@@ -515,10 +661,45 @@ export function simular(
 	proyecto: Proyecto,
 	estado: EstadoTablero = {},
 	activosPrevios?: ReadonlySet<string>,
-	reloj?: { ahora: number; memoria: MemoriaTiempos },
+	reloj?: { ahora: number; memoria: MemoriaTiempos; logica?: MemoriaLogica },
 ): ResultadoSimulacion {
 	const aparatos = proyecto.dispositivos.filter((d) => !d.imagen);
 	const fuentes = fuentesDe(proyecto);
+
+	/*
+	 * EL PROGRAMA DE LOS CONTROLADORES.
+	 *
+	 * Se lee una vez y se EJECUTA dentro del punto fijo, no antes: una salida del controlador
+	 * mueve un contactor, el contactor cierra un contacto, y ese contacto puede ser justo la
+	 * entrada que el programa está mirando. Resolverlo fuera del bucle dejaría el controlador
+	 * viendo el tablero de la pasada anterior.
+	 */
+	const programas = new Map<string, ReglaLogica[]>();
+	const erroresPrograma: string[] = [];
+	for (const d of aparatos) {
+		if (d.tipo !== 'plc' || !d.programa?.trim()) continue;
+		const leido = leerPrograma(d.programa);
+		programas.set(d.id, leido.reglas);
+		for (const e of leido.errores) {
+			erroresPrograma.push(`${d.designacion ?? d.id}, renglón ${e.linea}: ${e.que} («${e.texto}»)`);
+		}
+	}
+	const memoriaLogica = reloj?.logica ?? memoriaLogicaVacia();
+	/*
+	 * Las salidas del programa son ESTADO del circuito, igual que una bobina metida, y viajan por
+	 * el mismo sitio: `activos`, con la clave «plc::DO1». Sin esto un programa que se realimenta
+	 * —«DO1 = (DI1 O DO1) Y NO DI2», el enclavamiento hecho en el controlador y no con relés— se
+	 * caía al soltar la marcha, porque cada llamada empezaba sin saber qué había encendido antes.
+	 */
+	const salidasDePrograma = new Map<string, Set<string>>();
+	for (const id of programas.keys()) {
+		const previas = new Set<string>();
+		for (const clave of activosPrevios ?? []) {
+			if (clave.startsWith(`${id}::`)) previas.add(clave.slice(id.length + 2));
+		}
+		salidasDePrograma.set(id, previas);
+	}
+	const esperasPrograma: (EsperaLogica & { dispositivoId: string; designacion: string })[] = [];
 
 	let vivos = new Map<string, BorneVivo>();
 	let activos = new Set<string>(activosPrevios ?? []);
@@ -534,11 +715,24 @@ export function simular(
 
 	while (pasadas < MAX_PASADAS && !estable) {
 		pasadas++;
-		prop = propagar(proyecto, aparatos, fuentes, estado, activos, vivos, conmutados);
+		prop = propagar(proyecto, aparatos, fuentes, estado, activos, vivos, conmutados, salidasDePrograma);
 		const nuevosVivos = prop.vivos;
+		// Los controladores leen su tablero y deciden sus salidas ANTES de la siguiente pasada.
+		for (const [id, reglas] of programas) {
+			const d = aparatos.find((x) => x.id === id)!;
+			const lectura = leerControlador(d, proyecto, nuevosVivos, estado,
+				salidasDePrograma.get(id) ?? new Set());
+			salidasDePrograma.set(id, salidasActivas(reglas, lectura,
+				reloj ? { ahora: reloj.ahora, memoria: memoriaLogica } : undefined));
+		}
 		const nuevosActivos = new Set<string>();
 		for (const d of aparatos) {
 			if (bobinaAlimentada(d, nuevosVivos)) nuevosActivos.add(d.id);
+		}
+		// Las salidas del programa entran en el estado del circuito para que la siguiente llamada
+		// las recuerde: son lo que sostiene un enclavamiento hecho en el controlador.
+		for (const [id, salidas] of salidasDePrograma) {
+			for (const s2 of salidas) nuevosActivos.add(`${id}::${s2}`);
 		}
 		conmutados = aplicarTemporizadores(aparatos, nuevosActivos, reloj);
 		estable = igualesClaves(vivos, nuevosVivos) && igualesConjuntos(activos, nuevosActivos);
@@ -733,6 +927,31 @@ export function simular(
 		avisos.push(`🔥 ${d.designacion} sobrecargado: ${d.explicacion}`);
 	}
 
+	/* ---- Lo que están haciendo los controladores programados ---- */
+	const controladores: EstadoControlador[] = [];
+	for (const [id, reglas] of programas) {
+		const d = aparatos.find((x) => x.id === id)!;
+		const lectura = leerControlador(d, proyecto, vivos, estado, salidasDePrograma.get(id) ?? new Set());
+		const mios = erroresPrograma.filter((e) => e.startsWith(`${d.designacion ?? d.id},`));
+		controladores.push({
+			dispositivoId: id,
+			designacion: d.designacion ?? id,
+			reglas: reglas.length,
+			entradas: [...lectura.activos].sort(),
+			sondas: lectura.valores,
+			salidas: [...(salidasDePrograma.get(id) ?? [])].sort(),
+			esperas: esperasDe(reglas, lectura, reloj ? { ahora: reloj.ahora, memoria: memoriaLogica } : undefined),
+			errores: mios,
+			renglones: reglas.map((r) => ({
+				salida: r.salida,
+				fuente: r.fuente,
+				pide: evaluar(r.cuando, lectura),
+				encendida: salidasDePrograma.get(id)?.has(r.salida) ?? false,
+			})),
+		});
+	}
+	for (const e of erroresPrograma) avisos.push(`📝 ${e}`);
+
 	const conductoresVivos = new Set<string>();
 	for (const c of proyecto.conductores) {
 		if (vivos.has(claveBorne(c.de)) && vivos.has(claveBorne(c.a))) conductoresVivos.add(c.id);
@@ -751,6 +970,7 @@ export function simular(
 		disparos,
 		tensionesEquivocadas,
 		arranques,
+		controladores,
 		temporizadores: cuentasAtras(aparatos, activos, reloj),
 	};
 }
@@ -805,6 +1025,7 @@ function propagar(
 	activos: Set<string>,
 	vivosPrevios: Map<string, BorneVivo>,
 	conmutados: Set<string>,
+	salidasDePrograma: ReadonlyMap<string, Set<string>> = new Map(),
 ): Propagacion {
 	// Grafo: borne ↔ borne por conductores, puentes de bornero y contactos cerrados.
 	const vecinos = new Map<string, string[]>();
@@ -824,8 +1045,29 @@ function propagar(
 		for (const grupo of d.puentes ?? []) {
 			for (let i = 1; i < grupo.length; i++) unir(`${d.id}::${grupo[0]}`, `${d.id}::${grupo[i]}`);
 		}
-		// Los contactos siguen a `conmutados`, no a la bobina: en un temporizado no es lo mismo.
-		for (const [a, b] of contactosCerrados(d, estado[d.id] ?? {}, conmutados.has(d.id))) {
+		// Un controlador cierra lo que pide su programa MÁS lo que se haya forzado a mano: forzar
+		// una salida es lo que hace un técnico para probar un actuador sin esperar a la maniobra.
+		// Un bloque esclavo hereda el estado de su maestro (disparado, accionado, seccionado): es el
+		// mismo aparato dibujado en dos sitios, no dos aparatos.
+		const delMaestro = d.rol?.tipo === 'esclavo' ? estado[d.rol.maestroId] ?? {} : {};
+		const suyo = { ...delMaestro, ...(estado[d.id] ?? {}) };
+		const delPrograma = salidasDePrograma.get(d.id);
+		const conSalidas = delPrograma?.size
+			? { ...suyo, salidas: [...new Set([...(suyo.salidas ?? []), ...delPrograma])] }
+			: suyo;
+		/*
+		 * QUÉ BOBINA MANDA EN ESTE APARATO.
+		 *
+		 * Un BLOQUE DE CONTACTOS AUXILIARES no tiene bobina propia: se clipa encima de su contactor
+		 * o de su relé y conmuta con él. En el modelo eso es el rol «esclavo», y aquí se le pregunta
+		 * al MAESTRO. Sin esto un contacto auxiliar dibujado aparte no cerraba nunca —el bloque no
+		 * tiene A1 ni A2, así que jamás aparecía en `conmutados`—, y toda maniobra hecha con un
+		 * contacto suelto en otra hoja se quedaba muerta: es como se dibuja un esquema de verdad.
+		 *
+		 * Los contactos siguen a `conmutados` y no a la bobina: en un temporizado no es lo mismo.
+		 */
+		const manda = d.rol?.tipo === 'esclavo' ? d.rol.maestroId : d.id;
+		for (const [a, b] of contactosCerrados(d, conSalidas, conmutados.has(manda))) {
 			unir(`${d.id}::${a}`, `${d.id}::${b}`);
 		}
 	}

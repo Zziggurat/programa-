@@ -32,6 +32,10 @@ export interface PlantillaAparato {
 	claseDiferencial?: Dispositivo['claseDiferencial'];
 	/** Rango de regulación de un guardamotor o relé térmico, en A. */
 	rangoRegulacionA?: [number, number];
+	/** Rango de medida de una SONDA analógica, en su unidad. Solo lo llevan las que miden. */
+	rangoSonda?: [number, number];
+	/** Unidad de lo que mide la sonda: °C, %HR, Pa… */
+	unidadSonda?: string;
 	/** Disipación en servicio (W). Siempre entra al proyecto marcada como ESTIMACIÓN. */
 	disipacionW?: number;
 	/**
@@ -368,6 +372,67 @@ const PLANTILLAS_BASE: PlantillaAparato[] = [
 		polos: 1, ancho: 40, alto: 40, color: '#c1440e',
 		bornes: [L('R1'), N('R2'), { id: 'PE', tipo: 'PE' }],
 	},
+
+	/*
+	 * ---------- Lo que cuelga de un tablero de clima ----------
+	 *
+	 * Sin esto no se podía montar la maniobra que gobierna una UMA: hacían falta las SONDAS —las
+	 * que entregan un número, no un contacto— y los servomotores que abren compuertas y válvulas.
+	 * Una sonda declara su rango de medida, y eso es lo que hace que la simulación le ponga un
+	 * mando con el que moverla y que el programa del controlador se pueda probar de verdad.
+	 */
+	{
+		id: 'sonda-temp-conducto', nombre: 'Sonda de temperatura (conducto)', tipo: 'sensor',
+		grupo: 'Campo', campo: true,
+		descripcion: 'Sonda de temperatura de conducto Pt1000 (retorno, impulsión, exterior)',
+		fabricante: 'Siemens', referencia: 'QAM2120.040',
+		rangoSonda: [-40, 80], unidadSonda: '°C',
+		ancho: 40, alto: 40, color: '#4dabf7',
+		bornes: [S('1'), C('2')],
+	},
+	{
+		id: 'sonda-humedad', nombre: 'Sonda de humedad', tipo: 'sensor', grupo: 'Campo', campo: true,
+		descripcion: 'Sonda de humedad relativa de conducto, salida 0–10 V',
+		fabricante: 'Siemens', referencia: 'QFM2160', tensionNominal: 24, corrienteNominal: 0.01,
+		rangoSonda: [0, 100], unidadSonda: '%HR',
+		ancho: 40, alto: 40, color: '#22b8cf',
+		bornes: [C('+24'), C('0V'), S('U1')],
+	},
+	{
+		id: 'sonda-presion', nombre: 'Sonda de presión diferencial', tipo: 'sensor', grupo: 'Campo',
+		campo: true,
+		descripcion: 'Transmisor de presión diferencial de aire, 0–1000 Pa, salida 0–10 V',
+		fabricante: 'Huba Control', referencia: '694', tensionNominal: 24, corrienteNominal: 0.01,
+		rangoSonda: [0, 1000], unidadSonda: 'Pa',
+		ancho: 40, alto: 40, color: '#3bc9db',
+		bornes: [C('+24'), C('0V'), S('U1')],
+	},
+	{
+		id: 'presostato-filtro', nombre: 'Presostato de filtro sucio', tipo: 'sensor', grupo: 'Campo',
+		campo: true,
+		// Este NO lleva rango: no es una sonda, es un contacto que cierra cuando el filtro se
+		// carga. Se acciona con su interruptor en la simulación, no con un mando de valores.
+		descripcion: 'Presostato diferencial de aire, contacto NA (cierra con el filtro sucio)',
+		fabricante: 'Huba Control', referencia: '604', tensionNominal: 24,
+		ancho: 40, alto: 40, color: '#748ffc',
+		bornes: [C('13'), C('14')],
+	},
+	{
+		id: 'servo-compuerta', nombre: 'Servomotor de compuerta 24 V', tipo: 'valvula', grupo: 'Campo',
+		campo: true,
+		descripcion: 'Servomotor de compuerta de aire 24 V, todo/nada con retorno por muelle',
+		fabricante: 'Belimo', referencia: 'LM24A', tensionNominal: 24, corrienteNominal: 0.1,
+		ancho: 40, alto: 40, color: '#20c997',
+		bornes: [C('+'), C('-')],
+	},
+	{
+		id: 'valvula-3vias', nombre: 'Válvula de 3 vías 24 V', tipo: 'valvula', grupo: 'Campo',
+		campo: true,
+		descripcion: 'Válvula de 3 vías con actuador 24 V (batería de frío o de calor)',
+		fabricante: 'Belimo', referencia: 'NR24A', tensionNominal: 24, corrienteNominal: 0.1,
+		ancho: 40, alto: 40, color: '#38d9a9',
+		bornes: [C('+'), C('-')],
+	},
 ];
 
 /**
@@ -468,6 +533,14 @@ const FICHA_ELECTRICA: Record<string, Partial<PlantillaAparato>> = {
 	'motor-mono': { disipacionW: 0, datosElectricos: 'tipico' },
 	'motor-tri': { disipacionW: 0, datosElectricos: 'tipico' },
 	'resistencia-campo': { disipacionW: 0, datosElectricos: 'tipico' },
+	// Sondas y actuadores de clima: todos van fuera del armario, así que dentro disipan cero, y
+	// eso NO es una estimación. El rango de medida sí sale de la ficha de cada modelo.
+	'sonda-temp-conducto': { disipacionW: 0, datosElectricos: 'referencia' },
+	'sonda-humedad': { disipacionW: 0, datosElectricos: 'referencia' },
+	'sonda-presion': { disipacionW: 0, datosElectricos: 'referencia' },
+	'presostato-filtro': { disipacionW: 0, datosElectricos: 'referencia' },
+	'servo-compuerta': { disipacionW: 0, datosElectricos: 'referencia' },
+	'valvula-3vias': { disipacionW: 0, datosElectricos: 'referencia' },
 };
 
 /** El catálogo que ve el usuario: cada aparato con su geometría y su ficha eléctrica. */
@@ -556,6 +629,8 @@ export function crearDesdePlantilla(plantilla: PlantillaAparato, proyecto: Proye
 		sensibilidadMA: plantilla.sensibilidadMA,
 		claseDiferencial: plantilla.claseDiferencial,
 		rangoRegulacionA: plantilla.rangoRegulacionA ? [...plantilla.rangoRegulacionA] : undefined,
+		rangoSonda: plantilla.rangoSonda ? [...plantilla.rangoSonda] : undefined,
+		unidadSonda: plantilla.unidadSonda,
 		profundidad: plantilla.profundidad,
 		colorCuerpo: plantilla.color,
 		terminales: plantilla.terminales?.map((b) => ({ ...b, bornes: [...b.bornes] })),

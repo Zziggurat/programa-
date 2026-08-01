@@ -471,6 +471,282 @@ function estrellaTriangulo(): Proyecto {
 	return p;
 }
 
+/* ------------ 4. Climatizador de cubierta (UMA) gobernado por programa ------------ */
+
+/**
+ * El tablero que de verdad se monta en una cubierta: una unidad de tratamiento de aire.
+ *
+ * Aquí el que manda no es un enredo de relés, es el CONTROLADOR, y su programa está escrito en el
+ * propio aparato —tres renglones que se leen en voz alta—. La secuencia es la de siempre en clima:
+ * primero abre la compuerta de aire exterior, unos segundos después arranca el ventilador (nunca
+ * al revés: un ventilador empujando contra una compuerta cerrada revienta conductos), y la válvula
+ * de la batería de calor solo entra si el ventilador está en marcha y la sonda de retorno pide.
+ *
+ * Y lo que NO está en el programa importa igual: el contacto del térmico va cableado EN SERIE con
+ * la bobina del contactor. Si el motor se sobrecarga, el ventilador para aunque el controlador
+ * siga diciendo que sí. Una seguridad no se programa, se cablea.
+ */
+function climatizadorCubierta(): Proyecto {
+	n = 0;
+	const p = crearProyecto('Climatizador de cubierta (UMA) con controlador');
+	p.opciones = {
+		iccPresuntaKA: 10, temperaturaAmbienteC: 40, montajeGabinete: 'mural',
+		usoPrevisto: 'intemperie',
+	};
+	p.hojas = [
+		{ id: 'h1', numero: 1, titulo: 'Fuerza 380 V — ventilador de impulsión' },
+		{ id: 'h2', numero: 2, titulo: 'Mando 220 V y alimentación 24 V CC' },
+		{ id: 'h3', numero: 3, titulo: 'Entradas y salidas del controlador' },
+	];
+
+	p.dispositivos = [
+		{
+			id: 'red', tipo: 'otro', clase: 'W', descripcion: 'Acometida 380 V 3F+N+PE', campo: true,
+			tensionNominal: 380, hojaId: 'h1', bornes: [L('L1'), L('L2'), L('L3'), N('N'), PE()],
+		},
+		{
+			id: 'q1', tipo: 'disyuntor', descripcion: 'Automático 3P C16 (ventilador de impulsión)',
+			fabricante: 'Schneider Electric', referencia: 'iC60N 3P C16', tensionNominal: 380,
+			hojaId: 'h1', corrienteNominal: 16, curvaDisparo: 'C', polos: 3,
+			poderCorteKA: 10, disipacionW: 6, poderCorteEstimado: true, disipacionEstimada: true,
+			bornes: [L('1'), L('3'), L('5'), L('2'), L('4'), L('6')],
+			puentesInternos: [['1', '2'], ['3', '4'], ['5', '6']],
+		},
+		{
+			id: 'km1', tipo: 'contactor', descripcion: 'Contactor del ventilador de impulsión',
+			fabricante: 'Schneider Electric', referencia: 'LC1D12', tensionNominal: 220, hojaId: 'h1',
+			rol: { tipo: 'maestro' }, disipacionW: 4, disipacionEstimada: true,
+			bornes: [L('1/L1'), L('3/L2'), L('5/L3'), L('2/T1'), L('4/T2'), L('6/T3'), C('A1'), C('A2')],
+			puentesInternos: [['1/L1', '2/T1'], ['3/L2', '4/T2'], ['5/L3', '6/T3']],
+		},
+		{
+			id: 'f2', tipo: 'rele', clase: 'F', descripcion: 'Relé térmico 7–10 A (regulado a 8,5 A)',
+			fabricante: 'Schneider Electric', referencia: 'LRD14', hojaId: 'h1',
+			rangoRegulacionA: [7, 10], disipacionW: 5, disipacionEstimada: true,
+			bornes: [L('1'), L('3'), L('5'), L('2'), L('4'), L('6'), C('95'), C('96')],
+			puentesInternos: [['1', '2'], ['3', '4'], ['5', '6']],
+		},
+		{
+			id: 'x1', tipo: 'bornero', descripcion: 'Bornero de fuerza al ventilador', hojaId: 'h1',
+			fabricante: 'Phoenix Contact', referencia: 'UT 6',
+			bornes: [C('U'), C('V'), C('W'), PE()],
+		},
+		{
+			id: 'm1', tipo: 'motor', descripcion: 'Ventilador de impulsión 4 kW', campo: true,
+			// 4 kW a 380 V con cos φ 0,84 y rendimiento 0,85: ~8,5 A por fase.
+			tensionNominal: 380, corrienteNominal: 8.5, polos: 3, hojaId: 'h1',
+			bornes: [L('U'), L('V'), L('W'), PE()],
+		},
+		{
+			id: 'x0', tipo: 'bornero', descripcion: 'Bornera de tierra (PE)', hojaId: 'h1',
+			fabricante: 'Phoenix Contact', referencia: 'USLKG 6',
+			// Una bornera de tierra es una sola pletina con varios tornillos: por eso van puenteadas
+			// todas entre sí. Sin ella, la tierra del motor, la de la fuente y la del controlador
+			// tendrían que entrar en la misma borna, y en una borna caben dos hilos.
+			bornes: [
+				{ id: 'PE1', tipo: 'PE' }, { id: 'PE2', tipo: 'PE' },
+				{ id: 'PE3', tipo: 'PE' }, { id: 'PE4', tipo: 'PE' },
+			],
+			puentes: [['PE1', 'PE2', 'PE3', 'PE4']],
+		},
+		{
+			id: 'q2', tipo: 'disyuntor', descripcion: 'Automático 2P C6 (mando y alimentación 24 V)',
+			fabricante: 'Schneider Electric', referencia: 'iC60N 2P C6', tensionNominal: 220,
+			hojaId: 'h2', corrienteNominal: 6, curvaDisparo: 'C',
+			poderCorteKA: 10, disipacionW: 2.5, poderCorteEstimado: true, disipacionEstimada: true,
+			bornes: [L('1'), N('3'), L('2'), N('4')],
+			puentesInternos: [['1', '2'], ['3', '4']],
+		},
+		{
+			id: 'g1', tipo: 'fuente', descripcion: 'Fuente de alimentación 220/24 V CC 2,5 A',
+			fabricante: 'Phoenix Contact', referencia: 'STEP-PS/1AC/24DC/2.5',
+			tensionNominal: 220, tensionSecundariaV: 24, corrienteNominal: 0.4,
+			disipacionW: 6, disipacionEstimada: true, hojaId: 'h2',
+			bornes: [L('L'), N('N'), PE(), C('+V'), C('-V')],
+		},
+		{
+			id: 'f1', tipo: 'fusible', descripcion: 'Portafusible 24 V CC 2 A (bus de control)',
+			fabricante: 'Phoenix Contact', referencia: 'UT 4-HESI', tensionNominal: 24,
+			corrienteNominal: 2, curvaDisparo: 'gG', hojaId: 'h2',
+			bornes: [C('1'), C('2')],
+		},
+		{
+			id: 'k1', tipo: 'rele', descripcion: 'Relé de interposición 24 V CC → mando 220 V',
+			fabricante: 'Finder', referencia: '40.52 24VDC', tensionNominal: 24,
+			corrienteNominal: 0.017, disipacionW: 0.4, rol: { tipo: 'maestro' }, hojaId: 'h2',
+			bornes: [C('A1'), C('A2')],
+		},
+		{
+			id: 'k1na', tipo: 'rele', descripcion: 'Contacto NA de K1 (mete el contactor)',
+			rol: { tipo: 'esclavo', maestroId: 'k1', contacto: 'NA' }, hojaId: 'h2',
+			bornes: [C('13'), C('14')],
+		},
+		{
+			id: 'a1', tipo: 'plc', descripcion: 'Controlador programable de clima (DDC) 24 V CC',
+			fabricante: 'Honeywell', referencia: 'CLM-24DC-6ES', tensionNominal: 24,
+			corrienteNominal: 0.2, disipacionW: 4.8, disipacionEstimada: true, hojaId: 'h3',
+			/*
+			 * LA MANIOBRA ENTERA, EN TRES RENGLONES.
+			 *
+			 * Léelos de arriba abajo como se lee un esquema de mando. El ventilador (DO1) no mira la
+			 * marcha: mira la compuerta (DO2). Eso es lo que ordena la secuencia, y es la diferencia
+			 * entre una UMA que arranca bien y una que se lleva por delante los conductos.
+			 */
+			programa: [
+				'DO2 = DI1 Y NO DI2               ; compuerta: abre si se pide marcha y el filtro está limpio',
+				'DO1 = DO2 retardo 8 minimo 30    ; ventilador: 8 s después, y una vez en marcha aguanta 30 s',
+				'DO3 = DO1 Y UI1 < 21             ; válvula de calor: solo con ventilador y retorno bajo 21 °C',
+			].join('\n'),
+			bornes: [
+				{ id: '+24', tipo: 'control', obligatorio: true },
+				{ id: '0V', tipo: 'control', obligatorio: true },
+				PE(),
+				{ id: 'DI1', tipo: 'senal' }, { id: 'DI2', tipo: 'senal' },
+				{ id: 'UI1', tipo: 'senal' },
+				{ id: 'DO1', tipo: 'senal' }, { id: 'DO2', tipo: 'senal' }, { id: 'DO3', tipo: 'senal' },
+			],
+		},
+		{
+			id: 'x2', tipo: 'bornero', descripcion: 'Bornero de control 24 V CC', hojaId: 'h3',
+			fabricante: 'Phoenix Contact', referencia: 'UT 2,5',
+			bornes: [
+				C('1'), C('2'), C('3'), C('4'), C('5'), C('6'), { id: '7', tipo: 'senal' },
+				C('8'), { id: '9', tipo: 'senal' }, C('10'), { id: '11', tipo: 'senal' },
+				C('12'), C('13'),
+			],
+			// Dos peines: el de +24 V (1-3-5) y el de 0 V (2-8-10-12-13). Es literalmente el pontet
+			// de latón que se pincha encima de las bornas en el tablero.
+			puentes: [['1', '3', '5'], ['2', '8', '10', '12', '13']],
+		},
+		{
+			id: 's0', tipo: 'selector', descripcion: 'Selector MARCHA/PARO de la UMA', campo: true,
+			tensionNominal: 24, hojaId: 'h3', bornes: [C('13'), C('14')],
+		},
+		{
+			id: 's1', tipo: 'sensor', descripcion: 'Presostato diferencial de filtro sucio (cierra si se ensucia)',
+			fabricante: 'Huba Control', referencia: '604', campo: true,
+			tensionNominal: 24, hojaId: 'h3', bornes: [C('13'), C('14')],
+		},
+		{
+			id: 'b1', tipo: 'sensor', descripcion: 'Sonda de temperatura de retorno (Pt1000)',
+			fabricante: 'Siemens', referencia: 'QAM2120.040', campo: true, hojaId: 'h3',
+			// Lo que la convierte en SONDA y no en contacto: entrega un número, y por eso la
+			// simulación le pone un mando con el que mover la temperatura.
+			rangoSonda: [-10, 50], unidadSonda: '°C',
+			bornes: [{ id: '1', tipo: 'senal' }, C('2')],
+		},
+		{
+			id: 'y1', tipo: 'valvula', descripcion: 'Servomotor de la compuerta de aire exterior 24 V',
+			fabricante: 'Belimo', referencia: 'LM24A', campo: true,
+			tensionNominal: 24, corrienteNominal: 0.1, hojaId: 'h3',
+			bornes: [C('+'), C('-')],
+		},
+		{
+			id: 'y2', tipo: 'valvula', descripcion: 'Válvula de 3 vías de la batería de calor 24 V',
+			fabricante: 'Belimo', referencia: 'NR24A', campo: true,
+			tensionNominal: 24, corrienteNominal: 0.1, hojaId: 'h3',
+			bornes: [C('+'), C('-')],
+		},
+	];
+
+	p.conductores = [
+		// --- Fuerza: red → automático → contactor → térmico → bornero → ventilador ---
+		cable(['red', 'L1'], ['q1', '1'], 4, 'marrón'),
+		cable(['red', 'L2'], ['q1', '3'], 4, 'negro'),
+		cable(['red', 'L3'], ['q1', '5'], 4, 'gris'),
+		cable(['q1', '2'], ['km1', '1/L1'], 4, 'marrón'),
+		cable(['q1', '4'], ['km1', '3/L2'], 4, 'negro'),
+		cable(['q1', '6'], ['km1', '5/L3'], 4, 'gris'),
+		cable(['km1', '2/T1'], ['f2', '1'], 4, 'marrón'),
+		cable(['km1', '4/T2'], ['f2', '3'], 4, 'negro'),
+		cable(['km1', '6/T3'], ['f2', '5'], 4, 'gris'),
+		cable(['f2', '2'], ['x1', 'U'], 4, 'marrón'),
+		cable(['f2', '4'], ['x1', 'V'], 4, 'negro'),
+		cable(['f2', '6'], ['x1', 'W'], 4, 'gris'),
+		cable(['x1', 'U'], ['m1', 'U'], 4, 'marrón'),
+		cable(['x1', 'V'], ['m1', 'V'], 4, 'negro'),
+		cable(['x1', 'W'], ['m1', 'W'], 4, 'gris'),
+		// --- Tierras: todo cuelga de la bornera de tierra ---
+		cable(['red', 'PE'], ['x0', 'PE1'], 4, 'verde/amarillo'),
+		cable(['x0', 'PE2'], ['x1', 'PE'], 4, 'verde/amarillo'),
+		cable(['x1', 'PE'], ['m1', 'PE'], 4, 'verde/amarillo'),
+		cable(['x0', 'PE3'], ['g1', 'PE'], 1.5, 'verde/amarillo'),
+		cable(['x0', 'PE4'], ['a1', 'PE'], 1.5, 'verde/amarillo'),
+		// --- Mando 220 V: automático de mando → fuente, y bobina del contactor ---
+		// La derivación del mando sale de la acometida, o sea de un tramo que todavía no protege
+		// nada del tablero: hasta Q2 tiene que aguantar lo mismo que la entrada, y por eso va en
+		// 2,5 mm² y no en 1,5. De Q2 hacia abajo ya manda su calibre de 6 A.
+		cable(['red', 'L1'], ['q2', '1'], 2.5, 'marrón'),
+		cable(['red', 'N'], ['q2', '3'], 2.5, 'azul'),
+		cable(['q2', '2'], ['g1', 'L'], 1.5, 'marrón'),
+		cable(['q2', '4'], ['g1', 'N'], 1.5, 'azul'),
+		// El contacto del relé de interposición mete la bobina de 220 V, y el retorno pasa POR EL
+		// TÉRMICO: esa es la seguridad que no depende del programa.
+		cable(['q2', '2'], ['k1na', '13'], 1.5, 'marrón'),
+		cable(['k1na', '14'], ['km1', 'A1'], 1.5, 'negro'),
+		cable(['km1', 'A2'], ['f2', '95'], 1.5, 'azul'),
+		cable(['f2', '96'], ['q2', '4'], 1.5, 'azul'),
+		// --- Bus de 24 V CC: fuente → fusible → bornero de control → controlador ---
+		cable(['g1', '+V'], ['f1', '1'], 1, 'rojo'),
+		cable(['f1', '2'], ['x2', '1'], 1, 'rojo'),
+		cable(['g1', '-V'], ['x2', '2'], 1, 'blanco'),
+		cable(['x2', '1'], ['a1', '+24'], 1, 'rojo'),
+		cable(['x2', '2'], ['a1', '0V'], 1, 'blanco'),
+		// --- Entradas digitales: selector de marcha y presostato de filtro ---
+		cable(['x2', '3'], ['s0', '13'], 0.75, 'rojo'),
+		cable(['s0', '14'], ['x2', '4'], 0.75, 'gris'),
+		cable(['x2', '4'], ['a1', 'DI1'], 0.75, 'gris'),
+		cable(['x2', '5'], ['s1', '13'], 0.75, 'rojo'),
+		cable(['s1', '14'], ['x2', '6'], 0.75, 'gris'),
+		cable(['x2', '6'], ['a1', 'DI2'], 0.75, 'gris'),
+		// --- Entrada analógica: la sonda de retorno, apantallada ---
+		cable(['x2', '7'], ['b1', '1'], 0.5, 'blanco'),
+		cable(['b1', '2'], ['x2', '8'], 0.5, 'blanco'),
+		cable(['x2', '7'], ['a1', 'UI1'], 0.5, 'blanco'),
+		// --- Salidas: relé de interposición, compuerta y válvula ---
+		cable(['a1', 'DO1'], ['k1', 'A1'], 0.75, 'gris'),
+		cable(['k1', 'A2'], ['x2', '10'], 0.75, 'blanco'),
+		cable(['a1', 'DO2'], ['x2', '9'], 0.75, 'gris'),
+		cable(['x2', '9'], ['y1', '+'], 0.75, 'gris'),
+		cable(['y1', '-'], ['x2', '12'], 0.75, 'blanco'),
+		cable(['a1', 'DO3'], ['x2', '11'], 0.75, 'gris'),
+		cable(['x2', '11'], ['y2', '+'], 0.75, 'gris'),
+		cable(['y2', '-'], ['x2', '13'], 0.75, 'blanco'),
+	];
+
+	p.gabinete = {
+		ancho: 600,
+		alto: 700,
+		rieles: [
+			{ id: 'r1', x: 30, y: 90, largo: 540 },
+			{ id: 'r2', x: 30, y: 280, largo: 540 },
+			{ id: 'r3', x: 30, y: 460, largo: 540 },
+			{ id: 'r4', x: 30, y: 620, largo: 540 },
+		],
+		canaletas: [
+			{ id: 'c1', x: 20, y: 180, largo: 560, orientacion: 'h', ancho: 40, alto: 60 },
+			{ id: 'c2', x: 20, y: 360, largo: 560, orientacion: 'h', ancho: 40, alto: 60 },
+			{ id: 'c3', x: 20, y: 540, largo: 560, orientacion: 'h', ancho: 40, alto: 60 },
+			{ id: 'c4', x: 20, y: 180, largo: 420, orientacion: 'v', ancho: 40, alto: 60 },
+		],
+		colocaciones: [
+			{ dispositivoId: 'q1', x: 70, y: 47, ancho: 54, alto: 85, rielId: 'r1' },
+			{ dispositivoId: 'km1', x: 160, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
+			{ dispositivoId: 'f2', x: 240, y: 55, ancho: 45, alto: 70, rielId: 'r1' },
+			{ dispositivoId: 'q2', x: 330, y: 50, ancho: 36, alto: 80, rielId: 'r1' },
+			{ dispositivoId: 'g1', x: 70, y: 235, ancho: 55, alto: 90, rielId: 'r2' },
+			{ dispositivoId: 'f1', x: 160, y: 245, ancho: 18, alto: 70, rielId: 'r2' },
+			{ dispositivoId: 'k1', x: 200, y: 245, ancho: 30, alto: 70, rielId: 'r2' },
+			{ dispositivoId: 'k1na', x: 235, y: 245, ancho: 20, alto: 70, rielId: 'r2' },
+			{ dispositivoId: 'a1', x: 290, y: 235, ancho: 200, alto: 90, rielId: 'r2' },
+			{ dispositivoId: 'x1', x: 60, y: 435, ancho: 80, alto: 50, rielId: 'r3' },
+			{ dispositivoId: 'x0', x: 160, y: 435, ancho: 80, alto: 50, rielId: 'r3' },
+			{ dispositivoId: 'x2', x: 60, y: 595, ancho: 230, alto: 50, rielId: 'r4' },
+		],
+	};
+	return p;
+}
+
 /* --------------------------------- La biblioteca --------------------------------- */
 
 export const EJEMPLOS: EjemploTablero[] = [
@@ -568,5 +844,45 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'Activa «Colorear por voltaje» en el panel Vista para ver de un golpe qué corre a 220 y qué a 24.',
 		],
 		crear: tableroEjemplo,
+	},
+	{
+		id: 'uma-cubierta',
+		titulo: 'Climatizador de cubierta (UMA) con controlador',
+		resumen: 'El tablero de clima de verdad: la maniobra la lleva el programa del controlador.',
+		queHace: 'Gobierna una unidad de tratamiento de aire de cubierta. Al pedir marcha abre la '
+			+ 'compuerta de aire exterior, ocho segundos después arranca el ventilador de 4 kW, y abre '
+			+ 'la válvula de la batería de calor cuando la sonda de retorno baja de 21 °C. Si el filtro '
+			+ 'se ensucia o el térmico dispara, todo se para.',
+		comoFunciona: [
+			'El automático Q2 alimenta la fuente G1, que reparte 24 V CC por el fusible F1 y el '
+			+ 'bornero X2. Con eso vive el controlador A1 y todo lo que va a campo.',
+			'El selector S0 pone 24 V en la entrada DI1: es la petición de marcha. El presostato de '
+			+ 'filtro S1 hace lo mismo en DI2, pero para avisar de que el filtro está sucio.',
+			'Renglón 1 del programa — «DO2 = DI1 Y NO DI2»: con marcha pedida y sin alarma, la salida '
+			+ 'DO2 abre el servomotor de la compuerta Y1.',
+			'Renglón 2 — «DO1 = DO2 retardo 8 minimo 30»: el ventilador mira a la COMPUERTA, no al '
+			+ 'selector, y espera 8 s a que termine de abrir. Una vez en marcha aguanta 30 s aunque le '
+			+ 'quiten la orden: es el tiempo mínimo que evita que el motor arranque y pare sin parar.',
+			'DO1 no mueve el motor directamente: excita el relé de interposición K1 (24 V CC), y el '
+			+ 'contacto de K1 es el que mete la bobina de 220 V del contactor KM1.',
+			'Renglón 3 — «DO3 = DO1 Y UI1 < 21»: con el ventilador en marcha, si la sonda B1 marca '
+			+ 'menos de 21 °C, DO3 abre la válvula de la batería de calor Y2.',
+			'El retorno de la bobina de KM1 pasa por el contacto 95-96 del térmico F2. Si el motor se '
+			+ 'sobrecarga, el ventilador para AUNQUE el programa siga diciendo que sí: una seguridad '
+			+ 'no se programa, se cablea.',
+		],
+		aprender: [
+			'Abre la ficha del controlador A1: el programa está ahí, en tres renglones que se editan '
+			+ 'como texto. Cámbiale el retardo o los 21 °C y vuelve a simular.',
+			'Energiza, gira el selector S0 y mira el panel de simulación: verás la cuenta atrás de los '
+			+ '8 segundos, y a DO1 encenderse solo cuando se cumple.',
+			'Mueve el mando de la sonda B1 por encima de 21 °C: DO3 se cae y la válvula cierra. Bájalo '
+			+ 'otra vez y vuelve a abrir. Eso es la regulación funcionando.',
+			'Activa el presostato S1 (filtro sucio) con el ventilador en marcha: la compuerta cierra '
+			+ 'de inmediato, pero el ventilador aguanta hasta cumplir sus 30 s de mínimo.',
+			'Compara con el estrella-triángulo: allí la secuencia estaba hecha con relés y un '
+			+ 'temporizador; aquí está escrita. El tablero tiene la mitad de aparatos y hace más.',
+		],
+		crear: climatizadorCubierta,
 	},
 ];

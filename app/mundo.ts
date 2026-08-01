@@ -22,6 +22,7 @@ import {
 	ColumnaPlanta, EquipoPlanta, FamiliaObra, Infraestructura, OBRA, ObraPlanta, SISTEMAS,
 	TrazaPlanta,
 } from '../src/modelo/infraestructura.js';
+import { EstadoObra } from '../src/motores/levantamiento.js';
 import { ModoColor, canalesDe, colorDeEquipo, medirTirada } from '../src/motores/planta.js';
 
 /* --------------------------------- Construcción --------------------------------- */
@@ -420,13 +421,15 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
  * material, así que basta con cambiarle el color —de otro modo, recolorear 129 máquinas obligaría
  * a rehacer la escena entera y el visor daría un tirón cada vez que se toca el selector.
  */
-export function pintarPorModo(m: Mundo, modo: ModoColor): void {
+export function pintarPorModo(
+	m: Mundo, modo: ModoColor, estados?: ReadonlyMap<string, EstadoObra>,
+): void {
 	const canales = canalesDe(m.inf);
 	for (const g of m.equipos.children) {
 		const e = g.userData.equipo as EquipoPlanta;
 		const cuerpo = g.userData.cuerpo as THREE.Mesh | undefined;
 		if (!e || !cuerpo) continue;
-		const color = colorDeEquipo(e, modo, canales);
+		const color = colorDeEquipo(e, modo, canales, estados);
 		(cuerpo.material as THREE.MeshStandardMaterial).color.setHex(color);
 		cuerpo.userData.baseColor = color;
 	}

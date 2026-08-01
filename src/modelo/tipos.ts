@@ -170,6 +170,18 @@ export interface Dispositivo {
 	/** Rango de regulación de un guardamotor o relé térmico, en A: [mínimo, máximo]. */
 	rangoRegulacionA?: [number, number];
 	/**
+	 * Rango de medida de una SONDA analógica: [mínimo, máximo] en su unidad.
+	 *
+	 * Es lo que separa una sonda de un contacto de campo. Un presostato de filtro sucio y una sonda
+	 * de temperatura de retorno se declaran los dos como «sensor», pero el primero abre y cierra y
+	 * el segundo entrega un número — y solo el segundo tiene sentido con un mando deslizante en la
+	 * simulación. Sin este dato el programa tenía que adivinarlo, y le ponía un mando de −10 a 60 °C
+	 * a un detector inductivo.
+	 */
+	rangoSonda?: [number, number];
+	/** Unidad de lo que mide la sonda: °C, %HR, Pa, bar… Solo para enseñarla. */
+	unidadSonda?: string;
+	/**
 	 * Temporización de un relé, si la tiene. Sin esto un relé conmuta al instante; con esto se
 	 * pueden montar las maniobras que de verdad se usan: una estrella-triángulo, o el arranque
 	 * escalonado de una UMA —primero abre la compuerta y unos segundos después arranca el
@@ -216,6 +228,14 @@ export interface Dispositivo {
 	profundidad?: number;
 	/** Color real del cuerpo (#rrggbb). Si falta, se usa el color por tipo de aparato. */
 	colorCuerpo?: string;
+	/**
+	 * PROGRAMA del controlador, un renglón por salida: «DO1 = DI1 Y NO DI2 retardo 5».
+	 *
+	 * Es lo que hace que un PLC del tablero deje de ser un adorno: sin esto sus salidas solo se
+	 * encendían forzándolas a mano, y un tablero de clima es justo lo contrario —el controlador ES
+	 * la maniobra—. El lenguaje está en `src/motores/logica.ts`.
+	 */
+	programa?: string;
 	/** Rasgos visibles del frente del equipo (los dibuja el modelo 3D tal cual). */
 	rasgosFrente?: { display?: boolean; leds?: number; puertosIP?: number; puertosRS485?: number };
 	/** Pares de bornes unidos internamente (paso directo), p. ej. entrada/salida de una borna. */

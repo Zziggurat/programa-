@@ -70,6 +70,38 @@ export function comoSeConecta(d: Dispositivo): AyudaCableado | undefined {
 	}
 	switch (d.tipo) {
 		case 'sensor': {
+			/*
+			 * Una SONDA no es un detector: no dice sí o no, dice CUÁNTO. Y se cablea distinto —a una
+			 * entrada universal o analógica, nunca a una digital—, así que se explica aparte. Se
+			 * reconoce por su rango de medida declarado.
+			 */
+			if (d.rangoSonda) {
+				const [min, max] = d.rangoSonda;
+				const u = d.unidadSonda ? ` ${d.unidadSonda}` : '';
+				const senal = d.bornes.find((b) => b.tipo === 'senal')?.id ?? '1';
+				const comun = d.bornes.find((b) => b.id !== senal && b.tipo !== 'PE')?.id ?? '2';
+				const alimentada = tiene(d, '+24') && tiene(d, '0V');
+				return {
+					resumen: `SONDA de medida: entrega un valor entre ${min}${u} y ${max}${u}. Va a una entrada `
+						+ 'UNIVERSAL o analógica del controlador (UI, AI), no a una digital: una digital solo '
+						+ 'sabría decir si hay tensión o no.',
+					bornes: alimentada
+						? [
+							{ borne: '+24', papel: 'marrón · +24 V de la fuente' },
+							{ borne: '0V', papel: 'azul · 0 V de la fuente' },
+							{ borne: senal, papel: 'la medida (0–10 V) · a la entrada universal del controlador' },
+						]
+						: [
+							{ borne: senal, papel: 'a la entrada universal del controlador (UI1, UI2…)' },
+							{ borne: comun, papel: 'al común de entradas (0 V) del controlador' },
+						],
+					cuidado: alimentada
+						? 'La señal y el 0 V comparten referencia: el 0 V de la sonda y el del controlador tienen '
+							+ 'que ser el MISMO, o la medida sale desviada.'
+						: 'Una Pt1000 no tiene polaridad, pero SÍ le importa la resistencia del cable: tírala con '
+							+ '0,5 mm² o más y no la metas en la misma canaleta que la fuerza, o la medida bailará.',
+				};
+			}
 			// El caso que motivó todo esto.
 			if (tiene(d, '+24', '0V') || tiene(d, '+', '-')) {
 				const mas = tiene(d, '+24') ? '+24' : '+';

@@ -6,8 +6,25 @@
  * dos bornes comparten potencial si los une un conductor, un puente interno de un
  * dispositivo o un puente entre bornas de un bornero.
  */
-import { Proyecto, TipoBorne } from '../modelo/tipos.js';
+import { Proyecto, TipoBorne, TipoDispositivo } from '../modelo/tipos.js';
 import { claveBorne } from '../modelo/proyecto.js';
+
+/**
+ * Aparatos cuyos «puentes internos» son POLOS QUE ABREN, no uniones permanentes.
+ *
+ * La entrada y la salida de un automático no son el mismo potencial: están unidas solo mientras el
+ * aparato esté cerrado, y en un esquema el hilo CAMBIA DE NÚMERO al pasar por él —esa es la razón
+ * de ser de la numeración por potencial—. Tomarlos por un puente fijo hacía que la acometida, la
+ * salida del contactor y el cable del motor fueran todos el mismo hilo «5»: el listado de
+ * conductores salía mal y la regla de coordinación exigía la sección de la protección de cabecera
+ * a tramos que ya iban protegidos por otra.
+ *
+ * Un bornero, un transformador o un controlador sí unen de verdad, y por eso no están aquí.
+ */
+const ABRE_SUS_POLOS = new Set<TipoDispositivo>([
+	'disyuntor', 'guardamotor', 'fusible', 'diferencial', 'seccionador',
+	'contactor', 'rele', 'pulsador', 'selector', 'sensor',
+]);
 
 export interface Potencial {
 	id: string;              // "P1", "P2", …
@@ -64,8 +81,10 @@ export function calcularPotenciales(proyecto: Proyecto): ResultadoPotenciales {
 	// Registrar todos los bornes existentes (aunque estén sueltos, para poder consultarlos).
 	for (const d of proyecto.dispositivos) {
 		for (const b of d.bornes) uf.raiz(claveBorne({ dispositivoId: d.id, borneId: b.id }));
-		for (const [b1, b2] of d.puentesInternos ?? []) {
-			uf.unir(`${d.id}::${b1}`, `${d.id}::${b2}`);
+		if (!ABRE_SUS_POLOS.has(d.tipo)) {
+			for (const [b1, b2] of d.puentesInternos ?? []) {
+				uf.unir(`${d.id}::${b1}`, `${d.id}::${b2}`);
+			}
 		}
 		for (const grupo of d.puentes ?? []) {
 			for (let i = 1; i < grupo.length; i++) uf.unir(`${d.id}::${grupo[0]}`, `${d.id}::${grupo[i]}`);

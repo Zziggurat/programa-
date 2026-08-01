@@ -16,6 +16,7 @@ import { crearProyecto, declarado, extremoTexto, opcionesDe } from '../src/model
 import {
 	AjustesDossier, BloqueDossier, FUENTES, SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion,
 } from '../src/modelo/dossier.js';
+import { MemoriaLogica, leerPrograma, memoriaLogicaVacia } from '../src/motores/logica.js';
 import { ArchivoInvalido, cargarProyecto } from '../src/modelo/cargar.js';
 import { calcularPotenciales, ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
@@ -1193,7 +1194,16 @@ function pintarSeleccion(): void {
 				</select></label>
 			<label>Retardo (s)<input id="dev-temp-seg" type="number" step="0.5" min="0" max="3600"
 				value="${num(d.temporizacion?.segundos)}" placeholder="5" ${d.temporizacion ? '' : 'disabled'}></label>` : ''}
+			${d.tipo === 'sensor' ? `
+			<label title="Deja el rango vacío si es un contacto seco: un presostato, una boya, un final de carrera">Rango de medida<input
+				id="dev-rango-sonda" type="text" value="${escaparHtml(d.rangoSonda ? d.rangoSonda.join('–') : '')}" placeholder="-10–50"></label>
+			<label>Unidad<input id="dev-unidad-sonda" type="text" maxlength="6"
+				value="${escaparHtml(d.unidadSonda ?? '')}" placeholder="°C"></label>` : ''}
 		</div>
+		${d.tipo === 'sensor' ? `<p class="pista">Con RANGO es una <b>sonda</b>: entrega un número y la
+		simulación le pone un mando para moverlo, que es con lo que se prueba un «UI1 &lt; 21» del
+		controlador. Sin rango es un <b>contacto de campo</b> y se acciona con su interruptor.</p>` : ''}
+		${d.tipo === 'plc' ? programaDeControlador(d) : ''}
 		${d.temporizacion ? `<p class="pista">Con el tablero energizado se ve la cuenta atrás.
 		${d.temporizacion.tipo === 'trabajo'
 			? 'A la conexión: al meter la bobina espera y luego conmuta (el de una estrella-triángulo).'
@@ -1398,6 +1408,14 @@ function pintarSeleccion(): void {
 			const n = v.split(/[-–a]/).map((x) => Number(x.trim())).filter((x) => Number.isFinite(x) && x > 0);
 			d.rangoRegulacionA = n.length === 2 ? [Math.min(...n), Math.max(...n)] : undefined;
 		});
+		texto('dev-rango-sonda', (v) => {
+			// Un rango de sonda SÍ admite negativos (una de exterior mide desde −20 °C), así que el
+			// signo no puede tomarse por el separador: se parte por el guion que va entre dígitos.
+			const n = v.split(/(?<=\d)\s*[-–]\s*|\s+a\s+/).map((x) => Number(x.trim()))
+				.filter((x) => Number.isFinite(x));
+			d.rangoSonda = n.length === 2 && n[0] !== n[1] ? [Math.min(...n), Math.max(...n)] : undefined;
+		});
+		texto('dev-unidad-sonda', (v) => { d.unidadSonda = v.trim() || undefined; });
 
 		(panel.querySelector('#dev-tension') as HTMLSelectElement | null)?.addEventListener('change', (e) => {
 			const v = (e.target as HTMLSelectElement).value;
@@ -1422,6 +1440,23 @@ function pintarSeleccion(): void {
 		(panel.querySelector('#dev-temp-seg') as HTMLInputElement | null)?.addEventListener('change', (e) => {
 			const s = Math.max(0, Math.min(3600, Number((e.target as HTMLInputElement).value) || 0));
 			aplicar(() => { if (d.temporizacion) d.temporizacion.segundos = s; });
+		});
+		// El programa del controlador: se guarda al salir del cuadro, no en cada tecla.
+		const cajaPrograma = panel.querySelector('#dev-programa') as HTMLTextAreaElement | null;
+		if (cajaPrograma) {
+			cajaPrograma.onblur = () => {
+				if (cajaPrograma.value === (d.programa ?? '')) return;
+				aplicar(() => { d.programa = cajaPrograma.value.trim() || undefined; });
+			};
+		}
+		(panel.querySelector('#dev-programa-ejemplo') as HTMLButtonElement | null)?.addEventListener('click', () => {
+			aplicar(() => {
+				d.programa = [
+					'DO1 = DI1 Y NO DI2            ; ventilador: marcha pedida y sin alarma',
+					'DO2 = DO1 retardo 5           ; compuerta, 5 s después',
+					'DO3 = DO1 Y UI1 < 21          ; válvula de calor si el retorno baja de 21 °C',
+				].join('\n');
+			});
 		});
 
 		// Medidas de la huella: se rechaza el cambio si dejaría el aparato encima de otro.
@@ -3328,6 +3363,39 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 	descargar(`${proyecto.nombre} - dossier.html`, dossier, 'text/html');
 };
 
+/**
+ * El cuadro donde se escribe el PROGRAMA de un controlador.
+ *
+ * Un renglón por salida, en castellano. Se enseña también lo que el motor entiende de él —cuántos
+ * renglones ha leído y cuáles no— para que quien escribe no tenga que adivinar por qué su
+ * maniobra no arranca.
+ */
+function programaDeControlador(d: Dispositivo): string {
+	const leido = leerPrograma(d.programa ?? '');
+	const errores = leido.errores.map((e) =>
+		`<li>renglón ${e.linea}: ${escaparHtml(e.que)} <code>${escaparHtml(e.texto)}</code></li>`).join('');
+	const bornes = d.bornes.map((b) => b.id);
+	const entradas = bornes.filter((b) => /^(DI|UI|AI)\d/.test(b));
+	const salidas = bornes.filter((b) => /^(DO|AO)\d/.test(b));
+	return `<div class="bloque-programa">
+		<h4>Programa del controlador</h4>
+		<p class="pista">Un renglón por salida. <b>Y</b>, <b>O</b>, <b>NO</b>, paréntesis,
+		<b>&gt;</b> y <b>&lt;</b> para comparar una sonda, y <b>retardo N</b> o <b>mínimo N</b> al
+		final. Lo que va tras <b>;</b> es un comentario.</p>
+		<textarea id="dev-programa" rows="5" spellcheck="false"
+			placeholder="DO1 = DI1 Y NO DI2&#10;AO1 = UI1 &lt; 21 retardo 5">${escaparHtml(d.programa ?? '')}</textarea>
+		<div class="bornes-programa">
+			${entradas.length ? `<span><b>Entradas:</b> ${entradas.join(' · ')}</span>` : ''}
+			${salidas.length ? `<span><b>Salidas:</b> ${salidas.join(' · ')}</span>` : ''}
+		</div>
+		${errores ? `<ul class="errores-programa">${errores}</ul>`
+			: leido.reglas.length
+				? `<p class="pista ok-programa">✓ ${leido.reglas.length} renglón(es) entendido(s). Energiza
+					el tablero para verlo funcionar.</p>`
+				: '<button class="boton" id="dev-programa-ejemplo">Ponme un ejemplo</button>'}
+	</div>`;
+}
+
 /* ==================== Vista previa del dossier, con su editor ==================== */
 
 /**
@@ -3700,14 +3768,16 @@ const AYUDA: Record<Modo, string> = {
  * lo que permite que una protección dispare DESPUÉS de un rato, como dispara de verdad, en vez de
  * saltar en el mismo instante en que se cierra el circuito.
  */
-let relojSim: { ahora: number; memoria: MemoriaTiempos } | undefined;
+let relojSim: { ahora: number; memoria: MemoriaTiempos; logica: MemoriaLogica } | undefined;
 let tickSim: number | undefined;
+/** Cuántas veces más rápido corre el reloj de la maniobra que el de la pared. */
+let velocidadSim = 1;
 /** Instantes en que cada protección empezó a ver corriente de más, para cronometrar su disparo. */
 let sobrecargaDesde: Record<string, number> = {};
 
 function recalcularSimulacion(): void {
 	if (!energizado) return;
-	if (!relojSim) relojSim = { ahora: 0, memoria: memoriaVacia() };
+	if (!relojSim) relojSim = { ahora: 0, memoria: memoriaVacia(), logica: memoriaLogicaVacia() };
 	ultimaSim = simular(proyecto, estadoSim, activosPrevios, relojSim);
 	activosPrevios = ultimaSim.activos;
 	aplicarDisparos();
@@ -3745,13 +3815,27 @@ function aplicarDisparos(): void {
 /** Arranca o para el reloj según esté el tablero energizado. */
 function ajustarRelojSim(): void {
 	if (tickSim !== undefined) { clearInterval(tickSim); tickSim = undefined; }
+	$('sim-transcurrido').textContent = '0,0 s';
 	if (!energizado) { relojSim = undefined; sobrecargaDesde = {}; return; }
-	relojSim = { ahora: 0, memoria: memoriaVacia() };
+	relojSim = { ahora: 0, memoria: memoriaVacia(), logica: memoriaLogicaVacia() };
 	tickSim = window.setInterval(() => {
 		if (!energizado || !relojSim) return;
-		relojSim.ahora += 200;
+		/*
+		 * El reloj puede correr más deprisa que el de la pared.
+		 *
+		 * Un retardo de ocho segundos se espera ocho segundos de verdad, y eso está bien la primera
+		 * vez —es lo que hace creíble la maniobra—, pero es un castigo cuando hay que probar la
+		 * misma secuencia diez veces cambiando un renglón del programa. Con ×20 la UMA entera
+		 * arranca en menos de un segundo, y lo que se ve es exactamente lo mismo.
+		 */
+		relojSim.ahora += 200 * velocidadSim;
+		const seg = relojSim.ahora / 1000;
+		$('sim-transcurrido').textContent = `${seg.toFixed(1).replace('.', ',')} s`;
 		// Solo se rehace si hay algo que dependa del tiempo; si no, es gastar por gastar.
-		const hayTiempo = proyecto.dispositivos.some((d) => d.temporizacion?.segundos)
+		// Un controlador con retardos o tiempos mínimos también depende del reloj: si no se
+		// rehiciera, su cuenta atrás se quedaría clavada y la maniobra nunca avanzaría.
+		const hayTiempo = proyecto.dispositivos.some((d) => d.temporizacion?.segundos
+			|| (d.tipo === 'plc' && /\b(retardo|m[ií]nimo)\b/i.test(d.programa ?? '')))
 			|| Object.keys(sobrecargaDesde).length > 0;
 		if (hayTiempo) recalcularSimulacion();
 	}, 200);
@@ -3792,7 +3876,88 @@ function pintarPanelSimulacion(): void {
 	avisos.innerHTML = '';
 	$('sim-consumo').innerHTML = '';
 	$('sim-carga').innerHTML = '';
+	$('sim-sondas').innerHTML = '';
+	$('sim-controladores').innerHTML = '';
 	if (!r) return;
+
+	/*
+	 * LAS SONDAS. Un controlador que decide por temperatura necesita una temperatura, y esa la
+	 * pone quien simula: aquí está el mando. Sin esto el programa nunca cumpliría un «UI1 < 21» y
+	 * parecería que la lógica no funciona, cuando lo que falta es el número.
+	 */
+	const cableado = (d: Dispositivo) =>
+		proyecto.conductores.some((c) => c.de.dispositivoId === d.id || c.a.dispositivoId === d.id);
+	const posiblesSondas = proyecto.dispositivos.filter((d) => d.tipo === 'sensor' && !d.imagen && cableado(d));
+	/*
+	 * Una SONDA es la que declara su rango de medida; lo demás son contactos de campo —un
+	 * presostato, una boya, un final de carrera— que se accionan con su interruptor, no con un
+	 * mando de temperatura. Si nadie declara rango, se toman todos como sondas: es lo que hacía
+	 * antes, y así los proyectos viejos siguen teniendo su mando.
+	 */
+	const conRango = posiblesSondas.filter((d) => d.rangoSonda);
+	const sondas = conRango.length ? conRango : posiblesSondas;
+	if (sondas.length && r.controladores.length) {
+		$('sim-sondas').innerHTML = '<h3 class="titulo-sim">Sondas</h3>' + sondas.map((d) => {
+			const [min, max] = d.rangoSonda ?? [-10, 60];
+			const paso = (max - min) > 200 ? 5 : (max - min) > 20 ? 0.5 : 0.1;
+			const v = estadoSim[d.id]?.valor ?? Math.round((min + max) / 2);
+			const unidad = d.unidadSonda ? ` ${d.unidadSonda}` : '';
+			return `<label class="fila-sonda" title="${escaparHtml(d.descripcion ?? '')}">`
+				+ `<span class="des-sim">${escaparHtml(d.designacion ?? d.id)}</span>`
+				+ `<input type="range" min="${min}" max="${max}" step="${paso}" value="${v}" `
+				+ `data-sonda="${escaparHtml(d.id)}" data-unidad="${escaparHtml(unidad)}">`
+				+ `<span class="valor-sonda">${v}${escaparHtml(unidad)}</span></label>`;
+		}).join('');
+		for (const el of $('sim-sondas').querySelectorAll<HTMLInputElement>('[data-sonda]')) {
+			el.oninput = () => {
+				const id = el.dataset.sonda!;
+				estadoSim[id] = { ...estadoSim[id], valor: Number(el.value) };
+				(el.parentElement!.querySelector('.valor-sonda') as HTMLElement).textContent =
+					el.value + (el.dataset.unidad ?? '');
+				recalcularSimulacion();
+			};
+		}
+	}
+
+	/* LO QUE ESTÁ HACIENDO CADA CONTROLADOR: lo que lee, lo que enciende y lo que espera. */
+	if (r.controladores.length) {
+		$('sim-controladores').innerHTML = '<h3 class="titulo-sim">Controladores</h3>'
+			+ r.controladores.map((c) => {
+				const pin = (t: string, clase = '') => `<span class="pin ${clase}">${escaparHtml(t)}</span>`;
+				const esperando = new Set(c.esperas.map((e) => e.salida));
+				const sondasTxt = Object.entries(c.sondas).map(([b, v]) => pin(`${b}=${v}`, 'on')).join('');
+				const entradas = c.entradas.filter((e) => /^(DI|UI|AI)\d/.test(e)).map((e) => pin(e, 'on')).join('');
+				const salidas = c.salidas.map((sx) => pin(sx, esperando.has(sx) ? 'esperando' : 'on')).join('');
+				const cuentas = c.esperas.map((e) =>
+					`<div class="pista">⏳ ${escaparHtml(e.salida)}: ${e.restan.toFixed(1)} s de ${e.total} s `
+					+ `(${e.motivo === 'retardo' ? 'retardo' : 'tiempo mínimo'})</div>`).join('');
+				/*
+				 * EL PROGRAMA, RENGLÓN A RENGLÓN Y EN MARCHA.
+				 *
+				 * Es la respuesta a la única pregunta que se hace delante de un tablero que no
+				 * arranca: «¿por qué no entra DO1?». El ● verde dice que la condición se cumple; si
+				 * está verde y la salida sigue apagada, la culpa es de un tiempo, y ahí abajo está
+				 * la cuenta atrás diciendo cuánto falta.
+				 */
+				const renglones = c.renglones.map((rg) => {
+					const estado = rg.encendida ? 'on' : rg.pide ? 'pidiendo' : '';
+					const porque = rg.encendida ? 'encendida'
+						: rg.pide ? 'la condición se cumple, pero la salida aún no está dada (mira el tiempo)'
+							: 'la condición no se cumple';
+					return `<div class="renglon-sim ${estado}" title="${escaparHtml(porque)}">`
+						+ `<span class="luz"></span><code>${escaparHtml(rg.fuente)}</code></div>`;
+				}).join('');
+				return `<div class="ctrl-sim" data-id="${escaparHtml(c.dispositivoId)}">`
+					+ `<span class="des-sim">${escaparHtml(c.designacion)}</span> `
+					+ `<span style="color:var(--texto-suave)">${c.reglas} renglón(es)</span>`
+					+ `<div class="es">${entradas || pin('sin entradas activas')}${sondasTxt}`
+					+ `<span style="color:var(--texto-suave)">→</span>${salidas || pin('sin salidas')}</div>`
+					+ renglones + cuentas + '</div>';
+			}).join('');
+		for (const el of $('sim-controladores').querySelectorAll<HTMLElement>('[data-id]')) {
+			el.onclick = () => seleccionar(el.dataset.id!);
+		}
+	}
 
 	/*
 	 * LO QUE CONSUME EL TABLERO. Antes esto solo decía qué estaba encendido, y un tablero se
@@ -3890,9 +4055,22 @@ function accionarEnSimulacion(dispositivoId: string): boolean {
 	if (!d) return false;
 	const st = { ...(estadoSim[d.id] ?? {}) };
 	switch (d.tipo) {
+		case 'sensor':
+			// Una SONDA no se acciona: se mueve. Cambiarle un `activo` que nadie mira daría la
+			// impresión de que el clic no hace nada; el mando de verdad está en el panel.
+			if (d.rangoSonda) {
+				const mando = document.querySelector<HTMLInputElement>(`#sim-sondas [data-sonda="${d.id}"]`);
+				mando?.focus();
+				const u = d.unidadSonda ? ` ${d.unidadSonda}` : '';
+				avisar(`${d.designacion ?? d.id} es una sonda: muévela con su mando del panel `
+					+ `(ahora marca ${estadoSim[d.id]?.valor ?? '—'}${u}).`, 'info');
+				return true;
+			}
+			st.activo = !st.activo;
+			avisar(`${d.designacion ?? d.id}: ${st.activo ? 'accionado' : 'en reposo'}`, 'info');
+			break;
 		case 'pulsador':
 		case 'selector':
-		case 'sensor':
 			st.activo = !st.activo;
 			avisar(`${d.designacion ?? d.id}: ${st.activo ? 'accionado' : 'en reposo'}`, 'info');
 			break;
@@ -3989,6 +4167,10 @@ function abrirTableroDesdeLaPlanta(nuevo: Proyecto, resumen: string): void {
 	ajustarRelojSim();
 	recalcularSimulacion();
 	avisar('Todo en reposo: pulsadores soltados, protecciones rearmadas y reloj a cero.', 'ok');
+};
+
+($('sim-velocidad') as HTMLSelectElement).onchange = (ev) => {
+	velocidadSim = Number((ev.target as HTMLSelectElement).value) || 1;
 };
 
 /* ------------------------------- Modo Visualización ------------------------------- */

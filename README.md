@@ -8,11 +8,11 @@ totalmente personalizable.
 ## Qué hace ya (núcleo v0.1)
 
 El núcleo es una librería TypeScript **sin interfaz gráfica**, con un modelo de datos JSON y
-dieciséis motores independientes y testeados:
+dieciocho motores independientes y testeados:
 
 | Motor | Archivo | Qué resuelve |
 |---|---|---|
-| Potenciales | `src/motores/potenciales.ts` | Clases de equivalencia de bornes conectados (union-find): la base de todo lo demás |
+| Potenciales | `src/motores/potenciales.ts` | Clases de equivalencia de bornes conectados (union-find): la base de todo lo demás. Los **polos de un aparato de corte no unen**: la entrada y la salida de un automático no son el mismo hilo, y por eso el número de conductor cambia al pasar por él |
 | Numeración IEC | `src/motores/numeracion.ts` | Designaciones IEC 81346 (`=función+ubicación-K1`) con plantillas, secuencias y congelamiento; numeración de conductores por potencial |
 | Referencias cruzadas | `src/motores/referencias.ts` | Bobina ↔ contactos con la posición `hoja.columna` que sale del esquema realmente montado, índice de dispositivos |
 | DRC | `src/motores/drc.ts` | 14 reglas de detección de errores eléctricos: cortocircuitos, designaciones duplicadas, exceso de conductores por borne, conflictos de tensión, esclavos huérfanos, coordinación protección↔sección, caída de tensión, puesta a tierra, llenado de canaleta, **poder de corte frente a la Icc presunta**, **calentamiento del armario**… |
@@ -22,10 +22,12 @@ dieciséis motores independientes y testeados:
 | Documentación | `src/motores/documentacion.ts` | BOM, lista de conductores, planes de borneros, informe HTML completo, exportación CSV |
 | Terminales | `src/motores/terminales.ts` | Geometría de las borneras declaradas por ficha de datos: es la única fuente de verdad que comparten el modelo 3D y el anclaje de los cables |
 | Ficha del tablero | `src/motores/ficha-tablero.ts` | Las cifras del conjunto: recuento de aparatos por familia, medidas de caja y placa, metros de riel y canaleta, cable por sección, ocupación de la placa |
-| Simulación | `src/motores/simulacion.ts` | Energizar el tablero y verlo funcionar: contactos según el estado de cada mando, propagación de la tensión e iteración a punto fijo para que el enclavamiento se sostenga. Y con qué **corriente**: intensidades por rama contadas **por fase**, cortocircuitos fase-neutro y fase-fase con la protección que los ve, **tiempo de disparo** según la curva (B/C/D/K/Z y gG), sobrecarga cronometrada y **temporizadores** a la conexión y a la desconexión. Y dos comprobaciones que se hacen antes de dar tensión: que cada carga reciba **su** tensión (un piloto de 24 V en el circuito de 220 se quema, y «funciona» en cualquier simulación que solo mire si hay tensión o no) y que la **punta de arranque** de un motor —seis veces su nominal— la aguante la protección de delante |
+| Simulación | `src/motores/simulacion.ts` | Energizar el tablero y verlo funcionar: contactos según el estado de cada mando, propagación de la tensión e iteración a punto fijo para que el enclavamiento se sostenga. Un **bloque de contactos auxiliares** dibujado aparte conmuta con la bobina de su maestro, que es como se dibuja un esquema de verdad, y el **controlador ejecuta su programa dentro del punto fijo** —tiene que ser dentro: una salida mueve un contactor cuyo contacto puede ser justo la entrada que el programa está mirando—, leyendo sus sondas a través del bornero. Y con qué **corriente**: intensidades por rama contadas **por fase**, cortocircuitos fase-neutro y fase-fase con la protección que los ve, **tiempo de disparo** según la curva (B/C/D/K/Z y gG), sobrecarga cronometrada y **temporizadores** a la conexión y a la desconexión. Y dos comprobaciones que se hacen antes de dar tensión: que cada carga reciba **su** tensión (un piloto de 24 V en el circuito de 220 se quema, y «funciona» en cualquier simulación que solo mire si hay tensión o no) y que la **punta de arranque** de un motor —seis veces su nominal— la aguante la protección de delante |
+| Programa del controlador | `src/motores/logica.ts` | El lenguaje que hace que un PLC del tablero deje de ser un adorno: un renglón por salida, en castellano —`DO1 = DI1 Y NO DI2`, `DO2 = DO1 retardo 8 minimo 30`, `DO3 = UI1 < 21`—, con su lector que **nunca lanza** (el renglón malo se aparta con su explicación y los buenos siguen funcionando), su evaluador, sus retardos a la conexión y sus **tiempos mínimos de marcha** (lo que evita que un compresor arranque y pare cada dos segundos) |
 | Dossier editable | `src/modelo/dossier.ts` | Qué apartados lleva el dossier y qué le añade a mano quien lo firma. Aquí está el **reparto del texto en líneas**: cortar un párrafo donde cabe sabiendo que dentro hay trozos en negrita, en cursiva, de otro tamaño y de otra fuente, y que una palabra suelta puede no caber ni ella sola |
 | Nombres de archivo | `src/modelo/archivos.ts` | Deja en ASCII el nombre de lo que se descarga. No es manía: **un solo carácter con tilde en el atributo `download` y el navegador tira el nombre entero** y guarda el archivo como «download», sin extensión — que es lo que le pasaba a «Climatización» y a casi todos los tableros de aquí |
-| Consulta de planta | `src/motores/planta.ts` | Buscar una máquina entre 129 como se escribe de verdad (sin guiones ni tildes), filtrar por tipo/controlador/señales, colorear por cuatro criterios, y **medir una tirada de cable**: recta, recorrido ortogonal por bandeja, subida y bajada, y los metros a pedir con su reserva |
+| Consulta de planta | `src/motores/planta.ts` | Buscar una máquina entre 129 como se escribe de verdad (sin guiones ni tildes), filtrar por tipo/controlador/señales, colorear por cinco criterios —incluido el **estado en obra**—, y **medir una tirada de cable**: recta, recorrido ortogonal por bandeja, subida y bajada, y los metros a pedir con su reserva |
+| Levantamiento de obra | `src/motores/levantamiento.ts` | Lo que se apunta subiendo a la cubierta y tiene que seguir ahí mañana: el **parte de obra** máquina a máquina (pendiente / en curso / montado / probado / con problema, más la nota de lo que uno se encuentra) y las **tiradas medidas**, de las que sale sola la **lista de cable a pedir** agrupada por manguera (4×2,5, 2×0,75…). Todo se lleva en CSV |
 | Del mundo al tablero | `src/motores/planta-tablero.ts` | Convertir las máquinas elegidas en la cubierta en el tablero que las gobierna: lista de señales, bornera por máquina con sus comunes puenteados, peine de comunes, controlador dimensionado a la E/S real, alimentación y todo el cableado |
 | Balance térmico | `src/motores/termico.ts` | Temperatura interior del armario por el método simplificado de IEC 60890: disipación de cada aparato, superficie efectiva según el montaje y veredicto (natural / rejilla / ventilador / climatizador) |
 | Apertura de archivo | `src/modelo/cargar.ts` | Validación real del proyecto que se abre, reparación de lo recuperable (cables huérfanos, colocaciones fantasma) y punto de enganche para migrar formatos antiguos |
@@ -83,6 +85,7 @@ Además de los tests del núcleo, hay varias suites que manejan el editor 3D de 
 | `npm run qa:prender` | **De cero a encender**: placa en blanco → sacar del catálogo la acometida, el disyuntor y la ampolleta → cablearlos a clics → Energizar → la ampolleta prende, y se apaga al abrir el disyuntor. Y el arranque de un motor trifásico con su contactor y su pulsador |
 | `npm run qa:dossier` | La **vista previa editable del dossier**: que el PDF se vea antes de descargarlo y que lo que se ve sea el PDF de verdad, que se quiten apartados, que el texto se escriba con negrita, cursiva, tamaño y fuente, que entren imágenes de archivo y capturas del tablero en 3D y en 2D — y al final se descarga y se **lee el PDF** para comprobar que lo escrito está dentro |
 | `npm run qa:esquema` | El **esquema que se ordena a mano** (arrastrar un símbolo, deshacerlo, volver a ordenar solo, columnas por hoja) y el **dossier que no supone nada**: se exporta sin declarar ningún dato y se lee el PDF para comprobar que dice «a declarar» en vez de inventarse el uso previsto, la frecuencia o la temperatura |
+| `npm run qa:cubierta` | El **levantamiento de la cubierta**: anotar el parte de obra de una máquina, verlo en la lista y en el color del 3D, medir y **guardar tiradas** con su cable, comprobar que los metros se suman por manguera — y que todo eso **sigue ahí al recargar** |
 | `npm run qa:planta-trabajo` | La planta **como herramienta de trabajo**: buscar entre las 129 máquinas, filtrar, colorear, **medir una tirada** (30 y 40 m: recta 50, recorrido 70, a pedir 85) y el puente entero **del plano al tablero** — elegir tres UMAs, revisar su lista de señales y comprobar que el tablero llega al editor con sus borneras rotuladas y **sin un error de DRC** |
 | `npm run qa:empaquetado` | **El archivo que se entrega**: abre `dist-final/TableroStudio.html` con `file://`, sin servidor, y comprueba que arranca en la ventana de inicio, que se puede trabajar y que salen el dossier y el proyecto guardado |
 
@@ -128,9 +131,9 @@ todas. El panel izquierdo es el que convierte la maqueta en herramienta:
   referencia de dónde está uno en la cubierta.
 - **Filtrar** por tipo de máquina, por si tiene controlador rotulado, por si trae su diagrama de
   señales, o por si está situada en planta.
-- **Colorear** por cuatro criterios: tipo de máquina, **canal del controlador** (CH5, CH6, CH8…,
+- **Colorear** por cinco criterios: tipo de máquina, **canal del controlador** (CH5, CH6, CH8…,
   que es el color que importa para cablear, porque las de un mismo canal comparten bus), número de
-  señales, o si van cableadas en el tablero. La leyenda dice además cuántas de las 129 sitúa el
+  señales, si van cableadas en el tablero, o el **estado en obra** que tú mismo has apuntado. La leyenda dice además cuántas de las 129 sitúa el
   plano en planta: elegir «Controlador» y ver dos colores donde la leyenda enumera seis canales
   parecería un fallo del programa, y no lo es.
 - **📏 Medir** una tirada de cable. Se marcan puntos en la cubierta y sale la recta, el **recorrido
@@ -138,6 +141,21 @@ todas. El panel izquierdo es el que convierte la maqueta en herramienta:
   los 3,2 m de la bandeja, y los metros a pedir con un 10 % de reserva. Entre dos puntos separados
   30 y 40 m, la recta son 50 m y lo que hay que pedir son 85: quien pida por la recta se queda
   corto.
+
+#### El levantamiento: lo que se apunta subiendo, y sigue ahí mañana
+
+Medir sin guardar no sirve de nada, y un plano no dice cómo está la cubierta HOY. Por eso el visor
+lleva el **levantamiento**, que se guarda solo —nadie le da a «Guardar» en una azotea con viento— y
+sobrevive a cerrar el programa:
+
+- **Parte de obra máquina a máquina.** Un estado (*pendiente · en curso · montado · probado · con
+  problema*) y la nota de lo que uno se encuentra: «falta el prensaestopas», «el sensor de retorno
+  está suelto». En la lista de máquinas sale como un punto de color, así que se ve lo que queda sin
+  abrir ninguna ficha, y el 3D se puede colorear por ello. La cabecera dice el porcentaje probado.
+- **Tiradas guardadas.** Cada medida se guarda con su nombre y su cable (4×2,5, 2×0,75…), y el
+  programa suma los metros **por tipo de manguera**: nadie pide «120 metros de 2,5», pide «120
+  metros de 4×2,5». Esa es la lista con la que se va a pedir el cable.
+- **Las dos cosas se llevan en CSV**, que es lo que se manda por correo al bajar de la cubierta.
 
 #### 🔌 Del plano al tablero
 
@@ -216,7 +234,34 @@ Designer, conectado en vivo con los motores del núcleo:
   curva (B, C, D, K, Z y fusibles gG); una sobrecarga se cronometra contra el reloj de la
   simulación y **el aparato dispara solo**, como en el tablero. Y hay **temporizadores**: un
   relé a la conexión cuenta sus segundos con la bobina metida y los contactos en reposo, uno a
-  la desconexión aguanta al soltarla, y la cuenta atrás se ve correr en pantalla.
+  la desconexión aguanta al soltarla, y la cuenta atrás se ve correr en pantalla. El **reloj se
+  puede acelerar** a ×5 o ×20: un retardo de 8 s se prueba en menos de un segundo y lo que se ve
+  es exactamente lo mismo.
+
+- **🧠 El controlador ejecuta un programa de verdad.** Hasta ahora un PLC en la placa era un
+  adorno: sus salidas solo se encendían forzándolas a mano, y un tablero de clima es justo lo
+  contrario —el controlador ES la maniobra—. Ahora se le escribe su programa en la ficha, un
+  renglón por salida y en castellano:
+
+  ```
+  DO2 = DI1 Y NO DI2               ; compuerta: abre si se pide marcha y el filtro está limpio
+  DO1 = DO2 retardo 8 minimo 30    ; ventilador: 8 s después, y una vez en marcha aguanta 30 s
+  DO3 = DO1 Y UI1 < 21             ; válvula de calor: solo con ventilador y retorno bajo 21 °C
+  ```
+
+  Con `Y`, `O`, `NO`, paréntesis, comparaciones contra una sonda, **retardo a la conexión** y
+  **tiempo mínimo de marcha** —que no es un capricho: un compresor que arranca y para cada dos
+  segundos se destruye, y es el error de programación más caro que se puede cometer en un tablero
+  de clima—. Un renglón mal escrito **no tira los demás**: se aparta con su explicación («falta el
+  «=»», «sobra …») y el resto sigue funcionando mientras se escribe.
+
+  El programa corre **dentro** de la simulación, no antes: una salida mueve un contactor cuyo
+  contacto puede ser justo la entrada que el programa está mirando. Las **sondas** se mueven con un
+  mando —una sonda declara su rango, y por eso un presostato de filtro no lo lleva: ese es un
+  contacto, y se acciona con su interruptor—, y el panel enseña qué lee el controlador, qué
+  enciende y **qué está esperando**. El ejemplo *Climatizador de cubierta (UMA)* lo trae montado
+  entero, con su relé de interposición y con el térmico cableado en serie con la bobina: una
+  seguridad no se programa, se cablea.
 - **El esquema se ordena a mano** (botón «📐 Esquema»): el motor propone y la persona dispone.
   Se **arrastra** cualquier símbolo y se queda donde se suelte —en rejilla, columna y fila—, y los
   hilos lo siguen; arrastrarlo más allá de la última columna lo pasa a la hoja siguiente. Se puede
@@ -247,8 +292,11 @@ Designer, conectado en vivo con los motores del núcleo:
   se declara está el **uso previsto**: un tablero de cubierta está a la intemperie, y dar por
   supuesto «interior» era justo lo contrario de la verdad.
 - **Tableros de ejemplo explicados** (botón «📚 Ejemplos»): arranque directo de motor,
-  bomba de agua con boya de nivel, **arranque estrella-triángulo con temporizador** y tablero
-  de control con PLC a 24 V. El estrella-triángulo es el que hace visible el reloj: se energiza,
+  bomba de agua con boya de nivel, **arranque estrella-triángulo con temporizador**, tablero
+  de control con PLC a 24 V y **climatizador de cubierta (UMA) gobernado por programa** —el que
+  se monta de verdad en una azotea: la maniobra no está en un enredo de relés, está escrita en
+  tres renglones dentro del controlador, y el tablero tiene la mitad de aparatos y hace más.
+  El estrella-triángulo es el que hace visible el reloj: se energiza,
   se aprieta MARCHA y el ventilador arranca en estrella; a los 6 segundos el temporizador da
   vuelta sus contactos, se cae la estrella y entra el triángulo **solo, sin tocar nada**, con
   los bloqueos mutuos que impiden que los dos cierren a la vez. Cada uno se abre
@@ -397,7 +445,13 @@ dibuja igual, con sus borneras y listo para cablear.
 6. **v0.6 — Más planta, más terreno**: llevarse al tablero también las máquinas que el plano
    **no sitúa en planta** (88 de las 129 solo salen en la lista), y guardar en el proyecto de
    dónde vino cada bornera para poder volver del tablero a su máquina en la cubierta.
-7. **v1.0 — Empaquetado** como aplicación de escritorio (Tauri/Electron). El archivo único
+   El **levantamiento** (parte de obra por máquina y tiradas medidas) ya está y se guarda solo;
+   falta poder llevárselo de un ordenador a otro en un archivo, no solo en CSV.
+7. **Programa del controlador, segunda vuelta**: hoy es lógica combinacional con retardo y
+   tiempo mínimo, que resuelve la mayoría de las maniobras de clima. Lo que falta para las
+   demás es un **PID** de verdad para las válvulas modulantes y salidas analógicas con valor
+   (0–10 V), no solo todo/nada.
+8. **v1.0 — Empaquetado** como aplicación de escritorio (Tauri/Electron). El archivo único
    `dist-final/TableroStudio.html` ya funciona sin servidor ni internet, y lo verifica
    `npm run qa:empaquetado`.
 

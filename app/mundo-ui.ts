@@ -14,6 +14,11 @@ import {
 	resumenPlanta,
 } from '../src/modelo/infraestructura.js';
 import { Proyecto } from '../src/modelo/tipos.js';
+import { nombreSeguroDeArchivo } from '../src/modelo/archivos.js';
+import {
+	ESTADOS_OBRA, EstadoObra, Levantamiento, NotaEquipo, Tirada, avanceObra, estadosPorTag,
+	leerLevantamiento, levantamientoVacio, listaDePedido, parteDeObraCSV, tiradasCSV,
+} from '../src/motores/levantamiento.js';
 import {
 	FiltroPlanta, MODOS_COLOR, ModoColor, buscarEquipos, leyendaColor,
 } from '../src/motores/planta.js';
@@ -49,6 +54,46 @@ let midiendo = false;
 
 /** Quien recibe el tablero armado desde la planta. Lo pone el editor al abrir la herramienta. */
 let alLlevarAlTablero: ((p: Proyecto, resumen: string) => void) | undefined;
+
+/* --------------------------- El levantamiento de la obra --------------------------- */
+
+/**
+ * Lo que se apunta subiendo a la cubierta, y que TIENE que seguir ahí mañana.
+ *
+ * Se guarda en el navegador, no en el proyecto del tablero: el parte de obra es de la cubierta
+ * entera y sobrevive a los tableros que se armen desde ella. Y se escribe en cada cambio, sin
+ * botón de guardar: nadie apunta algo en una azotea con viento y luego se acuerda de guardarlo.
+ */
+const CLAVE_LEVANTAMIENTO = 'tablerostudio.levantamiento';
+let levantamiento: Levantamiento = levantamientoVacio();
+
+function cargarLevantamiento(): void {
+	try {
+		const crudo = localStorage.getItem(CLAVE_LEVANTAMIENTO);
+		levantamiento = crudo ? leerLevantamiento(JSON.parse(crudo)) : levantamientoVacio();
+	} catch {
+		// Un parte ilegible no puede impedir abrir la herramienta: se empieza uno nuevo.
+		levantamiento = levantamientoVacio();
+	}
+}
+
+function guardarLevantamiento(): void {
+	try {
+		localStorage.setItem(CLAVE_LEVANTAMIENTO, JSON.stringify(levantamiento));
+	} catch { /* sin sitio o en modo privado: se sigue trabajando, solo que sin memoria. */ }
+}
+
+/** Descarga un texto con nombre seguro (ASCII): con una tilde, Chromium tira el nombre entero. */
+function descargar(nombre: string, texto: string, tipo = 'text/csv;charset=utf-8'): void {
+	const url = URL.createObjectURL(new Blob([texto], { type: tipo }));
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = nombreSeguroDeArchivo(nombre, 'levantamiento');
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 /* ------------------------------- Cabecera y ficha ------------------------------- */
 
@@ -111,7 +156,73 @@ function pintarFicha(e: EquipoPlanta | undefined): void {
 			: '<h3>Puntos de control</h3><div class="vacio">El plano no dibuja el diagrama de control '
 				+ 'de esta máquina.</div>')
 		+ (e.tagSeguro ? '' : '<p style="font-size:11.5px;color:var(--aviso);margin-top:10px">Este marcado '
-			+ 'se ha deducido de la posición: el plano no lo rotula aquí.</p>');
+			+ 'se ha deducido de la posición: el plano no lo rotula aquí.</p>')
+		+ parteDeMaquina(e);
+	engancharParte(e.tag);
+}
+
+/**
+ * El parte de obra de UNA máquina: en qué punto está y qué se ha encontrado en ella.
+ *
+ * Esto es lo que convierte el visor en una herramienta de campo. El plano dice cómo tendría que
+ * ser la cubierta; el parte dice cómo está HOY, que es lo que hace falta para decidir a qué máquina
+ * subir mañana y qué material llevarse.
+ */
+function parteDeMaquina(e: EquipoPlanta): string {
+	const n = levantamiento.notas[e.tag];
+	const estado = n?.estado ?? 'pendiente';
+	const chips = ESTADOS_OBRA.map((x) =>
+		`<button class="chip-estado${x.estado === estado ? ' activo' : ''}" data-estado="${x.estado}" `
+		+ `style="--c:${hex(x.color)}">${esc(x.nombre)}</button>`).join('');
+	return '<h3>Parte de obra</h3>'
+		+ `<div class="estados-obra">${chips}</div>`
+		+ `<textarea id="mundo-nota" rows="3" placeholder="Qué te has encontrado en esta máquina: `
+		+ `«falta prensaestopas», «el sensor de retorno está suelto»…">${esc(n?.nota ?? '')}</textarea>`
+		+ (n ? `<div class="pie-nota">Apuntado el ${n.fecha.slice(0, 10)}</div>` : '');
+}
+
+/** Engancha los mandos del parte. Se guarda solo: en una azotea nadie le da a «Guardar». */
+function engancharParte(tag: string): void {
+	const anotar = (cambio: Partial<Omit<NotaEquipo, 'tag'>>): void => {
+		const previa = levantamiento.notas[tag];
+		levantamiento.notas[tag] = {
+			tag,
+			estado: cambio.estado ?? previa?.estado ?? 'pendiente',
+			nota: cambio.nota ?? previa?.nota ?? '',
+			fecha: new Date().toISOString(),
+		};
+		guardarLevantamiento();
+	};
+	for (const b of $('mundo-ficha').querySelectorAll<HTMLButtonElement>('[data-estado]')) {
+		b.onclick = () => {
+			anotar({ estado: b.dataset.estado as EstadoObra });
+			pintarFicha(inf.equipos.find((x) => x.tag === tag));
+			if (modoColor === 'obra') aplicarColor();
+			pintarAvance();
+			pintarLista();
+		};
+	}
+	const caja = document.getElementById('mundo-nota') as HTMLTextAreaElement | null;
+	if (caja) {
+		caja.onchange = () => { anotar({ nota: caja.value }); pintarAvance(); pintarLista(); };
+		caja.onblur = caja.onchange;
+	}
+}
+
+/** Cómo va la obra: la barra de reparto por estados y el porcentaje ya probado. */
+function pintarAvance(): void {
+	const avance = avanceObra(levantamiento, inf);
+	const total = inf.equipos.length || 1;
+	const hechas = avance.find((a) => a.estado === 'probado')?.cuantos ?? 0;
+	$('mundo-avance').innerHTML =
+		`<div class="barra-obra">${avance.filter((a) => a.cuantos > 0).map((a) =>
+			`<span style="background:${hex(a.color)};flex:${a.cuantos}" title="${esc(a.nombre)}: ${a.cuantos}"></span>`)
+			.join('')}</div>`
+		+ `<div class="mundo-fila-sis" style="margin-top:6px"><b style="color:var(--texto)">`
+		+ `${Math.round((hechas / total) * 100)} %</b> probado · ${hechas} de ${total} máquinas</div>`
+		+ avance.filter((a) => a.cuantos > 0 && a.estado !== 'pendiente').map((a) =>
+			`<div class="mundo-fila-sis"><span class="tira" style="background:${hex(a.color)}"></span>`
+			+ `${esc(a.nombre)} · ${a.cuantos}</div>`).join('');
 }
 
 /* --------------------------- Buscar, filtrar y colorear --------------------------- */
@@ -152,9 +263,10 @@ function pintarSelectorColor(): void {
 }
 
 function aplicarColor(): void {
-	if (mundo) pintarPorModo(mundo, modoColor);
+	const estados = estadosPorTag(levantamiento);
+	if (mundo) pintarPorModo(mundo, modoColor, estados);
 	const situados = inf.equipos.filter((e) => e.x !== null).length;
-	$('mundo-leyenda-color').innerHTML = leyendaColor(inf, modoColor)
+	$('mundo-leyenda-color').innerHTML = leyendaColor(inf, modoColor, estados)
 		.filter((l) => l.cuantos > 0)
 		.map((l) => `<div class="mundo-fila-sis"><span class="tira" style="background:${hex(l.color)}">`
 			+ `</span>${esc(l.nombre)} · ${l.cuantos}</div>`)
@@ -194,8 +306,16 @@ function pintarLista(): void {
 		const marcada = elegidas.has(e.tag) ? ' checked' : '';
 		const sel = e.tag === seleccionado ? ' sel' : '';
 		const nombre = e.tagSeguro ? esc(e.tag) : `${esc(e.tag)} <span class="sin">?</span>`;
+		// El punto de color es el parte de obra en la lista: sin abrir la ficha ya se ve lo que
+		// queda por hacer, que es la pregunta con la que uno sube a la cubierta.
+		const n = levantamiento.notas[e.tag];
+		const est = ESTADOS_OBRA.find((x) => x.estado === (n?.estado ?? 'pendiente'))!;
+		const punto = n
+			? `<span class="punto-obra" style="background:${hex(est.color)}" title="${esc(est.nombre)}`
+				+ `${n.nota ? `: ${n.nota}` : ''}"></span>`
+			: '<span class="punto-obra vacio"></span>';
 		return `<label class="fila-eq${sel}" data-tag="${esc(e.tag)}" title="${esc(e.controlador ?? 'sin controlador en el plano')}">`
-			+ `<input type="checkbox"${marcada}><span class="nom">${nombre}</span>`
+			+ `<input type="checkbox"${marcada}>${punto}<span class="nom">${nombre}</span>`
 			+ `<span class="np${e.puntos.length ? '' : ' cero'}">${e.puntos.length}</span></label>`;
 	}).join('') + (encontradas.length > 200
 		? `<div id="mundo-vacio">…y ${encontradas.length - 200} más. Afina la búsqueda.</div>` : '');
@@ -284,6 +404,100 @@ function pintarCinta(): void {
 	if (deshacer) deshacer.onclick = () => { cinta?.deshacer(); pintarCinta(); };
 	const limpiar = document.getElementById('cinta-limpiar');
 	if (limpiar) limpiar.onclick = () => { cinta?.reiniciar(); pintarCinta(); };
+	pintarGuardarTirada(med ? extremos : []);
+	pintarTiradas();
+}
+
+/* ------------------------ Guardar la tirada y pedir el cable ------------------------ */
+
+/** Secciones que se usan de verdad en una cubierta, de la señal a la fuerza del ventilador. */
+const SECCIONES = [0.5, 0.75, 1, 1.5, 2.5, 4, 6, 10, 16];
+
+/**
+ * El formulario de guardar la tirada: nombre, cable y a la lista.
+ *
+ * Medir sin guardar no sirve de nada. Quien sube a la cubierta mide seis u ocho tiradas seguidas y
+ * lo que baja es UNA lista de metros por tipo de cable: eso es lo que se pide, y eso es lo que
+ * hasta ahora había que apuntar en el móvil.
+ */
+function pintarGuardarTirada(extremos: string[]): void {
+	const caja = $('mundo-guardar-tirada');
+	const med = cinta?.medida();
+	if (!med) { caja.innerHTML = ''; return; }
+	const sugerido = extremos.length >= 2
+		? `${extremos[0]} → ${extremos[extremos.length - 1]}`
+		: `Tirada ${levantamiento.tiradas.length + 1}`;
+	caja.innerHTML = '<div class="guardar-tirada">'
+		+ `<input id="tirada-nombre" value="${esc(sugerido)}" placeholder="Nombre de la tirada">`
+		+ '<div class="cable">'
+		+ '<select id="tirada-hilos" title="Cuántos hilos van por el mismo recorrido">'
+		+ [2, 3, 4, 5, 7, 12].map((h) => `<option value="${h}"${h === 4 ? ' selected' : ''}>${h} hilos</option>`).join('')
+		+ '</select>'
+		+ '<select id="tirada-seccion" title="Sección de cada hilo">'
+		+ SECCIONES.map((s) => `<option value="${s}"${s === 2.5 ? ' selected' : ''}>`
+			+ `${String(s).replace('.', ',')} mm²</option>`).join('')
+		+ '</select>'
+		+ `<button class="boton primario" id="tirada-guardar">Guardar ${med.cablePedido} m</button>`
+		+ '</div></div>';
+	$('tirada-guardar').onclick = () => {
+		const m = cinta?.medida();
+		if (!m) return;
+		const nombre = ($('tirada-nombre') as HTMLInputElement).value.trim() || sugerido;
+		const nueva: Tirada = {
+			id: `t${Date.now().toString(36)}`,
+			nombre,
+			desde: extremos[0],
+			hasta: extremos.length >= 2 ? extremos[extremos.length - 1] : undefined,
+			metros: m.cablePedido,
+			recorrido: Number((m.recorrido + m.vertical).toFixed(1)),
+			seccion: Number(($('tirada-seccion') as HTMLSelectElement).value),
+			conductores: Number(($('tirada-hilos') as HTMLSelectElement).value),
+			fecha: new Date().toISOString(),
+		};
+		levantamiento.tiradas.push(nueva);
+		guardarLevantamiento();
+		cinta?.reiniciar();
+		pintarCinta();
+	};
+}
+
+/** Las tiradas ya guardadas y, debajo, lo que suman: la lista con la que se pide el cable. */
+function pintarTiradas(): void {
+	const caja = $('mundo-tiradas');
+	if (levantamiento.tiradas.length === 0) {
+		caja.innerHTML = '<div class="ayuda">Aún no has guardado ninguna tirada. Mide una y guárdala: '
+			+ 'el programa te irá sumando los metros por tipo de cable.</div>';
+		return;
+	}
+	const filas = levantamiento.tiradas.map((t) => `<div class="fila-tirada" data-tirada="${esc(t.id)}">`
+		+ `<span class="nom">${esc(t.nombre)}</span>`
+		+ `<span class="cable">${t.conductores}×${String(t.seccion).replace('.', ',')}</span>`
+		+ `<span class="m">${t.metros} m</span>`
+		+ '<button class="quitar" title="Quitar esta tirada">✕</button></div>').join('');
+	const pedido = listaDePedido(levantamiento.tiradas);
+	const total = pedido.reduce((s, f) => s + f.metros, 0);
+	caja.innerHTML = `<h3>Tiradas guardadas (${levantamiento.tiradas.length})</h3>`
+		+ `<div class="lista-tiradas">${filas}</div>`
+		+ '<h3>Cable a pedir</h3>'
+		+ pedido.map((f) => `<div class="fila-pedido"><span>${esc(f.cable)}</span>`
+			+ `<b>${f.metros} m</b></div>`).join('')
+		+ `<div class="fila-pedido total"><span>Total de manguera</span><b>${total} m</b></div>`
+		+ '<div class="botones"><button class="boton" id="tiradas-csv">⬇️ Lista en CSV</button>'
+		+ '<button class="boton" id="tiradas-vaciar">Vaciar</button></div>';
+	for (const f of caja.querySelectorAll<HTMLElement>('.fila-tirada')) {
+		f.querySelector<HTMLButtonElement>('.quitar')!.onclick = () => {
+			levantamiento.tiradas = levantamiento.tiradas.filter((t) => t.id !== f.dataset.tirada);
+			guardarLevantamiento();
+			pintarTiradas();
+		};
+	}
+	$('tiradas-csv').onclick = () => descargar(`Tiradas ${inf.nombre}.csv`, tiradasCSV(levantamiento));
+	$('tiradas-vaciar').onclick = () => {
+		if (!confirm('¿Borrar todas las tiradas medidas? Esto no se puede deshacer.')) return;
+		levantamiento.tiradas = [];
+		guardarLevantamiento();
+		pintarTiradas();
+	};
 }
 
 /* ------------------------------ Del mundo al tablero ------------------------------ */
@@ -363,6 +577,7 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 		paseo = crearPaseo(mundo, lienzo);
 		cinta = crearCinta(mundo);
 		cinta.visible(false);
+		cargarLevantamiento();
 		pintarResumen();
 		lienzo.addEventListener('click', (ev) => {
 			// Midiendo, el clic marca un punto de la tirada; si no, consulta la máquina.
@@ -402,11 +617,15 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 		$('btn-cerrar-puente').onclick = () => { ($('modal-puente') as HTMLElement).hidden = true; };
 		$('btn-puente-cancelar').onclick = () => { ($('modal-puente') as HTMLElement).hidden = true; };
 		$('btn-puente-crear').onclick = () => armarTablero();
+		$('mundo-csv-parte').onclick = () =>
+			descargar(`Parte de obra ${inf.nombre}.csv`, parteDeObraCSV(levantamiento, inf));
 		pintarChips();
 		pintarSelectorColor();
 		aplicarColor();
 		refrescarBusqueda();
 		pintarElegidas();
+		pintarAvance();
+		pintarTiradas();
 	}
 	ajustar();
 	cambiarVista('sims');
@@ -505,6 +724,38 @@ if (__QA__) {
 			cinta?.anadir(g.position.clone(), tag);
 			pintarCinta();
 			return cinta?.medida();
+		},
+		/* --- Levantamiento: parte de obra y tiradas guardadas --- */
+		anotar: (tag: string, estado: string, nota: string) => {
+			const e = inf.equipos.find((x) => x.tag === tag);
+			if (!e) return undefined;
+			seleccionar(tag);
+			const chip = $('mundo-ficha').querySelector<HTMLButtonElement>(`[data-estado="${estado}"]`);
+			chip?.click();
+			const caja = document.getElementById('mundo-nota') as HTMLTextAreaElement | null;
+			if (caja) { caja.value = nota; caja.onchange!(new Event('change')); }
+			return levantamiento.notas[tag];
+		},
+		avance: () => avanceObra(levantamiento, inf).map((a) => ({ estado: a.estado, cuantos: a.cuantos })),
+		/** Guarda la tirada que hay medida ahora mismo, como si se pulsara el botón. */
+		guardarTirada: (nombre: string, hilos: number, seccion: number) => {
+			const boton = document.getElementById('tirada-guardar');
+			if (!boton) return undefined;
+			($('tirada-nombre') as HTMLInputElement).value = nombre;
+			($('tirada-hilos') as HTMLSelectElement).value = String(hilos);
+			($('tirada-seccion') as HTMLSelectElement).value = String(seccion);
+			boton.click();
+			return levantamiento.tiradas[levantamiento.tiradas.length - 1];
+		},
+		pedido: () => listaDePedido(levantamiento.tiradas),
+		/** Vacía el parte para que una prueba no dependa de lo que dejó la anterior. */
+		olvidarLevantamiento: () => {
+			levantamiento = levantamientoVacio();
+			guardarLevantamiento();
+			pintarAvance();
+			pintarTiradas();
+			pintarLista();
+			return true;
 		},
 		/* --- Del mundo al tablero --- */
 		elegir: (tags: string[]) => {

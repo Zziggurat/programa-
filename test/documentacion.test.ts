@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import { tableroEjemplo } from '../ejemplo/tablero-ejemplo.js';
 import { calcularPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
@@ -52,4 +53,17 @@ test('lista de conductores del ejemplo: numerada y con longitudes ruteadas', () 
 	assert.ok((interna.longitudMm ?? 0) > 0);
 	// El CSV de la BOM tiene cabecera + una fila por grupo.
 	assert.ok(bomACSV(generarBOM(p)).split('\n').length > 5);
+});
+
+test('TODOS los ejemplos de la biblioteca pasan el DRC sin errores', () => {
+	// Un ejemplo con un error de cableado no es un ejemplo: es una lección de cómo NO hacerlo.
+	// Esta prueba barre la biblioteca entera para que no se cuele ninguno al añadir uno nuevo.
+	for (const e of EJEMPLOS) {
+		const p = e.crear();
+		numerarDispositivos(p);
+		const potenciales = calcularPotenciales(p);
+		numerarConductores(p, potenciales);
+		const errores = verificarProyecto(p, potenciales).filter((h) => h.severidad === 'error');
+		assert.deepEqual(errores.map((x) => x.mensaje), [], `el ejemplo «${e.id}» tiene errores de DRC`);
+	}
 });

@@ -249,8 +249,10 @@
 		display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 	#mundo-lista { overflow-y: auto; flex: 1 1 auto; min-height: 60px; margin: 0 -4px;
 		padding: 0 4px; }
-	.fila-eq { display: grid; grid-template-columns: 18px 1fr auto; gap: 7px; align-items: center;
+	.fila-eq { display: grid; grid-template-columns: 18px 9px 1fr auto; gap: 7px; align-items: center;
 		padding: 5px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px; }
+	.punto-obra { width: 9px; height: 9px; border-radius: 50%; display: block; }
+	.punto-obra.vacio { border: 1px solid #3a434f; background: none; }
 	.fila-eq:hover { background: var(--panel-2); }
 	.fila-eq.sel { background: #17325a; }
 	.fila-eq input { margin: 0; cursor: pointer; }
@@ -284,6 +286,94 @@
 	#mundo-cinta .pedir .cifra { color: #ffd43b; }
 	#mundo-cinta .botones { display: flex; gap: 6px; }
 	#mundo-cinta .botones .boton { flex: 1 1 0; justify-content: center; font-size: 11.5px; }
+
+	/* ---- Tiradas guardadas y lista de cable a pedir ---- */
+	.guardar-tirada { border-top: 1px solid #d9a40033; margin-top: 10px; padding-top: 10px;
+		display: flex; flex-direction: column; gap: 6px; }
+	.guardar-tirada input, .guardar-tirada select { background: var(--panel-2); color: var(--texto);
+		border: 1px solid var(--borde); border-radius: 8px; padding: 5px 7px; font-size: 12px;
+		font-family: inherit; box-sizing: border-box; }
+	.guardar-tirada input { width: 100%; }
+	.guardar-tirada .cable { display: flex; gap: 5px; }
+	.guardar-tirada .cable select { flex: 1 1 0; min-width: 0; }
+	.guardar-tirada .cable .boton { flex: 1.4 1 0; justify-content: center; font-size: 11.5px;
+		white-space: nowrap; }
+	#mundo-tiradas { margin-top: 10px; }
+	.lista-tiradas { max-height: 132px; overflow-y: auto; margin: 0 -3px 8px; padding: 0 3px; }
+	.fila-tirada { display: grid; grid-template-columns: 1fr auto auto 18px; gap: 6px;
+		align-items: center; font-size: 11.5px; padding: 3px 5px; border-radius: 7px; }
+	.fila-tirada:hover { background: var(--panel-2); }
+	.fila-tirada .nom { color: var(--texto); overflow: hidden; text-overflow: ellipsis;
+		white-space: nowrap; }
+	.fila-tirada .cable { color: var(--texto-suave); font-family: ui-monospace, monospace; }
+	.fila-tirada .m { color: #ffd43b; font-weight: 600; }
+	.fila-tirada .quitar { background: none; border: none; color: var(--texto-suave); cursor: pointer;
+		font-size: 12px; padding: 0; line-height: 1; }
+	.fila-tirada .quitar:hover { color: var(--peligro, #ff8787); }
+	.fila-pedido { display: flex; justify-content: space-between; font-size: 12px;
+		color: var(--texto-suave); padding: 2px 0; }
+	.fila-pedido b { color: var(--texto); font-variant-numeric: tabular-nums; }
+	.fila-pedido.total { border-top: 1px solid #d9a40033; margin-top: 4px; padding-top: 5px; }
+	.fila-pedido.total b { color: #ffd43b; }
+
+	/* ---- Parte de obra ---- */
+	.estados-obra { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 7px; }
+	.chip-estado { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 999px;
+		color: var(--texto-suave); font-size: 11px; padding: 3px 9px; cursor: pointer;
+		font-family: inherit; }
+	.chip-estado:hover { color: var(--texto); }
+	.chip-estado.activo { background: var(--c); border-color: var(--c); color: #080c10;
+		font-weight: 600; }
+	#mundo-nota { width: 100%; box-sizing: border-box; background: var(--panel-2); color: var(--texto);
+		border: 1px solid var(--borde); border-radius: 8px; padding: 6px 8px; font-size: 12px;
+		font-family: inherit; resize: vertical; }
+	.pie-nota { font-size: 10.5px; color: var(--texto-suave); margin-top: 4px; }
+	.barra-obra { display: flex; height: 9px; border-radius: 999px; overflow: hidden;
+		background: var(--panel-2); }
+	.barra-obra span { display: block; }
+	#mundo-csv-parte { width: 100%; justify-content: center; margin-top: 9px; font-size: 11.5px; }
+
+	/* ---- Programa del controlador ---- */
+	.bloque-programa { margin-top: 12px; border-top: 1px solid var(--borde); padding-top: 10px; }
+	.bloque-programa h4 { margin: 0 0 5px; font-size: 12px; text-transform: uppercase;
+		letter-spacing: .05em; color: var(--texto-suave); }
+	#dev-programa { width: 100%; box-sizing: border-box; background: #0f1318; color: #cfe6ff;
+		border: 1px solid var(--borde); border-radius: 8px; padding: 8px 9px; resize: vertical;
+		font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px;
+		line-height: 1.5; tab-size: 2; }
+	#dev-programa:focus { outline: none; border-color: #3b82f6; }
+	.bornes-programa { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 5px;
+		font-size: 11px; color: var(--texto-suave); font-family: ui-monospace, monospace; }
+	.bornes-programa b { font-family: system-ui, sans-serif; }
+	.errores-programa { margin: 6px 0 0; padding-left: 16px; font-size: 11.5px; color: var(--peligro); }
+	.errores-programa code { background: #2a1a1a; border-radius: 4px; padding: 0 4px;
+		font-size: 11px; color: #ffb4b4; }
+	.ok-programa { color: #6fcf80; }
+	/* Mando de una sonda en el panel de simulación */
+	.fila-sonda { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center;
+		padding: 5px 8px; border-radius: 8px; background: var(--panel-2); margin-bottom: 4px;
+		font-size: 12.5px; }
+	.fila-sonda input[type=range] { width: 100%; accent-color: #4dabf7; }
+	.fila-sonda .valor-sonda { font-family: ui-monospace, monospace; font-weight: 700;
+		color: #7cc0ff; min-width: 52px; text-align: right; }
+	.ctrl-sim { background: var(--panel-2); border-radius: 8px; padding: 7px 9px; margin-bottom: 5px;
+		font-size: 12px; }
+	.ctrl-sim .des-sim { font-weight: 600; }
+	.ctrl-sim .es { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+	.ctrl-sim .pin { font-family: ui-monospace, monospace; font-size: 11px; border-radius: 5px;
+		padding: 1px 6px; background: #1b2027; color: var(--texto-suave); }
+	.ctrl-sim .pin.on { background: #14401f; color: #74d68a; }
+	.ctrl-sim .pin.esperando { background: #3a3115; color: #ffd97a; }
+	/* El programa en marcha: una luz por renglón dice si su condición se cumple ahora. */
+	.renglon-sim { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; }
+	.renglon-sim code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+		font-size: 11px; color: var(--texto-suave); overflow-wrap: anywhere; }
+	.renglon-sim .luz { width: 7px; height: 7px; border-radius: 50%; flex: none;
+		background: #3a434f; }
+	.renglon-sim.pidiendo .luz { background: #ffd97a; box-shadow: 0 0 6px #ffd97a; }
+	.renglon-sim.pidiendo code { color: #ffd97a; }
+	.renglon-sim.on .luz { background: #51cf66; box-shadow: 0 0 6px #51cf66; }
+	.renglon-sim.on code { color: #b6f0c2; }
 
 	/* ---- Vista previa del dossier, con su editor ---- */
 	#panel-dossier { position: fixed; inset: 0; z-index: 48; background: #0b0e12; display: flex;
@@ -370,6 +460,13 @@
 		background: #2a2418; border-radius: 8px; padding: 8px 10px; margin-top: 6px; }
 	#sim-funcionando .nada-sim { color: var(--texto-suave); font-size: 12.5px; }
 	.fila-sim.contando .punto-sim { background: #4dabf7; box-shadow: 0 0 7px #4dabf7; }
+	#sim-reloj-caja { display: flex; align-items: center; gap: 7px; font-size: 12px;
+		color: var(--texto-suave); background: var(--panel-2); border-radius: 8px;
+		padding: 5px 9px; margin-bottom: 8px; }
+	#sim-reloj-caja select { background: var(--panel); border: 1px solid var(--borde);
+		border-radius: 7px; color: var(--texto); font-size: 12px; font-family: inherit;
+		padding: 2px 5px; }
+	#sim-reloj-caja b { margin-left: auto; color: #ffd54f; font-variant-numeric: tabular-nums; }
 
 	/* Lo que consume el tablero: total e intensidad por protección, con su barra de carga.
 	   La barra es lo que se lee de un vistazo — verde va sobrado, ámbar va justo, rojo se pasa. */
@@ -837,7 +934,20 @@
 			<div class="sub" style="color:var(--texto-suave);margin-bottom:8px">Haz clic en un
 			<b>pulsador</b> para pulsarlo, en un <b>sensor</b> o una <b>boya</b> para activarlo, y en una
 			<b>protección</b> para abrirla o cerrarla. Los cables con tensión se iluminan.</div>
+			<!-- El reloj de la maniobra. Un retardo de 8 s se espera 8 s de verdad, y eso está
+			     bien para creérselo pero es un castigo para probar una secuencia diez veces. -->
+			<label id="sim-reloj-caja" title="Acelera el reloj de la simulación: los retardos y los tiempos mínimos corren más rápido">
+				<span>⏱️ Reloj</span>
+				<select id="sim-velocidad">
+					<option value="1">tiempo real</option>
+					<option value="5">×5</option>
+					<option value="20">×20</option>
+				</select>
+				<b id="sim-transcurrido">0,0 s</b>
+			</label>
 			<div id="sim-consumo"></div>
+			<div id="sim-sondas"></div>
+			<div id="sim-controladores"></div>
 			<div id="sim-funcionando"></div>
 			<div id="sim-carga"></div>
 			<div id="sim-avisos"></div>
@@ -1098,15 +1208,21 @@
 		</div>
 	</div>
 
-	<!-- Cinta métrica: sale solo cuando se activa el modo Medir. -->
+	<!-- Cinta métrica: sale solo cuando se activa el modo Medir. Lo medido se guarda como
+	     tirada, y de las tiradas sale sola la lista de cable a pedir. -->
 	<div id="mundo-cinta" hidden>
 		<h3>📏 Cinta métrica</h3>
 		<div id="mundo-cinta-cuerpo"></div>
+		<div id="mundo-guardar-tirada"></div>
+		<div id="mundo-tiradas"></div>
 	</div>
 
 	<div id="mundo-panel">
 		<div id="mundo-resumen"></div>
 		<div id="mundo-ficha"></div>
+		<h3>Cómo va la obra</h3>
+		<div id="mundo-avance"></div>
+		<button class="boton" id="mundo-csv-parte" title="Llevarse el parte de obra en una hoja de cálculo">⬇️ Parte de obra (CSV)</button>
 		<h3>Sistemas</h3>
 		<div id="mundo-leyenda"></div>
 		<h3>La cubierta</h3>
@@ -1163,6 +1279,22 @@
 			Prueba el ejemplo del arranque directo: pulsa MARCHA, suéltala y verás que el motor
 			<b>sigue girando</b> — eso es el enclavamiento del contactor sosteniéndose por su propio
 			contacto auxiliar.</li>
+			<li><b>🧠 Programar el controlador:</b> selecciona un PLC o un controlador y escríbele su
+			programa en la ficha, un renglón por salida y en castellano:
+			<code>DO2 = DI1 Y NO DI2</code>, <code>DO1 = DO2 retardo 8 minimo 30</code>,
+			<code>DO3 = DO1 Y UI1 &lt; 21</code>. Al energizar, la maniobra corre sola: se ven las
+			cuentas atrás, las sondas se mueven con un mando y las salidas encienden lo que tengan
+			cableado. Mira el ejemplo <i>Climatizador de cubierta (UMA)</i>.</li>
+			<li><b>⏱️ Acelerar el reloj:</b> con el tablero energizado, el selector <i>Reloj</i> del panel
+			derecho corre la simulación a ×5 o ×20. Un retardo de 8 s se prueba en menos de un segundo,
+			y lo que se ve es exactamente lo mismo.</li>
+			<li><b>📋 Parte de obra en la cubierta:</b> dentro de la <i>Planta 3D</i>, cada máquina tiene su
+			estado (pendiente, en curso, montado, probado, con problema) y su nota de lo que te has
+			encontrado. Se guarda solo y sigue ahí mañana; colorea el 3D por <i>Estado en obra</i> para
+			ver de un golpe lo que queda, y llévatelo en CSV.</li>
+			<li><b>📏 Tiradas y cable a pedir:</b> midiendo en la cubierta, cada tirada se <b>guarda</b> con su
+			nombre y su cable (4×2,5, 2×0,75…). El programa suma los metros por tipo de manguera: eso es
+			la lista con la que se pide el cable, y también sale en CSV.</li>
 			<li><b>Corregir los datos de un aparato:</b> selecciónalo en modo Editor y edita su ficha en el panel derecho: marcado, referencia, In, polos, medidas, <b>poder de corte</b> y <b>disipación</b>. Lo que escribas ahí es lo que sale en el dossier del cliente.</li>
 			<li><b>Datos del proyecto:</b> <i>Archivo → Datos del proyecto</i> — cliente, obra, proyectista y revisión (van al cajetín del esquema y a la portada del dossier), más la <b>Icc presunta</b>, la temperatura ambiente y el montaje del armario, de los que dependen la verificación del poder de corte y el balance térmico.</li>
 			<li><b>Balance térmico:</b> el panel derecho estima la temperatura interior del armario (IEC 60890) y dice si necesita rejilla, ventilador o climatizador antes de que lo pidas.</li>

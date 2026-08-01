@@ -65,6 +65,9 @@ export function tableroEjemplo(): Proyecto {
 			fabricante: 'Genérico', referencia: 'CTRL-24DC', tensionNominal: 24,
 			corrienteNominal: 0.15, disipacionW: 3.6, disipacionEstimada: true,
 			hojaId: 'h2', posicion: { x: 1, y: 0 },
+			// El programa que gobierna la maniobra. Sin él el controlador sería un adorno: sus
+			// salidas solo se encenderían forzándolas a mano.
+			programa: 'DO1 = DI1   ; el sensor manda: si detecta, abre la electroválvula',
 			bornes: [
 				{ id: '+24', tipo: 'control', obligatorio: true },
 				{ id: '0V', tipo: 'control', obligatorio: true },

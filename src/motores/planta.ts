@@ -11,6 +11,7 @@
  * probar sin navegador, que es lo que hace que estas reglas se puedan cambiar sin miedo.
  */
 import { EquipoPlanta, Infraestructura } from '../modelo/infraestructura.js';
+import { ESTADOS_OBRA, EstadoObra } from './levantamiento.js';
 
 /* --------------------------------- Buscar y filtrar --------------------------------- */
 
@@ -88,14 +89,17 @@ export function buscarEquipos(inf: Infraestructura, f: FiltroPlanta = {}): Equip
  *  - `puntos`: cuántas señales tiene, de gris (ninguna) a verde fuerte (nueve). Enseña de un golpe
  *    dónde está el trabajo.
  *  - `tablero`: si sus señales van cableadas en el tablero o no.
+ *  - `obra`: en qué punto está cada máquina según el parte que se lleva en el propio programa.
+ *    Este es el color que se mira al subir: enseña de un golpe lo que queda por hacer.
  */
-export type ModoColor = 'tipo' | 'controlador' | 'puntos' | 'tablero';
+export type ModoColor = 'tipo' | 'controlador' | 'puntos' | 'tablero' | 'obra';
 
 export const MODOS_COLOR: { modo: ModoColor; nombre: string; ayuda: string }[] = [
 	{ modo: 'tipo', nombre: 'Tipo de máquina', ayuda: 'Manejadoras de aire y extractores' },
 	{ modo: 'controlador', nombre: 'Controlador', ayuda: 'Por el canal del bus: CH5, CH6, CH8…' },
 	{ modo: 'puntos', nombre: 'Nº de señales', ayuda: 'Cuántos puntos de BMS tiene dibujados' },
 	{ modo: 'tablero', nombre: 'Cableada en tablero', ayuda: 'Si sus señales entran al tablero' },
+	{ modo: 'obra', nombre: 'Estado en obra', ayuda: 'Lo que tú has apuntado: pendiente, montado, probado…' },
 ];
 
 /**
@@ -118,8 +122,17 @@ export function canalesDe(inf: Infraestructura): string[] {
 	return [...set].sort((a, b) => Number(a.slice(2)) - Number(b.slice(2)));
 }
 
-/** Color de una máquina según el modo elegido. */
-export function colorDeEquipo(e: EquipoPlanta, modo: ModoColor, canales: string[]): number {
+/**
+ * Color de una máquina según el modo elegido.
+ *
+ * `estados` es el parte de obra —lo que ha apuntado quien sube— y solo hace falta para el modo
+ * `obra`. Va como argumento y no dentro del equipo a propósito: el equipo es lo que dice el plano,
+ * y el parte es lo que dice la persona. No son el mismo dato ni se guardan en el mismo sitio.
+ */
+export function colorDeEquipo(
+	e: EquipoPlanta, modo: ModoColor, canales: string[],
+	estados?: ReadonlyMap<string, EstadoObra>,
+): number {
 	switch (modo) {
 		case 'tipo':
 			return e.tipo === 'uma' ? 0x8b98a5 : 0x6b7d8f;
@@ -136,12 +149,16 @@ export function colorDeEquipo(e: EquipoPlanta, modo: ModoColor, canales: string[
 		}
 		case 'tablero':
 			return e.enTablero ? 0x2f9e44 : GRIS_SIN_DATO;
+		case 'obra': {
+			const estado = estados?.get(e.tag) ?? 'pendiente';
+			return ESTADOS_OBRA.find((x) => x.estado === estado)?.color ?? GRIS_SIN_DATO;
+		}
 	}
 }
 
 /** Leyenda del modo de color activo: qué significa cada color en pantalla. */
 export function leyendaColor(
-	inf: Infraestructura, modo: ModoColor,
+	inf: Infraestructura, modo: ModoColor, estados?: ReadonlyMap<string, EstadoObra>,
 ): { color: number; nombre: string; cuantos: number }[] {
 	const canales = canalesDe(inf);
 	const cuenta = (f: (e: EquipoPlanta) => boolean): number => inf.equipos.filter(f).length;
@@ -172,6 +189,12 @@ export function leyendaColor(
 				{ color: 0x2f9e44, nombre: 'Cableada en el tablero', cuantos: cuenta((e) => e.enTablero) },
 				{ color: GRIS_SIN_DATO, nombre: 'No lo dice el plano', cuantos: cuenta((e) => !e.enTablero) },
 			];
+		case 'obra':
+			return ESTADOS_OBRA.map((x) => ({
+				color: x.color,
+				nombre: x.nombre,
+				cuantos: cuenta((e) => (estados?.get(e.tag) ?? 'pendiente') === x.estado),
+			}));
 	}
 }
 
