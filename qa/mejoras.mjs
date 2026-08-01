@@ -40,6 +40,7 @@ if (await page.isVisible('#modal-ayuda')) { await jsClick('btn-cerrar-ayuda'); a
 await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(700);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 	await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
 }
 await jsClick('modo-editor'); await page.waitForTimeout(300);

@@ -134,15 +134,59 @@ test('R9: un automático de 25 A sobre cable de 2,5 mm² es un ERROR (el cable a
 	assert.equal(r9.severidad, 'error');
 	assert.match(r9.mensaje, /25 A/);
 	assert.match(r9.mensaje, /2\.5 mm²/);
-	assert.match(r9.mensaje, /4 mm²/, 'debe decir a qué sección subir');
+	assert.match(r9.mensaje, /6 mm²/, 'debe decir a qué sección subir');
+	assert.match(r9.mensaje, /35 °C/, 'y en qué condiciones lo ha calculado');
 });
 
-test('R9: la misma protección sobre 4 mm² está bien coordinada', () => {
-	assert.ok(!reglas(verificar(circuito(25, 4))).includes('R9-proteccion-sobredimensionada'));
+/**
+ * LA TABLA NO ES EL TABLERO.
+ *
+ * Un 2,5 mm² «admite 19,5 A» en la tabla, que es a 30 °C y con un solo circuito. Dentro de un
+ * armario a 35 °C admite 18,3 A, y un 4 mm² no llega a los 25 A que sí aguantaría en la tabla.
+ * Estas dos pruebas son las que impiden volver a verificar un tablero con la tabla a secas.
+ */
+test('R9: a la temperatura del armario, un 4 mm² YA NO da para 25 A', () => {
+	assert.ok(reglas(verificar(circuito(25, 4))).includes('R9-proteccion-sobredimensionada'),
+		'con la tabla a 30 °C esto pasaba; a 35 °C dentro del armario, no');
 });
 
-test('R9: el límite justo (16 A sobre 2,5 mm², que admite 19,5 A) se acepta', () => {
+test('R9: con 6 mm² sí queda coordinado', () => {
+	assert.ok(!reglas(verificar(circuito(25, 6))).includes('R9-proteccion-sobredimensionada'));
+});
+
+test('R9: el límite justo (16 A sobre 2,5 mm², que a 35 °C admite 18,3 A) se acepta', () => {
 	assert.ok(!reglas(verificar(circuito(16, 2.5))).includes('R9-proteccion-sobredimensionada'));
+});
+
+test('R9: los circuitos que comparten canaleta se cuentan y bajan la admisible', () => {
+	// Cuatro circuitos juntos en la misma canaleta son el factor 0,65 de IEC 60364-5-52: un
+	// 2,5 mm² que a 35 °C admitía 18,3 A pasa a 11,9 A, y el C16 que estaba bien deja de estarlo.
+	const p = circuito(16, 2.5);
+	const canaletas = new Map([['c1', ['can1']]]);
+	const sinAgrupar = verificarProyecto(p, calcularPotenciales(p), { canaletasPorConductor: canaletas });
+	assert.ok(!reglas(sinAgrupar).includes('R9-proteccion-sobredimensionada'),
+		'un solo circuito en la canaleta no agrupa nada');
+
+	// Se añaden tres circuitos más pasando por la misma canaleta.
+	for (let i = 2; i <= 4; i++) {
+		p.dispositivos.push({
+			id: `q${i}`, tipo: 'disyuntor', designacion: `-Q${i}`, corrienteNominal: 16,
+			polos: 1, tensionNominal: 220, bornes: [{ id: '1', tipo: 'L' }, { id: '2', tipo: 'L' }],
+		});
+		p.dispositivos.push({
+			id: `m${i}`, tipo: 'motor', designacion: `-M${i}`, corrienteNominal: 16,
+			tensionNominal: 220, polos: 1, bornes: [{ id: 'U', tipo: 'L' }],
+		});
+		p.conductores.push({
+			id: `c${i}`, de: { dispositivoId: `q${i}`, borneId: '2' },
+			a: { dispositivoId: `m${i}`, borneId: 'U' }, seccion: 2.5,
+		});
+		canaletas.set(`c${i}`, ['can1']);
+	}
+	const agrupado = verificarProyecto(p, calcularPotenciales(p), { canaletasPorConductor: canaletas });
+	const r9 = agrupado.find((h) => h.regla === 'R9-proteccion-sobredimensionada');
+	assert.ok(r9, 'con cuatro circuitos juntos el 2,5 mm² ya no aguanta el C16');
+	assert.match(r9!.mensaje, /4 circuitos/, r9!.mensaje);
 });
 
 test('R9: sin calibre declarado no inventa un hallazgo', () => {
@@ -426,4 +470,63 @@ test('R13: 380 y 400 V son la misma red y las dos protecciones se comprueban', (
 	const ids = verificar(p).filter((h) => h.regla === 'R13-poder-de-corte-insuficiente')
 		.map((h) => h.dispositivoId).sort();
 	assert.deepEqual(ids, ['q1', 'q2']);
+});
+
+/* ---------------- R15: la sección tiene que caber en la borna ---------------- */
+
+test('R15: un 6 mm² no entra en una borna que admite 2,5', () => {
+	// R5 cuenta cuántos hilos entran; esto comprueba que ENTREN. Se descubre con el tablero
+	// montado y el cable ya cortado, que es el peor momento posible.
+	const p = circuito(25, 6);
+	p.dispositivos.push({
+		id: 'x1', tipo: 'bornero', designacion: '-X1',
+		bornes: [{ id: '1', tipo: 'L', seccionMaxMm2: 2.5 }],
+	});
+	p.conductores.push({
+		id: 'c2', de: { dispositivoId: 'q1', borneId: '2' }, a: { dispositivoId: 'x1', borneId: '1' }, seccion: 6,
+	});
+	const h = verificar(p).find((x) => x.regla === 'R15-seccion-no-cabe');
+	assert.ok(h, 'no avisa de que el cable no entra');
+	assert.equal(h!.severidad, 'error');
+	assert.match(h!.mensaje, /6 mm²/);
+	assert.match(h!.mensaje, /2\.5 mm²/);
+});
+
+test('R15: sin límite declarado no se supone ninguno', () => {
+	const p = circuito(25, 6);
+	p.dispositivos.push({
+		id: 'x1', tipo: 'bornero', designacion: '-X1', bornes: [{ id: '1', tipo: 'L' }],
+	});
+	p.conductores.push({
+		id: 'c2', de: { dispositivoId: 'q1', borneId: '2' }, a: { dispositivoId: 'x1', borneId: '1' }, seccion: 6,
+	});
+	assert.ok(!reglas(verificar(p)).includes('R15-seccion-no-cabe'));
+});
+
+/* ------------- R16: la tierra no se adelgaza respecto de su fase ------------- */
+
+test('R16: la tierra de un motor no puede ser más fina que su fase', () => {
+	const p = circuito(16, 2.5);
+	p.dispositivos[1].bornes.push({ id: 'PE', tipo: 'PE' });
+	p.dispositivos.push({
+		id: 'x0', tipo: 'bornero', designacion: '-X0', bornes: [{ id: 'PE', tipo: 'PE' }],
+	});
+	p.conductores.push({
+		id: 'cpe', de: { dispositivoId: 'x0', borneId: 'PE' }, a: { dispositivoId: 'm1', borneId: 'PE' }, seccion: 1.5,
+	});
+	const h = verificar(p).find((x) => x.regla === 'R16-tierra-mas-fina-que-la-fase');
+	assert.ok(h, 'una tierra de 1,5 bajo una fase de 2,5 tiene que salir');
+	assert.match(h!.mensaje, /2\.5 mm²/);
+});
+
+test('R16: con la misma sección que la fase no dice nada', () => {
+	const p = circuito(16, 2.5);
+	p.dispositivos[1].bornes.push({ id: 'PE', tipo: 'PE' });
+	p.dispositivos.push({
+		id: 'x0', tipo: 'bornero', designacion: '-X0', bornes: [{ id: 'PE', tipo: 'PE' }],
+	});
+	p.conductores.push({
+		id: 'cpe', de: { dispositivoId: 'x0', borneId: 'PE' }, a: { dispositivoId: 'm1', borneId: 'PE' }, seccion: 2.5,
+	});
+	assert.ok(!reglas(verificar(p)).includes('R16-tierra-mas-fina-que-la-fase'));
 });

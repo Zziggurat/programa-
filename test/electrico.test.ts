@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import {
 	ampacidad, areaConductorAisladoMm2, caidaTensionPct, CAIDA_MAX_PCT, coordinacionCorrecta,
-	factorAgrupamiento, ocupacionCanaleta, seccionMinima, seccionPE,
+	factorAgrupamiento, factorTemperatura, ocupacionCanaleta, seccionMinima, seccionPE,
 } from '../src/motores/electrico.js';
 
 /* ------------------------------- Ampacidad ------------------------------- */
@@ -181,4 +181,35 @@ test('una sección enorme extrapola pero sigue siendo un número usable', () => 
 test('seccionMinima con una corriente imposible no devuelve una sección falsa', () => {
 	assert.equal(seccionMinima(NaN), undefined);
 	assert.equal(seccionMinima(Infinity), undefined);
+});
+
+/* ------------------ La tabla no es el tablero: correcciones ------------------ */
+
+test('la intensidad admisible se corrige por temperatura (IEC 60364-5-52 B.52.14)', () => {
+	// Es la corrección que faltaba y por la que el programa aprobaba cables de azotea con la
+	// tabla de 30 °C. Los factores son los de la norma para PVC.
+	assert.equal(factorTemperatura(30), 1);
+	assert.equal(factorTemperatura(40), 0.87);
+	assert.equal(factorTemperatura(50), 0.71);
+	// Entre dos filas se interpola.
+	assert.ok(Math.abs(factorTemperatura(45) - 0.79) < 1e-9);
+	assert.ok(factorTemperatura(47.5) > 0.71 && factorTemperatura(47.5) < 0.79);
+	// Por debajo de la tabla no se extrapola al infinito.
+	assert.equal(factorTemperatura(-40), 1.22);
+});
+
+test('por encima de 60 °C el PVC no admite corriente, y se dice con un cero', () => {
+	// No es «aguanta poco»: es que a esa temperatura no se pone PVC. Devolver un número pequeño
+	// invitaría a subir la sección, que ahí no arregla nada.
+	assert.equal(factorTemperatura(61), 0);
+	assert.equal(ampacidad(2.5, 1, 61), 0);
+	assert.equal(seccionMinima(10, 1, 61), undefined);
+});
+
+test('un 2,5 mm² en un tablero de cubierta no admite lo que dice la tabla', () => {
+	// El caso que motivó todo: tabla 19,5 A; dentro de un armario a 50 °C con nueve circuitos
+	// en la canaleta, menos de 7 A. Aprobar un C16 encima era el error.
+	assert.equal(ampacidad(2.5), 19.5);
+	const real = ampacidad(2.5, 9, 50);
+	assert.ok(real > 6.8 && real < 7.1, `${real} A`);
 });

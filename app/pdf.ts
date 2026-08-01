@@ -25,6 +25,7 @@ import { generarBOM, generarListaConductores } from '../src/motores/documentacio
 import { fondoDe, generarFichaTablero } from '../src/motores/ficha-tablero.js';
 import { montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
 import { calcularBalanceTermico } from '../src/motores/termico.js';
+import { factorTemperatura, TEMPERATURA_TABLA_C } from '../src/motores/electrico.js';
 import { declarado, opcionesDe } from '../src/modelo/proyecto.js';
 import { CONTROLADORES } from './controladores.js';
 import { descargar } from './dialogos.js';
@@ -160,6 +161,7 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	const hallazgos = verificarProyecto(proyecto, potenciales, {
 		longitudesMm: new Map(ruteo.rutas.map((r) => [r.conductorId, r.longitudMm])),
 		canaletas: ruteo.ocupaciones,
+		canaletasPorConductor: new Map(ruteo.rutas.map((r) => [r.conductorId, r.canaletasUsadas])),
 	});
 	const hojasEsquema = montarEsquema(proyecto, potenciales);
 	const referencias = generarReferencias(proyecto, posicionesEnEsquema(hojasEsquema));
@@ -460,6 +462,20 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 		['Verificación eléctrica', errores
 			? `${errores} error(es) y ${avisos} aviso(s) — ver el apartado de verificación`
 			: `sin errores${avisos ? `, ${avisos} aviso(s)` : ''}`],
+		/*
+		 * BAJO QUÉ TABLA se ha verificado la sección de los conductores.
+		 *
+		 * Un documento que pone «verificado» sin decir contra qué tabla no es defendible: la misma
+		 * sección admite 19,5 A o 7 A según la temperatura y los circuitos que lleve al lado. Se
+		 * dicen las tres cosas —tabla, temperatura y agrupamiento— y de dónde salen.
+		 */
+		['Intensidad admisible de los conductores',
+			`IEC 60364-5-52, cobre con aislación PVC 70 °C, instalación B1 (tabla a ${TEMPERATURA_TABLA_C} °C), `
+			+ (termico
+				? `corregida a los ${Math.round(termico.temperaturaInteriorC)} °C que alcanza el interior del `
+					+ `armario según el balance térmico (factor ${factorTemperatura(termico.temperaturaInteriorC).toFixed(2)}) `
+				: `corregida a los ${opciones.temperaturaAmbienteC} °C de ambiente declarados `)
+			+ 'y por el número de circuitos que comparten cada canaleta (tabla B.52.17)'],
 	];
 	doc.setFont('helvetica', 'bold');
 	doc.setFontSize(10.5);

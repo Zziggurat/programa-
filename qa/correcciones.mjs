@@ -44,6 +44,7 @@ if (await page.isVisible('#modal-ayuda')) { await jsClick('btn-cerrar-ayuda'); a
 await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.evaluate(() => document.querySelectorAll('.tarjeta-ejemplo button')[2].click());
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 	await page.waitForTimeout(750); await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
 }
 
@@ -143,6 +144,7 @@ if (await page.isVisible('#modal-dialogo')) { await jsClick('dialogo-ok'); await
 await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.evaluate(() => document.querySelectorAll('.tarjeta-ejemplo button')[2].click());
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 	await page.waitForTimeout(750); await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
 }
 await jsClick('modo-trabajo'); await page.waitForTimeout(350);

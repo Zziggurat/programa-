@@ -173,37 +173,42 @@ const PLANTILLAS_BASE: PlantillaAparato[] = [
 		id: 'borna-1', nombre: 'Borna suelta 4 mm²', tipo: 'bornero', grupo: 'Conexión',
 		descripcion: 'Una borna de paso de 4 mm² (puente, reserva o señal suelta)',
 		fabricante: 'Phoenix Contact', referencia: 'UT 4', ancho: 8, alto: 56, color: '#9aa0a6',
-		bornes: [C('1')],
+		bornes: [{ id: '1', tipo: 'control', seccionMaxMm2: 6 }],
 	},
 	{
 		id: 'borna-2', nombre: 'Bornas 2 × 4 mm²', tipo: 'bornero', grupo: 'Conexión',
 		descripcion: 'Dos bornas de paso de 4 mm² (una señal de ida y vuelta)',
 		fabricante: 'Phoenix Contact', referencia: 'UT 4', ancho: 15, alto: 56, color: '#9aa0a6',
-		bornes: [C('1'), C('2')],
+		bornes: [1, 2].map((n) => ({ id: String(n), tipo: 'control' as const, seccionMaxMm2: 6 })),
 	},
 	{
 		id: 'borna-4', nombre: 'Bornas 4 × 4 mm²', tipo: 'bornero', grupo: 'Conexión',
 		descripcion: 'Cuatro bornas de paso de 4 mm²', fabricante: 'Phoenix Contact',
 		referencia: 'UT 4', ancho: 29, alto: 56, color: '#9aa0a6',
-		bornes: [C('1'), C('2'), C('3'), C('4')],
+		bornes: [1, 2, 3, 4].map((n) => ({ id: String(n), tipo: 'control' as const, seccionMaxMm2: 6 })),
 	},
 	{
 		id: 'borna-pe-1', nombre: 'Borna de tierra suelta', tipo: 'bornero', grupo: 'Conexión',
 		descripcion: 'Una borna de puesta a tierra (verde/amarillo), unida al riel',
 		fabricante: 'Phoenix Contact', referencia: 'USLKG 5', ancho: 9, alto: 56, color: '#7cb342',
-		bornes: [{ id: 'PE', tipo: 'PE' }],
+		bornes: [{ id: 'PE', tipo: 'PE', seccionMaxMm2: 6 }],
 	},
 	{
 		id: 'bornero-8', nombre: 'Bornero 8 bornas 4 mm²', tipo: 'bornero', grupo: 'Conexión',
 		descripcion: 'Bornero de paso 8 × UT 4 + tierra', fabricante: 'Phoenix Contact',
 		referencia: 'UT 4', ancho: 55, alto: 56, color: '#9aa0a6',
-		bornes: [C('1'), C('2'), C('3'), C('4'), C('5'), C('6'), C('7'), { id: 'PE', tipo: 'PE' }],
+		bornes: [
+			...[1, 2, 3, 4, 5, 6, 7].map((n) => ({ id: String(n), tipo: 'control' as const, seccionMaxMm2: 6 })),
+			{ id: 'PE', tipo: 'PE', seccionMaxMm2: 6 },
+		],
 	},
 	{
 		id: 'bornero-12', nombre: 'Bornero 12 bornas 2.5 mm²', tipo: 'bornero', grupo: 'Conexión',
 		descripcion: 'Bornero de paso 12 × UT 2,5', fabricante: 'Phoenix Contact',
 		referencia: 'UT 2,5', ancho: 62, alto: 50, color: '#9aa0a6',
-		bornes: Array.from({ length: 12 }, (_, i) => C(String(i + 1))),
+		// Una UT 2,5 admite hasta 4 mm² rígido: por encima NO entra en el tornillo, y eso se
+		// descubre con el tablero montado y el cable cortado. El DRC lo comprueba (R15).
+		bornes: Array.from({ length: 12 }, (_, i) => ({ id: String(i + 1), tipo: 'control' as const, seccionMaxMm2: 4 })),
 	},
 	{
 		id: 'disyuntor-2p-16', nombre: 'Disyuntor 2P C16', tipo: 'disyuntor', grupo: 'Protección',

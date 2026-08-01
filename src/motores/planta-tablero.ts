@@ -229,7 +229,9 @@ export function tableroDesdeEquipos(
 	cable(['g1', '0V'], ['a1', '24V COM'], 1, 'negro');
 	// La masa del controlador NO se deja al aire: va a la tierra de la fuente. Un DDC sin GND
 	// conectado lee las sondas con ruido y da lecturas que no son.
-	cable(['a1', 'GND'], ['g1', 'PE'], 1, 'verde/amarillo');
+	// La tierra del controlador va con la misma sección que la fase que alimenta la fuente: un
+	// conductor de protección no se adelgaza (IEC 60364-5-54), y el DRC lo comprueba.
+	cable(['a1', 'GND'], ['g1', 'PE'], 1.5, 'verde/amarillo');
 
 	/*
 	 * BORNERA DE COMUNES. Una borna admite dos hilos, así que los comunes de cuatro máquinas no

@@ -38,6 +38,7 @@ if (await page.isVisible('#modal-ayuda')) { await jsClick('btn-cerrar-ayuda'); a
 await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(700);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 	await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
 } else {
 	info('OJO: no se abrió la biblioteca de ejemplos; se sigue con el tablero que hubiera');
@@ -131,6 +132,7 @@ for (const [indice, nombre] of [[0, 'Arranque directo'], [1, 'Bomba con boya'], 
 	await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 	if (await page.isVisible('#modal-ejemplos')) {
 		await page.evaluate((i) => document.querySelectorAll('.tarjeta-ejemplo button')[i].click(), indice);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 		await page.waitForTimeout(700);
 		await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
 	}
@@ -191,6 +193,7 @@ if (await page.isVisible('#modal-dialogo')) { await jsClick('dialogo-ok'); await
 await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(700);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 	await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
 } else {
 	info('OJO: no se abrió la biblioteca de ejemplos; se sigue con el tablero que hubiera');
@@ -346,7 +349,10 @@ if (await page.isVisible('#modal-dialogo')) { await jsClick('dialogo-ok'); await
 const vacio = (await qa('proyecto')).dispositivos.length;
 await jsClick('btn-ejemplos'); await page.waitForTimeout(450);
 must('la plantilla aparece en la biblioteca', await page.isVisible('[data-plantilla="0"]'));
-await page.click('[data-plantilla="0"]'); await page.waitForTimeout(700);
+await page.click('[data-plantilla="0"]'); await page.waitForTimeout(400);
+// Abrir una plantilla reemplaza el tablero: desde que eso avisa, hay que aceptarlo.
+if (await page.isVisible('#modal-dialogo')) { await jsClick('dialogo-ok'); await page.waitForTimeout(600); }
+await page.waitForTimeout(300);
 const recuperado = await qa('proyecto');
 must('al abrir la plantilla vuelve el tablero entero', recuperado.dispositivos.length > vacio,
 	`${vacio} → ${recuperado.dispositivos.length}`);

@@ -134,6 +134,10 @@ function recalcular(): void {
 	hallazgos = verificarProyecto(proyecto, potenciales, {
 		longitudesMm: new Map(proyecto.conductores.map((c) => [c.id, longitudCableMm(c)])),
 		canaletas: ruteo.ocupaciones,
+		// Y por qué canaleta va cada uno: con eso la coordinación cuenta los circuitos que se
+		// calientan entre ellos y corrige la intensidad admisible, que dentro de un armario nunca
+		// es la de la tabla.
+		canaletasPorConductor: new Map(ruteo.rutas.map((r) => [r.conductorId, r.canaletasUsadas])),
 	});
 	// Dónde cae cada aparato en el esquema montado. Se calcula aquí, con el resto de la verdad
 	// del proyecto, para que el panel, el índice y el dossier citen SIEMPRE la posición real
@@ -3370,6 +3374,10 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 ($('archivo-abrir') as HTMLInputElement).onchange = async (e) => {
 	const archivo = (e.target as HTMLInputElement).files?.[0];
 	if (!archivo) return;
+	if (!(await puedoReemplazarElTablero('otro proyecto'))) {
+		(e.target as HTMLInputElement).value = '';
+		return;
+	}
 	try {
 		const { proyecto: abierto, arreglos } = cargarProyecto(await archivo.text());
 		capturar();
@@ -4186,6 +4194,22 @@ async function irAPlanta(): Promise<void> {
  * secciones—, no un tablero terminado que se recorra tal cual.
  */
 function abrirTableroDesdeLaPlanta(nuevo: Proyecto, resumen: string): void {
+	// El puente desde el plano también reemplaza el tablero: se pregunta igual que en todo lo
+	// demás que lo reemplaza. Se hace aquí dentro porque el visor ya se cerró al pulsar «Armar».
+	if (hayCambiosSinExportar) {
+		void (async () => {
+			if (await puedoReemplazarElTablero('el tablero armado desde el plano')) {
+				abrirTableroDesdeLaPlantaSinPreguntar(nuevo, resumen);
+			} else {
+				avisar('No se abrió el tablero del plano: el tuyo sigue como estaba.', 'info');
+			}
+		})();
+		return;
+	}
+	abrirTableroDesdeLaPlantaSinPreguntar(nuevo, resumen);
+}
+
+function abrirTableroDesdeLaPlantaSinPreguntar(nuevo: Proyecto, resumen: string): void {
 	capturar();
 	proyecto = nuevo;
 	numerarDispositivos(proyecto);
@@ -4992,6 +5016,24 @@ $('modal-dialogo').addEventListener('keydown', (e) => {
 /* ------------------- Biblioteca de tableros de ejemplo (para estudiar) ------------------- */
 
 /** Abre un tablero de ejemplo y ofrece su explicación. */
+/**
+ * ¿Se puede tirar lo que hay en pantalla?
+ *
+ * El botón «Nuevo» ya preguntaba, pero abrir un ejemplo o una plantilla NO: reemplazaban el
+ * tablero sin decir nada y el guardado automático pisaba la única copia acto seguido. O sea que
+ * ir a mirar cómo era el estrella-triángulo, a media UMA, costaba la mañana. Ctrl+Z lo recupera
+ * mientras la pestaña siga abierta; al cerrarla, no.
+ *
+ * Solo pregunta si hay trabajo sin descargar: en un tablero recién abierto no estorba.
+ */
+async function puedoReemplazarElTablero(que: string): Promise<boolean> {
+	if (!hayCambiosSinExportar) return true;
+	return confirmar(
+		`Tienes cambios sin guardar en «${proyecto.nombre}». Si abres ${que} se reemplaza lo que hay.`,
+		{ ok: 'Abrir de todas formas', peligro: true },
+	);
+}
+
 function abrirEjemplo(ej: EjemploTablero): void {
 	capturar();
 	proyecto = ej.crear();
@@ -5035,14 +5077,18 @@ function abrirBibliotecaEjemplos(): void {
 		const b = document.createElement('button');
 		b.className = 'boton primario';
 		b.textContent = 'Abrir y estudiar';
-		b.onclick = () => abrirEjemplo(ej);
+		b.onclick = () => { void (async () => {
+			if (await puedoReemplazarElTablero('este ejemplo')) abrirEjemplo(ej);
+		})(); };
 		div.appendChild(b);
 		cont.appendChild(div);
 	}
 	// Tras los ejemplos, las plantillas que ha guardado el propio usuario.
 	cont.insertAdjacentHTML('beforeend', pintarPlantillasPropias());
 	for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-plantilla]')) {
-		b.onclick = () => abrirPlantilla(Number(b.dataset.plantilla));
+		b.onclick = () => { void (async () => {
+			if (await puedoReemplazarElTablero('esta plantilla')) abrirPlantilla(Number(b.dataset.plantilla));
+		})(); };
 	}
 	for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-borrar-plantilla]')) {
 		b.onclick = () => { void borrarPlantilla(Number(b.dataset.borrarPlantilla)); };

@@ -48,6 +48,7 @@ async function abrirEjemplo(indice) {
 	await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 	if (await page.isVisible('#modal-ejemplos')) {
 		await page.locator('.tarjeta-ejemplo button').nth(indice).click(); await page.waitForTimeout(650);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 		await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(150);
 	}
 	// La guía de primera visita se queda por delante del lienzo: se cierra, como haría cualquiera.

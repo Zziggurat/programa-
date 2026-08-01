@@ -46,6 +46,7 @@ await page.goto(url, { waitUntil: 'networkidle' }); await page.waitForTimeout(60
 await click('btn-cerrar-ayuda'); await page.waitForTimeout(150);
 await click('btn-empezar-ejemplo'); await page.waitForTimeout(300);
 await page.locator('.tarjeta-ejemplo button').nth(0).click(); await page.waitForTimeout(700);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 await click('btn-cerrar-explicacion'); await page.waitForTimeout(200);
 
 console.log('--- 1. El PDF se ve ANTES de descargarlo ---');

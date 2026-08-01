@@ -81,6 +81,7 @@ await jsClick('btn-cerrar-ayuda'); await page.waitForTimeout(120);
 console.log('\n--- 1. El dossier de un tablero real ---');
 await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(400);
 await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(800);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
 
 const p = await qa('proyecto');

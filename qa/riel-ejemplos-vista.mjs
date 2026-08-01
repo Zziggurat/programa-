@@ -45,6 +45,7 @@ must('se abre la biblioteca', await visible('#modal-ejemplos'));
 const tarjetas = await page.locator('.tarjeta-ejemplo').count();
 must('hay varios tableros para estudiar', tarjetas >= 3, `${tarjetas}`);
 await page.locator('.tarjeta-ejemplo button').first().click(); await page.waitForTimeout(700);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 must('al abrirlo se explica qué hace', await visible('#modal-explicacion'));
 const texto = await page.textContent('#texto-explicacion');
 must('la explicación trae «cómo funciona» paso a paso', /Cómo funciona/i.test(texto) && /Qué hace/i.test(texto));

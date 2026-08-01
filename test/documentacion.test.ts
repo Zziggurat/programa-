@@ -63,7 +63,15 @@ test('TODOS los ejemplos de la biblioteca pasan el DRC sin errores', () => {
 		numerarDispositivos(p);
 		const potenciales = calcularPotenciales(p);
 		numerarConductores(p, potenciales);
-		const errores = verificarProyecto(p, potenciales).filter((h) => h.severidad === 'error');
+		// Se verifica CON el ruteo, que es como lo hace el programa: sin las longitudes y sin saber
+		// qué comparte canaleta, la coordinación no puede corregir por agrupamiento ni reconocer una
+		// derivación corta, y comprobaría los ejemplos en unas condiciones que no son las suyas.
+		const ruteo = rutearConductores(p);
+		const errores = verificarProyecto(p, potenciales, {
+			longitudesMm: new Map(ruteo.rutas.map((r) => [r.conductorId, r.longitudMm])),
+			canaletas: ruteo.ocupaciones,
+			canaletasPorConductor: new Map(ruteo.rutas.map((r) => [r.conductorId, r.canaletasUsadas])),
+		}).filter((h) => h.severidad === 'error');
 		assert.deepEqual(errores.map((x) => x.mensaje), [], `el ejemplo «${e.id}» tiene errores de DRC`);
 	}
 });

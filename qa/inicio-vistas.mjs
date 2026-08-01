@@ -66,6 +66,7 @@ must('y la ventana de inicio se aparta', !(await page.isVisible('#inicio')));
 
 // Cargar un tablero con aparatos de fondos MUY distintos, que es donde se nota el alzado.
 await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(900);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 await click('btn-cerrar-explicacion'); await page.waitForTimeout(200);
 const aparatos = await page.evaluate(() => window.qa.proyecto().dispositivos.map((d) => d.id));
 must('el ejemplo trae aparatos para medir', aparatos.length > 4, `${aparatos.length}`);
@@ -245,6 +246,7 @@ await click('btn-nuevo'); await page.waitForTimeout(200);
 if (await page.isVisible('#modal-dialogo')) { await click('dialogo-ok'); await page.waitForTimeout(400); }
 await click('btn-empezar-ejemplo'); await page.waitForTimeout(400);
 await page.locator('.tarjeta-ejemplo button').nth(0).click(); await page.waitForTimeout(1000);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 await click('btn-cerrar-explicacion'); await page.waitForTimeout(300);
 await click('modo-trabajo'); await page.waitForTimeout(400);
 await click('btn-centrar'); await page.waitForTimeout(700);

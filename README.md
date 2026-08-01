@@ -8,14 +8,15 @@ totalmente personalizable.
 ## Qué hace ya (núcleo v0.1)
 
 El núcleo es una librería TypeScript **sin interfaz gráfica**, con un modelo de datos JSON y
-dieciocho motores independientes y testeados:
+diecinueve motores independientes y testeados:
 
 | Motor | Archivo | Qué resuelve |
 |---|---|---|
 | Potenciales | `src/motores/potenciales.ts` | Clases de equivalencia de bornes conectados (union-find): la base de todo lo demás. Los **polos de un aparato de corte no unen**: la entrada y la salida de un automático no son el mismo hilo, y por eso el número de conductor cambia al pasar por él |
 | Numeración IEC | `src/motores/numeracion.ts` | Designaciones IEC 81346 (`=función+ubicación-K1`) con plantillas, secuencias y congelamiento; numeración de conductores por potencial |
 | Referencias cruzadas | `src/motores/referencias.ts` | Bobina ↔ contactos con la posición `hoja.columna` que sale del esquema realmente montado, índice de dispositivos |
-| DRC | `src/motores/drc.ts` | 14 reglas de detección de errores eléctricos: cortocircuitos, designaciones duplicadas, exceso de conductores por borne, conflictos de tensión, esclavos huérfanos, coordinación protección↔sección, caída de tensión, puesta a tierra, llenado de canaleta, **poder de corte frente a la Icc presunta**, **calentamiento del armario**… |
+| Cálculo eléctrico | `src/motores/electrico.ts` | La física de los conductores: intensidad admisible (IEC 60364-5-52, cobre PVC, instalación B1) **con sus dos correcciones**, que son las que separan la tabla del tablero — por **temperatura ambiente** (a 50 °C dentro del armario un cable admite el 71 % de lo que dice la tabla) y por **agrupamiento** (nueve circuitos en la misma canaleta, el 50 %); caída de tensión, sección mínima, sección del PE y ocupación de canaleta |
+| DRC | `src/motores/drc.ts` | 16 reglas de detección de errores eléctricos: cortocircuitos, designaciones duplicadas, exceso de conductores por borne, conflictos de tensión, esclavos huérfanos, coordinación protección↔sección, caída de tensión, puesta a tierra, llenado de canaleta, **poder de corte frente a la Icc presunta**, **calentamiento del armario**, **sección que no cabe en la borna** y **tierra más fina que su fase**… La coordinación protección↔sección se verifica **en las condiciones del tablero**, no en las de la tabla: corrige por la temperatura que alcanza el interior del armario y por los circuitos que comparten canaleta, y reconoce la **derivación corta** que termina en su propia protección (IEC 60364-4-43 §434.2) |
 | Listas de bornes | `src/motores/bornes.ts` | Plan de bornero de taller: borna, lado interno/externo, puentes, número de conductor |
 | Ruteo de cables | `src/motores/ruteo.ts` | Ruteo automático por canaletas (Dijkstra sobre el grafo de ductos), longitudes reales en mm con reserva, ocupación de canaletas |
 | Sincronización | `src/motores/sincronizacion.ts` | Esquema ↔ placa de montaje: faltantes, sobrantes, solapes, fuera de placa |
@@ -237,6 +238,23 @@ Designer, conectado en vivo con los motores del núcleo:
   la desconexión aguanta al soltarla, y la cuenta atrás se ve correr en pantalla. El **reloj se
   puede acelerar** a ×5 o ×20: un retardo de 8 s se prueba en menos de un segundo y lo que se ve
   es exactamente lo mismo.
+
+- **Nada reemplaza tu tablero sin preguntar.** «Nuevo» ya avisaba, pero abrir un ejemplo, una
+  plantilla, un archivo de proyecto o el tablero armado desde el plano lo hacían en silencio, y el
+  guardado automático pisaba la única copia acto seguido: ir a mirar cómo era el estrella-triángulo
+  a media UMA costaba la mañana. Ahora los cuatro preguntan, y solo cuando hay trabajo sin guardar.
+
+- **⚠️ La verificación del cable se hace en las condiciones del tablero, no en las de la tabla.**
+  La intensidad admisible de catálogo es a 30 °C y con un solo circuito, y dentro de un armario
+  nunca se dan las dos cosas. Ahora la coordinación protección↔sección corrige por la **temperatura
+  que alcanza el interior** (la del balance térmico, no la de fuera) y por los **circuitos que
+  comparten canaleta**, y lo dice en el propio mensaje: «-Q1 es de 16 A pero el conductor 14 es de
+  4 mm² y ahí admite 13,0 A (50 °C dentro del armario y 3 circuitos en la canaleta)». Para un
+  tablero de cubierta la diferencia llega al 60 %, siempre hacia el lado peligroso. También
+  reconoce la **derivación corta** que acaba en su propia protección (IEC 60364-4-43 §434.2), que
+  es la toma del circuito de mando y que no hay que engordar. Los cinco tableros de ejemplo
+  estaban dibujados con la tabla a 30 °C y se han corregido: **la fuerza del estrella-triángulo y
+  de la UMA pasa de 4 a 6 mm², y el mando de la bomba de 1 a 1,5**.
 
 - **🧠 El controlador ejecuta un programa de verdad.** Hasta ahora un PLC en la placa era un
   adorno: sus salidas solo se encendían forzándolas a mano, y un tablero de clima es justo lo

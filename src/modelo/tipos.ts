@@ -59,6 +59,14 @@ export interface Borne {
 	obligatorio?: boolean;
 	/** Máximo de conductores admitidos en este punto (por defecto 2). */
 	maxConductores?: number;
+	/**
+	 * Sección máxima (mm²) que admite el tornillo de este borne, de la ficha del aparato.
+	 *
+	 * Cuenta tanto como el número de hilos: un 6 mm² no entra en una borna UT 2,5 por mucho que
+	 * el cálculo diga que hace falta un 6, y eso se descubre con el tablero ya montado y el cable
+	 * ya cortado. Si no se declara, el DRC no supone nada.
+	 */
+	seccionMaxMm2?: number;
 	/** Posición relativa (0..1) del pin sobre la imagen de un dispositivo de referencia. */
 	u?: number;
 	v?: number;

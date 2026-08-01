@@ -249,11 +249,11 @@ function bombaConBoya(): Proyecto {
 		cable(['red', 'PE'], ['x1', 'PE'], 4, 'verde/amarillo'),
 		cable(['x1', 'PE'], ['m1', 'PE'], 2.5, 'verde/amarillo'),
 		// Mando: la boya, en serie con la bobina, decide si la bomba anda
-		cable(['q2', '2'], ['x1', '3'], 1, 'marrón'),
-		cable(['x1', '3'], ['b1', '1'], 1, 'marrón'),
-		cable(['b1', '2'], ['x1', '4'], 1, 'negro'),
-		cable(['x1', '4'], ['km1', 'A1'], 1, 'negro'),
-		cable(['km1', 'A2'], ['q2', '4'], 1, 'azul'),
+		cable(['q2', '2'], ['x1', '3'], 1.5, 'marrón'),
+		cable(['x1', '3'], ['b1', '1'], 1.5, 'marrón'),
+		cable(['b1', '2'], ['x1', '4'], 1.5, 'negro'),
+		cable(['x1', '4'], ['km1', 'A1'], 1.5, 'negro'),
+		cable(['km1', 'A2'], ['q2', '4'], 1.5, 'azul'),
 	];
 
 	p.gabinete = {
@@ -376,43 +376,43 @@ function estrellaTriangulo(): Proyecto {
 
 	p.conductores = [
 		// --- Fuerza: red → automático → térmico → contactores → bornero → motor ---
-		cable(['red', 'L1'], ['q1', '1'], 4, 'marrón'),
-		cable(['red', 'L2'], ['q1', '3'], 4, 'negro'),
-		cable(['red', 'L3'], ['q1', '5'], 4, 'gris'),
-		cable(['q1', '2'], ['f2', '1'], 4, 'marrón'),
-		cable(['q1', '4'], ['f2', '3'], 4, 'negro'),
-		cable(['q1', '6'], ['f2', '5'], 4, 'gris'),
+		cable(['red', 'L1'], ['q1', '1'], 6, 'marrón'),
+		cable(['red', 'L2'], ['q1', '3'], 6, 'negro'),
+		cable(['red', 'L3'], ['q1', '5'], 6, 'gris'),
+		cable(['q1', '2'], ['f2', '1'], 6, 'marrón'),
+		cable(['q1', '4'], ['f2', '3'], 6, 'negro'),
+		cable(['q1', '6'], ['f2', '5'], 6, 'gris'),
 		// La línea sale del térmico y se reparte entre el contactor de línea y el de triángulo.
-		cable(['f2', '2'], ['km1', '1/L1'], 4, 'marrón'),
-		cable(['f2', '4'], ['km1', '3/L2'], 4, 'negro'),
-		cable(['f2', '6'], ['km1', '5/L3'], 4, 'gris'),
-		cable(['km1', '1/L1'], ['km3', '1/L1'], 4, 'marrón'),
-		cable(['km1', '3/L2'], ['km3', '3/L2'], 4, 'negro'),
-		cable(['km1', '5/L3'], ['km3', '5/L3'], 4, 'gris'),
+		cable(['f2', '2'], ['km1', '1/L1'], 6, 'marrón'),
+		cable(['f2', '4'], ['km1', '3/L2'], 6, 'negro'),
+		cable(['f2', '6'], ['km1', '5/L3'], 6, 'gris'),
+		cable(['km1', '1/L1'], ['km3', '1/L1'], 6, 'marrón'),
+		cable(['km1', '3/L2'], ['km3', '3/L2'], 6, 'negro'),
+		cable(['km1', '5/L3'], ['km3', '5/L3'], 6, 'gris'),
 		// KM1 alimenta las CABEZAS de bobinado U1 V1 W1.
-		cable(['km1', '2/T1'], ['x1', 'U1'], 4, 'marrón'),
-		cable(['km1', '4/T2'], ['x1', 'V1'], 4, 'negro'),
-		cable(['km1', '6/T3'], ['x1', 'W1'], 4, 'gris'),
+		cable(['km1', '2/T1'], ['x1', 'U1'], 6, 'marrón'),
+		cable(['km1', '4/T2'], ['x1', 'V1'], 6, 'negro'),
+		cable(['km1', '6/T3'], ['x1', 'W1'], 6, 'gris'),
 		// KM3 alimenta las COLAS U2 V2 W2, pero CRUZADAS: es eso lo que forma el triángulo.
-		cable(['km3', '2/T1'], ['x1', 'V2'], 4, 'marrón'),
-		cable(['km3', '4/T2'], ['x1', 'W2'], 4, 'negro'),
-		cable(['km3', '6/T3'], ['x1', 'U2'], 4, 'gris'),
+		cable(['km3', '2/T1'], ['x1', 'V2'], 6, 'marrón'),
+		cable(['km3', '4/T2'], ['x1', 'W2'], 6, 'negro'),
+		cable(['km3', '6/T3'], ['x1', 'U2'], 6, 'gris'),
 		// KM2 junta las tres colas en un punto: eso es la estrella. Se cuelga de las salidas de
 		// KM3 —que son las mismas colas— y no de las bornas: en una borna no caben tres hilos.
-		cable(['km3', '6/T3'], ['km2', '1/L1'], 4, 'marrón'),   // el nudo U2
-		cable(['km3', '2/T1'], ['km2', '3/L2'], 4, 'negro'),    // el nudo V2
-		cable(['km3', '4/T2'], ['km2', '5/L3'], 4, 'gris'),     // el nudo W2
-		cable(['km2', '2/T1'], ['km2', '4/T2'], 4, 'azul'),   // puente de estrella
-		cable(['km2', '4/T2'], ['km2', '6/T3'], 4, 'azul'),
+		cable(['km3', '6/T3'], ['km2', '1/L1'], 6, 'marrón'),   // el nudo U2
+		cable(['km3', '2/T1'], ['km2', '3/L2'], 6, 'negro'),    // el nudo V2
+		cable(['km3', '4/T2'], ['km2', '5/L3'], 6, 'gris'),     // el nudo W2
+		cable(['km2', '2/T1'], ['km2', '4/T2'], 6, 'azul'),   // puente de estrella
+		cable(['km2', '4/T2'], ['km2', '6/T3'], 6, 'azul'),
 		// Los seis hilos hasta el motor, más la tierra.
-		cable(['x1', 'U1'], ['m1', 'U1'], 4, 'marrón'),
-		cable(['x1', 'V1'], ['m1', 'V1'], 4, 'negro'),
-		cable(['x1', 'W1'], ['m1', 'W1'], 4, 'gris'),
-		cable(['x1', 'U2'], ['m1', 'U2'], 4, 'marrón'),
-		cable(['x1', 'V2'], ['m1', 'V2'], 4, 'negro'),
-		cable(['x1', 'W2'], ['m1', 'W2'], 4, 'gris'),
-		cable(['red', 'PE'], ['x1', 'PE'], 4, 'verde/amarillo'),
-		cable(['x1', 'PE'], ['m1', 'PE'], 4, 'verde/amarillo'),
+		cable(['x1', 'U1'], ['m1', 'U1'], 6, 'marrón'),
+		cable(['x1', 'V1'], ['m1', 'V1'], 6, 'negro'),
+		cable(['x1', 'W1'], ['m1', 'W1'], 6, 'gris'),
+		cable(['x1', 'U2'], ['m1', 'U2'], 6, 'marrón'),
+		cable(['x1', 'V2'], ['m1', 'V2'], 6, 'negro'),
+		cable(['x1', 'W2'], ['m1', 'W2'], 6, 'gris'),
+		cable(['red', 'PE'], ['x1', 'PE'], 6, 'verde/amarillo'),
+		cable(['x1', 'PE'], ['m1', 'PE'], 6, 'verde/amarillo'),
 		// --- Mando 220 V: fase → fusible → paro → marcha → bobinas → térmico → neutro ---
 		// El mando se saca de la SALIDA del automático, no de la acometida pelada: así el tramo
 		// hasta el fusible ya va protegido, y de F1 para abajo protege el fusible de 2 A.
@@ -651,25 +651,25 @@ function climatizadorCubierta(): Proyecto {
 
 	p.conductores = [
 		// --- Fuerza: red → automático → contactor → térmico → bornero → ventilador ---
-		cable(['red', 'L1'], ['q1', '1'], 4, 'marrón'),
-		cable(['red', 'L2'], ['q1', '3'], 4, 'negro'),
-		cable(['red', 'L3'], ['q1', '5'], 4, 'gris'),
-		cable(['q1', '2'], ['km1', '1/L1'], 4, 'marrón'),
-		cable(['q1', '4'], ['km1', '3/L2'], 4, 'negro'),
-		cable(['q1', '6'], ['km1', '5/L3'], 4, 'gris'),
-		cable(['km1', '2/T1'], ['f2', '1'], 4, 'marrón'),
-		cable(['km1', '4/T2'], ['f2', '3'], 4, 'negro'),
-		cable(['km1', '6/T3'], ['f2', '5'], 4, 'gris'),
-		cable(['f2', '2'], ['x1', 'U'], 4, 'marrón'),
-		cable(['f2', '4'], ['x1', 'V'], 4, 'negro'),
-		cable(['f2', '6'], ['x1', 'W'], 4, 'gris'),
-		cable(['x1', 'U'], ['m1', 'U'], 4, 'marrón'),
-		cable(['x1', 'V'], ['m1', 'V'], 4, 'negro'),
-		cable(['x1', 'W'], ['m1', 'W'], 4, 'gris'),
+		cable(['red', 'L1'], ['q1', '1'], 6, 'marrón'),
+		cable(['red', 'L2'], ['q1', '3'], 6, 'negro'),
+		cable(['red', 'L3'], ['q1', '5'], 6, 'gris'),
+		cable(['q1', '2'], ['km1', '1/L1'], 6, 'marrón'),
+		cable(['q1', '4'], ['km1', '3/L2'], 6, 'negro'),
+		cable(['q1', '6'], ['km1', '5/L3'], 6, 'gris'),
+		cable(['km1', '2/T1'], ['f2', '1'], 6, 'marrón'),
+		cable(['km1', '4/T2'], ['f2', '3'], 6, 'negro'),
+		cable(['km1', '6/T3'], ['f2', '5'], 6, 'gris'),
+		cable(['f2', '2'], ['x1', 'U'], 6, 'marrón'),
+		cable(['f2', '4'], ['x1', 'V'], 6, 'negro'),
+		cable(['f2', '6'], ['x1', 'W'], 6, 'gris'),
+		cable(['x1', 'U'], ['m1', 'U'], 6, 'marrón'),
+		cable(['x1', 'V'], ['m1', 'V'], 6, 'negro'),
+		cable(['x1', 'W'], ['m1', 'W'], 6, 'gris'),
 		// --- Tierras: todo cuelga de la bornera de tierra ---
-		cable(['red', 'PE'], ['x0', 'PE1'], 4, 'verde/amarillo'),
-		cable(['x0', 'PE2'], ['x1', 'PE'], 4, 'verde/amarillo'),
-		cable(['x1', 'PE'], ['m1', 'PE'], 4, 'verde/amarillo'),
+		cable(['red', 'PE'], ['x0', 'PE1'], 6, 'verde/amarillo'),
+		cable(['x0', 'PE2'], ['x1', 'PE'], 6, 'verde/amarillo'),
+		cable(['x1', 'PE'], ['m1', 'PE'], 6, 'verde/amarillo'),
 		cable(['x0', 'PE3'], ['g1', 'PE'], 1.5, 'verde/amarillo'),
 		cable(['x0', 'PE4'], ['a1', 'PE'], 1.5, 'verde/amarillo'),
 		// --- Mando 220 V: automático de mando → fuente, y bobina del contactor ---

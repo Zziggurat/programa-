@@ -45,6 +45,7 @@ await click('btn-cerrar-ayuda'); await page.waitForTimeout(200);
 // El arranque directo de motor: el ejemplo con enclavamiento, que es el caso interesante.
 await click('btn-empezar-ejemplo'); await page.waitForTimeout(400);
 await page.locator('.tarjeta-ejemplo button').nth(0).click(); await page.waitForTimeout(1000);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 await click('btn-cerrar-explicacion'); await page.waitForTimeout(300);
 
 console.log('--- 1. Se puede energizar ---');

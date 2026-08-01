@@ -91,6 +91,7 @@ must('está la barra con sus herramientas', await page.evaluate(
 console.log('\n--- 3. Se puede trabajar con él ---');
 await page.click('#btn-empezar-ejemplo'); await page.waitForTimeout(400);
 await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(1200);
+if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 await cerrar('btn-cerrar-explicacion'); await page.waitForTimeout(300);
 
 const aparatos = await page.evaluate(() => document.querySelectorAll('#lista-dispositivos li').length);
