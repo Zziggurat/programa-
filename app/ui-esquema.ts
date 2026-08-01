@@ -53,12 +53,9 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	const proyecto = ctx.proyecto;
 	const { capturar, marcarSucio, actualizarTodo, seleccionar, nombreArchivo } = ctx;
 
-	/**
-	 * El esquema eléctrico: el plano de mando y potencia que se entrega al cliente y con el que
-	 * trabaja el electricista. Se monta desde el mismo modelo que el 3D —no hay dos verdades— y
-	 * se muestra como una capa por encima del lienzo, igual que el modo Visualización.
-	 */
+	/** La capa está delante del lienzo (como el modo Visualización, con el que no puede convivir). */
 	let esquemaAbierto = false;
+	/** Las hojas montadas del esquema abierto: se rehacen enteras en cada refresco. */
 	let hojasEsquema: HojaEsq[] = [];
 	let hojaActual = 0;
 	let zoomEsquema = 1;
@@ -136,7 +133,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			const xmm = ((cx - caja.left) / caja.width) * hoja.anchoMm;
 			const ymm = ((cy - caja.top) / caja.height) * hoja.altoMm;
 			const paso = anchoColumna(HOJA_A3, hoja.columnas);
-	        const enHoja = Math.floor((xmm - MARGEN.izq) / paso);
+			const enHoja = Math.floor((xmm - MARGEN.izq) / paso);
 			// La columna es global: la hoja 2 empieza donde acaba la 1, y por eso arrastrar más allá
 			// del borde derecho pasa el aparato a la hoja siguiente.
 			const base = (hoja.numero - 1) * hoja.columnas;
