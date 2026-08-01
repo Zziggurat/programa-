@@ -246,6 +246,21 @@ function deshacer(): void {
 	trasCambiarProyecto();
 }
 
+/**
+ * Tira la última `capturar()` si la acción NO llegó a cambiar nada.
+ *
+ * Alinear lo que ya está alineado, o repartir lo que ya está repartido, dejaba igualmente su foto
+ * en la pila, y el siguiente Ctrl+Z se la comía sin que se moviera nada en pantalla: parecía que
+ * deshacer estaba roto. Se quita aquí, en el sitio donde se sabe si hubo cambio o no, y NO en
+ * `deshacer()`: saltando fotos al deshacer se encadenarían varias acciones seguidas y una sola
+ * pulsación podría llevarse por delante el proyecto entero.
+ */
+function descartarCapturaSiIgual(): void {
+	if (pila.length === 0 || pila[pila.length - 1] !== JSON.stringify(proyecto)) return;
+	pila.pop();
+	actualizarBotonesHistorial();
+}
+
 function rehacer(): void {
 	if (rehacerPila.length === 0) return;
 	pila.push(JSON.stringify(proyecto));
@@ -1940,6 +1955,7 @@ function alinearSeleccionados(como: Alineacion): void {
 		avisar('Así quedarían aparatos encimados: no se ha alineado.', 'error');
 		return;
 	}
+	descartarCapturaSiIgual();
 	actualizarTodo();
 	avisar(`${cols.length} aparatos alineados`, 'ok');
 }
@@ -3287,6 +3303,32 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 	avisar('Proyecto descargado', 'ok');
 };
 
+/**
+ * Dónde cae una imagen de referencia recién subida.
+ *
+ * En el centro de la placa si está libre —que es donde uno espera verla— y, si no, en el hueco
+ * libre más cercano al centro. Antes caía SIEMPRE en el centro exacto, que es justo donde está el
+ * aparato: la foto tapaba media placa y, peor, sus puntos de conexión quedaban por detrás de los
+ * terminales de lo que hubiera debajo, o sea que no se podían pinchar para cablearlos.
+ */
+function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; y: number } {
+	const g = proyecto.gabinete!;
+	const cx = Math.max(0, Math.round((g.ancho - ancho) / 2));
+	const cy = Math.max(0, Math.round((g.alto - alto) / 2));
+	if (!solapaCon(cx, cy, ancho, alto, id)) return { x: cx, y: cy };
+	let mejor: { x: number; y: number; d: number } | undefined;
+	for (let y = 0; y + alto <= g.alto; y += 10) {
+		for (let x = 0; x + ancho <= g.ancho; x += 10) {
+			if (solapaCon(x, y, ancho, alto, id)) continue;
+			const d = Math.hypot(x - cx, y - cy);
+			if (!mejor || d < mejor.d) mejor = { x, y, d };
+		}
+	}
+	// Si la foto es más grande que cualquier hueco, al centro: es una decisión de quien la sube,
+	// y siempre puede moverla o achicarla.
+	return mejor ? { x: mejor.x, y: mejor.y } : { x: cx, y: cy };
+}
+
 // Imagen de referencia: se importa como dispositivo con imagen (data URL) y colocación.
 ($('btn-imagen') as HTMLButtonElement).onclick = () => ($('archivo-imagen') as HTMLInputElement).click();
 ($('archivo-imagen') as HTMLInputElement).onchange = (e) => {
@@ -3310,8 +3352,7 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 			});
 			g.colocaciones.push({
 				dispositivoId: id,
-				x: Math.max(0, Math.round((g.ancho - ancho) / 2)),
-				y: Math.max(0, Math.round((g.alto - alto) / 2)),
+				...huecoParaImagen(ancho, alto, id),
 				ancho, alto,
 				z: Z_IMAGEN_FRENTE,   // delante del riel desde el primer momento
 			});
@@ -5452,8 +5493,17 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			const r = renderer.domElement.getBoundingClientRect();
 			const centro = new THREE.Vector3().setFromMatrixPosition(esfera.matrixWorld);
 			const radio = 4.2 * (esfera.scale.x || 1);
-			// Se prueba el centro y, si un cable lo cruza, unos puntos alrededor del propio punto.
-			const alrededor: [number, number][] = [[0, 0], [0, -0.7], [0, 0.7], [-0.7, 0], [0.7, 0], [-0.5, -0.5], [0.5, 0.5]];
+			// Se prueba el centro y, si algo lo cruza, una corona de puntos alrededor. Con solo siete
+			// muestras bastaba un cable cruzando en diagonal para que la sonda diera el terminal por
+			// intocable cuando a ojo se pincha sin problema; con dos anillos de ocho se agota de
+			// verdad el sitio disponible antes de decir que no.
+			const alrededor: [number, number][] = [[0, 0]];
+			for (const radio of [0.55, 0.85]) {
+				for (let i = 0; i < 8; i++) {
+					const a = (i * Math.PI) / 4;
+					alrededor.push([Math.cos(a) * radio, Math.sin(a) * radio]);
+				}
+			}
 			for (const [dx, dy] of alrededor) {
 				const v = aPantalla(new THREE.Vector3(centro.x + dx * radio, centro.y + dy * radio, centro.z));
 				const p = { x: Math.round(v.x), y: Math.round(v.y) };
@@ -5464,8 +5514,13 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				const cable = raycaster.intersectObjects(escenario.cables.children, true)
 					.find((h) => h.object.userData.tuboVisible);
 				if (cable && cable.distance < b.distance) continue; // hay un cable por delante
+				// Un aparato NO puede tapar su propio terminal: el terminal va dibujado sobre él, y
+				// en una imagen de referencia además está justo en su plano, así que la lámina
+				// salía «por delante» de sus propios puntos por unas centésimas y la prueba
+				// concluía que no se podía pinchar ninguno. Lo que sí tapa es OTRO aparato.
 				const aparato = raycaster.intersectObjects(escenario.dispositivos.children, true)
-					.find((h) => h.object.userData.dispositivoId);
+					.find((h) => h.object.userData.dispositivoId
+						&& h.object.userData.dispositivoId !== dispositivoId);
 				if (aparato && aparato.distance < b.distance) continue;
 				return p;
 			}

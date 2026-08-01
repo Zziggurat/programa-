@@ -39,7 +39,10 @@ await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(700);
 	await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+} else {
+	info('OJO: no se abrió la biblioteca de ejemplos; se sigue con el tablero que hubiera');
 }
+info(`proyecto de partida: «${(await qa('proyecto')).nombre}»`);
 
 /* ============================ 1. La barra cabe en pantalla ============================ */
 console.log('\n--- 1. La barra superior no se desborda ---');
@@ -96,7 +99,16 @@ const fuera = await page.evaluate(() => {
 must('ningún símbolo se sale de la hoja', fuera === 0, `${fuera} fuera`);
 
 // Pinchar un símbolo selecciona ese aparato en todo el programa.
-await page.evaluate(() => document.querySelector('#esquema-hoja [data-dispositivo]').dispatchEvent(new MouseEvent('click', { bubbles: true })));
+// Se manda un pointerdown + pointerup, que es lo que hace un ratón de verdad ANTES del click:
+// desde que el símbolo se puede arrastrar para colocarlo, quien escucha es «pointerdown», y un
+// «click» sintético a secas no toca nada (un usuario nunca genera un click sin pointerdown).
+await page.evaluate(() => {
+	const g = document.querySelector('#esquema-hoja [data-dispositivo]');
+	const r = g.getBoundingClientRect();
+	const opciones = { bubbles: true, button: 0, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
+	g.dispatchEvent(new PointerEvent('pointerdown', opciones));
+	window.dispatchEvent(new PointerEvent('pointerup', opciones));
+});
 await page.waitForTimeout(400);
 const selTrasClic = await qa('seleccion');
 must('pinchar un símbolo selecciona ese aparato', selTrasClic?.tipo === 'dispositivo', JSON.stringify(selTrasClic));
@@ -180,7 +192,10 @@ await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(700);
 	await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+} else {
+	info('OJO: no se abrió la biblioteca de ejemplos; se sigue con el tablero que hubiera');
 }
+info(`proyecto de partida: «${(await qa('proyecto')).nombre}»`);
 await jsClick('modo-editor'); await page.waitForTimeout(300);
 
 const p0 = await qa('proyecto');
@@ -197,6 +212,17 @@ await page.evaluate((ids) => {
 }, colocados.map((c) => c.dispositivoId));
 await page.waitForTimeout(350);
 must('el panel pasa a modo grupo', /3 aparatos seleccionados/.test(await page.textContent('#panel-der')));
+
+// Se descoloca uno a propósito: si los tres ya estuvieran a la misma altura, alinear no
+// cambiaría nada y no habría nada que deshacer después (el Ctrl+Z se iría a la acción anterior,
+// que es abrir el ejemplo, y se llevaría el tablero por delante).
+await page.evaluate((id) => {
+	const p = window.qa.proyecto();
+	const c = p.gabinete.colocaciones.find((x) => x.dispositivoId === id);
+	if (c) c.y += 25;
+	window.qa.recalcular?.();
+}, colocados[1].dispositivoId);
+await page.waitForTimeout(300);
 
 // Alinear arriba: todos deben acabar a la misma Y.
 await page.click('[data-alinear="arriba"]'); await page.waitForTimeout(450);
@@ -228,20 +254,38 @@ must('repartir deja la misma separación entre aparatos', Math.abs(huecos[0] - h
 
 // Ctrl+Z deshace el alineado completo.
 await page.keyboard.press('Control+z'); await page.waitForTimeout(400);
-must('Ctrl+Z deshace el alineado', JSON.stringify((await qa('proyecto')).gabinete.colocaciones) !== JSON.stringify(rep.gabinete.colocaciones));
+const trasZ = await qa('proyecto');
+info(`tras Ctrl+Z: «${trasZ.nombre}» con ${trasZ.dispositivos.length} aparatos y `
+	+ `${trasZ.gabinete.colocaciones.length} colocaciones (antes: «${rep.nombre}» con `
+	+ `${rep.dispositivos.length} y ${rep.gabinete.colocaciones.length})`);
+must('Ctrl+Z deshace el alineado', JSON.stringify(trasZ.gabinete.colocaciones) !== JSON.stringify(rep.gabinete.colocaciones));
 
 /* ============================ 5. Rótulos y DXF ============================ */
 console.log('\n--- 5. Entregables: rótulos y DXF ---');
 const descargas = [];
 page.on('download', (d) => descargas.push(d.suggestedFilename()));
 
-await jsClick('btn-etiquetas'); await page.waitForTimeout(1200);
+// Se ESPERA a la descarga en vez de dar por hecho que cabe en un tiempo fijo: generar el PDF
+// tarda lo que tarde la máquina, y un tiempo fijo convierte una prueba buena en una lotería.
+await Promise.all([
+	page.waitForEvent('download', { timeout: 30000 }).catch(() => undefined),
+	jsClick('btn-etiquetas'),
+]);
+await page.waitForTimeout(300);
 must('los rótulos se descargan en PDF', descargas.some((f) => /rotulos\.pdf$/.test(f)), descargas.join(', '));
 
-await jsClick('btn-dxf-placa'); await page.waitForTimeout(900);
+await Promise.all([
+	page.waitForEvent('download', { timeout: 30000 }).catch(() => undefined),
+	jsClick('btn-dxf-placa'),
+]);
+await page.waitForTimeout(300);
 must('la placa se descarga en DXF', descargas.some((f) => /placa\.dxf$/.test(f)), descargas.join(', '));
 
-await jsClick('btn-dxf-esquema'); await page.waitForTimeout(900);
+await Promise.all([
+	page.waitForEvent('download', { timeout: 30000 }).catch(() => undefined),
+	jsClick('btn-dxf-esquema'),
+]);
+await page.waitForTimeout(300);
 must('el esquema se descarga en DXF', descargas.some((f) => /esquema-\d+\.dxf$/.test(f)), descargas.join(', '));
 
 /* ==================== 6. Copiar/pegar y plantillas propias ==================== */

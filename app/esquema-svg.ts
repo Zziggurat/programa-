@@ -90,8 +90,8 @@ function pintarCajetin(hoja: HojaEsq, o: OpcionesEsquema, tinta: string, suave: 
 		`<line x1="${n(col3)}" y1="${n(y)}" x2="${n(col3)}" y2="${n(y + alto)}" stroke="${tinta}" stroke-width="0.3"/>`,
 		// Franja superior: proyecto y nº de hoja.
 		`<text x="${n(x + 3)}" y="${n(y + 6.3)}" font-size="4" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${esc(recortar(o.proyecto ?? 'TableroStudio', 44))}</text>`,
-		`<text x="${n(col3 + 17)}" y="${n(y + 3.4)}" font-size="2.3" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">HOJA</text>`,
-		`<text x="${n(col3 + 17)}" y="${n(y + 8.6)}" font-size="4.6" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${hoja.numero}${o.totalHojas ? ` / ${o.totalHojas}` : ''}</text>`,
+		`<text x="${n(col3 + 17)}" y="${n(y + 2.9)}" font-size="2.3" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">HOJA</text>`,
+		`<text x="${n(col3 + 17)}" y="${n(y + 8.3)}" font-size="4.4" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${hoja.numero}${o.totalHojas ? ` / ${o.totalHojas}` : ''}</text>`,
 		campo(x + 3, y + 12.4, 'CLIENTE', d.cliente ?? '', 40),
 		campo(col2 + 3, y + 12.4, 'OBRA', d.obra ?? '', 34),
 		campo(x + 3, y + 21, 'DIBUJÓ', d.proyectista ?? '', 40),

@@ -284,6 +284,19 @@ const antesCables = (await qa('proyecto')).conductores.length;
 const pinA = await qa('puntoParaBorne', img.id, bornesImg[0].id);
 const otro = (await qa('proyecto')).dispositivos.find((d) => d.id !== img.id && d.bornes.length);
 const pinB = otro ? await qa('puntoParaBorne', otro.id, otro.bornes.at(-1).id) : undefined;
+if (!pinA) {
+	// Sin esto, un fallo aquí no dice nada: no se sabe si la esfera del terminal falta en la
+	// escena o si es que algo la tapa. Y lo que la tapaba era que la foto caía encima de los
+	// aparatos, cuyos terminales sobresalen por delante de ella: por eso se dice con QUÉ se encima.
+	info('esferas del aparato imagen: ' + JSON.stringify(await page.evaluate((id) =>
+		window.qa.bornes().filter((b) => b.dispositivo === id), img.id)));
+	const pj = await qa('proyecto');
+	const ci = pj.gabinete.colocaciones.find((c) => c.dispositivoId === img.id);
+	const encima = pj.gabinete.colocaciones.filter((c) => c.dispositivoId !== img.id
+		&& ci.x < c.x + c.ancho && c.x < ci.x + ci.ancho && ci.y < c.y + c.alto && c.y < ci.y + ci.alto);
+	info(`la imagen ocupa ${JSON.stringify(ci)} y se encima con ${encima.length}: `
+		+ encima.map((c) => c.dispositivoId).join(', '));
+}
 must('los puntos de la imagen son clicables en 3D', !!pinA, JSON.stringify(pinA));
 if (pinA && pinB) {
 	await page.mouse.click(pinA.x, pinA.y); await page.waitForTimeout(400);

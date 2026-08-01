@@ -632,6 +632,11 @@ export function anchoEtiquetaMm(texto: string): number {
  *
  * Se hace en una pasada aparte (y no al crearlas) porque solo se puede repartir cuando ya
  * están todas: hasta la última no se sabe cuántas comparten sitio.
+ *
+ * Y se apilan SIN SALIRSE DEL RECUADRO. Empujar una etiqueta hacia arriba sin más la sacaba del
+ * marco y la dejaba justo encima del renglón de números de columna que va sobre él: dos textos
+ * distintos en el mismo sitio, y el número de columna es de lo que más se mira en un plano para
+ * decir «esto está en la 5». Cuando por ese lado ya no cabe, se prueba por el otro.
  */
 export function separarEtiquetas(
 	etiquetas: { texto: string; p: PuntoEsq }[],
@@ -643,6 +648,10 @@ export function separarEtiquetas(
 	const paso = opciones.paso ?? 4.4;
 	const alto = opciones.altoMm ?? HOJA_A3.alto;
 	const ancho = anchoEtiquetaMm;
+	// Dentro de qué puede moverse una etiqueta: el recuadro del plano, dejando el hueco que su
+	// propio texto ocupa por encima de la línea base (2,6 mm) y por debajo (0,8 mm).
+	const techo = MARGEN.arriba + 2.6;
+	const suelo = alto - MARGEN.abajo - 0.8;
 	// Los símbolos entran como sitio YA OCUPADO: una referencia encima de un símbolo es tan
 	// ilegible como una encima de otra referencia.
 	const puestas: { x0: number; x1: number; y: number }[] = [];
@@ -653,17 +662,22 @@ export function separarEtiquetas(
 	const orden = [...etiquetas].sort((a, b) => a.p.y - b.p.y || a.p.x - b.p.x);
 	for (const e of orden) {
 		const w = ancho(e.texto);
+		const x0 = e.p.x - w / 2;
+		const x1 = e.p.x + w / 2;
+		const libre = (y: number): boolean =>
+			!puestas.some((q) => q.x1 > x0 && q.x0 < x1 && Math.abs(q.y - y) < paso - 0.4)
+			&& !bloques.some((b) => b.x1 > x0 && b.x0 < x1 && b.y1 > y - 3 && b.y0 < y + 1.5);
 		// Las de la mitad de arriba se apilan hacia arriba; las de abajo, hacia abajo.
 		const sentido = e.p.y < alto / 2 ? -1 : 1;
-		for (let intento = 0; intento < 24; intento++) {
-			const x0 = e.p.x - w / 2;
-			const x1 = e.p.x + w / 2;
-			const chocaEtiqueta = puestas.some((q) => q.x1 > x0 && q.x0 < x1 && Math.abs(q.y - e.p.y) < paso - 0.4);
-			const chocaSimbolo = bloques.some((b) => b.x1 > x0 && b.x0 < x1 && b.y1 > e.p.y - 3 && b.y0 < e.p.y + 1.5);
-			if (!chocaEtiqueta && !chocaSimbolo) break;
-			e.p.y += sentido * paso;
+		const inicial = e.p.y;
+		for (let intento = 1; intento <= 24 && !libre(e.p.y); intento++) {
+			// Primero hacia fuera del dibujo; si por ahí ya no hay recuadro, hacia dentro.
+			const candidatos = [inicial + sentido * paso * intento, inicial - sentido * paso * intento]
+				.filter((y) => y >= techo && y <= suelo);
+			e.p.y = candidatos.find(libre) ?? candidatos[0] ?? Math.min(suelo, Math.max(techo, inicial));
+			if (candidatos.length === 0) break;   // no queda hueco por ninguno de los dos lados
 		}
-		puestas.push({ x0: e.p.x - w / 2, x1: e.p.x + w / 2, y: e.p.y });
+		puestas.push({ x0, x1, y: e.p.y });
 	}
 }
 

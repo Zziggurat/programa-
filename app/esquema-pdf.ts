@@ -92,11 +92,11 @@ function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number, d: 
 	doc.setFontSize(5.4);
 	doc.setFont('helvetica', 'normal');
 	doc.setTextColor(...SUAVE);
-	doc.text('HOJA', col3 + 17, y + 3.4, { align: 'center' });
-	doc.setFontSize(11);
+	doc.text('HOJA', col3 + 17, y + 2.9, { align: 'center' });
+	doc.setFontSize(10.5);
 	doc.setFont('helvetica', 'bold');
 	doc.setTextColor(...TINTA);
-	doc.text(`${hoja.numero} / ${total}`, col3 + 17, y + 8.6, { align: 'center' });
+	doc.text(`${hoja.numero} / ${total}`, col3 + 17, y + 8.3, { align: 'center' });
 
 	doc.setFont('helvetica', 'normal');
 	campo(x + 3, y + 12.4, 'CLIENTE', d.cliente ?? '', 88);
