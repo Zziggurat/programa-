@@ -5,6 +5,12 @@
  * desde el panel de propiedades, estructura editable (placa, rieles, canaletas),
  * guardar/abrir proyecto, exportación del dossier técnico y verificación eléctrica
  * en vivo. Todo apoyado en los motores del núcleo (src/motores).
+ *
+ * Lo que NO está aquí, porque salió a su propio módulo: la vista previa del dossier
+ * (`ui-dossier.ts`), la ventana de inicio con los ejemplos y las plantillas propias
+ * (`ui-inicio.ts`), el plano de mando y potencia (`ui-esquema.ts`) y el modo Energizar
+ * (`ui-simulacion.ts`). Ninguno importa nada de este archivo: se les pasa lo que necesitan
+ * al instalarlos, y siempre como función, para que no dependan del orden de arranque.
  */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -4077,8 +4083,13 @@ export function ajustarRotulosBarra(): void {
 	// esta función se llama desde `pintarEstadoGuardado()`, que corre durante el arranque, y una
 	// constante declarada más abajo en el archivo daría un «no se puede acceder a X antes de
 	// inicializar» en tiempo de ejecución que TypeScript compila sin quejarse. Me pasó exactamente
-	// eso al escribir esto. Es el mismo riesgo que hace que partir este archivo en módulos sea
-	// peligroso mientras el nivel superior siga siendo un guion de arranque.
+	// eso al escribir esto.
+	//
+	// Ese riesgo es el que manda cómo se parte este archivo: los módulos que ya salieron
+	// (ui-dossier, ui-inicio, ui-esquema, ui-simulacion) no leen NADA de aquí. Lo que necesitan se
+	// les pasa al instalarlos, y siempre como función —`proyecto: () => proyecto`—, así que se
+	// evalúa cuando se usa y no cuando se monta. Mientras el nivel superior de este archivo siga
+	// siendo un guion de arranque, cualquier módulo nuevo tiene que salir por esa misma puerta.
 	const NIVELES = ['compacta', 'apretada', 'minima', 'micro'];
 	const barra = $('barra');
 	barra.classList.remove(...NIVELES);

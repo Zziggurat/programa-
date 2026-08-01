@@ -475,7 +475,19 @@ dibuja igual, con sus borneras y listo para cablear.
 
 ### Deuda técnica conocida
 
-- `app/main.ts` pasa de las 3.900 líneas y concentra escena, interacción, paneles y diálogos.
-  Partirlo en módulos no cambia nada de lo que se entrega —el empaquetado es un único archivo
-  con `inlineDynamicImports`, así que dividir no reduce el bundle— pero sí el coste de tocarlo.
-  Pendiente de hacer con la batería de QA en verde como red, no a última hora antes de entregar.
+- `app/main.ts` sigue siendo el archivo grande del editor, aunque ya no lo concentra todo: han
+  salido cuatro módulos —`ui-dossier.ts` (vista previa y editor del dossier), `ui-inicio.ts`
+  (ventana de inicio, ejemplos y plantillas propias), `ui-esquema.ts` (el plano de mando y
+  potencia con sus exportaciones) y `ui-simulacion.ts` (todo el modo Energizar)—. Partirlo no
+  cambia nada de lo que se entrega —el empaquetado es un único archivo con
+  `inlineDynamicImports`, así que dividir no reduce el bundle— pero sí el coste de tocarlo.
+
+  **La regla al sacar un módulo nuevo**: no puede importar nada de `main.ts`. Lo que necesita del
+  editor entra por un contexto (`ContextoEsquema`, `ContextoSimulacion`…) que se le pasa al
+  instalarlo, y siempre como función (`proyecto: () => proyecto`), para que se evalúe cuando se
+  usa y no cuando se monta. Así no hay imports cruzados ni orden de inicialización que recordar,
+  que es el error que TypeScript no ve y solo aparece en tiempo de ejecución.
+
+  Lo que queda dentro es el núcleo acoplado de un editor 3D —escena, interacción con el ratón,
+  paneles de propiedades y catálogo—, donde un contexto de veinte campos sería peor cura que
+  enfermedad.
