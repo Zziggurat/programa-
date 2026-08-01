@@ -41,13 +41,10 @@ import {
 } from './dialogos.js';
 import { instalarDossier } from './ui-dossier.js';
 import { instalarInicio } from './ui-inicio.js';
+import { instalarEsquema } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
-import {
-	anchoColumna, filaDeAltura, HOJA_A3, HojaEsq, MARGEN, montarEsquema, posicionesEnEsquema,
-} from '../src/motores/esquema.js';
-import { hojaASvg } from './esquema-svg.js';
-import { exportarEsquemaPDF } from './esquema-pdf.js';
-import { dxfDeEsquema, dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
+import { montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
+import { dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
 import { distPuntoSegmento, longitudSolapada, orthogonalize, redondearEsquinas } from './geometria-cables.js';
 
 /** Bandera que inyecta el empaquetador: true solo en el build para las pruebas (QA=1). */
@@ -511,7 +508,7 @@ function actualizarTodo(): void {
 	montarEscenario();
 	pintarPaneles();
 	pintarSeleccion();
-	refrescarEsquema(); // si el esquema está abierto, se redibuja: es la misma verdad, otra vista
+	panelEsq.refrescar(); // si el esquema está abierto, se redibuja: es la misma verdad, otra vista
 	panelSim.recalcular(); // rehacer la escena borra el brillo: se vuelve a pintar lo que está vivo
 }
 
@@ -531,7 +528,7 @@ function actualizarConservandoAparatos(): void {
 	reconstruirCotas();
 	pintarPaneles();
 	pintarSeleccion();
-	refrescarEsquema();
+	panelEsq.refrescar();
 	panelSim.recalcular();
 }
 
@@ -3125,7 +3122,7 @@ function crearUnionBajoElPuntero(ev: MouseEvent): boolean {
 
 // DOBLE CLIC IZQUIERDO: sobre una unión existente la quita; sobre el cable, crea una nueva.
 renderer.domElement.addEventListener('dblclick', (ev) => {
-	if (modo !== 'trabajo' || visualizacion || esquemaAbierto) return;
+	if (modo !== 'trabajo' || visualizacion || panelEsq.abierto()) return;
 	const handle = handleBajoElPuntero(ev);
 	if (handle?.sel.tipo === 'cable' && handle.indice !== undefined && handle.indice >= 0) {
 		const c = proyecto.conductores.find((x) => x.id === handle.sel.id);
@@ -3154,7 +3151,7 @@ const MS_DOBLE_CLIC = 600; // el umbral habitual de doble clic del sistema
 
 renderer.domElement.addEventListener('contextmenu', (ev) => {
 	ev.preventDefault(); // sin menú del navegador
-	if (modo !== 'trabajo' || visualizacion || esquemaAbierto) return;
+	if (modo !== 'trabajo' || visualizacion || panelEsq.abierto()) return;
 	if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); return; }
 
 	const ahora = Date.now();
@@ -3172,27 +3169,26 @@ window.addEventListener('keydown', (ev) => {
 	if (activo === 'INPUT' || activo === 'SELECT' || activo === 'TEXTAREA') return;
 	// Con el esquema o la Visualización delante, el tablero 3D NO se ve: dejar que Supr borrase
 	// un aparato o Ctrl+V pegase otro sería editar a ciegas. Solo pasan navegar y salir.
-	if (esquemaAbierto || visualizacion) {
+	if (panelEsq.abierto() || visualizacion) {
 		const conCtrl = ev.ctrlKey || ev.metaKey;
 		if (ev.key === 'Escape') {
 			ev.preventDefault();
-			if (esquemaAbierto) abrirEsquema(false); else aplicarVisualizacion(false);
-		} else if (esquemaAbierto && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
+			if (panelEsq.abierto()) panelEsq.abrir(false); else aplicarVisualizacion(false);
+		} else if (panelEsq.abierto() && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
 			ev.preventDefault();
-			hojaActual += ev.key === 'ArrowRight' ? 1 : -1;
-			refrescarEsquema();
-		} else if (esquemaAbierto && conCtrl && ev.key.toLowerCase() === 'z' && !ev.shiftKey) {
+			panelEsq.pasarHoja(ev.key === 'ArrowRight' ? 1 : -1);
+		} else if (panelEsq.abierto() && conCtrl && ev.key.toLowerCase() === 'z' && !ev.shiftKey) {
 			// En el esquema SÍ se edita —se colocan los símbolos a mano—, así que deshacer y
 			// rehacer tienen que funcionar aquí. Lo que sigue vetado es borrar y pegar: eso
 			// tocaría el tablero, que desde aquí no se ve.
 			ev.preventDefault();
 			deshacer();
-			refrescarEsquema();
-		} else if (esquemaAbierto && conCtrl
+			panelEsq.refrescar();
+		} else if (panelEsq.abierto() && conCtrl
 			&& (ev.key.toLowerCase() === 'y' || (ev.key.toLowerCase() === 'z' && ev.shiftKey))) {
 			ev.preventDefault();
 			rehacer();
-			refrescarEsquema();
+			panelEsq.refrescar();
 		}
 		return;
 	}
@@ -3543,7 +3539,7 @@ let visualizacion = false;
  * Solo se puede girar y acercar la vista, como enseñando el tablero terminado.
  */
 function aplicarVisualizacion(activo: boolean): void {
-	if (activo && esquemaAbierto) abrirEsquema(false); // las dos capas no pueden convivir
+	if (activo && panelEsq.abierto()) panelEsq.abrir(false); // las dos capas no pueden convivir
 	visualizacion = activo;
 	document.body.classList.toggle('modo-visualizacion', activo);
 	$('btn-ver').classList.toggle('activo', activo);
@@ -3607,153 +3603,18 @@ $('modo-trabajo').onclick = () => { if (!visualizacion) aplicarModo('trabajo'); 
 
 /* ----------------------------- Vista de esquema ----------------------------- */
 
-/**
- * El esquema eléctrico: el plano de mando y potencia que se entrega al cliente y con el que
- * trabaja el electricista. Se monta desde el mismo modelo que el 3D —no hay dos verdades— y
- * se muestra como una capa por encima del lienzo, igual que el modo Visualización.
- */
-let esquemaAbierto = false;
-let hojasEsquema: HojaEsq[] = [];
-let hojaActual = 0;
-let zoomEsquema = 1;
+const panelEsq = instalarEsquema({
+	proyecto: () => proyecto,
+	potenciales: () => potenciales,
+	dispositivoSeleccionado: () => (sel?.tipo === 'dispositivo' ? sel.id : undefined),
+	seleccionar,
+	capturar,
+	marcarSucio,
+	actualizarTodo,
+	nombreArchivo,
+	cerrarVisualizacion: () => { if (visualizacion) aplicarVisualizacion(false); },
+});
 
-/** Vuelve a montar el esquema desde el modelo actual y lo pinta. */
-function refrescarEsquema(): void {
-	if (!esquemaAbierto) return;
-	hojasEsquema = montarEsquema(proyecto, potenciales);
-	if (hojasEsquema.length === 0) {
-		$('esquema-hoja').innerHTML = '<div id="esquema-vacio">Todavía no hay nada que dibujar.<br>'
-			+ 'Coloca aparatos y conéctalos, y el esquema se dibuja solo.</div>';
-		$('esq-indicador').textContent = 'Sin hojas';
-		$('esq-titulo').textContent = '';
-		return;
-	}
-	hojaActual = Math.max(0, Math.min(hojaActual, hojasEsquema.length - 1));
-	const hoja = hojasEsquema[hojaActual];
-	$('esquema-hoja').innerHTML = hojaASvg(hoja, {
-		proyecto: proyecto.nombre,
-		datos: proyecto.datos,
-		totalHojas: hojasEsquema.length,
-		resaltado: sel?.tipo === 'dispositivo' ? sel.id : undefined,
-	});
-	$('esq-indicador').textContent = `Hoja ${hoja.numero} / ${hojasEsquema.length}`;
-	$('esq-titulo').textContent = hoja.titulo;
-	($('esq-columnas') as HTMLInputElement).value = String(hoja.columnas);
-	// Se dice cuántos aparatos están colocados a mano: si no, «Ordenar solo» parece que no hace
-	// nada cuando no hay nada que soltar, y sorprende cuando sí lo hay.
-	const aMano = proyecto.dispositivos.filter((d) => d.esquema).length;
-	($('esq-auto') as HTMLButtonElement).textContent = aMano ? `⟲ Ordenar solo (${aMano})` : '⟲ Ordenar solo';
-	aplicarZoomEsquema();
-
-	// Pinchar un símbolo selecciona ese aparato en todo el programa —el esquema y el 3D son dos
-	// vistas del mismo tablero— y arrastrarlo lo COLOCA donde se suelte.
-	for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('[data-dispositivo]')) {
-		g.addEventListener('pointerdown', (ev) => empezarArrastreEsquema(ev, g));
-	}
-}
-
-/* ------------------- Colocar los símbolos del esquema a mano ------------------- */
-
-/**
- * Arrastrar un símbolo del esquema para ponerlo donde uno quiere.
- *
- * El motor propone un orden automático que está bien para empezar, pero el esquema que se
- * entrega lo ordena una persona: agrupa la maniobra, separa lo que va a campo y deja hueco donde
- * hará falta. Lo que se suelta se queda ahí (se guarda en el proyecto y entra en el historial de
- * deshacer), y lo que no se toca se sigue ordenando solo.
- *
- * Se SUELTA EN REJILLA —columna entera y una de las ocho filas— y no en cualquier punto: un
- * esquema que se entrega tiene los aparatos alineados, no puestos a ojo.
- */
-function empezarArrastreEsquema(ev: PointerEvent, g: SVGGElement): void {
-	const id = g.getAttribute('data-dispositivo');
-	const hoja = hojasEsquema[hojaActual];
-	if (!id || !hoja || ev.button !== 0) return;
-	const d = proyecto.dispositivos.find((x) => x.id === id);
-	if (!d) return;
-	ev.preventDefault();
-	seleccionar(id);
-
-	const antes = d.esquema ? { ...d.esquema } : undefined;
-	let movido = false;
-	let destino = antes;
-
-	/** Píxeles de pantalla → columna y fila de la rejilla del esquema. */
-	const rejillaEn = (cx: number, cy: number): { columna: number; fila: number } | undefined => {
-		// Se busca el <svg> CADA VEZ: cada repintado rehace el innerHTML de la hoja, y una
-		// referencia guardada de antes se queda huérfana devolviendo un rectángulo a cero —con lo
-		// que el símbolo se quedaba clavado donde se agarró.
-		const svg = $('esquema-hoja').querySelector('svg');
-		if (!svg) return undefined;
-		const caja = svg.getBoundingClientRect();
-		if (caja.width < 1 || caja.height < 1) return undefined;
-		const xmm = ((cx - caja.left) / caja.width) * hoja.anchoMm;
-		const ymm = ((cy - caja.top) / caja.height) * hoja.altoMm;
-		const paso = anchoColumna(HOJA_A3, hoja.columnas);
-        const enHoja = Math.floor((xmm - MARGEN.izq) / paso);
-		// La columna es global: la hoja 2 empieza donde acaba la 1, y por eso arrastrar más allá
-		// del borde derecho pasa el aparato a la hoja siguiente.
-		const base = (hoja.numero - 1) * hoja.columnas;
-		return {
-			columna: Math.max(1, base + Math.min(hoja.columnas - 1, Math.max(0, enHoja)) + 1),
-			fila: filaDeAltura(ymm),
-		};
-	};
-
-	const alMover = (e: PointerEvent): void => {
-		const r = rejillaEn(e.clientX, e.clientY);
-		if (!r) return;
-		if (!movido) {
-			// Solo se considera arrastre cuando de verdad cambia de casilla: así un clic simple
-			// sigue siendo un clic y no mueve nada sin querer.
-			if (r.columna === (antes?.columna ?? -1) && r.fila === (antes?.fila ?? -1)) return;
-			movido = true;
-			capturar();
-			$('esquema-hoja').classList.add('arrastrando');
-		}
-		if (r.columna === destino?.columna && r.fila === destino?.fila) return;
-		destino = r;
-		d.esquema = r;
-		refrescarEsquema();
-	};
-
-	const alSoltar = (): void => {
-		window.removeEventListener('pointermove', alMover);
-		window.removeEventListener('pointerup', alSoltar);
-		$('esquema-hoja').classList.remove('arrastrando');
-		if (!movido) { refrescarEsquema(); return; }   // fue un clic: solo seleccionar
-		marcarSucio();
-		actualizarTodo();
-		refrescarEsquema();
-		avisar(`${d.designacion ?? d.id} colocado en la columna ${d.esquema?.columna}`, 'ok');
-	};
-
-	window.addEventListener('pointermove', alMover);
-	window.addEventListener('pointerup', alSoltar);
-}
-
-function aplicarZoomEsquema(): void {
-	const hoja = hojasEsquema[hojaActual];
-	if (!hoja) return;
-	const caja = $('esquema-lienzo').getBoundingClientRect();
-	// «Ajustar» = zoom 1: la hoja entra entera con un margen cómodo.
-	const base = Math.max(0.05, Math.min((caja.width - 40) / hoja.anchoMm, (caja.height - 40) / hoja.altoMm));
-	const escala = base * zoomEsquema;
-	const el = $('esquema-hoja');
-	el.style.width = `${hoja.anchoMm * escala}px`;
-	el.style.height = `${hoja.altoMm * escala}px`;
-}
-
-function abrirEsquema(abrir: boolean): void {
-	esquemaAbierto = abrir;
-	($('panel-esquema') as HTMLElement).hidden = !abrir;
-	$('btn-esquema').classList.toggle('activo', abrir);
-	if (abrir) {
-		if (visualizacion) aplicarVisualizacion(false); // las dos capas no pueden convivir
-		zoomEsquema = 1;
-		refrescarEsquema();
-	}
-}
 
 /* ------------------ Copiar / pegar aparatos y plantillas propias ------------------ */
 
@@ -3875,15 +3736,6 @@ function renumerar(d: Dispositivo): Dispositivo {
 	}
 };
 
-($('btn-dxf-esquema') as HTMLButtonElement).onclick = () => {
-	// Si el esquema no está abierto se monta al vuelo: el usuario no tiene por qué abrirlo antes.
-	const hojas = hojasEsquema.length ? hojasEsquema : montarEsquema(proyecto, potenciales);
-	const hoja = hojas[Math.min(hojaActual, hojas.length - 1)];
-	if (!hoja) { avisar('Todavía no hay esquema que exportar.', 'info'); return; }
-	descargar(`${nombreArchivo()}-esquema-${hoja.numero}.dxf`, dxfDeEsquema(hoja), 'image/vnd.dxf');
-	avisar(`Hoja ${hoja.numero} del esquema exportada a DXF`, 'ok');
-};
-
 /**
  * Menús desplegables de la barra. Agrupar en menús es lo que permite que los botones
  * quepan con su rótulo en un portátil en vez de quedarse en «N…», «G…».
@@ -3907,88 +3759,6 @@ for (const [idMenu, idBoton] of [
 		b.addEventListener('click', () => menu.classList.remove('abierto'));
 	}
 }
-
-($('btn-esquema') as HTMLButtonElement).onclick = () => abrirEsquema(!esquemaAbierto);
-($('esq-cerrar') as HTMLButtonElement).onclick = () => abrirEsquema(false);
-($('esq-anterior') as HTMLButtonElement).onclick = () => { hojaActual--; refrescarEsquema(); };
-($('esq-siguiente') as HTMLButtonElement).onclick = () => { hojaActual++; refrescarEsquema(); };
-($('esq-acercar') as HTMLButtonElement).onclick = () => { zoomEsquema = Math.min(6, zoomEsquema * 1.3); aplicarZoomEsquema(); };
-($('esq-alejar') as HTMLButtonElement).onclick = () => { zoomEsquema = Math.max(0.4, zoomEsquema / 1.3); aplicarZoomEsquema(); };
-($('esq-ajustar') as HTMLButtonElement).onclick = () => { zoomEsquema = 1; aplicarZoomEsquema(); };
-
-// Columnas por hoja: menos columnas = símbolos más separados y más hojas. Es la palanca que
-// convierte un esquema apretado e ilegible en uno que se lee, sin tocar el circuito.
-($('esq-columnas') as HTMLInputElement).onchange = (ev) => {
-	const n = Math.max(4, Math.min(20, Number((ev.target as HTMLInputElement).value) || 10));
-	(ev.target as HTMLInputElement).value = String(n);
-	if (n === (proyecto.esquema?.columnasPorHoja ?? 10)) return;
-	capturar();
-	proyecto.esquema = { ...proyecto.esquema, columnasPorHoja: n };
-	marcarSucio();
-	actualizarTodo();
-	refrescarEsquema();
-};
-
-($('esq-titulo-editar') as HTMLButtonElement).onclick = async () => {
-	const hoja = hojasEsquema[hojaActual];
-	if (!hoja) { avisar('Todavía no hay ninguna hoja.', 'info'); return; }
-	const nuevo = await pedirTexto(`Título de la hoja ${hoja.numero}:`, hoja.titulo);
-	if (nuevo === null) return;
-	capturar();
-	const titulos = { ...(proyecto.esquema?.titulos ?? {}) };
-	// Vaciarlo devuelve el título automático, que es lo que espera quien borra el texto.
-	if (nuevo.trim()) titulos[String(hoja.numero)] = nuevo.trim();
-	else delete titulos[String(hoja.numero)];
-	proyecto.esquema = { ...proyecto.esquema, titulos };
-	marcarSucio();
-	actualizarTodo();
-	refrescarEsquema();
-};
-
-($('esq-auto') as HTMLButtonElement).onclick = async () => {
-	const aMano = proyecto.dispositivos.filter((d) => d.esquema);
-	if (aMano.length === 0) { avisar('El esquema ya está ordenado solo: no has movido nada.', 'info'); return; }
-	if (!(await confirmar(
-		`Se van a soltar las ${aMano.length} colocaciones hechas a mano y el esquema volverá a `
-		+ 'ordenarse solo. Ctrl+Z lo deshace.',
-		{ ok: 'Ordenar solo' },
-	))) return;
-	capturar();
-	for (const d of aMano) delete d.esquema;
-	marcarSucio();
-	actualizarTodo();
-	refrescarEsquema();
-	avisar('Esquema reordenado automáticamente', 'ok');
-};
-
-($('esq-pdf') as HTMLButtonElement).onclick = async () => {
-	if (hojasEsquema.length === 0) { avisar('No hay esquema que exportar todavía.', 'info'); return; }
-	const btn = $('esq-pdf') as HTMLButtonElement;
-	btn.disabled = true;
-	const antes = btn.textContent;
-	btn.textContent = 'Generando…';
-	try {
-		await exportarEsquemaPDF(hojasEsquema, proyecto.nombre, `${nombreArchivo()}-esquema.pdf`, proyecto.datos ?? {});
-		avisar(`Esquema exportado (${hojasEsquema.length} hoja${hojasEsquema.length > 1 ? 's' : ''})`, 'ok');
-	} catch (e) {
-		avisar(`No se pudo exportar el esquema: ${(e as Error).message}`, 'error');
-	} finally {
-		btn.disabled = false;
-		btn.textContent = antes;
-	}
-};
-
-($('esq-svg') as HTMLButtonElement).onclick = () => {
-	const hoja = hojasEsquema[hojaActual];
-	if (!hoja) { avisar('No hay ninguna hoja que descargar.', 'info'); return; }
-	// Se descarga en tinta negra sobre papel blanco: es lo que se imprime y se archiva.
-	descargar(
-		`${nombreArchivo()}-esquema-${hoja.numero}.svg`,
-		hojaASvg(hoja, { proyecto: proyecto.nombre, datos: proyecto.datos, totalHojas: hojasEsquema.length }),
-		'image/svg+xml',
-	);
-	avisar(`Hoja ${hoja.numero} descargada en SVG`, 'ok');
-};
 
 /* ------------------------------- Vista ------------------------------- */
 
@@ -4134,7 +3904,7 @@ function guardarDatosProyecto(): void {
 	($('modal-proyecto') as HTMLElement).hidden = true;
 	recalcular();      // la Icc cambia el DRC al instante
 	pintarPaneles();
-	refrescarEsquema();
+	panelEsq.refrescar();
 	avisar('Datos del proyecto guardados', 'ok');
 }
 
@@ -4338,7 +4108,7 @@ window.addEventListener('resize', () => {
 	ajustarTamano();
 	ajustarRotulosBarra();
 	if (encuadrePendiente) encuadrar();
-	if (esquemaAbierto) aplicarZoomEsquema(); // la hoja se reajusta al nuevo tamaño de ventana
+	if (panelEsq.abierto()) panelEsq.reajustarZoom(); // la hoja se reajusta al nuevo tamaño de ventana
 });
 ajustarTamano();
 ajustarRotulosBarra();
