@@ -720,7 +720,7 @@ export function rutasDeCables(proyecto: Proyecto): RutaCable[] {
 	const abanico = abanicoDeSalida(proyecto);
 	// Reparte los cables por carriles llevando la cuenta de lo ya ocupado: dos cables solo
 	// comparten altura si van por tramos del tablero que no se pisan.
-	const repartir = crearRepartidor(corredores);
+	const repartir = crearRepartidor(corredores, 8, CAPAS_CABLE);
 	const rutas: RutaCable[] = [];
 
 	let manuales = 0;

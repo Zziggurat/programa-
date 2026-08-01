@@ -110,11 +110,20 @@ for (const [indice, nombre] of [[0, 'Arranque directo'], [1, 'Bomba con boya'], 
 	info(`${compartidos} bornes con más de un cable · separación mínima ${peor === Infinity ? '—' : peor.toFixed(1) + ' mm'}`);
 	must('ningún par de cables sale fundido del mismo borne', fundidos === 0, `${fundidos} pares`);
 
-	/* ---- y tampoco pueden ir montados a lo largo del recorrido ---- */
+	/* ---- y tampoco pueden ir uno DENTRO de otro a lo largo del recorrido ---- */
+	/*
+	 * Lo que se exige es que ningún cable vaya metido dentro de otro: mismo recorrido Y misma
+	 * profundidad, o sea indistinguibles por mucho que se gire la vista. Correr en paralelo por
+	 * el mismo pasillo, en capas distintas, no es un defecto: es lo que hace un mazo de verdad,
+	 * y medirlo en plano —que es lo que hacía esta prueba antes, con un tope de 45 mm/cable
+	 * puesto a ojo— castigaba precisamente el peinado bien hecho.
+	 */
 	const am = await qa('amontonamiento');
 	const porCable = am.cables ? Math.round(am.totalMm / am.cables) : 0;
-	info(`amontonamiento: ${am.totalMm} mm en ${am.pares} pares de ${am.cables} cables (${porCable} mm/cable)`);
-	must('los cables no van montados unos sobre otros', porCable <= 45, `${porCable} mm/cable`);
+	info(`en paralelo: ${am.totalMm} mm en ${am.pares} pares de ${am.cables} cables (${porCable} mm/cable)`);
+	info(`a la misma profundidad: ${am.mismaCapaMm} mm en ${am.paresMismaCapa} pares`);
+	must('ningún cable va metido DENTRO de otro', am.mismaCapaMm === 0,
+		`${am.mismaCapaMm} mm en ${am.paresMismaCapa} pares`);
 }
 
 /* ============ 2. La selección tiene que caer en el cable que se está señalando ============ */

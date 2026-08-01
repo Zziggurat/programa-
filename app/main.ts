@@ -4312,19 +4312,31 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		/**
 		 * Cuánto van MONTADOS unos cables sobre otros (mm de tramos paralelos que se pisan).
-		 * Es la medida de «cables amontonados»: en un tablero bien ruteado ronda cero.
+		 *
+		 * Se dan DOS cifras, y la que importa es la segunda. `totalMm` mira el tablero de frente,
+		 * en plano: ahí cuenta como montado cualquier cable que corra paralelo a otro, y en un
+		 * mazo de verdad eso pasa continuamente sin que sea un defecto. `mismaCapaMm` cuenta solo
+		 * los que además van a la MISMA PROFUNDIDAD, o sea uno dentro del otro: esos no se
+		 * distinguen ni girando la vista, y son los que hay que dejar en cero.
 		 */
 		amontonamiento: () => {
 			const rutas = rutasDeCables(proyecto);
 			let total = 0;
 			let pares = 0;
+			let mismaCapa = 0;
+			let paresMismaCapa = 0;
 			for (let i = 0; i < rutas.length; i++) {
 				for (let j = i + 1; j < rutas.length; j++) {
 					const mm = longitudSolapada(rutas[i].nodos, rutas[j].nodos);
-					if (mm > 0) { total += mm; pares++; }
+					if (mm <= 0) continue;
+					total += mm; pares++;
+					if (Math.abs(rutas[i].z - rutas[j].z) < 0.5) { mismaCapa += mm; paresMismaCapa++; }
 				}
 			}
-			return { totalMm: Math.round(total), pares, cables: rutas.length };
+			return {
+				totalMm: Math.round(total), pares, cables: rutas.length,
+				mismaCapaMm: Math.round(mismaCapa), paresMismaCapa,
+			};
 		},
 		/** Recorrido resuelto de cada cable (mm de modelo), tal cual se dibuja. */
 		rutas: () => rutasDeCables(proyecto).map((r) => ({ id: r.conductorId, nodos: r.nodos, z: r.z })),

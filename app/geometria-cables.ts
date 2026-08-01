@@ -106,48 +106,105 @@ export function rutaAutomatica(a: Punto, b: Punto, corredores: Banda[], carril: 
 	return [{ x: a.x, y }, { x: b.x, y }];
 }
 
+/** Un trozo recto ya tendido: horizontal a la altura `fijo`, o vertical en la abscisa `fijo`. */
+interface Reserva { horizontal: boolean; fijo: number; desde: number; hasta: number }
+
+/** Milímetros en que dos trozos rectos van montados uno sobre otro (0 si no se tocan). */
+function montados(a: Reserva, b: Reserva, tolerancia: number): number {
+	if (a.horizontal !== b.horizontal) return 0;         // se cruzan, no se montan
+	if (Math.abs(a.fijo - b.fijo) > tolerancia) return 0;
+	return Math.max(0, Math.min(a.hasta, b.hasta) - Math.max(a.desde, b.desde));
+}
+
 /**
  * Repartidor de carriles: reparte los cables por el tablero de forma que NINGUNO quede montado
  * encima de otro. A diferencia de `rutaAutomatica` (que reparte a ciegas por número de cable),
- * este lleva la cuenta de qué trozo de cada carril está ya ocupado y le da a cada cable el
- * primer carril libre EN SU TRAMO DE X. Dos cables solo comparten altura si van por zonas del
- * tablero que no se pisan, que es exactamente como se peina un tablero de verdad.
+ * este lleva la cuenta de qué trozos están ya tendidos y le busca a cada cable un sitio libre.
+ * Dos cables solo comparten altura si van por zonas del tablero que no se pisan, que es
+ * exactamente como se peina un tablero de verdad.
  *
- * Devuelve una función que, para cada par de bornes, da los puntos intermedios de su ruta y el
- * número de carril que le ha tocado (el dibujo lo usa para separarlos también en profundidad).
+ * Un sitio son DOS cosas: la altura del carril y la CAPA de profundidad. En un tablero de verdad,
+ * cuando el pasillo se llena, los cables siguientes no se ponen encima de los que ya están: van
+ * por delante, en una segunda capa. Aquí igual, y en ese orden: primero se llenan todos los
+ * carriles de la capa de atrás —del centro del pasillo hacia los bordes, que es como se peina— y
+ * solo cuando ninguno queda libre se empieza la capa siguiente.
+ *
+ * Y se reserva el RECORRIDO ENTERO, no solo el tramo del pasillo: la bajada del borne al carril y
+ * la subida al otro borne son cable igual que el resto. Faltaban, y por eso dos cables que salían
+ * de bornes casi en la misma vertical —los de un bornero al motor, sin ir más lejos— se bajaban
+ * uno dentro de otro por mucho que luego cada uno cogiera su carril.
+ *
+ * Devuelve, para cada par de bornes, los puntos intermedios de su ruta y la capa que le ha tocado
+ * (el dibujo la usa para separar los cables también en profundidad).
  */
 export function crearRepartidor(
-	corredores: Banda[], holgura = 8,
+	corredores: Banda[], holgura = 8, capas = 4, tolerancia = 3,
 ): (a: Punto, b: Punto) => { puntos: Punto[]; carril: number } {
-	const ocupado = new Map<number, { x0: number; x1: number }[]>();
-	let sueltos = 0;
+	/** Lo ya tendido en cada capa de profundidad. */
+	const tendido: Reserva[][] = Array.from({ length: capas }, () => []);
+	/** Cuánto se monta un recorrido con lo que ya hay en esa capa. */
+	const choque = (piezas: Reserva[], capa: number): number => {
+		let total = 0;
+		for (const p of piezas) for (const q of tendido[capa]) total += montados(p, q, tolerancia);
+		return total;
+	};
+	const vertical = (x: number, y0: number, y1: number): Reserva =>
+		({ horizontal: false, fijo: x, desde: Math.min(y0, y1), hasta: Math.max(y0, y1) });
+
+	/** Elige capa para un recorrido que no admite carril (recta o sin corredor) y lo apunta. */
+	const soloCapa = (piezas: Reserva[]): number => {
+		let mejor = 0;
+		let mejorChoque = Infinity;
+		for (let capa = 0; capa < capas; capa++) {
+			const c = choque(piezas, capa);
+			if (c < mejorChoque) { mejorChoque = c; mejor = capa; }
+			if (c === 0) break;
+		}
+		tendido[mejor].push(...piezas);
+		return mejor;
+	};
+
 	return (a, b) => {
-		if (Math.abs(a.x - b.x) < 2) return { puntos: [], carril: sueltos++ }; // misma vertical
+		// Misma vertical: tramo recto, sin codos. Aun así ocupa sitio y hay que apuntarlo.
+		if (Math.abs(a.x - b.x) < 2) return { puntos: [], carril: soloCapa([vertical(a.x, a.y, b.y)]) };
 		const corredor = mejorCorredor(a, b, corredores);
 		if (!corredor) {
 			const y = Math.round((a.y + b.y) / 2);
-			return { puntos: [{ x: a.x, y }, { x: b.x, y }], carril: sueltos++ };
+			const piezas = [
+				vertical(a.x, a.y, y),
+				{ horizontal: true, fijo: y, desde: Math.min(a.x, b.x), hasta: Math.max(a.x, b.x) },
+				vertical(b.x, y, b.y),
+			];
+			return { puntos: [{ x: a.x, y }, { x: b.x, y }], carril: soloCapa(piezas) };
 		}
-		const tramo = { x0: Math.min(a.x, b.x) - holgura, x1: Math.max(a.x, b.x) + holgura };
 		const carriles = carrilesDe(corredor);
+		/** El recorrido completo si el cable fuera por el carril `y`. */
+		const recorrido = (y: number): Reserva[] => [
+			vertical(a.x, a.y, y),
+			{
+				horizontal: true, fijo: y,
+				desde: Math.min(a.x, b.x) - holgura, hasta: Math.max(a.x, b.x) + holgura,
+			},
+			vertical(b.x, y, b.y),
+		];
 		/*
-		 * Se elige el carril que MENOS se pise con lo ya tendido, no el primero libre y luego por
-		 * turnos. Con el corredor lleno, el reparto por turnos volvía a montar cables enteros unos
-		 * encima de otros; midiendo el solape, al que peor le toca es al que menos estorba.
+		 * Se busca sitio LIMPIO recorriendo capa por capa y, dentro de cada una, del centro del
+		 * pasillo hacia fuera. Si no queda ninguno —tablero muy cargado— se coge el que MENOS se
+		 * pise: al que peor le toca es al que menos estorba. Por turnos, que es lo que había antes
+		 * de esto, volvían a montarse cables enteros unos encima de otros.
 		 */
 		let mejorY = carriles[0];
-		let mejorSolape = Infinity;
-		for (const y of carriles) {
-			let solape = 0;
-			for (const u of ocupado.get(y) ?? []) {
-				solape += Math.max(0, Math.min(u.x1, tramo.x1) - Math.max(u.x0, tramo.x0));
+		let mejorCapa = 0;
+		let mejorChoque = Infinity;
+		buscar: for (let capa = 0; capa < capas; capa++) {
+			for (const y of carriles) {
+				const c = choque(recorrido(y), capa);
+				if (c < mejorChoque) { mejorChoque = c; mejorY = y; mejorCapa = capa; }
+				if (c === 0) break buscar;   // un sitio limpio ya no se puede mejorar
 			}
-			if (solape < mejorSolape) { mejorSolape = solape; mejorY = y; }
-			if (solape === 0) break;   // un carril limpio ya no se puede mejorar
 		}
-		const usos = ocupado.get(mejorY);
-		if (usos) usos.push(tramo); else ocupado.set(mejorY, [tramo]);
-		return { puntos: [{ x: a.x, y: mejorY }, { x: b.x, y: mejorY }], carril: carriles.indexOf(mejorY) };
+		tendido[mejorCapa].push(...recorrido(mejorY));
+		return { puntos: [{ x: a.x, y: mejorY }, { x: b.x, y: mejorY }], carril: mejorCapa };
 	};
 }
 
