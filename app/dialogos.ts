@@ -15,6 +15,16 @@ export { nombreSeguroDeArchivo };
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
+/**
+ * Escapa texto para meterlo en HTML sin que un nombre con < o & rompa la página.
+ *
+ * Vive aquí porque la usan todos los paneles que pintan HTML —el editor, el dossier, el panel de
+ * la simulación— y tener tres copias iguales era pedir que un día se arreglara solo una.
+ */
+export function escaparHtml(t: string): string {
+	return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 export let cerrarDialogo: ((valor: string | null) => void) | undefined;
 
 export function abrirDialogo(mensaje: string, opciones: {

@@ -19,7 +19,7 @@ import { Proyecto } from '../src/modelo/tipos.js';
 import {
 	AjustesDossier, BloqueDossier, FUENTES, SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion,
 } from '../src/modelo/dossier.js';
-import { descargar } from './dialogos.js';
+import { descargar, escaparHtml } from './dialogos.js';
 
 /** Lo que el editor del dossier necesita del resto del programa. */
 export interface ContextoDossier {
@@ -28,7 +28,6 @@ export interface ContextoDossier {
 	avisar: (mensaje: string, tono?: 'ok' | 'info' | 'error') => void;
 	marcarSucio: () => void;
 	capturar: () => void;
-	escaparHtml: (t: string) => string;
 	/** Una foto del tablero como se ve ahora: en 3D o en alzado 2D. La saca la escena. */
 	fotoDelTablero: (en2D: boolean) => string;
 }
@@ -41,7 +40,7 @@ const $ = (id: string): HTMLElement => document.getElementById(id)!;
  * Devuelve la única puerta que el resto del programa necesita: abrir o cerrar el panel.
  */
 export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean) => void } {
-	const { avisar, marcarSucio, capturar, escaparHtml, fotoDelTablero } = ctx;
+	const { avisar, marcarSucio, capturar, fotoDelTablero } = ctx;
 	const proyecto = ctx.proyecto;
 
 	let urlDossier: string | undefined;
