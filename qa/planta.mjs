@@ -216,6 +216,41 @@ must('y su catálogo también', await page.evaluate(
 await click('btn-planta'); await page.waitForTimeout(1200);
 must('se puede volver a abrir', await page.isVisible('#mundo'));
 
+/*
+ * Reportado a mano: «al pasear, si aprietas el botón derecho para mover la cámara se abre el menú
+ * de guardar imagen, y al quitarlo sigues caminando sin poder parar». Eran dos cosas: nada evitaba
+ * el menú del navegador, y con el menú delante el `keyup` de la W se lo comía él, así que la tecla
+ * se quedaba apretada para siempre.
+ */
+console.log('\n--- 8b. Pasear: el botón derecho mira, y se puede parar ---');
+await click('mundo-paseo'); await page.waitForTimeout(900);
+must('se entra al paseo', (await page.evaluate(() => window.__plantaQA.vista())) === 'paseo');
+
+const menuEvitado = await page.evaluate(() => {
+	const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 });
+	document.querySelector('#mundo-lienzo, #mundo canvas').dispatchEvent(ev);
+	return ev.defaultPrevented;
+});
+must('el botón derecho NO abre el menú del navegador', menuEvitado);
+
+// Se aprieta la W y se comprueba que anda; luego se le roba el foco, como hacía el menú.
+await page.mouse.move(640, 400);
+await page.keyboard.down('KeyW');
+await page.waitForTimeout(250);
+must('con la W apretada, anda', await page.evaluate(() => window.__plantaQA.andando()));
+const antesDeRobar = await page.evaluate(() => window.__plantaQA.camara());
+await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+await page.waitForTimeout(400);
+must('al perder el foco deja de andar', !(await page.evaluate(() => window.__plantaQA.andando())));
+const despuesDeRobar = await page.evaluate(() => window.__plantaQA.camara());
+await page.waitForTimeout(500);
+const masTarde = await page.evaluate(() => window.__plantaQA.camara());
+const quieto = Math.hypot(masTarde.x - despuesDeRobar.x, masTarde.z - despuesDeRobar.z) < 0.05;
+must('y se queda QUIETO, no sigue caminando solo', quieto,
+	`${antesDeRobar.x.toFixed(1)} → ${despuesDeRobar.x.toFixed(1)} → ${masTarde.x.toFixed(1)}`);
+await page.keyboard.up('KeyW');
+await click('mundo-sims'); await page.waitForTimeout(400);
+
 console.log('\n--- 9. Sin errores ---');
 must('ningún error de JavaScript', errs.length === 0, errs.slice(0, 3).join(' | '));
 

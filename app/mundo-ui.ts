@@ -113,6 +113,19 @@ function pintarResumen(): void {
 	const fila = (color: number, nombre: string, cola: string): string =>
 		`<div class="mundo-fila-sis"><span class="tira" style="background:${hex(color)}"></span>`
 		+ `${esc(nombre)} · ${cola}</div>`;
+	/*
+	 * La misma clave, en pequeño, para el paseo: ahí el panel lateral no se ve y sin esto el color
+	 * de cada conducto no significa nada. La forma de la muestra acompaña a la del 3D —tira plana
+	 * para lo rectangular, punto para lo redondo— porque en la cubierta se distinguen por la forma
+	 * antes que por el color.
+	 */
+	const REDONDOS = new Set(['agua', 'agua-fria', 'bus']);
+	$('mundo-clave').innerHTML = r.metrosPorSistema
+		.map((s) => {
+			const sis = SISTEMAS[s.sistema as SistemaTraza];
+			const redondo = REDONDOS.has(s.sistema) ? ' redondo' : '';
+			return `<span><i class="${redondo}" style="background:${hex(sis.color)}"></i>${esc(sis.nombre)}</span>`;
+		}).join('');
 	$('mundo-leyenda').innerHTML = r.metrosPorSistema
 		.map((s) => fila(SISTEMAS[s.sistema as SistemaTraza].color,
 			SISTEMAS[s.sistema as SistemaTraza].nombre, `${s.metros} m`))
@@ -546,6 +559,7 @@ function cambiarVista(nueva: 'sims' | 'paseo'): void {
 	$('mundo-sims').classList.toggle('activo', nueva === 'sims');
 	$('mundo-paseo').classList.toggle('activo', nueva === 'paseo');
 	($('mundo-ayuda-paseo') as HTMLElement).hidden = nueva !== 'paseo';
+	($('mundo-clave') as HTMLElement).hidden = nueva !== 'paseo';
 	if (nueva === 'paseo') {
 		ponerVistaPaseo(mundo);
 		paseo?.activar();
@@ -680,6 +694,8 @@ if (__QA__) {
 			return { x: d?.x ?? 0, y: d?.y ?? 0, z: d?.z ?? 0 };
 		},
 		invertirRaton: (v: boolean) => paseo?.invertirRaton(v),
+		/** ¿Hay alguna tecla de andar apretada ahora mismo? (para el bug del «no puedo parar»). */
+		andando: () => paseo?.andando() ?? false,
 		/** Selecciona una máquina por su marcado, como si se hubiera pinchado en ella. */
 		seleccionar: (tag: string) => {
 			const e = inf.equipos.find((x) => x.tag === tag);

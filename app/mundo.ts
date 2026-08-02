@@ -67,14 +67,57 @@ function hacerConversor(inf: Infraestructura) {
 		new THREE.Vector3((x - cx) / 1000, z / 1000, -(y - cy) / 1000);
 }
 
-function materialSistema(color: number, transparente = false): THREE.MeshStandardMaterial {
-	return new THREE.MeshStandardMaterial({
-		color, roughness: 0.55, metalness: 0.15,
-		transparent: transparente, opacity: transparente ? 0.75 : 1,
-	});
+/**
+ * ¿Cómo es de verdad esta instalación? Es lo que decide la forma que se dibuja.
+ *
+ * En una cubierta se distinguen a simple vista por su FORMA antes que por su color: el conducto de
+ * aire es una caja de chapa ancha y baja, la cañería es un tubo redondo delgado, la bandeja es una
+ * canal plana. Dibujarlo todo como el mismo tubo gordo era lo que hacía que no se entendiera nada.
+ */
+const FORMA: Record<string, 'conducto' | 'canaleria' | 'bandeja'> = {
+	inyeccion: 'conducto',
+	extraccion: 'conducto',
+	agua: 'canaleria',
+	'agua-fria': 'canaleria',
+	bus: 'canaleria',
+	bandeja: 'bandeja',
+};
+
+/**
+ * Material según de qué está hecha la cosa.
+ *
+ * La chapa galvanizada de un conducto brilla y es casi gris: el color del sistema entra como TINTE,
+ * no como pintura plana. Una cañería aislada es mate. Así el color sigue diciendo qué es cada cosa
+ * —que es para lo que está— sin que la cubierta parezca un juguete de plastilina.
+ */
+function materialSistema(color: number, forma: 'conducto' | 'canaleria' | 'bandeja'): THREE.MeshStandardMaterial {
+	const c = new THREE.Color(color);
+	if (forma === 'conducto') {
+		// Chapa: se le baja el color hacia el gris del galvanizado y se le sube el brillo.
+		c.lerp(new THREE.Color(0xb8c2cc), 0.45);
+		return new THREE.MeshStandardMaterial({ color: c, roughness: 0.35, metalness: 0.75 });
+	}
+	if (forma === 'bandeja') {
+		c.lerp(new THREE.Color(0x9aa4ae), 0.3);
+		return new THREE.MeshStandardMaterial({ color: c, roughness: 0.5, metalness: 0.6 });
+	}
+	// Cañería: aislamiento mate, el color se conserva casi entero porque es lo que la identifica.
+	c.lerp(new THREE.Color(0xced4da), 0.12);
+	return new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, metalness: 0.05 });
 }
 
-/** Geometría de un tramo de conducto o cañería: un tubo que sigue el recorrido, con su sección. */
+/**
+ * Geometría de un tramo, con su SECCIÓN REAL.
+ *
+ * El tamaño estaba mal, y mucho: se usaba `max(ancho, alto)` como RADIO, así que un conducto de
+ * 600×400 se dibujaba de 600 de radio —1.200 mm de through, el doble de lo que mide— y encima
+ * redondo. La bandeja de 300×100 salía de 600 de ancha. De ahí que todo pareciera la misma
+ * salchicha gorda de colores.
+ *
+ * Los conductos y las bandejas se montan como una cadena de cajas, una por tramo recto, girada
+ * hacia donde va: es rectangular de verdad, ancha y baja, con la cara plana hacia arriba. Las
+ * cañerías siguen siendo un tubo, pero redondo de verdad y del diámetro que toca.
+ */
 function geometriaTraza(
 	t: TrazaPlanta, aEscena: ReturnType<typeof hacerConversor>,
 ): THREE.BufferGeometry | undefined {
@@ -82,12 +125,75 @@ function geometriaTraza(
 	// Puntos repetidos rompen la curva; y con menos de dos no hay tramo.
 	const limpios = pts.filter((p, i) => i === 0 || p.distanceTo(pts[i - 1]) > 0.01);
 	if (limpios.length < 2) return undefined;
-	const redondo = t.sistema === 'agua' || t.sistema === 'agua-fria' || t.sistema === 'bus';
-	const curva = new THREE.CatmullRomCurve3(limpios, false, 'catmullrom', 0.02);
-	const radio = Math.max(t.ancho, t.alto) / 2000;
-	return new THREE.TubeGeometry(
-		curva, Math.min(90, Math.max(2, limpios.length * 2)), radio, redondo ? 6 : 4, false,
-	);
+	const forma = FORMA[t.sistema] ?? 'canaleria';
+
+	const piezas: THREE.BufferGeometry[] = [];
+
+	if (forma === 'canaleria') {
+		const curva = new THREE.CatmullRomCurve3(limpios, false, 'catmullrom', 0.02);
+		// Redondo DE VERDAD: con seis lados se veía el hexágono. Y el radio es la mitad del
+		// diámetro, no el diámetro entero.
+		const radio = Math.max(0.02, t.ancho / 2000);
+		const tubo = new THREE.TubeGeometry(
+			curva, Math.min(90, Math.max(2, limpios.length * 2)), radio, 10, false,
+		);
+		tubo.deleteAttribute('uv');
+		piezas.push(tubo);
+		piezas.push(...soportes(limpios, radio, 0.05));
+		return fusionar(piezas);
+	}
+
+	const ancho = Math.max(0.05, t.ancho / 1000);
+	const alto = Math.max(0.04, t.alto / 1000);
+	for (let i = 1; i < limpios.length; i++) {
+		const a = limpios[i - 1];
+		const b = limpios[i];
+		const largo = a.distanceTo(b);
+		if (largo < 0.02) continue;
+		// Se alarga media sección por cada punta para que las esquinas no queden abiertas.
+		const g = new THREE.BoxGeometry(largo + ancho * 0.5, alto, ancho);
+		g.deleteAttribute('uv');
+		g.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.atan2(a.z - b.z, b.x - a.x)));
+		const medio = a.clone().add(b).multiplyScalar(0.5);
+		g.translate(medio.x, medio.y, medio.z);
+		piezas.push(g);
+	}
+	piezas.push(...soportes(limpios, alto / 2, forma === 'bandeja' ? 0.05 : 0.07));
+	return fusionar(piezas);
+}
+
+/**
+ * Los SOPORTES que apean la instalación sobre la cubierta.
+ *
+ * Sin ellos los conductos salían flotando en el aire —a 4,20 m, sobre máquinas de 2,20— y parecían
+ * losas de colores colgadas de la nada; era buena parte del «no se entiende nada». En una cubierta
+ * de verdad todo va apeado con perfiles cada pocos metros, y en cuanto se ven los pies el cerebro
+ * entiende de golpe que eso es una instalación montada por encima y a qué altura va.
+ *
+ * Se ponen a intervalos, no en cada vértice: un tramo del plano puede traer veinte puntos en dos
+ * metros y saldría una empalizada.
+ */
+function soportes(
+	puntos: THREE.Vector3[], medioAlto: number, grueso: number, cada = 6,
+): THREE.BufferGeometry[] {
+	const out: THREE.BufferGeometry[] = [];
+	let desdeElUltimo = cada; // el primer punto ya lleva soporte
+	for (let i = 1; i < puntos.length; i++) {
+		const a = puntos[i - 1];
+		const b = puntos[i];
+		const largo = a.distanceTo(b);
+		desdeElUltimo += largo;
+		if (desdeElUltimo < cada) continue;
+		desdeElUltimo = 0;
+		const p = a.clone().add(b).multiplyScalar(0.5);
+		const altura = p.y - medioAlto;
+		if (altura < 0.25) continue;      // va casi en el suelo: no hay nada que apear
+		const g = new THREE.BoxGeometry(grueso, altura, grueso);
+		g.deleteAttribute('uv');
+		g.translate(p.x, altura / 2, p.z);
+		out.push(g);
+	}
+	return out;
 }
 
 /**
@@ -115,7 +221,7 @@ function construirInstalaciones(
 		const info = SISTEMAS[sistema as keyof typeof SISTEMAS];
 		const fusionada = fusionar(geos);
 		if (!fusionada) continue;
-		const malla = new THREE.Mesh(fusionada, materialSistema(info.color, sistema === 'bus'));
+		const malla = new THREE.Mesh(fusionada, materialSistema(info.color, FORMA[sistema] ?? 'canaleria'));
 		malla.userData.sistema = sistema;
 		malla.userData.tramos = geos.length;
 		grupo.add(malla);
@@ -254,15 +360,52 @@ function construirEquipo(e: EquipoPlanta, aEscena: ReturnType<typeof hacerConver
 	const fo = (e.fondo ?? 2000) / 1000;
 	const al = (e.alto ?? 2000) / 1000;
 	const esUma = e.tipo === 'uma';
+	/*
+	 * Una UMA no es una caja lisa: se apoya en una BANCADA sobre la cubierta, lleva tapa de
+	 * cubrición con vuelo y los paneles se ven por sus juntas. Con la caja pelada, en el paseo
+	 * costaba saber si aquello era un equipo, una caseta o un bulto del plano. Son tres piezas
+	 * más por máquina y hay 41 situadas: no se nota en el paseo y se entiende a la primera.
+	 */
+	const ALTO_BANCADA = 0.28;
+	const cuerpoAlto = Math.max(0.4, al - ALTO_BANCADA);
 	const cuerpo = new THREE.Mesh(
-		new THREE.BoxGeometry(an, al, fo),
+		new THREE.BoxGeometry(an, cuerpoAlto, fo),
 		new THREE.MeshStandardMaterial({
-			color: esUma ? COLOR_UMA : COLOR_VEX, roughness: 0.65, metalness: 0.35,
+			color: esUma ? COLOR_UMA : COLOR_VEX, roughness: 0.5, metalness: 0.55,
 		}),
 	);
-	cuerpo.position.y = al / 2;
+	cuerpo.position.y = ALTO_BANCADA + cuerpoAlto / 2;
 	cuerpo.castShadow = true;
 	g.add(cuerpo);
+
+	// Bancada: perfil oscuro y algo más estrecho, para que el equipo no nazca del suelo.
+	const bancada = new THREE.Mesh(
+		new THREE.BoxGeometry(an * 0.94, ALTO_BANCADA, fo * 0.94),
+		new THREE.MeshStandardMaterial({ color: 0x3a4149, roughness: 0.9, metalness: 0.2 }),
+	);
+	bancada.position.y = ALTO_BANCADA / 2;
+	bancada.castShadow = true;
+	g.add(bancada);
+
+	// Tapa con vuelo: la línea de sombra que remata arriba es lo que hace que se lea como techo.
+	const tapa = new THREE.Mesh(
+		new THREE.BoxGeometry(an + 0.12, 0.09, fo + 0.12),
+		new THREE.MeshStandardMaterial({ color: 0xb0bac4, roughness: 0.4, metalness: 0.6 }),
+	);
+	tapa.position.y = al + 0.045;
+	tapa.castShadow = true;
+	g.add(tapa);
+
+	// Juntas de los paneles registrables, en el frente: dan escala y dicen por dónde se abre.
+	const paneles = Math.max(2, Math.min(6, Math.round(an / 1.2)));
+	for (let i = 1; i < paneles; i++) {
+		const junta = new THREE.Mesh(
+			new THREE.BoxGeometry(0.03, cuerpoAlto * 0.86, 0.02),
+			new THREE.MeshStandardMaterial({ color: 0x2b3138, roughness: 0.9 }),
+		);
+		junta.position.set(-an / 2 + (an * i) / paneles, ALTO_BANCADA + cuerpoAlto / 2, fo / 2 + 0.012);
+		g.add(junta);
+	}
 	// Franja de color en el frente: verde si tiene puntos de control, gris si el plano no los da.
 	const franja = new THREE.Mesh(
 		new THREE.BoxGeometry(an * 0.96, Math.min(0.22, al * 0.12), 0.04),
@@ -696,8 +839,10 @@ function distanciaAObra(m: Mundo, x: number, z: number): number {
 /**
  * Paseo en primera persona: WASD para moverse, ratón para mirar.
  *
- * No usa `PointerLockControls` para no bloquear el cursor sin avisar —eso desconcierta a quien
- * no juega— sino arrastre con el botón izquierdo, que es lo que ya hace en el resto del programa.
+ * No usa `PointerLockControls` para no bloquear el cursor sin avisar —eso desconcierta a quien no
+ * juega— sino arrastre con el BOTÓN DERECHO. El izquierdo se queda para pinchar una máquina y ver
+ * su ficha, que es a lo que se viene: en la cubierta se mira alrededor mucho, pero se consulta
+ * más.
  *
  * SENTIDO DEL RATÓN. El convenio es el de cualquier juego en primera persona: arrastrar hacia
  * arriba mira hacia arriba y arrastrar a la derecha mira a la derecha. Antes la vertical estaba
@@ -716,15 +861,48 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 	const VELOCIDAD = 14;          // m/s: se recorren 240 m sin aburrirse
 	const SENSIBILIDAD = 0.0035;
 
-	const onKeyDown = (e: KeyboardEvent) => { teclas.add(e.code); };
+	const ANDAR = new Set([
+		'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+		'ShiftLeft', 'ShiftRight',
+	]);
+
+	/**
+	 * QUEDARSE QUIETO. Se sueltan todas las teclas de golpe.
+	 *
+	 * Hace falta porque una tecla se «queda pulsada» siempre que el navegador se lleva el foco
+	 * mientras la tienes apretada: el `keyup` se lo come él y aquí nunca llega. Pasaba de forma
+	 * escandalosa al abrirse el menú del botón derecho —seguías andando sin poder parar, aunque
+	 * cerraras el menú—, y pasa igual al cambiar de pestaña o de ventana con la W apretada.
+	 */
+	const pararEnSeco = (): void => { teclas.clear(); girando = false; };
+
+	const onKeyDown = (e: KeyboardEvent) => {
+		teclas.add(e.code);
+		// Las flechas hacen desplazarse la página por debajo; andando eso descoloca la pantalla.
+		if (ANDAR.has(e.code)) e.preventDefault();
+	};
 	const onKeyUp = (e: KeyboardEvent) => { teclas.delete(e.code); };
-	const onDown = (e: MouseEvent) => { girando = true; ultimo = { x: e.clientX, y: e.clientY }; };
-	const onUp = () => { girando = false; };
+	/*
+	 * MIRAR ES EL BOTÓN DERECHO, Y SOLO ÉL. El izquierdo queda libre para lo suyo: pinchar una
+	 * máquina y ver su ficha, o marcar un punto de la cinta métrica. Antes miraba con cualquier
+	 * botón, así que al girar con el derecho se abría además el menú del navegador («Guardar
+	 * imagen como…») encima de la cubierta.
+	 */
+	const onDown = (e: MouseEvent) => {
+		if (e.button !== 2) return;
+		e.preventDefault();
+		girando = true;
+		ultimo = { x: e.clientX, y: e.clientY };
+	};
+	const onUp = (e: MouseEvent) => { if (e.button === 2) girando = false; };
 	const onMove = (e: MouseEvent) => {
 		if (!girando) return;
 		mirar(e.clientX - ultimo.x, e.clientY - ultimo.y);
 		ultimo = { x: e.clientX, y: e.clientY };
 	};
+	// Sin esto, el menú del navegador tapa la cubierta en cuanto giras la vista.
+	const onMenu = (e: MouseEvent) => { e.preventDefault(); };
+	const onSalidaDeFoco = () => pararEnSeco();
 
 	/** Gira la vista por un arrastre de `dx`,`dy` píxeles. Separado para poder probarlo. */
 	function mirar(dx: number, dy: number): void {
@@ -742,8 +920,11 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 		window.addEventListener('keydown', onKeyDown);
 		window.addEventListener('keyup', onKeyUp);
 		lienzo.addEventListener('mousedown', onDown);
+		lienzo.addEventListener('contextmenu', onMenu);
 		window.addEventListener('mouseup', onUp);
 		window.addEventListener('mousemove', onMove);
+		window.addEventListener('blur', onSalidaDeFoco);
+		document.addEventListener('visibilitychange', onSalidaDeFoco);
 		// Se mira hacia donde ya apuntaba la cámara, para no dar un salto al cambiar de vista.
 		const dir = new THREE.Vector3();
 		m.camara.getWorldDirection(dir);
@@ -755,10 +936,12 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 		window.removeEventListener('keydown', onKeyDown);
 		window.removeEventListener('keyup', onKeyUp);
 		lienzo.removeEventListener('mousedown', onDown);
+		lienzo.removeEventListener('contextmenu', onMenu);
 		window.removeEventListener('mouseup', onUp);
 		window.removeEventListener('mousemove', onMove);
-		teclas.clear();
-		girando = false;
+		window.removeEventListener('blur', onSalidaDeFoco);
+		document.removeEventListener('visibilitychange', onSalidaDeFoco);
+		pararEnSeco();
 	}
 	function paso(dt: number): void {
 		// Ojo con el signo: solo la horizontal va negada. Negar el vector entero —como se hacía—
@@ -786,7 +969,14 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 		m.camara.position.x = Math.max(-lx, Math.min(lx, m.camara.position.x));
 		m.camara.position.z = Math.max(-lz, Math.min(lz, m.camara.position.z));
 	}
-	return { activar, desactivar, paso, mirar, invertirRaton, estaInvertido, direccion };
+	/** ¿Hay alguna tecla de movimiento apretada? Lo consultan las pruebas del «no puedo parar». */
+	function andando(): boolean {
+		for (const t of teclas) if (ANDAR.has(t) && t !== 'ShiftLeft' && t !== 'ShiftRight') return true;
+		return false;
+	}
+	return {
+		activar, desactivar, paso, mirar, invertirRaton, estaInvertido, direccion, pararEnSeco, andando,
+	};
 
 	/** Hacia dónde se está mirando ahora mismo (unitario). */
 	function direccion(): THREE.Vector3 {
