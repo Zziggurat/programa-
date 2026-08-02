@@ -106,6 +106,85 @@ export function rutaAutomatica(a: Punto, b: Punto, corredores: Banda[], carril: 
 	return [{ x: a.x, y }, { x: b.x, y }];
 }
 
+/** Rectángulo (mm de modelo) donde se puede tender cable. */
+export interface Area { x0: number; x1: number; y0: number; y1: number }
+
+/**
+ * Encierra un punto de cable dentro del área donde de verdad se puede tender.
+ *
+ * Sin esto una unión se podía arrastrar A DONDE FUERA: en una placa de 400×500 acabó a 159 mm
+ * por fuera, con el cable estirado hacia el vacío y el tirador lejos de la vista. Los aparatos
+ * llevan su recorte desde siempre; los puntos de quiebre de los cables no lo tenían.
+ */
+export function dentroDelArea(p: Punto, area: Area): Punto {
+	return {
+		x: Math.min(Math.max(p.x, area.x0), area.x1),
+		y: Math.min(Math.max(p.y, area.y0), area.y1),
+	};
+}
+
+/** Rectángulo que ocupa un aparato en la placa (mm de modelo). */
+export interface Huella { x: number; y: number; ancho: number; alto: number }
+
+/**
+ * Saca un punto de cable de encima de un aparato, por el lado que quede más cerca.
+ *
+ * En un tablero de verdad un hilo no cruza por la cara de un automático: lo rodea. El ruteo
+ * automático ya lo respeta —solo usa corredores libres—, pero un punto puesto A MANO no lo
+ * respetaba de dos maneras: se podía arrastrar encima de un aparato, y —peor— se quedaba donde
+ * estaba cuando el aparato se movía DEBAJO de él más tarde, así que peinabas el cable, corrías
+ * el guardamotor dos centímetros y el cable te quedaba cruzando por encima sin haberlo tocado.
+ *
+ * Se repasa dos veces porque salir de una huella puede meter el punto en la de al lado.
+ */
+export function fueraDeLaHuella(p: Punto, huellas: Huella[], margen = 4): Punto {
+	let q = p;
+	// Unas pocas vueltas bastan: cada una saca el punto de un bloque entero de aparatos.
+	for (let vuelta = 0; vuelta < 4; vuelta++) {
+		/*
+		 * Se sale del BLOQUE, no de un aparato suelto, y esto no es un refinamiento: en un riel
+		 * los aparatos van pegados unos a otros, con dos milímetros entre ellos. Saliendo de cada
+		 * uno por separado, el punto rebotaba del primero al segundo y del segundo al primero sin
+		 * salir nunca, porque entre los dos no cabe el margen.
+		 */
+		let x0 = Infinity; let x1 = -Infinity; let y0 = Infinity; let y1 = -Infinity;
+		for (const h of huellas) {
+			const a0 = h.x - margen; const a1 = h.x + h.ancho + margen;
+			const b0 = h.y - margen; const b1 = h.y + h.alto + margen;
+			if (q.x <= a0 || q.x >= a1 || q.y <= b0 || q.y >= b1) continue;
+			x0 = Math.min(x0, a0); x1 = Math.max(x1, a1);
+			y0 = Math.min(y0, b0); y1 = Math.max(y1, b1);
+		}
+		if (x0 === Infinity) break;   // ya está libre
+		// El bloque CRECE con todo aparato que lo toque, en cadena. Si no, el de al lado se queda
+		// fuera por medio milímetro y el punto sale de uno para meterse en el otro; en una fila de
+		// riel eso es un bucle. Creciendo, el bloque acaba siendo la fila entera y la salida
+		// barata pasa a ser por arriba o por abajo, que es por donde sale un cable de verdad.
+		for (let crece = true; crece;) {
+			crece = false;
+			for (const h of huellas) {
+				const a0 = h.x - margen; const a1 = h.x + h.ancho + margen;
+				const b0 = h.y - margen; const b1 = h.y + h.alto + margen;
+				if (a1 <= x0 || a0 >= x1 || b1 <= y0 || b0 >= y1) continue;   // no toca el bloque
+				if (a0 < x0 || a1 > x1 || b0 < y0 || b1 > y1) {
+					x0 = Math.min(x0, a0); x1 = Math.max(x1, a1);
+					y0 = Math.min(y0, b0); y1 = Math.max(y1, b1);
+					crece = true;
+				}
+			}
+		}
+		// Se sale por el lado más barato: el que menos desvía el cable de donde lo dejaste.
+		const salidas = [
+			{ d: q.x - x0, p: { x: x0, y: q.y } },
+			{ d: x1 - q.x, p: { x: x1, y: q.y } },
+			{ d: q.y - y0, p: { x: q.x, y: y0 } },
+			{ d: y1 - q.y, p: { x: q.x, y: y1 } },
+		].sort((a, b) => a.d - b.d);
+		q = salidas[0].p;
+	}
+	return q;
+}
+
 /** Un trozo recto ya tendido: horizontal a la altura `fijo`, o vertical en la abscisa `fijo`. */
 interface Reserva { horizontal: boolean; fijo: number; desde: number; hasta: number }
 

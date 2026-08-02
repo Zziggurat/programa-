@@ -6,8 +6,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-	Banda, carrilesDe, corredoresLibres, crearRepartidor, distPuntoSegmento, longitudSolapada,
-	orthogonalize, Punto, rutaAutomatica,
+	Banda, carrilesDe, corredoresLibres, crearRepartidor, dentroDelArea, distPuntoSegmento,
+	fueraDeLaHuella, longitudSolapada, orthogonalize, Punto, rutaAutomatica,
 } from '../app/geometria-cables.js';
 
 /** ¿Todos los tramos consecutivos son horizontales o verticales (nunca diagonales)? */
@@ -216,4 +216,43 @@ test('repartidor: dos cables que BAJAN por la misma vertical no se meten uno den
 	const otro = repartir({ x: 50, y: 60 }, { x: 380, y: 220 });
 	assert.notEqual(uno.carril === otro.carril && uno.puntos[0].y === otro.puntos[0].y, true,
 		'o cambian de carril o cambian de capa, pero no las dos cosas iguales');
+});
+
+test('dentroDelArea: una unión arrastrada lejos se queda en el borde, no en el vacío', () => {
+	const area = { x0: -10, x1: 410, y0: -10, y1: 526 };
+	assert.deepEqual(dentroDelArea({ x: 559, y: 239 }, area), { x: 410, y: 239 }, 'se sale por la derecha');
+	assert.deepEqual(dentroDelArea({ x: -300, y: -900 }, area), { x: -10, y: -10 }, 'se sale por arriba a la izquierda');
+	assert.deepEqual(dentroDelArea({ x: 200, y: 5000 }, area), { x: 200, y: 526 }, 'no baja de los prensaestopas');
+});
+
+test('dentroDelArea: un punto que ya está dentro no se toca', () => {
+	const area = { x0: -10, x1: 410, y0: -10, y1: 526 };
+	assert.deepEqual(dentroDelArea({ x: 120, y: 300 }, area), { x: 120, y: 300 });
+});
+
+test('fueraDeLaHuella: un punto encima de un aparato sale por el lado más cercano', () => {
+	const h = [{ x: 100, y: 100, ancho: 100, alto: 50 }];
+	// Muy pegado al borde izquierdo → sale por la izquierda.
+	assert.deepEqual(fueraDeLaHuella({ x: 105, y: 120 }, h, 4), { x: 96, y: 120 });
+	// Muy pegado al borde de arriba → sale por arriba.
+	assert.deepEqual(fueraDeLaHuella({ x: 150, y: 103 }, h, 4), { x: 150, y: 96 });
+	// Muy pegado al de abajo → sale por abajo.
+	assert.deepEqual(fueraDeLaHuella({ x: 150, y: 148 }, h, 4), { x: 150, y: 154 });
+});
+
+test('fueraDeLaHuella: un punto que no está encima de nada no se toca', () => {
+	const h = [{ x: 100, y: 100, ancho: 100, alto: 50 }];
+	assert.deepEqual(fueraDeLaHuella({ x: 300, y: 300 }, h, 4), { x: 300, y: 300 });
+	assert.deepEqual(fueraDeLaHuella({ x: 150, y: 300 }, h, 4), { x: 150, y: 300 });
+});
+
+test('fueraDeLaHuella: salir de un aparato no puede dejarte dentro del de al lado', () => {
+	// Dos aparatos pegados: el hueco entre ellos es más estrecho que el margen.
+	const h = [
+		{ x: 100, y: 100, ancho: 50, alto: 50 },
+		{ x: 152, y: 100, ancho: 50, alto: 50 },
+	];
+	const q = fueraDeLaHuella({ x: 148, y: 120 }, h, 4);
+	const dentroDe = (r: { x: number; y: number; ancho: number; alto: number }) => q.x > r.x - 4 && q.x < r.x + r.ancho + 4 && q.y > r.y - 4 && q.y < r.y + r.alto + 4;
+	assert.equal(h.some(dentroDe), false, `el punto ${JSON.stringify(q)} sigue encima de un aparato`);
 });

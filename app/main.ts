@@ -34,7 +34,7 @@ import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
 	anclajeBorne, cajaDe, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
-	liberar, rutasDeCables, salidasDeCable, vaciar, VOLTAJE_COLOR, Z_FRENTE,
+	liberar, rutasDeCables, salidasDeCable, vaciar, VOLTAJE_COLOR, yEntradasCampo, Z_FRENTE,
 	Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
@@ -51,7 +51,10 @@ import { instalarEsquema } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
 import { montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
 import { dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
-import { distPuntoSegmento, longitudSolapada, orthogonalize, redondearEsquinas } from './geometria-cables.js';
+import {
+	dentroDelArea, distPuntoSegmento, fueraDeLaHuella, Huella, longitudSolapada, orthogonalize,
+	redondearEsquinas,
+} from './geometria-cables.js';
 
 /** Bandera que inyecta el empaquetador: true solo en el build para las pruebas (QA=1). */
 declare const __QA__: boolean;
@@ -2488,14 +2491,78 @@ function insertarWaypoint(c: Conductor, x: number, y: number): number {
 
 /** Mueve el punto de quiebre `idx` a (x,y), alineándolo en vertical/horizontal con sus vecinos
  *  (para que los tramos queden rectos, como en Tinkercad). */
+/**
+ * Dónde se puede tender cable, en mm de modelo.
+ *
+ * No es la placa a secas: un cable rodea su borde, y los que van a campo BAJAN hasta la línea de
+ * los prensaestopas, que está por debajo de la placa. Es el mismo terreno que usa el ruteo
+ * automático, así que a mano se puede llegar exactamente adonde llega solo.
+ */
+function areaDeCableado(): { x0: number; x1: number; y0: number; y1: number } {
+	const g = proyecto.gabinete;
+	const margen = 10;
+	return {
+		x0: -margen, x1: (g?.ancho ?? 0) + margen,
+		y0: -margen, y1: yEntradasCampo(proyecto),
+	};
+}
+
+/**
+ * Huellas que un cable NO puede cruzar por encima.
+ *
+ * Las imágenes de referencia quedan fuera a propósito: son la foto del tablero de verdad, y
+ * cablear sobre ellas es justo para lo que están.
+ */
+function huellasQueEsquivarLosCables(): Huella[] {
+	const g = proyecto.gabinete;
+	if (!g) return [];
+	return g.colocaciones
+		.filter((c) => !proyecto.dispositivos.find((d) => d.id === c.dispositivoId)?.imagen)
+		.map((c) => ({ x: c.x, y: c.y, ancho: c.ancho, alto: c.alto }));
+}
+
+/** Punto de cable ya recortado al área, fuera de los aparatos y redondeado al milímetro. */
+function puntoDeCableValido(x: number, y: number): { x: number; y: number } {
+	const dentro = dentroDelArea({ x, y }, areaDeCableado());
+	const libre = fueraDeLaHuella(dentro, huellasQueEsquivarLosCables());
+	return { x: Math.round(libre.x), y: Math.round(libre.y) };
+}
+
+/**
+ * Repasa los peinados hechos a mano y saca de encima de los aparatos los puntos que hayan
+ * quedado ahí. Se llama al SOLTAR un aparato o un riel: son los movimientos que pueden dejar
+ * un cable cruzando por encima de algo sin que nadie haya tocado el cable.
+ */
+/** Si el saneado tuvo que mover algo, se dice: nadie debe encontrarse cambios sin explicación. */
+function avisarSiSeMovioAlgunCable(cuantos: number): void {
+	if (!cuantos) return;
+	avisar(`${cuantos} punto${cuantos > 1 ? 's' : ''} de cable se apartó del aparato para no cruzarlo por encima`, 'info');
+}
+
+function sanearTrazados(): number {
+	let arreglados = 0;
+	for (const c of proyecto.conductores) {
+		if (!c.trazado?.length) continue;
+		for (let i = 0; i < c.trazado.length; i++) {
+			const antes = c.trazado[i];
+			const ahora = puntoDeCableValido(antes.x, antes.y);
+			if (ahora.x !== antes.x || ahora.y !== antes.y) { c.trazado[i] = ahora; arreglados++; }
+		}
+	}
+	return arreglados;
+}
+
 function moverWaypoint(c: Conductor, idx: number, x: number, y: number): void {
 	const wps = c.trazado;
 	if (!wps || !wps[idx]) return;
 	const p = salidasDeCable(proyecto, c);
 	const prev = idx > 0 ? wps[idx - 1] : p?.salidaA;
 	const next = idx < wps.length - 1 ? wps[idx + 1] : p?.salidaB;
-	let nx = Math.round(x);
-	let ny = Math.round(y);
+	// Primero se encierra en el área y luego se alinea: así el recorte nunca desalinea un tramo
+	// que el usuario acaba de dejar recto.
+	const dentro = puntoDeCableValido(x, y);
+	let nx = dentro.x;
+	let ny = dentro.y;
 	// Alinear en vertical/horizontal con el vecino más cercano en cada eje.
 	if (prev && Math.abs(nx - prev.x) < SNAP_ORTO) nx = prev.x;
 	else if (next && Math.abs(nx - next.x) < SNAP_ORTO) nx = next.x;
@@ -2796,9 +2863,9 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 
 	// Modo Trabajo (CLIC IZQUIERDO = agarrar y mover el cable): se puede agarrar CUALQUIER
 	// cable por cualquier punto de su recorrido, esté o no seleccionado. Si el punto de agarre
-	// cae sobre una unión existente se mueve esa; si no, al empezar a arrastrar se crea una
-	// unión ahí (si solo se hace clic sin arrastrar, únicamente se selecciona: no deja uniones
-	// sueltas). Los aparatos solo tienen prioridad si están DELANTE del cable.
+	// cae sobre una unión existente, se mueve esa; si no hay unión ahí, el cable NO se deforma:
+	// las uniones se crean con doble clic y solo así (ver `crearUnionBajoElPuntero`, que explica
+	// por qué). Los aparatos solo tienen prioridad si están DELANTE del cable.
 	if (modo === 'trabajo') {
 		const cid = cableBajoElPuntero(ev);
 		if (cid && (elem?.tipo !== 'dispositivo' || cableEstaDelante(ev))) {
@@ -2921,7 +2988,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			// Mover el punto de quiebre del tirador (o crear el primero si el cable no tenía).
 			const c = proyecto.conductores.find((x) => x.id === sel!.id)!;
 			if (handleArrastrado.indice === undefined || handleArrastrado.indice < 0) {
-				c.trazado = [{ x: Math.round(p.x), y: Math.round(p.y) }];
+				c.trazado = [puntoDeCableValido(p.x, p.y)];
 			} else {
 				moverWaypoint(c, handleArrastrado.indice, p.x, p.y);
 			}
@@ -3057,6 +3124,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		}
 		estadoRielArrastre = undefined;
 		for (const m of resaltados) m.emissive.setHex(0x1d4ed8);
+		avisarSiSeMovioAlgunCable(sanearTrazados());
 		actualizarTodo();
 		pintarEstructura();
 		return;
@@ -3093,6 +3161,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		for (const m of resaltados) m.emissive.setHex(0x1d4ed8); // restaurar color de selección
 	}
 	arrastreInicio = undefined;
+	avisarSiSeMovioAlgunCable(sanearTrazados());
 
 	recalcular();
 	reconstruirCables();
