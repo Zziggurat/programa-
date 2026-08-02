@@ -24,6 +24,7 @@ import {
 } from '../src/modelo/infraestructura.js';
 import { EstadoObra } from '../src/motores/levantamiento.js';
 import { ModoColor, canalesDe, colorDeEquipo, medirTirada } from '../src/motores/planta.js';
+import { ejesDeLaPlanta } from '../src/motores/ejes-planta.js';
 
 /* --------------------------------- Construcción --------------------------------- */
 
@@ -209,7 +210,16 @@ function construirInstalaciones(
 ): THREE.Group {
 	const grupo = new THREE.Group();
 	const porSistema = new Map<string, THREE.BufferGeometry[]>();
-	for (const t of trazas) {
+	/*
+	 * Del DIBUJO al EJE, antes de tocar nada del 3D.
+	 *
+	 * Lo que trae el plano son las líneas dibujadas, y un conducto se dibuja por sus DOS LADOS más
+	 * sus piezas y sus rejillas. Tomando cada línea por un conducto salían cientos de trozos
+	 * sueltos que no conectaban con nada —era la pregunta de quien lo probó: «¿por qué está todo
+	 * separado?»—. `ejesDeLaPlanta` empareja los lados, traza el eje por el medio y cose los tramos
+	 * seguidos, así que aquí ya llegan recorridos de verdad y con el ancho MEDIDO del plano.
+	 */
+	for (const t of ejesDeLaPlanta(trazas as unknown as Parameters<typeof ejesDeLaPlanta>[0]) as unknown as TrazaPlanta[]) {
 		const g = geometriaTraza(t, aEscena);
 		if (!g) continue;
 		// Los atributos tienen que coincidir para poder fusionar: solo posición y normal.
