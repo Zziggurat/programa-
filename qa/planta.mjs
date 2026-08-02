@@ -226,12 +226,39 @@ console.log('\n--- 8b. Pasear: el botón derecho mira, y se puede parar ---');
 await click('mundo-paseo'); await page.waitForTimeout(900);
 must('se entra al paseo', (await page.evaluate(() => window.__plantaQA.vista())) === 'paseo');
 
-const menuEvitado = await page.evaluate(() => {
+// Sobre el 3D y sobre los paneles del HUD: el primer arreglo solo cubría el lienzo y el fallo
+// seguía saliendo al pinchar con el derecho encima del buscador o de la lista de máquinas.
+for (const [donde, sel] of [['sobre la cubierta', '#mundo-lienzo'], ['sobre el panel del HUD', '#mundo-buscador'], ['sobre la lista de máquinas', '#mundo-panel']]) {
+	const evitado = await page.evaluate((s) => {
+		const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 });
+		document.querySelector(s).dispatchEvent(ev);
+		return ev.defaultPrevented;
+	}, sel);
+	must(`el botón derecho NO abre el menú del navegador (${donde})`, evitado);
+}
+
+// Y aunque el foco se pierda de una forma que no conozcamos, una tecla no puede quedarse colgada:
+// el sistema repite el keydown mientras está apretada, así que la que deja de repetirse se suelta.
+await page.keyboard.down('KeyW');
+await page.waitForTimeout(200);
+must('con la W apretada de verdad, anda', await page.evaluate(() => window.__plantaQA.andando()));
+await page.evaluate(() => {
 	const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 });
-	document.querySelector('#mundo-lienzo, #mundo canvas').dispatchEvent(ev);
-	return ev.defaultPrevented;
+	document.querySelector('#mundo-buscador').dispatchEvent(ev);
 });
-must('el botón derecho NO abre el menú del navegador', menuEvitado);
+await page.waitForTimeout(300);
+must('el menú del HUD deja de hacerte caminar', !(await page.evaluate(() => window.__plantaQA.andando())));
+await page.keyboard.up('KeyW');
+
+console.log('\n--- 8c. Los paneles se pliegan y se despliegan ---');
+must('el botón de paneles existe', await page.isVisible('#mundo-paneles'));
+must('empiezan a la vista', await page.isVisible('#mundo-buscador'));
+await click('mundo-paneles'); await page.waitForTimeout(400);
+must('el botón los esconde', await page.evaluate(
+	() => document.getElementById('mundo').classList.contains('sin-paneles')));
+await page.keyboard.press('h'); await page.waitForTimeout(400);
+must('y la tecla H los vuelve a sacar', await page.evaluate(
+	() => !document.getElementById('mundo').classList.contains('sin-paneles')));
 
 // Se aprieta la W y se comprueba que anda; luego se le roba el foco, como hacía el menú.
 await page.mouse.move(640, 400);

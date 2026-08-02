@@ -231,6 +231,14 @@
 		margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--borde); }
 	#mundo-invertir-caja:hover { color: var(--texto); }
 	@media (max-width: 900px) { #mundo-panel, #mundo-buscador, #mundo-cinta { display: none; } }
+	/* Paneles plegados: se apartan hacia su lado en vez de desaparecer de golpe, para que se vea
+	   de dónde salen y adónde vuelven. Quedan sin ratón para no comerse los clics del 3D. */
+	#mundo.sin-paneles #mundo-buscador { transform: translateX(calc(-100% - 20px)); }
+	#mundo.sin-paneles #mundo-panel { transform: translateX(calc(100% + 20px)); }
+	#mundo-buscador, #mundo-panel { transition: transform .22s ease; }
+	#mundo.sin-paneles #mundo-buscador, #mundo.sin-paneles #mundo-panel {
+		pointer-events: none; opacity: 0; }
+	@media (prefers-reduced-motion: reduce) { #mundo-buscador, #mundo-panel { transition: none; } }
 
 	/* ---- Buscar, filtrar y colorear la planta (panel izquierdo) ---- */
 	#mundo-buscador { position: absolute; top: 58px; left: 12px; width: 300px;
@@ -1191,6 +1199,7 @@
 			<button id="mundo-sims" class="activo" title="Vista general desde arriba, como en Los Sims">🏙️ Vista general</button>
 			<button id="mundo-paseo" title="Recorrerla a pie: WASD para andar, arrastra para mirar, Shift para correr">🚶 Pasear</button>
 		</div>
+		<button class="boton" id="mundo-paneles" title="Esconder o mostrar los paneles laterales (también con la tecla H)">🗔 Paneles</button>
 		<button class="boton" id="mundo-medir" title="Marcar puntos en la cubierta y saber cuánto cable pedir">📏 Medir</button>
 		<button class="boton" id="mundo-inicio" title="Volver a la ventana de inicio">🏠 Inicio</button>
 		<button class="boton peligro" id="mundo-salir" title="Ir al editor de tableros">✕ Salir</button>
@@ -1240,7 +1249,7 @@
 	</div>
 	<div id="mundo-clave" hidden></div>
 	<div id="mundo-ayuda-paseo" hidden>
-		<b>W A S D</b> andar · <b>Shift</b> correr · <b>botón derecho</b> para mirar · <b>clic izquierdo</b> en una máquina para su ficha
+		<b>W A S D</b> andar · <b>Shift</b> correr · <b>botón derecho</b> para mirar · <b>clic izquierdo</b> en una máquina para su ficha · <b>H</b> esconde los paneles
 		<label id="mundo-invertir-caja" title="Cambia el sentido del ratón al mirar, si lo prefieres al revés">
 			<input type="checkbox" id="mundo-invertir"> ratón invertido
 		</label>

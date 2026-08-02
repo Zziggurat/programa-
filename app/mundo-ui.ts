@@ -553,6 +553,23 @@ function armarTablero(): void {
 
 /* ---------------------------------- Vistas y bucle ---------------------------------- */
 
+/**
+ * Esconder o mostrar los paneles laterales.
+ *
+ * Paseando ocupan media pantalla, y a pie lo que se quiere es ver la cubierta; pero la lista de
+ * máquinas y el buscador hacen falta a cada rato, así que no se pueden quitar sin más. Con un
+ * botón lo decide quien trabaja, según lo que esté haciendo en ese momento.
+ */
+let panelesVisibles = true;
+function verPaneles(mostrar: boolean): void {
+	panelesVisibles = mostrar;
+	$('mundo').classList.toggle('sin-paneles', !mostrar);
+	$('mundo-paneles').classList.toggle('activo', !mostrar);
+	$('mundo-paneles').setAttribute('title', mostrar
+		? 'Esconder los paneles laterales para ver la cubierta entera (tecla H)'
+		: 'Volver a mostrar el buscador y la lista de máquinas (tecla H)');
+}
+
 function cambiarVista(nueva: 'sims' | 'paseo'): void {
 	if (!mundo) return;
 	vista = nueva;
@@ -607,6 +624,15 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 		$('mundo-sims').onclick = () => cambiarVista('sims');
 		$('mundo-paseo').onclick = () => cambiarVista('paseo');
 		$('mundo-medir').onclick = () => activarMedir(!midiendo);
+		$('mundo-paneles').onclick = () => verPaneles(!panelesVisibles);
+		// La H los pliega sin soltar el teclado: paseando se anda con la izquierda y no apetece
+		// ir al ratón para despejar la vista un momento. No se pisa con W A S D ni con Shift.
+		window.addEventListener('keydown', (ev) => {
+			if ($('mundo').hidden || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+			const foco = document.activeElement as HTMLElement | null;
+			if (foco && /^(INPUT|SELECT|TEXTAREA)$/.test(foco.tagName)) return;
+			if (ev.key === 'h' || ev.key === 'H') { ev.preventDefault(); verPaneles(!panelesVisibles); }
+		});
 		($('mundo-invertir') as HTMLInputElement).onchange = (ev) => {
 			paseo?.invertirRaton((ev.target as HTMLInputElement).checked);
 		};

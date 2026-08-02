@@ -852,6 +852,8 @@ function distanciaAObra(m: Mundo, x: number, z: number): number {
  */
 export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 	const teclas = new Set<string>();
+	/** Cuándo se vio por última vez cada tecla apretada (el sistema repite el `keydown`). */
+	const vistas = new Map<string, number>();
 	let girando = false;
 	let ultimo = { x: 0, y: 0 };
 	let yaw = Math.PI;
@@ -874,14 +876,15 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 	 * escandalosa al abrirse el menú del botón derecho —seguías andando sin poder parar, aunque
 	 * cerraras el menú—, y pasa igual al cambiar de pestaña o de ventana con la W apretada.
 	 */
-	const pararEnSeco = (): void => { teclas.clear(); girando = false; };
+	const pararEnSeco = (): void => { teclas.clear(); vistas.clear(); girando = false; };
 
 	const onKeyDown = (e: KeyboardEvent) => {
 		teclas.add(e.code);
+		vistas.set(e.code, performance.now());
 		// Las flechas hacen desplazarse la página por debajo; andando eso descoloca la pantalla.
 		if (ANDAR.has(e.code)) e.preventDefault();
 	};
-	const onKeyUp = (e: KeyboardEvent) => { teclas.delete(e.code); };
+	const onKeyUp = (e: KeyboardEvent) => { teclas.delete(e.code); vistas.delete(e.code); };
 	/*
 	 * MIRAR ES EL BOTÓN DERECHO, Y SOLO ÉL. El izquierdo queda libre para lo suyo: pinchar una
 	 * máquina y ver su ficha, o marcar un punto de la cinta métrica. Antes miraba con cualquier
@@ -900,8 +903,18 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 		mirar(e.clientX - ultimo.x, e.clientY - ultimo.y);
 		ultimo = { x: e.clientX, y: e.clientY };
 	};
-	// Sin esto, el menú del navegador tapa la cubierta en cuanto giras la vista.
-	const onMenu = (e: MouseEvent) => { e.preventDefault(); };
+	/*
+	 * El menú del navegador se corta EN TODA LA VENTANA mientras se pasea, no solo sobre el 3D.
+	 *
+	 * Ponerlo únicamente en el lienzo no bastaba: pinchando con el derecho sobre los paneles del
+	 * HUD —que son HTML por encima— el menú salía igual, el navegador se quedaba el foco y volvía
+	 * el «no puedo parar de caminar». Paseando no hay nada que hacer con ese menú, así que se
+	 * quita entero; al salir del paseo vuelve, porque ahí sí puede querer copiarse una imagen.
+	 *
+	 * Y se para en seco además de cortarlo, por si algún navegador se lleva el foco de todos
+	 * modos: soltar las teclas dos veces no cuesta nada, quedarse andando sí.
+	 */
+	const onMenu = (e: MouseEvent) => { e.preventDefault(); pararEnSeco(); };
 	const onSalidaDeFoco = () => pararEnSeco();
 
 	/** Gira la vista por un arrastre de `dx`,`dy` píxeles. Separado para poder probarlo. */
@@ -920,7 +933,7 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 		window.addEventListener('keydown', onKeyDown);
 		window.addEventListener('keyup', onKeyUp);
 		lienzo.addEventListener('mousedown', onDown);
-		lienzo.addEventListener('contextmenu', onMenu);
+		window.addEventListener('contextmenu', onMenu);
 		window.addEventListener('mouseup', onUp);
 		window.addEventListener('mousemove', onMove);
 		window.addEventListener('blur', onSalidaDeFoco);
@@ -936,14 +949,29 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 		window.removeEventListener('keydown', onKeyDown);
 		window.removeEventListener('keyup', onKeyUp);
 		lienzo.removeEventListener('mousedown', onDown);
-		lienzo.removeEventListener('contextmenu', onMenu);
+		window.removeEventListener('contextmenu', onMenu);
 		window.removeEventListener('mouseup', onUp);
 		window.removeEventListener('mousemove', onMove);
 		window.removeEventListener('blur', onSalidaDeFoco);
 		document.removeEventListener('visibilitychange', onSalidaDeFoco);
 		pararEnSeco();
 	}
+	/**
+	 * Suelta las teclas que se quedaron colgadas.
+	 *
+	 * Mientras se tiene una tecla apretada, el sistema repite su `keydown` unas veces por segundo.
+	 * Si una lleva más de medio segundo sin repetirse es que se soltó en otra ventana y su `keyup`
+	 * nunca llegó aquí. Es la red por debajo de todo lo demás: cubre cualquier forma de perder el
+	 * foco, incluidas las que aún no conocemos.
+	 */
+	function soltarLasColgadas(ahora: number): void {
+		for (const [code, visto] of vistas) {
+			if (ahora - visto > 500) { teclas.delete(code); vistas.delete(code); }
+		}
+	}
+
 	function paso(dt: number): void {
+		soltarLasColgadas(performance.now());
 		// Ojo con el signo: solo la horizontal va negada. Negar el vector entero —como se hacía—
 		// invierte también la altura y deja el «arriba es abajo» que se veía al pasear.
 		const dir = new THREE.Vector3(
