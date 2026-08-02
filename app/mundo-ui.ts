@@ -575,8 +575,7 @@ function cambiarVista(nueva: 'sims' | 'paseo'): void {
 	vista = nueva;
 	$('mundo-sims').classList.toggle('activo', nueva === 'sims');
 	$('mundo-paseo').classList.toggle('activo', nueva === 'paseo');
-	($('mundo-ayuda-paseo') as HTMLElement).hidden = nueva !== 'paseo';
-	($('mundo-clave') as HTMLElement).hidden = nueva !== 'paseo';
+	($('mundo-pie') as HTMLElement).hidden = nueva !== 'paseo';
 	if (nueva === 'paseo') {
 		ponerVistaPaseo(mundo);
 		paseo?.activar();

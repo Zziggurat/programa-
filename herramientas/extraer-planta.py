@@ -288,7 +288,10 @@ def main() -> None:
         sid, z, (an, al) = sis
         for pts in polilineas_de(e):
             largo = sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
-            if largo < 400:      # trocitos de detalle: no aportan al mundo 3D
+            # Trocitos de detalle: no aportan al mundo 3D. Pero un CODO es corto por naturaleza
+            # —884 mm de arco los de esta cubierta, y 60 de los 133 no llegaban al filtro— y sin
+            # él el conducto queda partido justo en cada curva, que es donde más se nota.
+            if largo < (60 if e.dxftype() == 'ARC' else 400):
                 continue
             trazas.append({'sistema': sid, 'z': z, 'ancho': an, 'alto': al,
                            'puntos': [[round(x, 1), round(y, 1)] for x, y in pts], 'largo': largo})

@@ -214,16 +214,30 @@
 		color: #ffb63a; }
 	.punto-bms .que { font-size: 12.5px; color: var(--texto); line-height: 1.35; }
 	.punto-bms .clase { font-size: 11px; color: var(--texto-suave); }
-	#mundo-ayuda-paseo { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
-		background: #12171cE6; border: 1px solid var(--borde); border-radius: 999px;
-		padding: 8px 18px; font-size: 12.5px; color: var(--texto-suave); white-space: nowrap; }
+	/*
+	 * El pie del paseo: la clave de sistemas y la ayuda, una encima de otra.
+	 *
+	 * Van en una COLUMNA y no cada una con su `bottom`, porque las dos crecen —la ayuda pasa a dos
+	 * líneas en cuanto la ventana estrecha— y con alturas fijas se pisaban entre ellas. Y se centra
+	 * en el LIENZO, no en la ventana: centrado en la ventana se metía por debajo del panel derecho
+	 * y el texto quedaba encima del aviso de las alturas. Los apartados son el ancho de cada panel
+	 * más su margen.
+	 */
+	#mundo-pie { position: absolute; bottom: 16px; left: 324px; right: 372px;
+		display: flex; flex-direction: column; align-items: center; gap: 8px;
+		pointer-events: none; }
+	#mundo-pie > * { pointer-events: auto; }
+	#mundo.sin-paneles #mundo-pie { left: 12px; right: 12px; }
+	@media (max-width: 900px) { #mundo-pie { left: 12px; right: 12px; } }
+	#mundo-ayuda-paseo { background: #12171cE6; border: 1px solid var(--borde);
+		border-radius: 999px; padding: 8px 18px; font-size: 12.5px; color: var(--texto-suave);
+		text-align: center; }
 	#mundo-ayuda-paseo b { color: var(--texto); }
 	/* Clave de instalaciones: paseando no se ve el panel lateral, y sin ella el color de cada
 	   conducto no dice nada. Va justo encima de la ayuda, en la misma píldora oscura. */
-	#mundo-clave { position: absolute; bottom: 54px; left: 50%; transform: translateX(-50%);
-		display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px;
+	#mundo-clave { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px;
 		background: #12171cE6; border: 1px solid var(--borde); border-radius: 999px;
-		padding: 7px 18px; font-size: 12px; color: var(--texto-suave); max-width: min(92vw, 780px); }
+		padding: 7px 18px; font-size: 12px; color: var(--texto-suave); }
 	#mundo-clave span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 	#mundo-clave i { width: 16px; height: 8px; border-radius: 2px; display: inline-block; }
 	#mundo-clave i.redondo { width: 10px; height: 10px; border-radius: 50%; }
@@ -1247,12 +1261,14 @@
 		<div id="mundo-leyenda-obra"></div>
 		<p id="mundo-aviso"></p>
 	</div>
-	<div id="mundo-clave" hidden></div>
-	<div id="mundo-ayuda-paseo" hidden>
+	<div id="mundo-pie" hidden>
+	<div id="mundo-clave"></div>
+	<div id="mundo-ayuda-paseo">
 		<b>W A S D</b> andar · <b>Shift</b> correr · <b>botón derecho</b> para mirar · <b>clic izquierdo</b> en una máquina para su ficha · <b>H</b> esconde los paneles
 		<label id="mundo-invertir-caja" title="Cambia el sentido del ratón al mirar, si lo prefieres al revés">
 			<input type="checkbox" id="mundo-invertir"> ratón invertido
 		</label>
+	</div>
 	</div>
 </div>
 
