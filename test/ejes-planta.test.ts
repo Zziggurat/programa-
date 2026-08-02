@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { coserEjes, ejesDeSistema, TrazoDibujado } from '../src/motores/ejes-planta.js';
+import { altoSegunElAncho, coserEjes, ejesDeSistema, TrazoDibujado } from '../src/motores/ejes-planta.js';
 
 /** Un conducto dibujado por sus dos lados, como en un plano de verdad. */
 function conducto(x0: number, y: number, x1: number, ancho: number): TrazoDibujado[] {
@@ -93,4 +93,17 @@ test('coserEjes: el ancho del recorrido es el que más se repite, no el de una r
 	]);
 	assert.equal(ejes.length, 1);
 	assert.equal(ejes[0].ancho, 300, 'la reducción del final no define el conducto');
+});
+
+test('altoSegunElAncho: la proporción sale del propio plano (2:1), no de una constante', () => {
+	// Los bloques del DWG se llaman por su sección en pulgadas: 16X8, 8X4, 22X10, 14X8, 22X12.
+	assert.equal(altoSegunElAncho(355), 178, 'un 14" va con la mitad de alto');
+	assert.equal(altoSegunElAncho(200), 100, 'un 8" igual');
+	assert.equal(altoSegunElAncho(60), 80, 'los muy finos no bajan de un mínimo visible');
+});
+
+test('ejesDeSistema: el alto acompaña al ancho medido, no se queda con el de proyecto', () => {
+	const ejes = ejesDeSistema(conducto(0, 0, 10000, 200));
+	assert.equal(ejes[0].ancho, 200);
+	assert.equal(ejes[0].alto, 100, 'no puede salir más alto que ancho');
 });

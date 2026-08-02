@@ -260,13 +260,27 @@ export function ejesDeSistema(
 	for (const [lista, medido] of [[ejes, true], [sinPareja, false]] as const) {
 		for (const c of coserEjes(lista)) {
 			if (largoDe(c.puntos) < largoMinimoSuelto) continue;
+			const ancho = medido ? c.ancho : modelo.ancho;
 			salida.push({
-				sistema: modelo.sistema, z: modelo.z, alto: modelo.alto, puntos: c.puntos,
-				ancho: medido ? c.ancho : modelo.ancho, anchoMedido: medido,
+				sistema: modelo.sistema, z: modelo.z, puntos: c.puntos, ancho, anchoMedido: medido,
+				alto: medido ? altoSegunElAncho(ancho) : modelo.alto,
 			});
 		}
 	}
 	return salida;
+}
+
+/**
+ * Alto de un conducto rectangular a partir de su ancho.
+ *
+ * El plano da el ancho —se ve en planta— pero no el alto, y ponerle uno fijo daba conductos más
+ * altos que anchos, que no existen. La proporción sale del PROPIO PLANO: sus bloques de conducto
+ * se llaman por su sección en pulgadas —16X8, 8X4, 22X10, 14X8, 22X12— y todos van en 2:1 o muy
+ * cerca. Así que el alto es la mitad del ancho, con un mínimo para que un conducto fino siga
+ * viéndose. (Los anchos medidos, por cierto, también son pulgadas: 200 mm son 8" y 355 son 14".)
+ */
+export function altoSegunElAncho(ancho: number): number {
+	return Math.max(80, Math.round(ancho / 2));
 }
 
 /** Saca los ejes de TODO lo dibujado, sistema por sistema. */

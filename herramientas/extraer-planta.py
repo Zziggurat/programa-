@@ -45,8 +45,12 @@ except ImportError:
 
 SISTEMAS = [
     # (id, patrón de capa, altura supuesta en mm, sección supuesta an×al en mm)
-    ('inyeccion',  re.compile(r'INYECC|inyecci', re.I),                     4200, (600, 400)),
-    ('extraccion', re.compile(r'EXTR|AIRE-EXTERIOR|AIRE_EXTERIOR|TF-ext', re.I), 4600, (500, 350)),
+    # Las secciones son las de PROYECTO y solo se usan de respaldo: el visor mide el ancho de
+    # verdad entre los dos lados dibujados (`src/motores/ejes-planta.ts`). Comprobado contra este
+    # mismo DWG: los conductos van en pulgadas —los bloques se llaman 16X8, 8X4, 22X10, 14X8— y
+    # los anchos que se miden son 200 mm (8") y 355 mm (14"), no los 600 que aquí se suponían.
+    ('inyeccion',  re.compile(r'INYECC|inyecci', re.I),                     4200, (355, 180)),
+    ('extraccion', re.compile(r'EXTR|AIRE-EXTERIOR|AIRE_EXTERIOR|TF-ext', re.I), 4600, (200, 100)),
     ('agua-fria',  re.compile(r'cañ-fria|CAÑ-FRIA', re.I),                  3600, (160, 160)),
     ('agua',       re.compile(r'CAÑERIA|cañerias|CAÑ', re.I),               3700, (160, 160)),
     ('bandeja',    re.compile(r'CANALIZ|Escalerilla', re.I),                3200, (300, 100)),
