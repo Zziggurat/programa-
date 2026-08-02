@@ -170,6 +170,7 @@ async function esperarCamaraQuieta(maximoMs = 6000) {
 }
 
 async function girarCamara(dx, dy) {
+	await qa('congelarCamara', false);   // para girar sí interesa el glisado, como al usuario
 	const x = LIBRE.x1 - 30, y = LIBRE.y0 + 30;
 	await page.mouse.move(x, y); await page.mouse.down(); await page.waitForTimeout(30);
 	for (let k = 1; k <= 5; k++) { await page.mouse.move(x + (dx * k) / 5, y + (dy * k) / 5); await page.waitForTimeout(25); }
@@ -179,6 +180,10 @@ async function girarCamara(dx, dy) {
 
 for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la derecha'], [-90, -60, 'girado a la izquierda y arriba']]) {
 	if (dx || dy) await girarCamara(dx, dy);
+	// La órbita nunca se para del todo: se le quita la amortiguación para medir y pinchar sobre
+	// la misma vista. Sin esto fallaba un cable de cada treinta y tantos, distinto cada vez.
+	await qa('congelarCamara', true);
+	await page.waitForTimeout(120);
 	const lista = await qa('rutas');
 	let ok = 0; let total = 0;
 	const mal = [];
@@ -187,17 +192,32 @@ for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la der
 		// clics siguientes se los come el tendido y saldrían como fallo en cascada, tapando cuál
 		// fue el que falló de verdad. Cada cable se prueba desde un estado limpio.
 		await page.keyboard.press('Escape'); await page.waitForTimeout(60);
-		// El propio programa dice dónde se ve ese cable; ahí es donde pincharía el usuario.
-		let p = await qa('puntoParaAgarrar', r.id);
-		if (!enZona(p)) continue;
-		await page.mouse.move(p.x, p.y); await page.waitForTimeout(50);
-		// Volver a apuntar si la vista se ha asentado entre medias (la órbita tiene inercia).
-		if ((await qa('cableEnPixel', p.x, p.y)) !== r.id) {
-			p = await qa('puntoParaAgarrar', r.id);
-			if (!enZona(p)) continue;
-			await page.mouse.move(p.x, p.y); await page.waitForTimeout(50);
+		/*
+		 * Apuntar, COMPROBAR que el píxel sigue siendo suyo y pinchar sin soltar el aliento.
+		 *
+		 * La órbita tiene inercia y nunca se para del todo, así que entre calcular el píxel y
+		 * pinchar la vista se mueve un pelo y un tubo fino se escapa. Antes se reapuntaba una vez
+		 * y se pinchaba a ciegas: si el segundo punto también llegaba tarde, fallo. Y salía un
+		 * cable distinto en cada pasada, que es la firma de una carrera y no de un bug.
+		 *
+		 * Ahora se reintenta hasta cuatro veces y entre la comprobación y el clic NO hay espera:
+		 * la ventana en la que la cámara puede moverse queda cerrada.
+		 */
+		let p;
+		for (let intento = 0; intento < 4; intento++) {
+			const candidato = await qa('puntoParaAgarrar', r.id);
+			if (!enZona(candidato)) { p = undefined; break; }
+			await page.mouse.move(candidato.x, candidato.y); await page.waitForTimeout(50);
+			if ((await qa('cableEnPixel', candidato.x, candidato.y)) === r.id) { p = candidato; break; }
+			p = undefined;
+			await page.waitForTimeout(80);
 		}
+		if (!p) continue;
+		// Lo que el programa dice del píxel JUSTO ANTES y JUSTO DESPUÉS de apretar. Si no coinciden,
+		// lo que ha cambiado es la escena entre una cosa y la otra, no la puntería.
+		const antesDeApretar = await qa('cableEnPixel', p.x, p.y);
 		await page.mouse.down(); await page.waitForTimeout(40);
+		const trasApretar = await qa('cableEnPixel', p.x, p.y);
 		const sel = await qa('seleccion');
 		await page.mouse.up(); await page.waitForTimeout(60);
 		total++;
@@ -206,7 +226,8 @@ for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la der
 			const hits = await qa('diagnosticoPixel', p.x, p.y);
 			const est = await qa('estadoInteraccion');
 			const encima = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.id || document.elementFromPoint(x, y)?.tagName, [p.x, p.y]);
-			mal.push(`${r.id}@(${Math.round(p.x)},${Math.round(p.y)}) → ${sel ? sel.tipo + ':' + sel.id : 'nada'} [${hits.join(' ')}] ${JSON.stringify(est)} encima=${encima}`);
+			mal.push(`${r.id}@(${Math.round(p.x)},${Math.round(p.y)}) → ${sel ? sel.tipo + ':' + sel.id : 'nada'} `
+				+ `(pixel antes=${antesDeApretar} despues=${trasApretar}) [${hits.join(' ')}] ${JSON.stringify(est)} encima=${encima}`);
 		}
 	}
 	must(`nada tapa el lienzo (${comoSeVe})`, await lienzoLibre());

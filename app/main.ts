@@ -4455,6 +4455,22 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			}));
 		},
 		/** Qué cable elegiría un clic en ese píxel de pantalla (misma lógica que la selección real). */
+		/*
+		 * Para la cámara EN SECO, quitándole la amortiguación.
+		 *
+		 * La órbita glisa: `controles.update()` la sigue acercando al destino en cada fotograma, y
+		 * la aproximación es asintótica, o sea que nunca llega. Para una persona eso es lo que hace
+		 * que girar el tablero se sienta suave; para una prueba que calcula un píxel y pincha en él
+		 * es veneno, porque entre las dos cosas la escena se ha movido un pelo y un tubo fino se
+		 * escapa. Con esto la prueba mide y pincha sobre la MISMA vista. No cambia lo que se
+		 * comprueba —que el clic agarre el cable señalado—, solo quita el temblor de en medio.
+		 */
+		congelarCamara: (parar: boolean) => {
+			controles.enableDamping = !parar;
+			controlesOrto.enableDamping = !parar;
+			controles.update();
+			controlesOrto.update();
+		},
 		cableEnPixel: (x: number, y: number) => {
 			const r = renderer.domElement.getBoundingClientRect();
 			puntero.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
