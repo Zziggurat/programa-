@@ -17,7 +17,8 @@
  */
 import { Proyecto } from '../src/modelo/tipos.js';
 import {
-	AjustesDossier, BloqueDossier, FUENTES, SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion,
+	AjustesDossier, BloqueDossier, COLOR_POR_DEFECTO, FUENTES, PAPELES, PapelDossier,
+	SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion, seccionesOrdenadas,
 } from '../src/modelo/dossier.js';
 import { descargar, escaparHtml } from './dialogos.js';
 
@@ -85,13 +86,16 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 
 	function pintarEditorDossier(): void {
 		const a = ajustesDossier();
-		$('dos-secciones').innerHTML = SECCIONES_DOSSIER.map((sec) => {
+		const orden = seccionesOrdenadas(a);
+		$('dos-secciones').innerHTML = orden.map((sec, i) => {
 			const marcado = saleSeccion(a, sec.id) ? ' checked' : '';
-			return `<label class="dos-sec${sec.fijo ? ' fijo' : ''}">`
-				+ `<input type="checkbox" data-sec="${escaparHtml(sec.id)}"${marcado}${sec.fijo ? ' disabled' : ''}>`
-				+ `${escaparHtml(sec.nombre)}`
+			return `<div class="dos-sec${sec.fijo ? ' fijo' : ''}">`
+				+ `<label><input type="checkbox" data-sec="${escaparHtml(sec.id)}"${marcado}${sec.fijo ? ' disabled' : ''}>`
+				+ `${escaparHtml(sec.nombre)}</label>`
 				+ (sec.fijo ? '<span class="candado" title="No se puede quitar: es lo que hace defendible el documento">🔒</span>' : '')
-				+ '</label>';
+				+ `<button class="mover" data-sube="${i}" title="Antes"${i === 0 ? ' disabled' : ''}>▲</button>`
+				+ `<button class="mover" data-baja="${i}" title="Después"${i === orden.length - 1 ? ' disabled' : ''}>▼</button>`
+				+ '</div>';
 		}).join('');
 		for (const c of $('dos-secciones').querySelectorAll<HTMLInputElement>('[data-sec]')) {
 			c.onchange = () => {
@@ -99,7 +103,56 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 				actualizarDossier();
 			};
 		}
+		// Mover un apartado guarda el orden ENTERO, no solo lo que cambió: así el archivo dice
+		// siempre qué documento quiere el usuario, y no depende de en qué orden venían.
+		const mover = (desde: number, hasta: number): void => {
+			if (hasta < 0 || hasta >= orden.length) return;
+			capturar();
+			const ids = orden.map((sec) => sec.id);
+			const [id] = ids.splice(desde, 1);
+			ids.splice(hasta, 0, id);
+			a.orden = ids;
+			actualizarDossier();
+		};
+		for (const b of $('dos-secciones').querySelectorAll<HTMLButtonElement>('[data-sube]')) {
+			const i = Number(b.dataset.sube);
+			b.onclick = () => mover(i, i - 1);
+		}
+		for (const b of $('dos-secciones').querySelectorAll<HTMLButtonElement>('[data-baja]')) {
+			const i = Number(b.dataset.baja);
+			b.onclick = () => mover(i, i + 1);
+		}
+		pintarIdentidad();
 		pintarBloquesDossier();
+	}
+
+	/**
+	 * Quién firma y cómo se ve el documento.
+	 *
+	 * Se repinta con el editor porque el proyecto puede haberse cambiado entero al abrir otro
+	 * archivo, y entonces la empresa y el color son los de ESE proyecto, no los que quedaron en los
+	 * recuadros.
+	 */
+	function pintarIdentidad(): void {
+		const a = ajustesDossier();
+		const emp = a.empresa ?? {};
+		($('dos-empresa-nombre') as HTMLInputElement).value = emp.nombre ?? '';
+		($('dos-empresa-contacto') as HTMLInputElement).value = emp.contacto ?? '';
+		const vista = $('dos-logo-vista') as HTMLImageElement;
+		vista.hidden = !emp.logo;
+		if (emp.logo) vista.src = emp.logo;
+		($('dos-logo-quitar') as HTMLElement).hidden = !emp.logo;
+		($('dos-color') as HTMLInputElement).value = a.color ?? COLOR_POR_DEFECTO;
+		($('dos-papel') as HTMLSelectElement).innerHTML = PAPELES.map((pap) =>
+			`<option value="${pap.id}"${(a.papel ?? 'a4') === pap.id ? ' selected' : ''}>${escaparHtml(pap.nombre)}</option>`,
+		).join('');
+	}
+
+	/** Cambia algo de la identidad y regenera. `capturar` deja el cambio en el deshacer. */
+	function tocarIdentidad(cambio: (a: AjustesDossier) => void): void {
+		capturar();
+		cambio(ajustesDossier());
+		actualizarDossier();
 	}
 
 	function pintarBloquesDossier(): void {
@@ -342,6 +395,45 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 			avisar('No se pudo generar el PDF: ' + (e as Error).message, 'error');
 		}
 	};
+	/* ---- Quién firma y cómo se ve ---- */
+	($('dos-empresa-nombre') as HTMLInputElement).onchange = (ev) => {
+		const v = (ev.target as HTMLInputElement).value.trim();
+		tocarIdentidad((a) => { a.empresa = { ...a.empresa, nombre: v || undefined }; });
+	};
+	($('dos-empresa-contacto') as HTMLInputElement).onchange = (ev) => {
+		const v = (ev.target as HTMLInputElement).value.trim();
+		tocarIdentidad((a) => { a.empresa = { ...a.empresa, contacto: v || undefined }; });
+	};
+	($('dos-logo') as HTMLButtonElement).onclick = () => ($('dos-logo-archivo') as HTMLInputElement).click();
+	($('dos-logo-quitar') as HTMLButtonElement).onclick = () =>
+		tocarIdentidad((a) => { a.empresa = { ...a.empresa, logo: undefined }; });
+	($('dos-logo-archivo') as HTMLInputElement).onchange = (ev) => {
+		const archivo = (ev.target as HTMLInputElement).files?.[0];
+		(ev.target as HTMLInputElement).value = '';
+		if (!archivo) return;
+		// Un logo de 8 MB se guardaría dentro del proyecto y llenaría el cupo del navegador. Se
+		// avisa, en vez de aceptarlo callando y que el guardado falle luego sin explicar por qué.
+		if (archivo.size > 2_000_000) {
+			avisar('El logo pesa más de 2 MB. Usa uno más pequeño: en el papel sale a 2 cm.', 'info');
+			return;
+		}
+		const lector = new FileReader();
+		lector.onload = () => tocarIdentidad((a) => {
+			a.empresa = { ...a.empresa, logo: String(lector.result) };
+		});
+		lector.readAsDataURL(archivo);
+	};
+	($('dos-color') as HTMLInputElement).onchange = (ev) => {
+		const v = (ev.target as HTMLInputElement).value;
+		tocarIdentidad((a) => { a.color = v; });
+	};
+	($('dos-color-reset') as HTMLButtonElement).onclick = () =>
+		tocarIdentidad((a) => { a.color = undefined; });
+	($('dos-papel') as HTMLSelectElement).onchange = (ev) => {
+		const v = (ev.target as HTMLSelectElement).value as PapelDossier;
+		tocarIdentidad((a) => { a.papel = v; });
+	};
+
 	($('dos-add-texto') as HTMLButtonElement).onclick = () => anadirBloque({
 		tipo: 'texto', donde: 'principio', titulo: 'Presentación',
 		trozos: [{ texto: 'Escribe aquí lo que quieras contarle al cliente. Selecciona un trozo y usa '

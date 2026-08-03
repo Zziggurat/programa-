@@ -23,10 +23,10 @@ import { declarado, opcionesDe } from '../src/modelo/proyecto.js';
 import { CONTROLADORES } from './controladores.js';
 import { descargar } from './dialogos.js';
 import {
-	BloqueDossier, EstiloTrozo, bloquesEn, repartirEnLineas, saleSeccion,
+	BloqueDossier, EstiloTrozo, aWinAnsi, bloquesEn, colorDossier, repartirEnLineas, saleSeccion,
+	seccionesOrdenadas, tintaSobre,
 } from '../src/modelo/dossier.js';
 
-const AZUL: [number, number, number] = [43, 74, 111];
 const GRIS: [number, number, number] = [90, 98, 106];
 const VERDE: [number, number, number] = [30, 130, 60];
 const ROJO: [number, number, number] = [176, 48, 48];
@@ -53,13 +53,20 @@ function dibujarPlaca(
 	doc: jsPDF,
 	proyecto: Proyecto,
 	marco: { x: number; y: number; ancho: number; alto: number },
+	color: [number, number, number],
 ): number {
 	const g = proyecto.gabinete;
 	if (!g || g.ancho <= 0 || g.alto <= 0) return 0;
-	const k = Math.min(marco.ancho / g.ancho, marco.alto / g.alto);
-	// Centrado dentro del hueco disponible.
-	const x0 = marco.x + (marco.ancho - g.ancho * k) / 2;
-	const y0 = marco.y + (marco.alto - g.alto * k) / 2;
+	/*
+	 * Las cotas se dibujan 6 mm FUERA de la placa, así que la placa no puede ocupar el hueco
+	 * entero: hay que dejarles su sitio dentro. Sin esto, en la portada la cota de abajo caía justo
+	 * encima del renglón de la escala y se leían las dos cosas encimadas.
+	 */
+	const COTAS = 10;
+	const k = Math.min((marco.ancho - COTAS) / g.ancho, (marco.alto - COTAS) / g.alto);
+	// Centrado dentro del hueco, dejando el margen de las cotas.
+	const x0 = marco.x + (marco.ancho - COTAS - g.ancho * k) / 2;
+	const y0 = marco.y + (marco.alto - COTAS - g.alto * k) / 2;
 	const px = (v: number): number => x0 + v * k;
 	const py = (v: number): number => y0 + v * k;
 
@@ -119,8 +126,8 @@ function dibujarPlaca(
 	}
 
 	// Cotas exteriores de la placa, en cm, como se pide una placa al taller.
-	doc.setDrawColor(...AZUL);
-	doc.setTextColor(...AZUL);
+	doc.setDrawColor(...color);
+	doc.setTextColor(...color);
 	doc.setFontSize(7.5);
 	doc.setLineWidth(0.3);
 	const yc = y0 + g.alto * k + 6;
@@ -136,6 +143,29 @@ function dibujarPlaca(
 
 	doc.setTextColor(0);
 	return k;
+}
+
+/**
+ * Deja las páginas del documento en el orden pedido.
+ *
+ * `orden` son los números de página ACTUALES, en el orden en que se quieren. Se coloca de la
+ * primera a la última llevando la cuenta de dónde ha ido a parar cada una: mover una página
+ * desplaza un puesto a todas las que quedan entre su sitio viejo y el nuevo, y sin llevar esa
+ * cuenta el documento sale barajado en vez de ordenado.
+ */
+function reordenarPaginas(doc: jsPDF, orden: number[]): void {
+	const posicion = new Map<number, number>();
+	for (let i = 1; i <= orden.length; i++) posicion.set(i, i);
+	for (let destino = 1; destino <= orden.length; destino++) {
+		const cual = orden[destino - 1];
+		const actual = posicion.get(cual)!;
+		if (actual === destino) continue;
+		doc.movePage(actual, destino);
+		for (const [pagina, pos] of posicion) {
+			if (pagina !== cual && pos >= destino && pos < actual) posicion.set(pagina, pos + 1);
+		}
+		posicion.set(cual, destino);
+	}
 }
 
 /** Genera y descarga el dossier técnico del proyecto en PDF. */
@@ -162,20 +192,78 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	const datos = proyecto.datos ?? {};
 	const opciones = opcionesDe(proyecto);
 
-	const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+	// Papel y color los pone quien firma: en Chile lo corriente es Carta, y el azul del programa no
+	// tiene por qué ser el color de su empresa.
+	const ajustes = proyecto.dossier;
+	const doc = new jsPDF({ unit: 'mm', format: ajustes?.papel === 'carta' ? 'letter' : 'a4' });
 	const anchoPag = doc.internal.pageSize.getWidth();
 	const altoPag = doc.internal.pageSize.getHeight();
+	/** Color del documento: el corporativo si lo hay, y si no el azul de siempre. */
+	const AZUL = colorDossier(ajustes);
+	/** Tinta que se lee sobre ese color (con un corporativo claro, el blanco desaparecía). */
+	const TINTA_CAB = tintaSobre(AZUL);
+	/** Hasta dónde se escribe antes de saltar de página, y dónde va el pie. Depende del papel. */
+	const LIMITE = altoPag - 15;
+	const PIE_Y = altoPag - 7;
+	const empresa = ajustes?.empresa ?? {};
 	const fecha = new Date().toLocaleDateString('es-CL', { year: 'numeric', month: 'long', day: 'numeric' });
+
+	/*
+	 * TODO lo que se escriba en este documento pasa antes por `aWinAnsi`.
+	 *
+	 * Las fuentes que trae jsPDF de serie solo saben WinAnsi. Un carácter fuera de ahí no sale mal:
+	 * sale ROTO —la fila se estira de lado a lado de la celda y el texto queda cortado— porque el
+	 * ancho medido deja de cuadrar con lo que se dibuja. Pasó con un aparato del ejemplo descrito
+	 * como «estrella→triángulo».
+	 *
+	 * Se hace envolviendo `text` y `getTextWidth` del documento, y no en los cien sitios que
+	 * escriben: uno solo que se olvide vuelve a romper una página entera, y además así queda
+	 * cubierto lo que escribe autoTable por su cuenta, que no pasa por aquí.
+	 */
+	{
+		const escribir = doc.text.bind(doc);
+		const medir = doc.getTextWidth.bind(doc);
+		type Texto = string | string[];
+		const limpiar = (t: Texto): Texto => (Array.isArray(t) ? t.map(aWinAnsi) : aWinAnsi(String(t)));
+		doc.text = ((t: Texto, ...resto: unknown[]) =>
+			(escribir as (...a: unknown[]) => jsPDF)(limpiar(t), ...resto)) as typeof doc.text;
+		doc.getTextWidth = ((t: string) => medir(aWinAnsi(String(t)))) as typeof doc.getTextWidth;
+	}
 
 	let y = 0;
 
-	const cabecera = (titulo: string): void => {
+	/**
+	 * Mete el logo respetando su proporción dentro de la caja que se le da, y devuelve lo que ocupó
+	 * de ancho. Devuelve 0 si no hay logo o si el archivo no se deja leer: un PNG roto no puede
+	 * tumbar la generación del dossier entero.
+	 */
+	const ponerLogo = (x: number, yLogo: number, altoMax: number, anchoMax: number): number => {
+		if (!empresa.logo) return 0;
+		try {
+			const props = doc.getImageProperties(empresa.logo);
+			const escala = Math.min(altoMax / props.height, anchoMax / props.width);
+			const an = props.width * escala;
+			doc.addImage(empresa.logo, props.fileType, x, yLogo, an, props.height * escala, undefined, 'FAST');
+			return an;
+		} catch {
+			return 0;
+		}
+	};
+
+	/** El apartado que se está dibujando, para poder repetirlo si una tabla salta de página. */
+	let apartadoActual = '';
+
+	/** Dibuja la banda de cabecera SIN tocar dónde se está escribiendo. */
+	const pintarCabecera = (titulo: string): void => {
 		doc.setFillColor(...AZUL);
 		doc.rect(0, 0, anchoPag, 16, 'F');
-		doc.setTextColor(255);
+		doc.setTextColor(...TINTA_CAB);
 		doc.setFont('helvetica', 'bold');
 		doc.setFontSize(11);
-		doc.text('TableroStudio', 12, 10);
+		// El documento lo firma la empresa, no la herramienta: si hay logo va delante, y si hay
+		// nombre manda ese. «TableroStudio» solo sale mientras nadie haya dicho quién firma.
+		const anchoLogo = ponerLogo(12, 3, 10, 34);
+		doc.text(empresa.nombre || 'TableroStudio', 12 + (anchoLogo ? anchoLogo + 4 : 0), 10);
 		doc.setFont('helvetica', 'normal');
 		doc.setFontSize(9);
 		doc.text(proyecto.nombre, anchoPag - 12, 10, { align: 'right' });
@@ -186,10 +274,18 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 		doc.setDrawColor(...AZUL);
 		doc.setLineWidth(0.5);
 		doc.line(12, 30, anchoPag - 12, 30);
+	};
+
+	const cabecera = (titulo: string): void => {
+		apartadoActual = titulo;
+		pintarCabecera(titulo);
 		y = 38;
 	};
 
 	const tabla = (cabeceras: string[], filas: (string | number)[][], anchos?: Record<number, number>): void => {
+		// Una tabla que arranca a dos dedos del pie deja su encabezado y una fila suelta abajo, y
+		// todo lo demás en la página siguiente. Si no queda sitio ni para eso, se pasa entera.
+		if (y > LIMITE - 34) { doc.addPage(); pintarCabecera(`${apartadoActual} (continúa)`); y = 38; }
 		autoTable(doc, {
 			startY: y,
 			head: [cabeceras],
@@ -198,8 +294,18 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 			headStyles: { fillColor: AZUL, fontSize: 9 },
 			bodyStyles: { fontSize: 8.5 },
 			alternateRowStyles: { fillColor: [244, 246, 248] },
-			margin: { left: 12, right: 12 },
+			// El `top` es para las páginas que abra la PROPIA tabla: ahí la cabecera se repite y la
+			// tabla tiene que empezar por debajo de ella.
+			margin: { left: 12, right: 12, top: 38 },
 			columnStyles: anchos ? Object.fromEntries(Object.entries(anchos).map(([k, v]) => [k, { cellWidth: v }])) : undefined,
+			/*
+			 * Una tabla larga se parte sola en varias páginas, y las que abría salían DESNUDAS: sin
+			 * banda, sin título y sin decir de qué apartado eran. En el dossier de un tablero de
+			 * verdad eso dejaba páginas con una tabla suelta flotando y el resto en blanco.
+			 */
+			didDrawPage: (datos) => {
+				if (datos.pageNumber > 1) pintarCabecera(`${apartadoActual} (continúa)`);
+			},
 		});
 		// @ts-expect-error autotable añade lastAutoTable
 		y = (doc.lastAutoTable?.finalY ?? y) + 8;
@@ -224,7 +330,7 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	const escribirConFormato = (bloque: BloqueDossier, ancho: number): void => {
 		const lineas = repartirEnLineas(bloque.trozos ?? [], ancho, medirTrozo);
 		for (const linea of lineas) {
-			if (y + linea.alto > 282) { doc.addPage(); y = 24; }
+			if (y + linea.alto > LIMITE) { doc.addPage(); y = 24; }
 			let x = 12;
 			for (const t of linea.trozos) {
 				ponerEstilo(t.estilo);
@@ -245,7 +351,7 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 		const ancho = Math.min(anchoMax, anchoMax * ((bloque.anchoPct ?? 100) / 100));
 		const alto = (props.height / props.width) * ancho;
 		// Si no cabe en lo que queda de página, se pasa entera a la siguiente en vez de partirla.
-		if (y + alto > 282) { doc.addPage(); y = 24; }
+		if (y + alto > LIMITE) { doc.addPage(); y = 24; }
 		doc.addImage(bloque.imagen, props.fileType, 12, y, ancho, alto, undefined, 'FAST');
 		y += alto + 3;
 		if (bloque.pie) {
@@ -261,7 +367,7 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	/** Un bloque del usuario: su título si lo tiene, y su contenido. */
 	const dibujarBloque = (b: BloqueDossier, ancho: number, tamTitulo = 12.5): void => {
 		if (b.titulo) {
-			if (y > 265) { doc.addPage(); y = 24; }
+			if (y > LIMITE - 17) { doc.addPage(); y = 24; }
 			doc.setFont('helvetica', 'bold');
 			doc.setFontSize(tamTitulo);
 			doc.setTextColor(...AZUL);
@@ -300,7 +406,9 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	/* ---------------------------- Portada ---------------------------- */
 	doc.setFillColor(...AZUL);
 	doc.rect(0, 0, anchoPag, 62, 'F');
-	doc.setTextColor(255);
+	doc.setTextColor(...TINTA_CAB);
+	// El logo arriba a la derecha, donde se mira primero al recibir un documento.
+	ponerLogo(anchoPag - 20 - 42, 10, 20, 42);
 	doc.setFont('helvetica', 'bold');
 	doc.setFontSize(24);
 	doc.text('Dossier técnico', 20, 32);
@@ -318,6 +426,20 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	].filter(Boolean).join('  ·  ');
 	doc.text(pie, 20, lineaCliente ? 59 : 54);
 
+	// Quién entrega el documento, justo bajo la banda: es la primera pregunta de quien lo recibe.
+	doc.setTextColor(0);
+	if (empresa.nombre || empresa.contacto) {
+		doc.setFont('helvetica', 'bold');
+		doc.setFontSize(10.5);
+		doc.setTextColor(...AZUL);
+		if (empresa.nombre) doc.text(empresa.nombre, 20, 69);
+		doc.setFont('helvetica', 'normal');
+		doc.setFontSize(8.5);
+		doc.setTextColor(...GRIS);
+		if (empresa.contacto) doc.text(empresa.contacto, 20, empresa.nombre ? 74 : 69, { maxWidth: anchoPag - 40 });
+		doc.setTextColor(0);
+	}
+
 	// Tarjetas con las cifras que definen el tablero: es lo que se mira primero.
 	doc.setTextColor(0);
 	const tarjetas: [string, string][] = [
@@ -329,9 +451,11 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 		['Verificación', errores ? `${errores} error${errores > 1 ? 'es' : ''}` : (avisos ? `${avisos} aviso${avisos > 1 ? 's' : ''}` : 'Conforme')],
 	];
 	const anchoTarjeta = (anchoPag - 40 - 2 * 6) / 3;
+	// Si hay empresa, las cifras bajan lo que ocupa su nombre y su contacto.
+	const yTarjetas = 72 + (empresa.nombre || empresa.contacto ? (empresa.nombre && empresa.contacto ? 11 : 6) : 0);
 	tarjetas.forEach(([titulo, valor], i) => {
 		const cx = 20 + (i % 3) * (anchoTarjeta + 6);
-		const cy = 72 + Math.floor(i / 3) * 26;
+		const cy = yTarjetas + Math.floor(i / 3) * 26;
 		doc.setFillColor(244, 246, 248);
 		doc.setDrawColor(220, 225, 230);
 		doc.roundedRect(cx, cy, anchoTarjeta, 21, 2, 2, 'FD');
@@ -353,23 +477,31 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	 * sitio debajo. Antes se escribía encima del plano, que es peor que no dejar poner nada.
 	 */
 	const dePortada = bloquesEn(proyecto.dossier, 'portada');
-	const altoPlano = dePortada.length ? 86 : 118;
+	// La portada se MIDE, no se clava con números: el papel puede ser Carta —18 mm más corta— y
+	// arriba puede haber una empresa que empuja las cifras hacia abajo. Con las medidas fijas de
+	// antes, el plano se salía por el pie en cuanto pasaba cualquiera de las dos cosas.
+	const yRotulo = yTarjetas + 2 * 26 + 4;
+	const yPlano = yRotulo + 6;
+	// Lo que queda hasta el pie, descontado el renglón de la escala. Si el usuario ha puesto algo
+	// suyo en la portada, el plano le cede algo más de un tercio.
+	const disponible = PIE_Y - 6 - yPlano - 6;
+	const altoPlano = Math.max(50, dePortada.length ? disponible * 0.62 : disponible);
 	doc.setTextColor(...GRIS);
 	doc.setFontSize(9);
-	doc.text('Disposición de la placa de montaje', 20, 132);
+	doc.text('Disposición de la placa de montaje', 20, yRotulo);
 	doc.setTextColor(0);
-	const escalaPortada = dibujarPlaca(doc, proyecto, { x: 20, y: 138, ancho: anchoPag - 46, alto: altoPlano });
+	const escalaPortada = dibujarPlaca(doc, proyecto, { x: 20, y: yPlano, ancho: anchoPag - 46, alto: altoPlano }, AZUL);
 	doc.setFontSize(7.5);
 	doc.setTextColor(...GRIS);
 	doc.text(
 		escalaPortada
 			? `Escala aproximada 1:${Math.round(1 / escalaPortada)} · medidas en milímetros`
 			: 'El proyecto todavía no tiene gabinete definido.',
-		20, 138 + altoPlano + 5,
+		20, yPlano + altoPlano + 5,
 	);
 	doc.setTextColor(0);
 	if (dePortada.length) {
-		y = 138 + altoPlano + 13;
+		y = yPlano + altoPlano + 13;
 		for (const b of dePortada) { dibujarBloque(b, anchoPag - 40, 11); y += 3; }
 	}
 
@@ -564,7 +696,7 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	cabecera('2. Disposición de la placa');
 	marcar('placa');
 	// La altura del hueco deja sitio bajo el dibujo para la cota, la leyenda y el pie.
-	const escala = dibujarPlaca(doc, proyecto, { x: 12, y: 38, ancho: anchoPag - 32, alto: 142 });
+	const escala = dibujarPlaca(doc, proyecto, { x: 12, y: 38, ancho: anchoPag - 32, alto: 142 }, AZUL);
 	y = 194;
 	// Leyenda: sin ella el plano se lee mal, sobre todo quien no armó el tablero.
 	const leyenda: [string, [number, number, number], [number, number, number]][] = [
@@ -932,16 +1064,46 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	);
 	doc.setTextColor(0);
 
-	dibujarBloques('final', 'Anexos del proyectista');
-
-	/* ---------- Fuera los apartados que no se quieren en ESTE dossier ---------- */
+	/*
+	 * El último apartado se cierra AQUÍ, antes de los anexos del proyectista.
+	 *
+	 * Antes se cerraba después, y entonces el rango del último apartado se tragaba las páginas que
+	 * había puesto el usuario: quitar «Anexo A · Placa de características» le borraba también sus
+	 * propias fotos y su carta. Lo suyo no es un apartado del programa y no se apaga con esa casilla.
+	 */
 	const ultimo = rangos[rangos.length - 1];
 	if (ultimo) ultimo.hasta = doc.getNumberOfPages();
-	// De atrás hacia delante: borrar una página mueve las de después, y al revés se descuadraría.
-	for (const r of [...rangos].reverse()) {
-		if (saleSeccion(proyecto.dossier, r.id)) continue;
-		for (let n = r.hasta; n >= r.desde; n--) doc.deletePage(n);
+
+	dibujarBloques('final', 'Anexos del proyectista');
+
+	/* --------- Los apartados: los que salen, y en el orden que se haya pedido --------- */
+	const total = doc.getNumberOfPages();
+	const paginasDe = new Map<string, number[]>();
+	for (const r of rangos) {
+		const ps: number[] = [];
+		for (let n = r.desde; n <= r.hasta; n++) ps.push(n);
+		paginasDe.set(r.id, ps);
 	}
+	// Lo de antes de los apartados (portada y presentación) y lo de después (los anexos del
+	// proyectista) no se mueve ni se quita: no son apartados del programa.
+	const primera = rangos[0]?.desde ?? total + 1;
+	const finApartados = ultimo?.hasta ?? 0;
+	const orden: number[] = [];
+	for (let n = 1; n < primera; n++) orden.push(n);
+	for (const sec of seccionesOrdenadas(ajustes)) {
+		if (!saleSeccion(ajustes, sec.id)) continue;
+		orden.push(...(paginasDe.get(sec.id) ?? []));
+	}
+	for (let n = finApartados + 1; n <= total; n++) orden.push(n);
+
+	// Fuera lo que no sale, de atrás hacia delante: borrar una página mueve las de después.
+	const salen = new Set(orden);
+	for (let n = total; n >= 1; n--) if (!salen.has(n)) doc.deletePage(n);
+	// Y ahora al orden pedido, ya con la numeración compactada por los borrados.
+	const nuevoNumero = new Map<number, number>();
+	let k = 0;
+	for (let n = 1; n <= total; n++) if (salen.has(n)) nuevoNumero.set(n, ++k);
+	reordenarPaginas(doc, orden.map((n) => nuevoNumero.get(n)!));
 
 	/* --------------------- Pie de página en todas --------------------- */
 	const paginas = doc.getNumberOfPages();
@@ -949,8 +1111,10 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 		doc.setPage(i);
 		doc.setFontSize(8);
 		doc.setTextColor(...GRIS);
-		doc.text(`Página ${i} de ${paginas}`, anchoPag - 12, 290, { align: 'right' });
-		doc.text(`${proyecto.nombre} — dossier técnico`, 12, 290);
+		doc.text(`Página ${i} de ${paginas}`, anchoPag - 12, PIE_Y, { align: 'right' });
+		// Al pie, quién firma delante del proyecto: una hoja suelta tiene que decir de quién es.
+		doc.text([empresa.nombre, `${proyecto.nombre} — dossier técnico`].filter(Boolean).join(' · '),
+			12, PIE_Y, { maxWidth: anchoPag - 50 });
 	}
 
 	return doc;

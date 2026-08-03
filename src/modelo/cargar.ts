@@ -10,7 +10,7 @@
  * sanos y se deja escrito dónde va la migración de la próxima versión.
  */
 import { Conductor, Dispositivo, Gabinete, Hoja, Proyecto } from './tipos.js';
-import { BloqueDossier, TrozoTexto } from './dossier.js';
+import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 
 /** Versión de formato que escribe este programa. */
 export const VERSION_FORMATO = 1;
@@ -182,6 +182,32 @@ function leerAjustesDossier(bruto: unknown): Proyecto['dossier'] {
 	const ajustes: Proyecto['dossier'] = {};
 	if (Object.keys(secciones).length) ajustes.secciones = secciones;
 	if (bloques.length) ajustes.bloques = bloques;
+
+	// Orden de los apartados: solo ids conocidos y sin repetir. Un id inventado en el archivo no
+	// haría daño, pero tampoco aporta nada y ensucia lo que se vuelve a guardar.
+	if (esLista(bruto.orden)) {
+		const conocidos = new Set(SECCIONES_DOSSIER.map((x) => x.id));
+		const orden = [...new Set((bruto.orden as unknown[])
+			.filter((x): x is string => typeof x === 'string' && conocidos.has(x)))];
+		if (orden.length) ajustes.orden = orden;
+	}
+
+	// Quién firma. El logo se acepta tal cual —es suyo— pero se comprueba que sea de verdad una
+	// imagen, por lo mismo que los bloques: un `data:text/html` acabaría dentro del PDF.
+	if (esObjeto(bruto.empresa)) {
+		const logo = texto(bruto.empresa.logo);
+		const empresa = {
+			nombre: texto(bruto.empresa.nombre)?.slice(0, 120),
+			contacto: texto(bruto.empresa.contacto)?.slice(0, 200),
+			logo: logo && /^data:image\//i.test(logo) ? logo : undefined,
+		};
+		if (empresa.nombre || empresa.contacto || empresa.logo) ajustes.empresa = empresa;
+	}
+
+	const color = texto(bruto.color);
+	if (color && /^#[0-9a-fA-F]{6}$/.test(color)) ajustes.color = color.toLowerCase();
+	if (bruto.papel === 'carta' || bruto.papel === 'a4') ajustes.papel = bruto.papel;
+
 	return Object.keys(ajustes).length ? ajustes : undefined;
 }
 

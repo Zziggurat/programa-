@@ -10,8 +10,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-	AjustesDossier, EstiloTrozo, TrozoTexto, altoDeLinea, altoDelTexto, bloquesEn, estiloDe,
-	repartirEnLineas, saleSeccion, textoPlano,
+	AjustesDossier, EstiloTrozo, SECCIONES_DOSSIER, TrozoTexto, altoDeLinea, altoDelTexto,
+	aWinAnsi, bloquesEn, colorDossier, estiloDe, repartirEnLineas, saleSeccion, seccionesOrdenadas,
+	textoPlano, tintaSobre,
 } from '../src/modelo/dossier.js';
 
 /** Regla de mentira: 2 mm por carácter, y el doble si el tamaño es el doble. */
@@ -155,5 +156,84 @@ test('nada de lo escrito se pierde por el camino, con cualquier ancho', () => {
 	for (const ancho of [15, 30, 60, 120, 400]) {
 		const salida = lineasDe(repartirEnLineas(trozos, ancho, regla)).join(' ').replace(/\s+/g, ' ').trim();
 		assert.equal(salida, esperado, `con ${ancho} mm de ancho el texto sale distinto`);
+	}
+});
+
+/* ------------------- Personalización: quién firma y cómo se ve ------------------- */
+
+test('el color del documento sale en componentes listos para el PDF', () => {
+	assert.deepEqual(colorDossier({ color: '#ff8800' }), [255, 136, 0]);
+	assert.deepEqual(colorDossier({ color: '#FF8800' }), [255, 136, 0], 'da igual mayúsculas');
+});
+
+test('un color imposible no rompe el dossier: se cae al azul de siempre', () => {
+	const azul = colorDossier(undefined);
+	assert.deepEqual(colorDossier({ color: 'rojo' }), azul);
+	assert.deepEqual(colorDossier({ color: '#12345' }), azul, 'cinco dígitos no es un color');
+	assert.deepEqual(colorDossier({}), azul);
+});
+
+test('la tinta de la cabecera se lee sobre CUALQUIER color corporativo', () => {
+	// Con un corporativo amarillo, el blanco de siempre desaparecía.
+	assert.deepEqual(tintaSobre([255, 214, 0]), [20, 24, 28], 'sobre amarillo, tinta oscura');
+	assert.deepEqual(tintaSobre([43, 74, 111]), [255, 255, 255], 'sobre azul marino, tinta blanca');
+	assert.deepEqual(tintaSobre([255, 255, 255]), [20, 24, 28]);
+	assert.deepEqual(tintaSobre([0, 0, 0]), [255, 255, 255]);
+});
+
+test('sin orden guardado, los apartados salen en el orden del programa', () => {
+	assert.deepEqual(
+		seccionesOrdenadas(undefined).map((s) => s.id),
+		SECCIONES_DOSSIER.map((s) => s.id),
+	);
+});
+
+test('el orden guardado manda, y lo que no nombra se va detrás', () => {
+	const ids = seccionesOrdenadas({ orden: ['bom', 'drc'] }).map((s) => s.id);
+	assert.equal(ids[0], 'bom', 'lo primero que pidió');
+	assert.equal(ids[1], 'drc');
+	assert.equal(ids.length, SECCIONES_DOSSIER.length, 'no se pierde ningún apartado');
+	const natural = SECCIONES_DOSSIER.map((s) => s.id).filter((id) => !['bom', 'drc'].includes(id));
+	assert.deepEqual(ids.slice(2), natural, 'el resto conserva su orden natural');
+});
+
+test('un apartado NUEVO del programa no desaparece de un dossier viejo', () => {
+	// El orden guardado el año pasado no conoce el apartado que se añadió después: tiene que salir
+	// al final, no dejar de salir.
+	const ids = seccionesOrdenadas({ orden: ['ficha', 'bom'] }).map((s) => s.id);
+	for (const s of SECCIONES_DOSSIER) assert.ok(ids.includes(s.id), `${s.id} sigue en el documento`);
+});
+
+/* ------------- Lo que las fuentes del PDF saben escribir ------------- */
+
+test('el texto normal pasa intacto, con acentos y todo', () => {
+	assert.equal(aWinAnsi('Relé térmico 7–10 A (regulado a 8,5 A) · «señal»'),
+		'Relé térmico 7–10 A (regulado a 8,5 A) · «señal»');
+});
+
+test('la flecha que rompía la tabla de componentes se escribe como se diría', () => {
+	// El caso real: «Temporizador a la conexión, 6 s (estrella→triángulo)» reventaba la fila.
+	assert.equal(aWinAnsi('estrella→triángulo'), 'estrella->triángulo');
+});
+
+test('los signos técnicos se traducen en vez de perderse', () => {
+	assert.equal(aWinAnsi('≤ 10 Ω'), '<= 10 ohm');
+	assert.equal(aWinAnsi('probado ✓'), 'probado OK');
+	assert.equal(aWinAnsi('I ≥ 16 A'), 'I >= 16 A');
+});
+
+test('lo que no se puede escribir ni traducir se quita, no se deja romper el PDF', () => {
+	const salida = aWinAnsi('Tablero 🔌 de cubierta 🏗️');
+	assert.ok(salida.includes('Tablero') && salida.includes('de cubierta'), salida);
+	assert.ok(!/[\u{1F000}-\u{1FAFF}]/u.test(salida), 'no queda ningún emoji');
+});
+
+test('nada de lo que devuelve puede romper la fuente del PDF', () => {
+	const bruto = 'μΩ→✓ 25 °C ± 2 · «prueba» — final… 🔥 ㎡';
+	for (const c of aWinAnsi(bruto)) {
+		const code = c.codePointAt(0) ?? 0;
+		const vale = code === 9 || code === 10 || (code >= 32 && code <= 126)
+			|| (code >= 160 && code <= 255) || '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ'.includes(c);
+		assert.ok(vale, `«${c}» (U+${code.toString(16)}) no lo sabe escribir el PDF`);
 	}
 });

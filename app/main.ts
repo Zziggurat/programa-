@@ -3213,7 +3213,16 @@ renderer.domElement.addEventListener('contextmenu', (ev) => {
 
 window.addEventListener('keydown', (ev) => {
 	const activo = document.activeElement?.tagName;
-	if (activo === 'INPUT' || activo === 'SELECT' || activo === 'TEXTAREA') return;
+	const escribiendo = activo === 'INPUT' || activo === 'SELECT' || activo === 'TEXTAREA';
+	/*
+	 * Escribiendo, las teclas son para escribir: Supr borra letras y no aparatos.
+	 *
+	 * Escape es la excepción, y por eso se deja pasar. Las ventanas con campos —los datos del
+	 * proyecto, el controlador— ponen el cursor en el primer recuadro al abrirse, así que con la
+	 * regla a secas Escape no cerraba NINGUNA de ellas: escribías el nombre del cliente, pulsabas
+	 * Escape y no pasaba nada. Cerrar con Escape es lo que hace cualquier programa.
+	 */
+	if (escribiendo && ev.key !== 'Escape') return;
 	// Con el esquema o la Visualización delante, el tablero 3D NO se ve: dejar que Supr borrase
 	// un aparato o Ctrl+V pegase otro sería editar a ciegas. Solo pasan navegar y salir.
 	if (panelEsq.abierto() || visualizacion) {
@@ -3271,9 +3280,20 @@ window.addEventListener('keydown', (ev) => {
 		return;
 	}
 	if (ev.key === 'Escape') {
-		// Escape cierra primero lo que esté abierto encima: es lo que espera cualquiera.
-		const abiertos = ['modal-proyecto', 'modal-controlador', 'modal-drc'].filter((id) => !($(id) as HTMLElement).hidden);
-		if (abiertos.length) { for (const id of abiertos) ($(id) as HTMLElement).hidden = true; }
+		/*
+		 * Escape cierra lo que esté abierto encima, y luego va soltando lo que se esté haciendo.
+		 *
+		 * Se BUSCAN las ventanas abiertas en vez de llevar una lista escrita a mano: la lista se
+		 * quedó corta —cerraba tres de las nueve, así que la ayuda, los ejemplos y la explicación
+		 * de un aparato no se cerraban con Escape— y volvería a quedarse corta con la siguiente
+		 * ventana que se añadiera. `modal-dialogo` se queda fuera porque tiene su propio Escape,
+		 * que además devuelve «cancelado» a quien esté esperando la respuesta.
+		 */
+		const abiertos = [...document.querySelectorAll<HTMLElement>('[id^="modal-"]')]
+			.filter((el) => el.id !== 'modal-dialogo' && !el.hidden);
+		const dossierAbierto = !($('panel-dossier') as HTMLElement).hidden;
+		if (abiertos.length) { for (const el of abiertos) el.hidden = true; }
+		else if (dossierAbierto) panelDossier.abrir(false);
 		else if (colocando) cancelarColocacion();
 		else if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); }
 		else aplicarSeleccion(undefined);
@@ -4376,6 +4396,26 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				totalMm: Math.round(total), pares, cables: rutas.length,
 				mismaCapaMm: Math.round(mismaCapa), paresMismaCapa,
 			};
+		},
+		/**
+		 * El dossier en crudo, para poder mirar DENTRO del PDF desde una prueba.
+		 *
+		 * Se genera con los ajustes que se le pasen y se deja el proyecto como estaba: así una
+		 * prueba puede comparar el mismo tablero con y sin empresa, en A4 y en Carta, sin tener que
+		 * ir tocando la interfaz para cada caso.
+		 */
+		dossierCrudo: async (ajustes?: unknown): Promise<string> => {
+			const antes = proyecto.dossier;
+			if (ajustes !== undefined) proyecto.dossier = ajustes as typeof proyecto.dossier;
+			try {
+				const { dossierComoBlob } = await import('./pdf.js');
+				const bytes = new Uint8Array(await dossierComoBlob(proyecto).arrayBuffer());
+				let texto = '';
+				for (let i = 0; i < bytes.length; i++) texto += String.fromCharCode(bytes[i]);
+				return texto;
+			} finally {
+				proyecto.dossier = antes;
+			}
 		},
 		/** Recorrido resuelto de cada cable (mm de modelo), tal cual se dibuja. */
 		rutas: () => rutasDeCables(proyecto).map((r) => ({ id: r.conductorId, nodos: r.nodos, z: r.z })),
