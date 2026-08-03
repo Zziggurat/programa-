@@ -223,6 +223,19 @@
 	 * y el texto quedaba encima del aviso de las alturas. Los apartados son el ancho de cada panel
 	 * más su margen.
 	 */
+	/* La guía del visor reutiliza el aspecto del modal de ayuda del editor. */
+	#modal-guia-mundo { position: fixed; inset: 0; z-index: 44; background: #0009;
+		display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-guia-mundo .caja-modal { position: relative; background: var(--panel);
+		border: 1px solid var(--borde); border-radius: 16px; padding: 26px 30px; max-width: 700px;
+		max-height: 88vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
+	#modal-guia-mundo h2 { margin: 0 0 14px; font-size: 20px; }
+	#modal-guia-mundo h3 { font-size: 14px; margin: 18px 0 6px; color: var(--texto); }
+	#modal-guia-mundo p { margin: 0 0 8px; font-size: 13.5px; line-height: 1.55;
+		color: var(--texto-suave); }
+	#modal-guia-mundo .cerrar { position: absolute; top: 14px; right: 14px; background: var(--panel-2);
+		border: 1px solid var(--borde); color: var(--texto); width: 30px; height: 30px;
+		border-radius: 8px; cursor: pointer; }
 	#mundo-pie { position: absolute; bottom: 16px; left: 324px; right: 372px;
 		display: flex; flex-direction: column; align-items: center; gap: 8px;
 		pointer-events: none; }
@@ -302,6 +315,18 @@
 
 	/* ---- Cinta métrica ---- */
 	#mundo-medir.activo { background: #7a5c00; border-color: #d9a400; color: #fff2cc; }
+	/* La lista de puntos de la cinta: cada uno con su aspa para quitarlo suelto. */
+	#mundo-cinta .puntos-cinta { margin: 8px 0 2px; max-height: 168px; overflow-y: auto; }
+	#mundo-cinta .punto-cinta { display: flex; align-items: center; gap: 8px; padding: 3px 2px;
+		font-size: 12px; color: var(--texto-suave); border-bottom: 1px solid #ffffff10; }
+	#mundo-cinta .punto-cinta .n { width: 20px; height: 20px; flex: none; border-radius: 50%;
+		background: #ffd43b22; color: #ffd43b; font-weight: 700; font-size: 11px;
+		display: inline-flex; align-items: center; justify-content: center; }
+	#mundo-cinta .punto-cinta .d { flex: 1 1 auto; font-variant-numeric: tabular-nums;
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#mundo-cinta .punto-cinta .quitar { flex: none; background: none; border: 0; cursor: pointer;
+		color: var(--texto-suave); font-size: 14px; line-height: 1; padding: 2px 5px; border-radius: 6px; }
+	#mundo-cinta .punto-cinta .quitar:hover { background: #ff6b6b33; color: #ff8787; }
 	#mundo-cinta { position: absolute; bottom: 16px; left: 12px; width: 300px; box-sizing: border-box;
 		background: #12171cF2; border: 1px solid #d9a40066; border-radius: 12px; padding: 12px 13px;
 		backdrop-filter: blur(6px); }
@@ -1213,6 +1238,7 @@
 			<button id="mundo-sims" class="activo" title="Vista general desde arriba, como en Los Sims">🏙️ Vista general</button>
 			<button id="mundo-paseo" title="Recorrerla a pie: WASD para andar, arrastra para mirar, Shift para correr">🚶 Pasear</button>
 		</div>
+		<button class="boton" id="mundo-guia" title="Para qué sirve esta vista y cómo se usa">❓ Guía</button>
 		<button class="boton" id="mundo-paneles" title="Esconder o mostrar los paneles laterales (también con la tecla H)">🗔 Paneles</button>
 		<button class="boton" id="mundo-medir" title="Marcar puntos en la cubierta y saber cuánto cable pedir">📏 Medir</button>
 		<button class="boton" id="mundo-inicio" title="Volver a la ventana de inicio">🏠 Inicio</button>
@@ -1261,6 +1287,64 @@
 		<div id="mundo-leyenda-obra"></div>
 		<p id="mundo-aviso"></p>
 	</div>
+	<!-- Guía del visor: para qué sirve y qué significa cada cosa del panel. -->
+	<div id="modal-guia-mundo" hidden>
+		<div class="caja-modal">
+			<button class="cerrar" id="btn-cerrar-guia-mundo-x" title="Cerrar">✕</button>
+			<h2>La cubierta en 3D: para qué sirve</h2>
+			<div id="texto-guia-mundo">
+				<p><b>Esta vista es el TERRENO; la otra herramienta es el TABLERO.</b> Aquí está el
+				plano de la cubierta convertido en 3D: las 129 máquinas de clima con su marcado, los
+				conductos, las cañerías y la bandeja. Se usa para tres cosas, y las tres acaban en el
+				editor de tableros.</p>
+
+				<h3>1 · Saber qué gobierna cada tablero</h3>
+				<p>Pincha una máquina —o búscala por su marcado— y verás su <b>lista de puntos de
+				control</b>: cuántas señales tiene, de qué clase y con qué controlador van. Es lo que
+				define cuántas entradas y salidas necesita el tablero que la manda.</p>
+				<p>Marca en la lista las máquinas que va a gobernar un mismo tablero y pulsa
+				<b>«Llevar al tablero»</b>: el programa arma un tablero de partida con su
+				controlador, sus borneras y las señales ya repartidas. De ahí se sigue en el editor.</p>
+
+				<h3>2 · Medir cuánto cable pedir</h3>
+				<p>Con <b>📏 Medir</b>, cada clic marca un punto por donde irá el cable. Se puede
+				pinchar directamente sobre una máquina para medir hasta ella exactamente. El
+				recorrido se cuenta <b>en ortogonal</b>, como va la bandeja de verdad, no en
+				diagonal, y se le suma la subida y la bajada hasta los 3,2 m de la bandeja. La cifra
+				de <b>«cable a pedir»</b> ya lleva un porcentaje de reserva.</p>
+				<p>Cada punto se puede quitar por separado con su aspa, sin deshacer los demás. Una
+				tirada se puede guardar con nombre, y todas se bajan juntas en CSV.</p>
+
+				<h3>3 · Llevar el parte de la obra</h3>
+				<p>Esto es lo que responde <b>«Cómo va la obra»</b>. A cada máquina se le puede poner
+				un estado —<b>Pendiente</b>, <b>En curso</b>, <b>Montado</b>, <b>Probado</b> o
+				<b>Con problema</b>— y una nota escrita en el momento. La barra de arriba cuenta
+				cuántas van <b>probadas</b> sobre el total: por eso empieza en <b>0 %</b> —nadie ha
+				marcado nada todavía— y sube según se apuntan.</p>
+				<p>En «Colorear por» se puede elegir <b>Estado de obra</b> y la cubierta entera se
+				pinta por estados: se ve de un vistazo qué queda pendiente y dónde está.</p>
+				<p><b>«Parte de obra (CSV)»</b> baja esa misma información en una hoja de cálculo
+				—máquina, tipo, controlador, nº de señales, estado, tu nota y la fecha— para
+				mandarla, imprimirla o pasarla al informe. Lo apuntado se guarda en este navegador,
+				así que sigue ahí al volver.</p>
+
+				<h3>Cómo moverse</h3>
+				<p><b>Vista general</b>: arrastra para girar, rueda para acercar, clic en una máquina
+				para su ficha.<br>
+				<b>Pasear</b>: <b>W A S D</b> para andar, <b>Shift</b> para correr, <b>botón
+				derecho</b> apretado para mirar alrededor —el cursor se clava mientras lo tienes
+				apretado, como en un juego— y <b>clic izquierdo</b> para consultar una máquina.
+				<b>H</b> esconde los paneles cuando estorban.</p>
+
+				<h3>Lo que el plano NO trae</h3>
+				<p>El DWG no lleva ninguna cota de altura: <b>las alturas son de proyecto</b>, no
+				medidas. Sirven para entender por dónde pasa cada cosa y a qué nivel, no para
+				replantear. Los anchos de conducto sí se miden del plano.</p>
+			</div>
+			<p style="margin-top:18px"><button class="boton primario" id="btn-cerrar-guia-mundo">Entendido</button></p>
+		</div>
+	</div>
+
 	<div id="mundo-pie" hidden>
 	<div id="mundo-clave"></div>
 	<div id="mundo-ayuda-paseo">

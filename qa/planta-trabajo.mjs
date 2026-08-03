@@ -42,8 +42,17 @@ const qa = (f, ...a) => page.evaluate(([fn, args]) => window.__plantaQA[fn](...a
 await page.goto(url, { waitUntil: 'load' });
 await page.waitForTimeout(1500);
 await click('btn-cerrar-ayuda'); await page.waitForTimeout(200);
+/** La guía del visor se abre sola la primera vez: se cierra, como haría cualquiera al entrar. */
+async function cerrarGuiaDelMundo() {
+	if (await page.isVisible('#modal-guia-mundo')) {
+		await page.evaluate(() => document.getElementById('btn-cerrar-guia-mundo')?.click());
+		await page.waitForTimeout(300);
+	}
+}
+
 await click('btn-planta');
 await page.waitForTimeout(3500);   // construir la escena lleva su tiempo
+await cerrarGuiaDelMundo();
 must('el visor abre', await page.isVisible('#mundo'));
 
 console.log('--- 1. Buscar una máquina entre todas ---');

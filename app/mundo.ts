@@ -701,9 +701,25 @@ export function crearCinta(m: Mundo) {
 			redibujar();
 		},
 		deshacer(): void { puntos.pop(); nombres.pop(); redibujar(); },
+		/**
+		 * Quita UN punto cualquiera, no solo el último.
+		 *
+		 * Midiendo una tirada larga uno se equivoca en el tercer punto de doce, y con solo «quitar
+		 * el último» había que deshacer nueve buenos para arreglar uno malo. Eso hacía que medir
+		 * fuera un incordio.
+		 */
+		quitar(indice: number): void {
+			if (indice < 0 || indice >= puntos.length) return;
+			puntos.splice(indice, 1);
+			nombres.splice(indice, 1);
+			redibujar();
+		},
 		reiniciar(): void { puntos.length = 0; nombres.length = 0; limpiar(); },
 		medida: () => medirTirada(puntos),
 		cuantos: () => puntos.length,
+		/** Los puntos marcados, con el marcado de la máquina si se pinchó en una. */
+		listado: (): { indice: number; nombre?: string; x: number; z: number }[] =>
+			puntos.map((p, i) => ({ indice: i, nombre: nombres[i], x: p.x, z: p.z })),
 		/** De dónde a dónde va la tirada, con el marcado de las máquinas si se pincharon. */
 		extremos: (): string[] => nombres.filter((x): x is string => !!x),
 		visible(v: boolean): void { grupo.visible = v; },
@@ -862,8 +878,6 @@ function distanciaAObra(m: Mundo, x: number, z: number): number {
  */
 export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 	const teclas = new Set<string>();
-	/** Cuándo se vio por última vez cada tecla apretada (el sistema repite el `keydown`). */
-	const vistas = new Map<string, number>();
 	let girando = false;
 	let ultimo = { x: 0, y: 0 };
 	let yaw = Math.PI;
@@ -886,33 +900,65 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 	 * escandalosa al abrirse el menú del botón derecho —seguías andando sin poder parar, aunque
 	 * cerraras el menú—, y pasa igual al cambiar de pestaña o de ventana con la W apretada.
 	 */
-	const pararEnSeco = (): void => { teclas.clear(); vistas.clear(); girando = false; };
+	const pararEnSeco = (): void => { teclas.clear(); girando = false; };
+
+	/** ¿El foco está en un campo de texto? Entonces las teclas son para escribir, no para andar. */
+	const escribiendo = (): boolean => {
+		const f = document.activeElement as HTMLElement | null;
+		return !!f && /^(INPUT|SELECT|TEXTAREA)$/.test(f.tagName);
+	};
 
 	const onKeyDown = (e: KeyboardEvent) => {
+		if (escribiendo()) return;   // tecleando en el buscador no se anda
 		teclas.add(e.code);
-		vistas.set(e.code, performance.now());
 		// Las flechas hacen desplazarse la página por debajo; andando eso descoloca la pantalla.
 		if (ANDAR.has(e.code)) e.preventDefault();
 	};
-	const onKeyUp = (e: KeyboardEvent) => { teclas.delete(e.code); vistas.delete(e.code); };
+	const onKeyUp = (e: KeyboardEvent) => { teclas.delete(e.code); };
 	/*
 	 * MIRAR ES EL BOTÓN DERECHO, Y SOLO ÉL. El izquierdo queda libre para lo suyo: pinchar una
 	 * máquina y ver su ficha, o marcar un punto de la cinta métrica. Antes miraba con cualquier
 	 * botón, así que al girar con el derecho se abría además el menú del navegador («Guardar
 	 * imagen como…») encima de la cubierta.
 	 */
+	/*
+	 * EL CURSOR SE CLAVA MIENTRAS SE MIRA.
+	 *
+	 * Con el botón derecho apretado se pide el bloqueo de puntero del navegador: la flecha
+	 * desaparece, el ratón deja de tener borde de pantalla y se puede girar sobre uno mismo sin
+	 * levantarlo de la mesa —como en cualquier juego en primera persona—. Al soltar, el cursor
+	 * vuelve a aparecer justo donde estaba y se puede pinchar una máquina.
+	 *
+	 * Bloqueado, la posición del ratón ya no significa nada: lo que dice cuánto se ha movido es
+	 * `movementX/movementY`. Y el navegador NO abre su menú mientras hay bloqueo, así que esto
+	 * cierra por partida doble el fallo del menú que aparecía al girar.
+	 *
+	 * Si el bloqueo no se concede —hay navegadores que lo niegan sin gesto previo— se sigue
+	 * girando por diferencia de posición, como antes: se pierde el clavado, no la función.
+	 */
+	const bloqueado = (): boolean => document.pointerLockElement === lienzo;
+
 	const onDown = (e: MouseEvent) => {
 		if (e.button !== 2) return;
 		e.preventDefault();
 		girando = true;
 		ultimo = { x: e.clientX, y: e.clientY };
+		if (!bloqueado()) void lienzo.requestPointerLock?.();
 	};
-	const onUp = (e: MouseEvent) => { if (e.button === 2) girando = false; };
+	const onUp = (e: MouseEvent) => {
+		if (e.button !== 2) return;
+		girando = false;
+		if (bloqueado()) document.exitPointerLock?.();
+	};
 	const onMove = (e: MouseEvent) => {
 		if (!girando) return;
+		if (bloqueado()) { mirar(e.movementX, e.movementY); return; }
 		mirar(e.clientX - ultimo.x, e.clientY - ultimo.y);
 		ultimo = { x: e.clientX, y: e.clientY };
 	};
+	/* Si el bloqueo se pierde por lo que sea —Esc, cambio de ventana— se deja de girar y de andar:
+	   es exactamente el momento en que el navegador puede haberse comido un `keyup`. */
+	const onBloqueo = () => { if (!bloqueado()) pararEnSeco(); };
 	/*
 	 * El menú del navegador se corta EN TODA LA VENTANA mientras se pasea, no solo sobre el 3D.
 	 *
@@ -948,6 +994,7 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 		window.addEventListener('mousemove', onMove);
 		window.addEventListener('blur', onSalidaDeFoco);
 		document.addEventListener('visibilitychange', onSalidaDeFoco);
+		document.addEventListener('pointerlockchange', onBloqueo);
 		// Se mira hacia donde ya apuntaba la cámara, para no dar un salto al cambiar de vista.
 		const dir = new THREE.Vector3();
 		m.camara.getWorldDirection(dir);
@@ -964,24 +1011,11 @@ export function crearPaseo(m: Mundo, lienzo: HTMLCanvasElement) {
 		window.removeEventListener('mousemove', onMove);
 		window.removeEventListener('blur', onSalidaDeFoco);
 		document.removeEventListener('visibilitychange', onSalidaDeFoco);
+		document.removeEventListener('pointerlockchange', onBloqueo);
+		if (bloqueado()) document.exitPointerLock?.();
 		pararEnSeco();
 	}
-	/**
-	 * Suelta las teclas que se quedaron colgadas.
-	 *
-	 * Mientras se tiene una tecla apretada, el sistema repite su `keydown` unas veces por segundo.
-	 * Si una lleva más de medio segundo sin repetirse es que se soltó en otra ventana y su `keyup`
-	 * nunca llegó aquí. Es la red por debajo de todo lo demás: cubre cualquier forma de perder el
-	 * foco, incluidas las que aún no conocemos.
-	 */
-	function soltarLasColgadas(ahora: number): void {
-		for (const [code, visto] of vistas) {
-			if (ahora - visto > 500) { teclas.delete(code); vistas.delete(code); }
-		}
-	}
-
 	function paso(dt: number): void {
-		soltarLasColgadas(performance.now());
 		// Ojo con el signo: solo la horizontal va negada. Negar el vector entero —como se hacía—
 		// invierte también la altura y deja el «arriba es abajo» que se veía al pasear.
 		const dir = new THREE.Vector3(

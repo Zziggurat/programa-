@@ -44,8 +44,17 @@ await click('btn-cerrar-ayuda'); await page.waitForTimeout(200);
 console.log('--- 1. Es una herramienta aparte ---');
 must('el botón de la planta está en la barra', await page.isVisible('#btn-planta'));
 must('el visor está cerrado al arrancar', !(await page.isVisible('#mundo')));
+/** La guía del visor se abre sola la primera vez: se cierra, como haría cualquiera al entrar. */
+async function cerrarGuiaDelMundo() {
+	if (await page.isVisible('#modal-guia-mundo')) {
+		await page.evaluate(() => document.getElementById('btn-cerrar-guia-mundo')?.click());
+		await page.waitForTimeout(300);
+	}
+}
+
 await click('btn-planta');
 await page.waitForTimeout(3500);   // construir la escena lleva su tiempo
+await cerrarGuiaDelMundo();
 must('el visor se abre a pantalla completa', await page.isVisible('#mundo'));
 must('tapa el editor de tableros', await page.evaluate(() => {
 	const m = document.getElementById('mundo').getBoundingClientRect();
@@ -203,7 +212,7 @@ must('el visor tiene botón de inicio', await page.isVisible('#mundo-inicio'));
 await click('mundo-inicio'); await page.waitForTimeout(500);
 must('cierra el visor', !(await page.isVisible('#mundo')));
 must('y deja a la vista la ventana de inicio', await page.isVisible('#inicio'));
-await click('inicio-terreno'); await page.waitForTimeout(2000);
+await click('inicio-terreno'); await page.waitForTimeout(2000); await cerrarGuiaDelMundo();
 must('desde el inicio se vuelve a terreno', await page.isVisible('#mundo'));
 must('y la ventana de inicio se quita de en medio', !(await page.isVisible('#inicio')));
 
@@ -213,7 +222,7 @@ must('el visor se cierra', !(await page.isVisible('#mundo')));
 must('el editor de tableros sigue ahí', await page.isVisible('#escena'));
 must('y su catálogo también', await page.evaluate(
 	() => document.querySelectorAll('#catalogo .item-catalogo').length > 20));
-await click('btn-planta'); await page.waitForTimeout(1200);
+await click('btn-planta'); await page.waitForTimeout(1200); await cerrarGuiaDelMundo();
 must('se puede volver a abrir', await page.isVisible('#mundo'));
 
 /*
@@ -277,6 +286,59 @@ must('y se queda QUIETO, no sigue caminando solo', quieto,
 	`${antesDeRobar.x.toFixed(1)} → ${despuesDeRobar.x.toFixed(1)} → ${masTarde.x.toFixed(1)}`);
 await page.keyboard.up('KeyW');
 await click('mundo-sims'); await page.waitForTimeout(400);
+
+/*
+ * Lo que se reportó a mano probándolo: las teclas se trababan, no se podían quitar puntos sueltos
+ * de la cinta y no había forma de saber para qué sirve esta vista.
+ */
+console.log('\n--- 8d. Las teclas no se traban al mantenerlas ---');
+await click('mundo-paseo'); await page.waitForTimeout(800);
+await page.mouse.move(640, 400);
+await page.keyboard.down('KeyW');
+// Más de lo que tarda el sistema en empezar a REPETIR la tecla: ahí es donde se trababa, porque
+// la red que soltaba «teclas colgadas» a los 500 ms se comía una tecla que seguía apretada.
+await page.waitForTimeout(1500);
+must('con la W apretada 1,5 s sigue andando', await page.evaluate(() => window.__plantaQA.andando()));
+const p1 = await page.evaluate(() => window.__plantaQA.camara());
+await page.waitForTimeout(700);
+const p2 = await page.evaluate(() => window.__plantaQA.camara());
+must('y de verdad avanza, no se queda clavado', Math.hypot(p2.x - p1.x, p2.z - p1.z) > 0.5,
+	`${Math.hypot(p2.x - p1.x, p2.z - p1.z).toFixed(1)} m en 0,7 s`);
+await page.keyboard.up('KeyW');
+await page.waitForTimeout(300);
+must('al soltarla, para', !(await page.evaluate(() => window.__plantaQA.andando())));
+
+// Escribiendo en el buscador no se anda: la W es una letra, no un paso.
+await page.click('#mundo-q');
+await page.keyboard.type('uma');
+await page.waitForTimeout(200);
+must('escribiendo en el buscador NO se camina', !(await page.evaluate(() => window.__plantaQA.andando())));
+await page.evaluate(() => { const c = document.getElementById('mundo-q'); c.value = ''; c.blur(); });
+await click('mundo-sims'); await page.waitForTimeout(500);
+
+console.log('\n--- 8e. La cinta deja quitar un punto cualquiera ---');
+await click('mundo-medir'); await page.waitForTimeout(400);
+for (const [x, y] of [[620, 420], [700, 450], [780, 430]]) {
+	await page.mouse.click(x, y); await page.waitForTimeout(250);
+}
+const conTres = await page.evaluate(() => document.querySelectorAll('#mundo-cinta [data-punto]').length);
+must('se marcan tres puntos y se listan', conTres === 3, `${conTres}`);
+await page.evaluate(() => document.querySelector('#mundo-cinta [data-punto="0"]').click());
+await page.waitForTimeout(350);
+const conDos = await page.evaluate(() => document.querySelectorAll('#mundo-cinta [data-punto]').length);
+must('el aspa quita ESE punto, no el último', conDos === 2, `${conDos}`);
+await click('mundo-medir'); await page.waitForTimeout(300);
+
+console.log('\n--- 8f. La guía explica para qué sirve la cubierta ---');
+must('hay botón de guía', await page.isVisible('#mundo-guia'));
+await click('mundo-guia'); await page.waitForTimeout(400);
+must('la guía se abre', await page.isVisible('#modal-guia-mundo'));
+const guia = await page.evaluate(() => document.getElementById('texto-guia-mundo').textContent);
+for (const tema of ['Cómo va la obra', 'Parte de obra', 'Llevar al tablero', 'Medir', 'alturas son de proyecto']) {
+	must(`la guía explica «${tema}»`, guia.includes(tema));
+}
+await click('btn-cerrar-guia-mundo'); await page.waitForTimeout(300);
+must('y se cierra', !(await page.isVisible('#modal-guia-mundo')));
 
 console.log('\n--- 9. Sin errores ---');
 must('ningún error de JavaScript', errs.length === 0, errs.slice(0, 3).join(' | '));

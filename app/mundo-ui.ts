@@ -391,11 +391,25 @@ function pintarCinta(): void {
 	const botones = '<div class="botones">'
 		+ '<button class="boton" id="cinta-deshacer">↶ Quitar último</button>'
 		+ '<button class="boton" id="cinta-limpiar">Empezar de nuevo</button></div>';
+	/*
+	 * La lista de puntos, con su aspa para quitar CUALQUIERA.
+	 *
+	 * Es lo que faltaba para que medir no fuera un incordio: en una tirada de doce puntos te
+	 * equivocas en el tercero, y con solo «quitar el último» tenías que deshacer nueve buenos.
+	 */
+	const lista = (cinta?.listado() ?? []);
+	const listaHtml = lista.length
+		? '<div class="puntos-cinta">' + lista.map((p) => `<div class="punto-cinta">`
+			+ `<span class="n">${p.indice + 1}</span>`
+			+ `<span class="d">${p.nombre ? esc(p.nombre) : `${p.x.toFixed(1)} , ${p.z.toFixed(1)} m`}</span>`
+			+ `<button class="quitar" data-punto="${p.indice}" title="Quitar este punto">✕</button>`
+			+ `</div>`).join('') + '</div>'
+		: '';
 	cuerpo.innerHTML = !med
 		? `<div class="ayuda">Haz clic en la cubierta para marcar por dónde va el cable, o `
 			+ `<b>en una máquina</b> para medir hasta ella exactamente. Con dos puntos ya hay `
 			+ `medida.${cuantos ? ' <b>1 punto marcado.</b>' : ''}</div>`
-			+ (cuantos ? botones : '')
+			+ listaHtml + (cuantos ? botones : '')
 		: `<div class="cifras">`
 			+ `<div><div class="cifra">${med.recorrido.toFixed(1)} m</div>`
 			+ `<div class="rotulo">Recorrido</div></div>`
@@ -412,11 +426,14 @@ function pintarCinta(): void {
 				: '')
 			+ `<div class="ayuda">El recorrido va en ortogonal, como la bandeja; la recta es solo el `
 			+ `mínimo teórico. La subida y la bajada suponen la bandeja a 3,2 m.</div>`
-			+ botones;
+			+ listaHtml + botones;
 	const deshacer = document.getElementById('cinta-deshacer');
 	if (deshacer) deshacer.onclick = () => { cinta?.deshacer(); pintarCinta(); };
 	const limpiar = document.getElementById('cinta-limpiar');
 	if (limpiar) limpiar.onclick = () => { cinta?.reiniciar(); pintarCinta(); };
+	for (const b of cuerpo.querySelectorAll<HTMLButtonElement>('[data-punto]')) {
+		b.onclick = () => { cinta?.quitar(Number(b.dataset.punto)); pintarCinta(); };
+	}
 	pintarGuardarTirada(med ? extremos : []);
 	pintarTiradas();
 }
@@ -624,6 +641,23 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 		$('mundo-paseo').onclick = () => cambiarVista('paseo');
 		$('mundo-medir').onclick = () => activarMedir(!midiendo);
 		$('mundo-paneles').onclick = () => verPaneles(!panelesVisibles);
+		const verGuia = (v: boolean) => { ($('modal-guia-mundo') as HTMLElement).hidden = !v; };
+		$('mundo-guia').onclick = () => verGuia(true);
+		$('btn-cerrar-guia-mundo').onclick = () => verGuia(false);
+		$('btn-cerrar-guia-mundo-x').onclick = () => verGuia(false);
+		$('modal-guia-mundo').addEventListener('click', (ev) => {
+			if (ev.target === $('modal-guia-mundo')) verGuia(false);
+		});
+		/*
+		 * La primera vez que se abre la cubierta se enseña la guía sola: sin ella no se sabe para
+		 * qué sirve esta vista, qué es «cómo va la obra» ni de dónde sale el CSV. Una sola vez.
+		 */
+		try {
+			if (!localStorage.getItem('tablerostudio:guia-mundo-vista')) {
+				verGuia(true);
+				localStorage.setItem('tablerostudio:guia-mundo-vista', '1');
+			}
+		} catch { /* sin almacén */ }
 		// La H los pliega sin soltar el teclado: paseando se anda con la izquierda y no apetece
 		// ir al ratón para despejar la vista un momento. No se pisa con W A S D ni con Shift.
 		window.addEventListener('keydown', (ev) => {
