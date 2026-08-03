@@ -202,15 +202,36 @@ if (enZona(p4)) {
 }
 
 // (e) Y una unión existente sí se puede arrastrar.
+//
+// Se pincha SOBRE la unión, no en un punto cualquiera del tubo. Esta prueba usaba
+// `puntoParaAgarrar`, que devuelve un píxel cualquiera del cable, y fallaba —con razón—: agarrar
+// el cable donde no hay unión NO lo deforma, y es a propósito (las uniones se crean con doble
+// clic; si no, mover un cable un poco llenaría el tablero de puntos sin querer). Pedía una
+// conducta que el programa no tiene ni debe tener.
 const conUnion = (await qa('proyecto')).conductores.find((c) => c.id === cable.id);
 const antesPos = JSON.stringify(conUnion.trazado);
-const pu = await qa('puntoParaAgarrar', cable.id);
+const pu = await qa('puntoDeUnion', cable.id, 0);
+must('la unión creada se localiza en pantalla', enZona(pu), JSON.stringify(pu));
 if (enZona(pu)) {
 	await page.mouse.move(pu.x, pu.y); await page.mouse.down(); await page.waitForTimeout(60);
 	for (let k = 1; k <= 6; k++) { await page.mouse.move(pu.x + 8 * k, pu.y + 6 * k); await page.waitForTimeout(30); }
 	await page.mouse.up(); await page.waitForTimeout(400);
 	const desp = JSON.stringify((await qa('proyecto')).conductores.find((c) => c.id === cable.id).trazado);
-	must('una unión existente sí se arrastra', desp !== antesPos);
+	must('una unión existente sí se arrastra', desp !== antesPos, `${antesPos} → ${desp}`);
+}
+
+// Y lo contrario, que es la regla de verdad: lejos de toda unión, el cable NO se deforma.
+{
+	const antes = JSON.stringify((await qa('proyecto')).conductores.find((c) => c.id === cable.id).trazado);
+	const lejos = await qa('puntoParaAgarrar', cable.id);
+	const union = await qa('puntoDeUnion', cable.id, 0);
+	if (enZona(lejos) && union && Math.hypot(lejos.x - union.x, lejos.y - union.y) > 60) {
+		await page.mouse.move(lejos.x, lejos.y); await page.mouse.down(); await page.waitForTimeout(60);
+		for (let k = 1; k <= 6; k++) { await page.mouse.move(lejos.x + 8 * k, lejos.y + 6 * k); await page.waitForTimeout(30); }
+		await page.mouse.up(); await page.waitForTimeout(400);
+		const desp = JSON.stringify((await qa('proyecto')).conductores.find((c) => c.id === cable.id).trazado);
+		must('arrastrar LEJOS de una unión no deforma el cable', desp === antes);
+	}
 }
 
 /* ================= 1. Tapas de canaleta opacas en Visualización ================= */

@@ -715,6 +715,40 @@ export function salidasDeCable(
 	};
 }
 
+/**
+ * Largo real (mm) de un conductor tal como está DIBUJADO en la placa, por su recorrido ortogonal
+ * (Manhattan, que es como corren los cables de verdad).
+ *
+ * Es el metraje que se va a cortar en el taller, y por tanto el bueno para la caída de tensión y
+ * para el total de cable que enseña el panel. Vive aquí y no en los motores porque la geometría
+ * del trazado es de la vista: depende de dónde quedó cada aparato, de por dónde abre el cable
+ * para no fundirse con sus vecinos y de los puntos de quiebre que haya movido quien dibuja.
+ */
+export function largoDibujadoMm(
+	proyecto: Proyecto,
+	conductor: Conductor,
+	abanico = abanicoDeSalida(proyecto),
+): number {
+	const p = salidasDeCable(proyecto, conductor, abanico);
+	if (!p) return 0;
+	const orto = orthogonalize([p.salidaA, ...(conductor.trazado ?? []), p.salidaB]);
+	let largo = 0;
+	for (let i = 0; i < orto.length - 1; i++) {
+		largo += Math.abs(orto[i].x - orto[i + 1].x) + Math.abs(orto[i].y - orto[i + 1].y);
+	}
+	return largo;
+}
+
+/**
+ * Lo mismo para todo el tablero, por id de conductor. Lo usan la pantalla y el PDF, y que lo usen
+ * los DOS es el asunto: cada uno tenía su propia cuenta y salían caídas de tensión distintas para
+ * el mismo tablero. El abanico se calcula UNA vez para todos, que es lo caro.
+ */
+export function longitudesDibujadasMm(proyecto: Proyecto): Map<string, number> {
+	const abanico = abanicoDeSalida(proyecto);
+	return new Map(proyecto.conductores.map((c) => [c.id, largoDibujadoMm(proyecto, c, abanico)]));
+}
+
 export function rutasDeCables(proyecto: Proyecto): RutaCable[] {
 	const corredores = corredoresLibresDe(proyecto);
 	const abanico = abanicoDeSalida(proyecto);

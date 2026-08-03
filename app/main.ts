@@ -23,19 +23,14 @@ import {
 } from '../src/modelo/dossier.js';
 import { leerPrograma } from '../src/motores/logica.js';
 import { ArchivoInvalido, cargarProyecto } from '../src/modelo/cargar.js';
-import { calcularPotenciales, ResultadoPotenciales } from '../src/motores/potenciales.js';
-import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
-import { verificarProyecto, Hallazgo } from '../src/motores/drc.js';
-import { rutearConductores, ResultadoRuteo } from '../src/motores/ruteo.js';
-import { sincronizarEsquemaGabinete } from '../src/motores/sincronizacion.js';
-import { generarReferencias } from '../src/motores/referencias.js';
-import { generarPlanBorneros } from '../src/motores/bornes.js';
+import { numerarDispositivos } from '../src/motores/numeracion.js';
+import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
 	anclajeBorne, cajaDe, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
-	liberar, rutasDeCables, salidasDeCable, vaciar, VOLTAJE_COLOR, yEntradasCampo, Z_FRENTE,
-	Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
+	largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable, vaciar, VOLTAJE_COLOR,
+	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
@@ -49,7 +44,6 @@ import { instalarDossier } from './ui-dossier.js';
 import { instalarInicio } from './ui-inicio.js';
 import { instalarEsquema } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
-import { montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
 import { dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
 import {
 	dentroDelArea, distPuntoSegmento, fueraDeLaHuella, Huella, longitudSolapada, orthogonalize,
@@ -114,38 +108,19 @@ function cargarInicial(): Proyecto {
 
 let proyecto: Proyecto = cargarInicial();
 
-let hallazgos: Hallazgo[] = [];
-let ruteo: ResultadoRuteo;
-let potenciales: ResultadoPotenciales;
-/** Posición «hoja.columna» de cada aparato en el esquema montado (la que se cita en el plano). */
-let posicionesEsquema = new Map<string, string>();
+/**
+ * Todo lo que el programa sabe del tablero que hay en pantalla. Lo calcula `revisarTablero()`, que
+ * es el único sitio que conoce el orden en que se encadenan los motores: aquí solo se guarda el
+ * resultado para que lo lean los paneles.
+ */
+let revision: RevisionTablero;
 let coloreaVoltaje = false; // "Colorear por voltaje" en el panel Vista
 
 function recalcular(): void {
-	potenciales = calcularPotenciales(proyecto);
-	numerarConductores(proyecto, potenciales);
-	ruteo = rutearConductores(proyecto);
 	// El DRC recibe las longitudes REALES del recorrido dibujado (no una estimación): con ellas
-	// puede calcular la caída de tensión de cada circuito, y los avisos de llenado de canaleta.
-	hallazgos = verificarProyecto(proyecto, potenciales, {
-		longitudesMm: new Map(proyecto.conductores.map((c) => [c.id, longitudCableMm(c)])),
-		canaletas: ruteo.ocupaciones,
-		// Y por qué canaleta va cada uno: con eso la coordinación cuenta los circuitos que se
-		// calientan entre ellos y corrige la intensidad admisible, que dentro de un armario nunca
-		// es la de la tabla.
-		canaletasPorConductor: new Map(ruteo.rutas.map((r) => [r.conductorId, r.canaletasUsadas])),
-	});
-	// Dónde cae cada aparato en el esquema montado. Se calcula aquí, con el resto de la verdad
-	// del proyecto, para que el panel, el índice y el dossier citen SIEMPRE la posición real
-	// del plano y no una numeración de cortesía.
-	posicionesEsquema = posicionesEnEsquema(montarEsquema(proyecto, potenciales));
-	const sync = sincronizarEsquemaGabinete(proyecto);
-	for (const [a, b] of sync.solapes) {
-		hallazgos.push({ regla: 'S1-solape', severidad: 'error', mensaje: `${a} y ${b} se solapan en la placa` });
-	}
-	for (const id of sync.faltanEnGabinete) {
-		hallazgos.push({ regla: 'S2-falta-colocar', severidad: 'aviso', mensaje: `${id} no está colocado en el gabinete` });
-	}
+	// puede calcular la caída de tensión de cada circuito. Se las pasa el PDF también, desde la
+	// misma función, para que el papel y la pantalla no digan cosas distintas.
+	revision = revisarTablero(proyecto, { longitudesMm: longitudesDibujadasMm(proyecto) });
 	autoguardar();
 }
 
@@ -463,10 +438,10 @@ function reconstruirCables(): void {
 	vaciar(escenario.cables);
 	// Coloreado por voltaje: cada cable toma el color del nivel de tensión de su potencial.
 	let voltajeMap: Map<string, number | undefined> | undefined;
-	if (coloreaVoltaje && potenciales) {
+	if (coloreaVoltaje) {
 		voltajeMap = new Map();
 		for (const c of proyecto.conductores) {
-			const p = potenciales.porConductor.get(c.id);
+			const p = revision.potenciales.porConductor.get(c.id);
 			voltajeMap.set(c.id, p?.tensiones[p.tensiones.length - 1]);
 		}
 	}
@@ -945,8 +920,8 @@ function pintarPaneles(): void {
 
 	const drc = $('lista-drc');
 	drc.innerHTML = '';
-	if (hallazgos.length === 0) drc.innerHTML = '<li class="hallazgo ok">Sin errores ni avisos</li>';
-	for (const h of hallazgos) {
+	if (revision.hallazgos.length === 0) drc.innerHTML = '<li class="hallazgo ok">Sin errores ni avisos</li>';
+	for (const h of revision.hallazgos) {
 		const li = document.createElement('li');
 		li.className = `hallazgo ${h.severidad}`;
 		li.textContent = h.mensaje;
@@ -956,8 +931,8 @@ function pintarPaneles(): void {
 		}
 		drc.appendChild(li);
 	}
-	const errores = hallazgos.filter((h) => h.severidad === 'error').length;
-	const avisos = hallazgos.length - errores;
+	const errores = revision.hallazgos.filter((h) => h.severidad === 'error').length;
+	const avisos = revision.hallazgos.length - errores;
 	const chip = $('chip-drc');
 	chip.className = errores ? 'con-errores' : avisos ? 'con-avisos' : '';
 	chip.id = 'chip-drc';
@@ -1115,7 +1090,7 @@ function pintarSeleccion(): void {
 	const cablesDelAparato = proyecto.conductores.filter(
 		(c) => c.de.dispositivoId === d.id || c.a.dispositivoId === d.id,
 	);
-	const propios = hallazgos.filter((h) => h.dispositivoId === d.id);
+	const propios = revision.hallazgos.filter((h) => h.dispositivoId === d.id);
 	const metros = cablesDelAparato.reduce((s, c) => s + longitudCableMm(c), 0);
 
 	const otrosAparatos = proyecto.dispositivos.filter((x) => x.id !== d.id);
@@ -1252,7 +1227,7 @@ function pintarSeleccion(): void {
 			${esImagen ? '' : `<dt>Referencia</dt><dd>${d.fabricante ?? '—'} ${d.referencia ?? ''}</dd>`}
 			${col ? `<dt>Posición en placa</dt><dd>x ${Math.round(col.x)} mm · y ${Math.round(col.y)} mm · ${col.ancho}×${col.alto} mm</dd>` : ''}
 			${d.tensionNominal !== undefined ? `<dt>Tensión</dt><dd><span class="chip-volt" style="background:${hexColor(colorVoltaje(d.tensionNominal))}">${d.tensionNominal} V</span></dd>` : ''}
-			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${posicionesEsquema.get(d.id) ?? '—'}</dd>`}
+			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${revision.posicionesEsquema.get(d.id) ?? '—'}</dd>`}
 		</dl>
 		${bloqueComoSeConecta}
 		${bloqueTension}
@@ -2461,16 +2436,13 @@ function nodosCable(c: Conductor): { x: number; y: number }[] {
 	return [p.salidaA, ...(c.trazado ?? []), p.salidaB];
 }
 
-/** Longitud aproximada del cable (mm) según su recorrido ortogonal real (Manhattan). */
+/**
+ * Longitud del cable (mm) por su recorrido ortogonal real. Es la MISMA cuenta que se le pasa al
+ * DRC y al PDF —vive en `escena3d`—: tenerla dos veces era pedir que el total del panel y la
+ * caída de tensión del papel acabaran discrepando.
+ */
 function longitudCableMm(c: Conductor): number {
-	const nodos = nodosCable(c);
-	if (nodos.length < 2) return 0;
-	const orto = orthogonalize(nodos);
-	let largo = 0;
-	for (let i = 0; i < orto.length - 1; i++) {
-		largo += Math.abs(orto[i].x - orto[i + 1].x) + Math.abs(orto[i].y - orto[i + 1].y);
-	}
-	return largo;
+	return largoDibujadoMm(proyecto, c);
 }
 
 /** Inserta un punto de quiebre en el tramo del cable más cercano a (x,y). Devuelve su índice. */
@@ -3455,17 +3427,9 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 };
 
 ($('btn-dossier') as HTMLButtonElement).onclick = () => {
-	const potenciales = calcularPotenciales(proyecto);
-	const dossier = generarInformeHTML({
-		proyecto,
-		potenciales,
-		hallazgos,
-		referencias: generarReferencias(proyecto, posicionesEsquema),
-		planesBorneros: generarPlanBorneros(proyecto, potenciales),
-		ruteo,
-		sincronizacion: sincronizarEsquemaGabinete(proyecto),
-	});
-	descargar(`${proyecto.nombre} - dossier.html`, dossier, 'text/html');
+	// El informe sale de la MISMA revisión que se ve en pantalla: antes recalculaba los potenciales
+	// por su cuenta y podía contar una historia distinta de la del panel.
+	descargar(`${proyecto.nombre} - dossier.html`, generarInformeHTML(revision), 'text/html');
 };
 
 /**
@@ -3680,7 +3644,7 @@ $('modo-trabajo').onclick = () => { if (!visualizacion) aplicarModo('trabajo'); 
 
 const panelEsq = instalarEsquema({
 	proyecto: () => proyecto,
-	potenciales: () => potenciales,
+	potenciales: () => revision.potenciales,
 	dispositivoSeleccionado: () => (sel?.tipo === 'dispositivo' ? sel.id : undefined),
 	seleccionar,
 	capturar,
@@ -3795,7 +3759,7 @@ function renumerar(d: Dispositivo): Dispositivo {
 
 ($('btn-etiquetas') as HTMLButtonElement).onclick = () => {
 	try {
-		exportarEtiquetasPDF(proyecto, potenciales, `${nombreArchivo()}-rotulos.pdf`);
+		exportarEtiquetasPDF(proyecto, revision.potenciales, `${nombreArchivo()}-rotulos.pdf`);
 		avisar('Rótulos exportados — imprímelos al 100 %, sin ajustar a la página', 'ok');
 	} catch (e) {
 		avisar(`No se pudieron generar los rótulos: ${(e as Error).message}`, 'error');
@@ -3871,17 +3835,17 @@ $('leyenda-voltaje').innerHTML =
  */
 function abrirDetalleDRC(): void {
 	const cont = $('drc-detalle');
-	const errores = hallazgos.filter((h) => h.severidad === 'error').length;
-	const avisos = hallazgos.length - errores;
-	$('drc-resumen').textContent = hallazgos.length === 0
+	const errores = revision.hallazgos.filter((h) => h.severidad === 'error').length;
+	const avisos = revision.hallazgos.length - errores;
+	$('drc-resumen').textContent = revision.hallazgos.length === 0
 		? 'El tablero pasa todas las reglas.'
 		: `${errores} ${errores === 1 ? 'error' : 'errores'} y ${avisos} ${avisos === 1 ? 'aviso' : 'avisos'} `
 			+ 'sobre el tablero tal como está ahora.';
 	cont.innerHTML = '';
-	if (hallazgos.length === 0) {
+	if (revision.hallazgos.length === 0) {
 		cont.innerHTML = '<li class="vacio">✔ Sin errores ni avisos</li>';
 	}
-	for (const h of hallazgos) {
+	for (const h of revision.hallazgos) {
 		const li = document.createElement('li');
 		const marca = document.createElement('span');
 		marca.className = 'marca';
@@ -4294,13 +4258,19 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		/** Añade un aparato a la selección múltiple, como haría un Shift+clic. */
 		anadirASeleccion: (id: string) => { construyendoSeleccion = true; alternarEnSeleccion(id); construyendoSeleccion = false; },
 		/** Resumen del esquema montado ahora mismo (para comprobar que no pierde aparatos). */
-		esquema: () => montarEsquema(proyecto, potenciales).map((h) => ({
+		esquema: () => revision.hojasEsquema.map((h) => ({
 			numero: h.numero,
 			aparatos: h.simbolos.map((s) => s.dispositivoId),
 			fuera: h.simbolos.filter((s) => s.x < 0 || s.y < 0
 				|| s.x + s.ancho > h.anchoMm || s.y + s.alto > h.altoMm).length,
 		})),
-		/** Punto en pantalla del tirador de una unión del cable (para poder arrastrarla). */
+		/**
+		 * Punto en pantalla del tirador de una unión del cable.
+		 *
+		 * Es el único sitio válido para probar que una unión se arrastra: agarrar un píxel
+		 * cualquiera del tubo NO deforma el cable, y es a propósito —solo se mueve la unión si se
+		 * pincha a menos de 26 mm de ella; las uniones se crean con doble clic—.
+		 */
 		puntoDeUnion: (conductorId: string, indice = 0) => {
 			const c = proyecto.conductores.find((x) => x.id === conductorId);
 			const w = c?.trazado?.[indice];
@@ -4321,7 +4291,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			return { x: Math.round(v.x), y: Math.round(v.y) };
 		},
 		/** Hallazgos del DRC en vivo (para comprobar las reglas eléctricas). */
-		hallazgos: () => hallazgos,
+		hallazgos: () => revision.hallazgos,
 		/** Fuerza un recálculo completo (tras tocar el proyecto desde la prueba). */
 		recalcular: () => actualizarTodo(),
 		/** Estado de la interacción (para diagnosticar un clic que se fue por otro camino). */
@@ -4668,6 +4638,6 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		proyecto: () => proyecto,
 		/** Hallazgos del DRC del proyecto abierto, tal como los ve el panel de verificación. */
-		drc: () => hallazgos,
+		drc: () => revision.hallazgos,
 	};
 }

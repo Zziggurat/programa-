@@ -15,17 +15,10 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 import { Proyecto } from '../src/modelo/tipos.js';
-import { calcularPotenciales } from '../src/motores/potenciales.js';
-import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
-import { verificarProyecto } from '../src/motores/drc.js';
-import { rutearConductores } from '../src/motores/ruteo.js';
-import { generarReferencias } from '../src/motores/referencias.js';
-import { generarPlanBorneros } from '../src/motores/bornes.js';
-import { generarBOM, generarListaConductores } from '../src/motores/documentacion.js';
-import { fondoDe, generarFichaTablero } from '../src/motores/ficha-tablero.js';
-import { montarEsquema, posicionesEnEsquema } from '../src/motores/esquema.js';
-import { calcularBalanceTermico } from '../src/motores/termico.js';
+import { revisarTablero } from '../src/motores/revision.js';
+import { fondoDe } from '../src/motores/ficha-tablero.js';
 import { factorTemperatura, TEMPERATURA_TABLA_C } from '../src/motores/electrico.js';
+import { longitudesDibujadasMm } from './escena3d.js';
 import { declarado, opcionesDe } from '../src/modelo/proyecto.js';
 import { CONTROLADORES } from './controladores.js';
 import { descargar } from './dialogos.js';
@@ -153,23 +146,19 @@ function dibujarPlaca(
  * guarde: el documento que se ve es exactamente el que se descarga, porque es el mismo.
  */
 export function construirDossier(proyecto: Proyecto): jsPDF {
-	// Recalcular todo para que el PDF refleje el estado actual del tablero.
-	numerarDispositivos(proyecto);
-	const potenciales = calcularPotenciales(proyecto);
-	numerarConductores(proyecto, potenciales);
-	const ruteo = rutearConductores(proyecto);
-	const hallazgos = verificarProyecto(proyecto, potenciales, {
-		longitudesMm: new Map(ruteo.rutas.map((r) => [r.conductorId, r.longitudMm])),
-		canaletas: ruteo.ocupaciones,
-		canaletasPorConductor: new Map(ruteo.rutas.map((r) => [r.conductorId, r.canaletasUsadas])),
+	// Recalcular todo para que el PDF refleje el estado actual del tablero. Sale de UNA sola
+	// revisión y con las MISMAS longitudes de cable que usa la pantalla: cuando cada uno hacía su
+	// propia cadena, el papel medía los hilos por el ruteo teórico de las canaletas y la pantalla
+	// por el trazado dibujado —dos caídas de tensión distintas para el mismo tablero—, y el papel
+	// se saltaba la sincronización, así que no avisaba de aparatos sin colocar ni que se pisan.
+	const revision = revisarTablero(proyecto, {
+		renumerarAparatos: true, // el documento se entrega con la numeración al día
+		longitudesMm: longitudesDibujadasMm(proyecto),
 	});
-	const hojasEsquema = montarEsquema(proyecto, potenciales);
-	const referencias = generarReferencias(proyecto, posicionesEnEsquema(hojasEsquema));
-	const bom = generarBOM(proyecto);
-	const conductores = generarListaConductores(proyecto, ruteo);
-	const planes = generarPlanBorneros(proyecto, potenciales);
-	const ficha = generarFichaTablero(proyecto, ruteo);
-	const termico = calcularBalanceTermico(proyecto);
+	const { potenciales, ruteo, hallazgos, referencias, ficha, termico } = revision;
+	const bom = revision.bom;
+	const conductores = revision.listaConductores;
+	const planes = revision.planesBorneros;
 	const datos = proyecto.datos ?? {};
 	const opciones = opcionesDe(proyecto);
 
