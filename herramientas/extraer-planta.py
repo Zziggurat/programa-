@@ -297,7 +297,19 @@ def main() -> None:
                            'puntos': [[round(x, 1), round(y, 1)] for x, y in pts], 'largo': largo})
     print(f"  {len(trazas)} trazas de conducto/cañería/bandeja")
 
-    # Zona de la planta: la ventana donde se concentran las trazas.
+    # ---------------- La zona: HASTA DÓNDE LLEGA LA CUBIERTA ----------------
+    #
+    # Los conductos solo sirven para SITUAR la planta —el modelspace tiene también diagramas de
+    # control en otra parte—, pero NO para medirla. La cubierta es más grande que la instalación
+    # de clima: donde no hay UMAs sigue habiendo tejado.
+    #
+    # Sacándola de las trazas, la losa salía de 165 × 244 m cuando el peto de la cubierta mide
+    # 213 × 221: 48 m corta de ancho y 23 m pasada de largo. En el 3D eso se veía como que «se
+    # corta el mapa»: las barandas y los petos seguían dibujados pero ya sin suelo debajo, y por
+    # el otro lado quedaban 23 m de losa donde no hay tejado.
+    #
+    # Así que la cubierta la define SU PROPIO BORDE, que es lo que es un peto: el perímetro del
+    # tejado. Las trazas solo dicen en qué parte del plano hay que mirar.
     if trazas:
         xs = [p[0] for t in trazas for p in t['puntos']]
         h = collections.Counter(int(x // 20000) for x in xs)
@@ -310,7 +322,26 @@ def main() -> None:
         zona = {'x0': min(xs), 'y0': min(ys), 'x1': max(xs), 'y1': max(ys)}
     else:
         zona = {'x0': 0, 'y0': 0, 'x1': 0, 'y1': 0}
-    print(f"  zona de planta: {(zona['x1']-zona['x0'])/1000:.0f} × {(zona['y1']-zona['y0'])/1000:.0f} m")
+    zonaClima = dict(zona)
+    print(f"  zona de clima:   {(zona['x1']-zona['x0'])/1000:.0f} × {(zona['y1']-zona['y0'])/1000:.0f} m"
+          " (donde hay conductos)")
+
+    # EL SECTOR DE CUBIERTA QUE SE MODELA, con su borde.
+    #
+    # Se midió el peto en el plano y esta cubierta es una terminal entera: 570 m de largo. La
+    # instalación de clima ocupa 165 de esos metros. Dibujar los 570 daría un mundo tres veces y
+    # media más grande y vacío en sus cuatro quintas partes, que para recorrer una obra es peor,
+    # no mejor: se anda mucho para no encontrar nada.
+    #
+    # Así que lo que se modela es el SECTOR donde está la instalación, y se le da un borde de
+    # veinte metros para que el peto, las barandas y los muros que la rodean queden dentro y con
+    # suelo debajo. Todo lo que se dibuje se recorta contra esta zona (ver `recortar`), así que
+    # nada vuelve a quedar volando sobre el vacío, que era el problema de verdad.
+    BORDE_CUBIERTA = 20_000
+    zona = {'x0': zona['x0'] - BORDE_CUBIERTA, 'y0': zona['y0'] - BORDE_CUBIERTA,
+            'x1': zona['x1'] + BORDE_CUBIERTA, 'y1': zona['y1'] + BORDE_CUBIERTA}
+    print(f"  sector modelado: {(zona['x1']-zona['x0'])/1000:.0f} × "
+          f"{(zona['y1']-zona['y0'])/1000:.0f} m (la instalación y su borde)")
 
     # Equipos en planta: se agrupa la geometría de las capas de equipo y cada racimo es una máquina.
     centros, cajas = [], []
@@ -373,10 +404,45 @@ def main() -> None:
     # ---------------- 4. La obra: columnas, barandas, bordes, muros, lucernarios ----------------
     # Solo lo que cae dentro de la zona modelada, y solo tramos con largo suficiente: el plano
     # está lleno de detalles de despiece de dos centímetros que en el mundo 3D son ruido.
-    MARGEN = 8000
     def en_zona(x: float, y: float) -> bool:
-        return (zona['x0'] - MARGEN <= x <= zona['x1'] + MARGEN
-                and zona['y0'] - MARGEN <= y <= zona['y1'] + MARGEN)
+        """¿Cae dentro del sector que se modela? La zona ya viene con su borde incluido."""
+        return (zona['x0'] <= x <= zona['x1'] and zona['y0'] <= y <= zona['y1'])
+
+    def recortar(pts: list[tuple[float, float]]) -> list[list[tuple[float, float]]]:
+        """Parte una polilínea en los trozos que caen DENTRO de la cubierta.
+
+        Antes bastaba con que UN punto cayera dentro para dibujarla entera, y una raya de
+        doscientos metros que solo rozaba el tejado se pintaba completa: en el 3D salía volando
+        sobre el vacío —había una a 51 m del borde—. Ahora se corta justo donde se sale, con el
+        punto de cruce calculado, así que el trazo llega hasta el borde y ahí se acaba.
+        """
+        def cruce(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float]:
+            # Búsqueda binaria del punto donde el segmento sale: es exacta a un milímetro en
+            # veinte pasos y no obliga a distinguir por cuál de los cuatro lados se marcha.
+            dentro, fuera = (a, b) if en_zona(*a) else (b, a)
+            for _ in range(20):
+                medio = ((dentro[0] + fuera[0]) / 2, (dentro[1] + fuera[1]) / 2)
+                if en_zona(*medio):
+                    dentro = medio
+                else:
+                    fuera = medio
+            return dentro
+
+        trozos: list[list[tuple[float, float]]] = []
+        actual: list[tuple[float, float]] = []
+        for i, p in enumerate(pts):
+            if en_zona(*p):
+                if not actual and i > 0:
+                    actual.append(cruce(p, pts[i - 1]))   # entra: se empieza en el borde
+                actual.append(p)
+            else:
+                if actual:
+                    actual.append(cruce(actual[-1], p))   # se va: se acaba en el borde
+                    trozos.append(actual)
+                    actual = []
+        if actual:
+            trozos.append(actual)
+        return trozos
 
     obra: list[dict[str, Any]] = []
     columnas: list[dict[str, Any]] = []
@@ -396,13 +462,12 @@ def main() -> None:
             continue
         familia, alto, grosor, largo_min = fam
         for pts in polilineas_de(e):
-            if not any(en_zona(x, y) for x, y in pts):
-                continue
-            largo = sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
-            if largo < largo_min:
-                continue
-            obra.append({'familia': familia, 'alto': alto, 'grosor': grosor,
-                         'puntos': [[round(x, 1), round(y, 1)] for x, y in pts]})
+            for trozo in recortar(list(pts)):
+                largo = sum(math.dist(a, b) for a, b in zip(trozo, trozo[1:]))
+                if largo < largo_min:
+                    continue
+                obra.append({'familia': familia, 'alto': alto, 'grosor': grosor,
+                             'puntos': [[round(x, 1), round(y, 1)] for x, y in trozo]})
     # Columnas duplicadas: la estructura suele dibujar dos círculos concéntricos por pilar.
     vistas: set[tuple[int, int]] = set()
     unicas = []
