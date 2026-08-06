@@ -661,6 +661,120 @@ export function verificarProyecto(
 		});
 	}
 
+	/*
+	 * R17 — SELECTIVIDAD entre dos protecciones en serie.
+	 *
+	 * El caso de siempre: salta un magnetotérmico de un circuito y se va también el general, así
+	 * que se queda a oscuras medio tablero por una avería que era de un solo aparato. Eso pasa
+	 * cuando las dos protecciones son demasiado parecidas y no hay quién decida cuál actúa antes.
+	 *
+	 * Se buscan pares DIRECTOS: la salida de una da al mismo potencial que la entrada de la otra.
+	 * Es lo que se puede afirmar con lo que hay dibujado, y además es donde vive el problema.
+	 *
+	 * QUÉ SE COMPRUEBA Y QUÉ NO. Se comprueba la selectividad en SOBRECARGA, que es la que sale de
+	 * los calibres: la de arriba tiene que ser bastante mayor que la de abajo para que la de abajo
+	 * llegue antes a su curva térmica. Con menos de 1,6 veces no hay nada que hacer, y esa cifra
+	 * es la práctica corriente de fabricante.
+	 *
+	 * La selectividad en CORTOCIRCUITO no sale de aquí y el aviso lo dice: depende de las curvas
+	 * reales y de las tablas de pareja del fabricante, que son datos que este programa no tiene.
+	 * Callarlo sería peor que no comprobar nada, porque quien lo lea daría por sentado que su
+	 * tablero es selectivo cuando solo se ha mirado la mitad del asunto.
+	 */
+	const RAZON_SELECTIVA = 1.6;
+	const deCorte = aparatos.filter((d) => ES_APARATO_DE_CORTE.has(d.tipo) && d.tipo !== 'seccionador');
+
+	/*
+	 * Cuál es la ENTRADA de cada protección y cuál la salida.
+	 *
+	 * No basta con que dos protecciones compartan un potencial: dos automáticos colgados del mismo
+	 * general también lo comparten —su entrada— y esos no van en serie, van en paralelo, que es un
+	 * tablero perfectamente normal. Lo que distingue una cosa de la otra es por dónde entra la
+	 * corriente, y eso se sabe caminando desde la acometida: se va de la fuente hacia fuera y el
+	 * primer potencial por el que se llega a una protección es su entrada.
+	 */
+	const potencialesDe = (d: Dispositivo): string[] => [...new Set(d.bornes
+		.map((b) => potenciales.porBorne.get(`${d.id}::${b.id}`)?.id)
+		.filter((x): x is string => !!x))];
+	const nivel = new Map<string, number>();
+	{
+		const cola: string[] = [];
+		for (const d of aparatos) {
+			if (d.tipo !== 'fuente' && d.tipo !== 'transformador') continue;
+			for (const pid of potencialesDe(d)) {
+				if (nivel.has(pid)) continue;
+				nivel.set(pid, 0);
+				cola.push(pid);
+			}
+		}
+		// Cada protección es un paso: lleva la corriente de sus potenciales de entrada a los demás.
+		for (let i = 0; i < cola.length; i++) {
+			const pid = cola[i];
+			const n = nivel.get(pid)!;
+			for (const d of deCorte) {
+				const suyos = potencialesDe(d);
+				if (!suyos.includes(pid)) continue;
+				for (const otro of suyos) {
+					if (nivel.has(otro)) continue;
+					nivel.set(otro, n + 1);
+					cola.push(otro);
+				}
+			}
+		}
+	}
+	/** El potencial por el que le entra la corriente: el más cercano a la acometida. */
+	const entradaDe = (d: Dispositivo): string | undefined => {
+		let mejor: string | undefined;
+		let menor = Infinity;
+		for (const pid of potencialesDe(d)) {
+			const n = nivel.get(pid);
+			if (n !== undefined && n < menor) { menor = n; mejor = pid; }
+		}
+		return mejor;
+	};
+
+	for (const arriba of deCorte) {
+		const inArriba = arriba.corrienteNominal;
+		if (!inArriba) continue;
+		const entradaArriba = entradaDe(arriba);
+		// Sus salidas son todos sus potenciales menos aquel por el que le entra la corriente.
+		const salidas = new Set(potencialesDe(arriba).filter((pid) => pid !== entradaArriba));
+		for (const abajo of deCorte) {
+			if (abajo.id === arriba.id) continue;
+			const inAbajo = abajo.corrienteNominal;
+			if (!inAbajo) continue;
+			// En serie de verdad: lo que sale de la de arriba es lo que entra en la de abajo.
+			const entradaAbajo = entradaDe(abajo);
+			if (!entradaAbajo || !salidas.has(entradaAbajo)) continue;
+			// El de más calibre es el de aguas arriba: se mira cada pareja una sola vez.
+			if (inArriba < inAbajo || (inArriba === inAbajo && arriba.id > abajo.id)) continue;
+
+			if (inArriba === inAbajo) {
+				hallazgos.push({
+					regla: 'R17-sin-selectividad',
+					severidad: 'error',
+					mensaje: `${etiqueta(arriba.id)} y ${etiqueta(abajo.id)} van en serie y los dos son `
+						+ `de ${inArriba} A. Ante una falta en el circuito de abajo saltarán los dos, y `
+						+ `se quedará sin tensión todo lo que cuelgue del de arriba. Sube el de cabecera `
+						+ `a ${Math.ceil(inAbajo * RAZON_SELECTIVA)} A o más.`,
+					dispositivoId: arriba.id,
+				});
+			} else if (inArriba < inAbajo * RAZON_SELECTIVA) {
+				hallazgos.push({
+					regla: 'R17-selectividad-justa',
+					severidad: 'aviso',
+					mensaje: `${etiqueta(arriba.id)} (${inArriba} A) va justo por encima de `
+						+ `${etiqueta(abajo.id)} (${inAbajo} A): con menos de ${RAZON_SELECTIVA} veces no hay `
+						+ `selectividad en sobrecarga y pueden saltar los dos. Con `
+						+ `${Math.ceil(inAbajo * RAZON_SELECTIVA)} A arriba se resuelve. `
+						+ `(En cortocircuito la selectividad depende de la tabla de pareja del `
+						+ `fabricante, que este programa no tiene: confírmala con su catálogo.)`,
+					dispositivoId: arriba.id,
+				});
+			}
+		}
+	}
+
 	const orden: Severidad[] = ['error', 'aviso'];
 	return hallazgos.sort(
 		(a, b) => orden.indexOf(a.severidad) - orden.indexOf(b.severidad) || a.regla.localeCompare(b.regla),

@@ -1444,6 +1444,13 @@
 			<code>DO3 = DO1 Y UI1 &lt; 21</code>. Al energizar, la maniobra corre sola: se ven las
 			cuentas atrás, las sondas se mueven con un mando y las salidas encienden lo que tengan
 			cableado. Mira el ejemplo <i>Climatizador de cubierta (UMA)</i>.</li>
+			<li><b>🎚️ Salidas de 0–10 V (válvulas y compuertas):</b> una válvula no se enciende, se
+			<b>abre un tanto</b>. Se escribe la banda proporcional tal como se dice en obra:
+			<code>AO1 = 0 a 10 según UI1 de 18 a 22</code> —a 18 °C cerrada, a 22 °C abierta del todo,
+			en medio lo proporcional—, y al revés para enfriar:
+			<code>AO2 = 10 a 0 según UI1 de 23 a 27</code>. Fuera de la banda se queda en el tope, como
+			un controlador de verdad. Al energizar, el panel derecho enseña cuántos voltios y qué
+			porcentaje está dando cada salida mientras giras el mando de la sonda.</li>
 			<li><b>⏱️ Acelerar el reloj:</b> con el tablero energizado, el selector <i>Reloj</i> del panel
 			derecho corre la simulación a ×5 o ×20. Un retardo de 8 s se prueba en menos de un segundo,
 			y lo que se ve es exactamente lo mismo.</li>

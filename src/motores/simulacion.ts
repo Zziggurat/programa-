@@ -59,7 +59,7 @@ import { Conductor, Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tip
 import { claveBorne } from '../modelo/proyecto.js';
 import {
 	EsperaLogica, LecturaControlador, MemoriaLogica, ReglaLogica, esperasDe, evaluar, leerPrograma,
-	memoriaLogicaVacia, salidasActivas,
+	memoriaLogicaVacia, salidasActivas, valoresAnalogicos,
 } from './logica.js';
 
 /** Estado que el usuario controla de cada aparato. */
@@ -205,6 +205,14 @@ export interface ResultadoSimulacion {
 	cortocircuitos: Cortocircuito[];
 	/** Protecciones que disparan por esta situación. */
 	disparos: Disparo[];
+	/**
+	 * Lo que marca cada SALIDA ANALÓGICA del programa de un controlador, por «aparato::borne».
+	 *
+	 * Va aparte de `activos` porque una salida analógica no está encendida ni apagada: está en
+	 * 3,4 V. Meterla entre las encendidas obligaría a quien lo lea a adivinar si un cero quiere
+	 * decir «apagada» o «abierta el 0 %», que no es lo mismo delante de una válvula.
+	 */
+	analogicas: Map<string, number>;
 	/** Temporizadores contando ahora mismo, para poder enseñar la cuenta atrás. */
 	temporizadores: CuentaAtras[];
 	/** Consumos que están recibiendo una tensión distinta de la suya. */
@@ -711,6 +719,7 @@ export function simular(
 	let conmutados = new Set<string>(activosPrevios ?? []);
 	let pasadas = 0;
 	let estable = false;
+	const analogicas = new Map<string, number>();
 	let prop: Propagacion = { vivos, alcances: [], conductorEntre: new Map() };
 
 	while (pasadas < MAX_PASADAS && !estable) {
@@ -724,6 +733,11 @@ export function simular(
 				salidasDePrograma.get(id) ?? new Set());
 			salidasDePrograma.set(id, salidasActivas(reglas, lectura,
 				reloj ? { ahora: reloj.ahora, memoria: memoriaLogica } : undefined));
+			// Y lo que valen sus salidas analógicas: la apertura de una válvula, la velocidad de un
+			// variador. No encienden nada, así que no entran en la propagación.
+			for (const [borne, v] of Object.entries(valoresAnalogicos(reglas, lectura))) {
+				analogicas.set(`${id}::${borne}`, v);
+			}
 		}
 		const nuevosActivos = new Set<string>();
 		for (const d of aparatos) {
@@ -960,7 +974,7 @@ export function simular(
 	const corrienteTotal = consumos.reduce((s, c) => s + c.corriente, 0);
 
 	return {
-		vivos, conductoresVivos, activos, funcionando, avisos,
+		vivos, conductoresVivos, activos, funcionando, avisos, analogicas,
 		pasadas, oscila: !estable,
 		consumos,
 		corrientePorConductor: porConductor,

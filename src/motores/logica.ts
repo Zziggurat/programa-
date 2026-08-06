@@ -31,11 +31,41 @@ export type Expr =
 	| { op: 'o'; de: Expr[] }
 	| { op: 'no'; de: Expr };
 
+/**
+ * Una salida ANALÓGICA: cuánto abre, no si abre.
+ *
+ * Es la banda proporcional de toda la vida, que es con lo que se gobierna de verdad una válvula,
+ * una compuerta o la velocidad de un variador en una UMA: la salida va de un extremo al otro según
+ * lo que marque la sonda, y fuera de la banda se queda pegada al tope.
+ *
+ * Se escribe como se dice en obra:  «AO1 = 0 a 10 según TE1 de 18 a 24»
+ * —a 18 °C o menos, 0 V; a 24 °C o más, 10 V; en medio, lo proporcional—. Y para refrigerar, al
+ * revés:  «AO2 = 10 a 0 según TE1 de 22 a 28».
+ */
+export interface Rampa {
+	/** Borne de la sonda que manda: UI1, TE1… */
+	sonda: string;
+	/** Valor de la sonda donde la salida está en `desde`. */
+	sondaDesde: number;
+	/** Valor de la sonda donde la salida está en `hasta`. */
+	sondaHasta: number;
+	/** Salida (en voltios o en %) en `sondaDesde`. */
+	desde: number;
+	/** Salida en `sondaHasta`. */
+	hasta: number;
+}
+
 /** Una regla: qué enciende una salida, y con qué tiempos. */
 export interface ReglaLogica {
 	/** Borne de salida que gobierna: DO1, AO2, Y1… */
 	salida: string;
+	/**
+	 * Cuándo se enciende (todo/nada). En una regla de rampa vale siempre, porque una salida
+	 * analógica no se enciende: se pone en un valor.
+	 */
 	cuando: Expr;
+	/** Si la regla es analógica, cómo se calcula su valor. */
+	rampa?: Rampa;
 	/** Segundos que espera con la condición cumplida antes de encender. */
 	retardoS?: number;
 	/**
@@ -99,6 +129,36 @@ export function leerPrograma(texto: string): Programa {
 
 		let resto = linea.slice(igual + 1).trim();
 		if (!resto) { fallo('no dice cuándo se enciende'); return; }
+
+		/*
+		 * ¿Es una salida analógica? «0 a 10 según TE1 de 18 a 24».
+		 *
+		 * Se mira ANTES que la condición porque es un renglón de otra forma: no dice cuándo se
+		 * enciende sino cuánto vale, y por el lector de condiciones no pasaría.
+		 */
+		const rampaEscrita = /^(-?\d+(?:[.,]\d+)?)\s*a\s*(-?\d+(?:[.,]\d+)?)\s+seg[uú]n\s+([A-Za-z][A-Za-z0-9_/+-]*)\s+de\s+(-?\d+(?:[.,]\d+)?)\s*a\s*(-?\d+(?:[.,]\d+)?)$/i
+			.exec(resto);
+		if (rampaEscrita) {
+			const num = (t: string): number => Number(t.replace(',', '.'));
+			const sondaDesde = num(rampaEscrita[4]);
+			const sondaHasta = num(rampaEscrita[5]);
+			if (sondaDesde === sondaHasta) {
+				fallo('la banda de la sonda no puede empezar y acabar en el mismo valor');
+				return;
+			}
+			reglas.push({
+				salida,
+				cuando: { op: 'o', de: [] },   // una salida analógica no se enciende: vale algo
+				rampa: {
+					sonda: rampaEscrita[3],
+					sondaDesde, sondaHasta,
+					desde: num(rampaEscrita[1]), hasta: num(rampaEscrita[2]),
+				},
+				comentario,
+				fuente: crudo.trim(),
+			});
+			return;
+		}
 
 		// Los tiempos van al final del renglón y se recortan antes de leer la condición.
 		let retardoS: number | undefined;
@@ -204,6 +264,40 @@ export function evaluar(e: Expr, l: LecturaControlador): boolean {
 	}
 }
 
+/**
+ * Cuánto vale una salida analógica ahora mismo, según lo que marque su sonda.
+ *
+ * Fuera de la banda se queda pegada al tope, que es lo que hace un controlador de verdad: por
+ * debajo de 18 °C la válvula está cerrada del todo, no «menos que cerrada». Si la sonda no marca
+ * nada —no está conectada, o no se ha girado el mando— la salida se queda en su extremo de
+ * reposo, que es el valor de `desde`.
+ */
+export function valorDeRampa(r: Rampa, valores: Record<string, number>): number {
+	const v = valores[r.sonda];
+	if (v === undefined) return r.desde;
+	const t = (v - r.sondaDesde) / (r.sondaHasta - r.sondaDesde);
+	const acotado = Math.max(0, Math.min(1, t));
+	return r.desde + (r.hasta - r.desde) * acotado;
+}
+
+/**
+ * Lo que vale cada salida analógica del programa, por su borne.
+ *
+ * Va aparte de `salidasActivas` a propósito: una salida analógica no está encendida ni apagada
+ * —está en 3,4 V—, y meterla en el conjunto de las encendidas obligaría a quien lo lea a adivinar
+ * cuándo un 0 significa «apagada» y cuándo significa «abierta el 0 %», que no es lo mismo.
+ */
+export function valoresAnalogicos(
+	reglas: readonly ReglaLogica[],
+	lectura: LecturaControlador,
+): Record<string, number> {
+	const salida: Record<string, number> = {};
+	for (const r of reglas) {
+		if (r.rampa) salida[r.salida] = valorDeRampa(r.rampa, lectura.valores);
+	}
+	return salida;
+}
+
 /** Memoria de los tiempos del programa, entre una pasada y la siguiente. */
 export interface MemoriaLogica {
 	/** Instante (ms) en que cada salida empezó a cumplir su condición. */
@@ -229,6 +323,8 @@ export function salidasActivas(
 ): Set<string> {
 	const encendidas = new Set<string>();
 	for (const r of reglas) {
+		// Las analógicas no se encienden: valen algo. Se resuelven en `valoresAnalogicos`.
+		if (r.rampa) continue;
 		const pide = evaluar(r.cuando, lectura);
 		if (!reloj) {
 			if (pide) encendidas.add(r.salida);

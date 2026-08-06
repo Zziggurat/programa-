@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 
 import {
 	Expr, LecturaControlador, esperasDe, evaluar, leerPrograma, memoriaLogicaVacia, salidasActivas,
+	valorDeRampa, valoresAnalogicos,
 } from '../src/motores/logica.js';
 
 /** Lo que ve el controlador: qué bornes tienen tensión y qué marcan las sondas. */
@@ -227,4 +228,69 @@ test('el programa se puede volver a escribir tal como se leyó', () => {
 	const texto = 'DO1 = DI1 Y NO DI2   ; el ventilador\nDO2 = UI1 > 24 retardo 5';
 	const p = leerPrograma(texto);
 	assert.deepEqual(p.reglas.map((r) => r.fuente), texto.split('\n').map((l) => l.trim()));
+});
+
+/* --------------------------- Salidas analógicas (0–10 V) --------------------------- */
+
+test('se lee una salida analógica escrita como se dice en obra', () => {
+	const p = leerPrograma('AO1 = 0 a 10 según TE1 de 18 a 24  ; válvula de calor');
+	assert.equal(p.errores.length, 0, JSON.stringify(p.errores));
+	assert.equal(p.reglas.length, 1);
+	assert.deepEqual(p.reglas[0].rampa, {
+		sonda: 'TE1', sondaDesde: 18, sondaHasta: 24, desde: 0, hasta: 10,
+	});
+	assert.equal(p.reglas[0].comentario, 'válvula de calor');
+});
+
+test('la válvula abre en proporción a lo que marca la sonda', () => {
+	const r = leerPrograma('AO1 = 0 a 10 según TE1 de 18 a 24').reglas[0].rampa!;
+	assert.equal(valorDeRampa(r, { TE1: 18 }), 0, 'en el extremo frío, cerrada');
+	assert.equal(valorDeRampa(r, { TE1: 21 }), 5, 'a mitad de banda, medio abierta');
+	assert.equal(valorDeRampa(r, { TE1: 24 }), 10, 'en el extremo caliente, abierta del todo');
+});
+
+test('fuera de la banda se queda en el tope, no se pasa', () => {
+	const r = leerPrograma('AO1 = 0 a 10 según TE1 de 18 a 24').reglas[0].rampa!;
+	assert.equal(valorDeRampa(r, { TE1: 5 }), 0, 'no existe «menos que cerrada»');
+	assert.equal(valorDeRampa(r, { TE1: 40 }), 10, 'ni «más que abierta»');
+});
+
+test('una banda al revés enfría: cuanto más calor, menos señal', () => {
+	// Como se programa una compuerta de free-cooling o una válvula de frío.
+	const r = leerPrograma('AO2 = 10 a 0 según TE1 de 22 a 28').reglas[0].rampa!;
+	assert.equal(valorDeRampa(r, { TE1: 22 }), 10);
+	assert.equal(valorDeRampa(r, { TE1: 25 }), 5);
+	assert.equal(valorDeRampa(r, { TE1: 28 }), 0);
+});
+
+test('si la sonda no marca nada, la salida se queda en reposo', () => {
+	const r = leerPrograma('AO1 = 0 a 10 según TE1 de 18 a 24').reglas[0].rampa!;
+	assert.equal(valorDeRampa(r, {}), 0, 'sonda sin conectar: la válvula no se abre sola');
+});
+
+test('una banda de ancho cero se rechaza con su explicación', () => {
+	const p = leerPrograma('AO1 = 0 a 10 según TE1 de 20 a 20');
+	assert.equal(p.reglas.length, 0);
+	assert.match(p.errores[0].que, /banda/i);
+});
+
+test('las analógicas no se cuelan entre las salidas encendidas', () => {
+	const p = leerPrograma('DO1 = DI1\nAO1 = 0 a 10 según TE1 de 18 a 24');
+	const lectura = { activos: new Set(['DI1']), salidasPrevias: new Set<string>(), valores: { TE1: 24 } };
+	const encendidas = salidasActivas(p.reglas, lectura);
+	assert.ok(encendidas.has('DO1'));
+	assert.ok(!encendidas.has('AO1'), 'una válvula abierta al 100 % no es un contacto cerrado');
+	assert.deepEqual(valoresAnalogicos(p.reglas, lectura), { AO1: 10 });
+});
+
+test('lo de siempre sigue funcionando junto a lo analógico', () => {
+	const p = leerPrograma([
+		'DO1 = DI1 Y NO DI2      ; ventilador',
+		'AO1 = 0 a 10 según TE1 de 18 a 24   ; válvula',
+		'DO2 = DI1 retardo 5     ; compuerta',
+	].join('\n'));
+	assert.equal(p.errores.length, 0, JSON.stringify(p.errores));
+	assert.equal(p.reglas.length, 3);
+	assert.equal(p.reglas[1].rampa?.sonda, 'TE1');
+	assert.equal(p.reglas[2].retardoS, 5);
 });

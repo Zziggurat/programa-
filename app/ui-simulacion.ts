@@ -331,6 +331,24 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			fila.onclick = () => seleccionar(t.dispositivoId);
 			cont.appendChild(fila);
 		}
+		/*
+		 * Las salidas analógicas: cuánto abre la válvula, a qué velocidad va el variador.
+		 *
+		 * Se enseñan aunque estén a cero, y a propósito: en una salida todo/nada «no aparece» y
+		 * «apagada» son lo mismo, pero en una válvula un 0 % es un dato —está cerrada porque la
+		 * sonda lo pide— y no verlo dejaría a quien programa sin saber si su rampa funciona.
+		 */
+		for (const [clave, valor] of r.analogicas) {
+			const [id, borne] = clave.split('::');
+			const d = proyecto().dispositivos.find((x) => x.id === id);
+			const fila = document.createElement('div');
+			fila.className = 'fila-sim analogica';
+			fila.innerHTML = `<span class="punto-sim"></span>`
+				+ `<span class="des-sim">${escaparHtml(`${d?.designacion ?? id}:${borne}`)}</span>`
+				+ `<span class="que-sim">${valor.toFixed(1)} V · ${Math.round((valor / 10) * 100)} %</span>`;
+			fila.onclick = () => seleccionar(id);
+			cont.appendChild(fila);
+		}
 		if (r.funcionando.length === 0 && cont.children.length === 0) cont.innerHTML = '<div class="nada-sim">Nada está funcionando todavía.</div>';
 		for (const f of r.funcionando) {
 			const fila = document.createElement('div');

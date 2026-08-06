@@ -37,6 +37,7 @@ import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
 import { huellaMinima, leerRotulos } from '../src/motores/terminales.js';
 import { calcularBalanceTermico } from '../src/motores/termico.js';
 import { comoSeConecta } from './como-se-conecta.js';
+import { avisarSiNoSePuede } from './requisitos.js';
 import {
 	avisar, confirmar, descargar, escaparHtml, nombreSeguroDeArchivo, pedirTexto,
 } from './dialogos.js';
@@ -249,6 +250,13 @@ function actualizarBotonesHistorial(): void {
 }
 
 /* ------------------------------ Escena ------------------------------ */
+
+/*
+ * Antes de tocar el 3D se comprueba que el navegador pueda. Si no puede, se explica y se para
+ * aquí: seguir sería reventar por dentro y dejar al usuario mirando una pantalla que no responde
+ * sin saber por qué (era exactamente lo que pasaba).
+ */
+if (avisarSiNoSePuede()) throw new Error('El navegador no reúne lo que hace falta para el 3D.');
 
 const contenedor = document.getElementById('escena')!;
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -1437,9 +1445,10 @@ function pintarSeleccion(): void {
 		(panel.querySelector('#dev-programa-ejemplo') as HTMLButtonElement | null)?.addEventListener('click', () => {
 			aplicar(() => {
 				d.programa = [
-					'DO1 = DI1 Y NO DI2            ; ventilador: marcha pedida y sin alarma',
-					'DO2 = DO1 retardo 5           ; compuerta, 5 s después',
-					'DO3 = DO1 Y UI1 < 21          ; válvula de calor si el retorno baja de 21 °C',
+					'DO1 = DI1 Y NO DI2               ; ventilador: marcha pedida y sin alarma',
+					'DO2 = DO1 retardo 5              ; compuerta, 5 s después',
+					'AO1 = 0 a 10 según UI1 de 18 a 22 ; válvula de calor, abre a medida que enfría',
+					'AO2 = 10 a 0 según UI1 de 23 a 27 ; compuerta de free-cooling, al revés',
 				].join('\n');
 			});
 		});
@@ -3472,7 +3481,7 @@ function programaDeControlador(d: Dispositivo): string {
 		<b>&gt;</b> y <b>&lt;</b> para comparar una sonda, y <b>retardo N</b> o <b>mínimo N</b> al
 		final. Lo que va tras <b>;</b> es un comentario.</p>
 		<textarea id="dev-programa" rows="5" spellcheck="false"
-			placeholder="DO1 = DI1 Y NO DI2&#10;AO1 = UI1 &lt; 21 retardo 5">${escaparHtml(d.programa ?? '')}</textarea>
+			placeholder="DO1 = DI1 Y NO DI2&#10;AO1 = 0 a 10 según UI1 de 18 a 22">${escaparHtml(d.programa ?? '')}</textarea>
 		<div class="bornes-programa">
 			${entradas.length ? `<span><b>Entradas:</b> ${entradas.join(' · ')}</span>` : ''}
 			${salidas.length ? `<span><b>Salidas:</b> ${salidas.join(' · ')}</span>` : ''}

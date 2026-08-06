@@ -530,3 +530,78 @@ test('R16: con la misma sección que la fase no dice nada', () => {
 	});
 	assert.ok(!reglas(verificar(p)).includes('R16-tierra-mas-fina-que-la-fase'));
 });
+
+/* ------------- R17: selectividad entre protecciones en serie ------------- */
+
+/** Dos protecciones una detrás de otra, con los calibres que se le pasen. */
+function enSerie(inArriba: number, inAbajo: number): Proyecto {
+	const p = crearProyecto('selectividad');
+	p.dispositivos = [
+		{ id: 'red', tipo: 'fuente', tensionNominal: 400, bornes: [{ id: 'L1', tipo: 'L' }] },
+		{
+			id: 'q1', tipo: 'disyuntor', designacion: '-Q1', tensionNominal: 400,
+			corrienteNominal: inArriba, bornes: [{ id: '1', tipo: 'L' }, { id: '2', tipo: 'L' }],
+		},
+		{
+			id: 'q2', tipo: 'disyuntor', designacion: '-Q2', tensionNominal: 400,
+			corrienteNominal: inAbajo, bornes: [{ id: '1', tipo: 'L' }, { id: '2', tipo: 'L' }],
+		},
+		{ id: 'm1', tipo: 'motor', tensionNominal: 400, bornes: [{ id: 'U', tipo: 'L' }] },
+	];
+	p.conductores = [
+		{ id: 'c1', de: { dispositivoId: 'red', borneId: 'L1' }, a: { dispositivoId: 'q1', borneId: '1' }, seccion: 6 },
+		{ id: 'c2', de: { dispositivoId: 'q1', borneId: '2' }, a: { dispositivoId: 'q2', borneId: '1' }, seccion: 6 },
+		{ id: 'c3', de: { dispositivoId: 'q2', borneId: '2' }, a: { dispositivoId: 'm1', borneId: 'U' }, seccion: 2.5 },
+	];
+	return p;
+}
+
+const reglas17 = (p: Proyecto): string[] =>
+	verificarProyecto(p, calcularPotenciales(p)).filter((h) => h.regla.startsWith('R17')).map((h) => h.regla);
+
+test('R17: dos protecciones en serie del MISMO calibre es un error', () => {
+	// El caso que deja a oscuras medio tablero por una avería de un solo circuito.
+	assert.deepEqual(reglas17(enSerie(16, 16)), ['R17-sin-selectividad']);
+});
+
+test('R17: un general apenas mayor que su derivado se avisa', () => {
+	// 20 A sobre 16 A es 1,25 veces: no llega a 1,6 y pueden saltar los dos.
+	assert.deepEqual(reglas17(enSerie(20, 16)), ['R17-selectividad-justa']);
+});
+
+test('R17: con holgura de sobra no se dice nada', () => {
+	assert.deepEqual(reglas17(enSerie(40, 16)), [], '40 sobre 16 es 2,5 veces: selectivo');
+	assert.deepEqual(reglas17(enSerie(32, 16)), [], '32 sobre 16 es el doble');
+});
+
+test('R17: no se avisa dos veces de la misma pareja', () => {
+	const hallazgos = verificarProyecto(enSerie(16, 16), calcularPotenciales(enSerie(16, 16)));
+	assert.equal(hallazgos.filter((h) => h.regla.startsWith('R17')).length, 1);
+});
+
+test('R17: dos protecciones que NO están en serie no se comparan', () => {
+	// Dos salidas independientes del mismo general, cada una con su automático de 16 A: eso es
+	// un tablero normal y corriente, no un fallo de selectividad entre ellas.
+	const p = crearProyecto('paralelo');
+	p.dispositivos = [
+		{ id: 'red', tipo: 'fuente', tensionNominal: 400, bornes: [{ id: 'L1', tipo: 'L' }] },
+		{ id: 'qa', tipo: 'disyuntor', designacion: '-QA', tensionNominal: 400, corrienteNominal: 16,
+			bornes: [{ id: '1', tipo: 'L' }, { id: '2', tipo: 'L' }] },
+		{ id: 'qb', tipo: 'disyuntor', designacion: '-QB', tensionNominal: 400, corrienteNominal: 16,
+			bornes: [{ id: '1', tipo: 'L' }, { id: '2', tipo: 'L' }] },
+	];
+	p.conductores = [
+		{ id: 'c1', de: { dispositivoId: 'red', borneId: 'L1' }, a: { dispositivoId: 'qa', borneId: '1' }, seccion: 6 },
+		{ id: 'c2', de: { dispositivoId: 'red', borneId: 'L1' }, a: { dispositivoId: 'qb', borneId: '1' }, seccion: 6 },
+	];
+	// Comparten la ENTRADA, no van uno detrás del otro: no hay nada que coordinar entre ellos.
+	assert.deepEqual(
+		verificarProyecto(p, calcularPotenciales(p))
+			.filter((h) => h.regla === 'R17-sin-selectividad').length, 0);
+});
+
+test('R17: sin calibre declarado no se inventa nada', () => {
+	const p = enSerie(16, 16);
+	delete p.dispositivos.find((d) => d.id === 'q1')!.corrienteNominal;
+	assert.deepEqual(reglas17(p), [], 'sin el dato no se puede afirmar nada');
+});
