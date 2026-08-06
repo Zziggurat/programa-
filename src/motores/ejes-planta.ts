@@ -47,10 +47,24 @@ const TOL = 1;                 // mm: dos puntos más cerca que esto son el mism
  * No es un número puesto a ojo. El eje de cada tramo se saca del TROZO EN QUE SE PISAN sus dos
  * lados, así que en cada codo y en cada pieza el eje se corta un poco antes de llegar: medido en
  * la cubierta, las puntas de dos tramos seguidos quedan a 165 mm de mediana, y con 60 no se cosía
- * absolutamente nada. Con 350 se une la inmensa mayoría sin llegar a saltar de un conducto al de
- * al lado, que en esta cubierta nunca están tan cerca.
+ * absolutamente nada.
+ *
+ * Subirlo tiene trampa, y se comprobó: cuanto más alto, menos trozos sueltos se ven —parece más
+ * limpio— pero empieza a saltar de un conducto al de al lado e inventar metros que no existen. Se
+ * mide contrastando los metros de eje que salen con los DIBUJADOS en el plano, que dan un suelo
+ * fiable: un conducto dibujado por sus dos lados tiene que dar un eje de la mitad de lo dibujado.
+ *
+ *   umbral   inyección                  extracción
+ *     350    156 recorridos, 491 m      149 recorridos, 253 m   ← aquí
+ *     650    136 recorridos, 506 m      149 recorridos, 264 m
+ *     800    129 recorridos, 510 m      146 recorridos, 264 m
+ *
+ * De 350 a 650 la inyección solo baja 20 recorridos y a cambio se inventa 15 m, y la extracción no
+ * mejora nada y se inventa 11 m. No sale a cuenta: lo que de verdad quitó los trozos sueltos no fue
+ * subir esto, sino coser los dos montones juntos y no equivocarse de vecino.
  */
 const UNION = 350;
+
 
 const dist = (p: Punto2, q: Punto2): number => Math.hypot(p.x - q.x, p.y - q.y);
 
@@ -119,9 +133,27 @@ export function ladosDelMismoConducto(
 	};
 }
 
-/** Encadena ejes sueltos en recorridos: los que se tocan por la punta se cosen en uno. */
-export function coserEjes(ejes: { a: Punto2; b: Punto2; ancho: number }[], union = UNION): {
-	puntos: [number, number][]; ancho: number;
+/** Un tramo de eje listo para coserse. `medido` dice si su ancho salió del plano o es el de proyecto. */
+export interface TramoEje {
+	a: Punto2;
+	b: Punto2;
+	ancho: number;
+	/** True si el ancho se midió entre los dos lados dibujados; false si es el de proyecto. */
+	medido?: boolean;
+}
+
+/**
+ * Encadena tramos sueltos en recorridos: los que se tocan por la punta se cosen en uno.
+ *
+ * SE COSE TODO JUNTO, medido y no medido. Antes se cosía en dos montones —los conductos a los que
+ * se les encontraron los dos lados por un lado, las líneas sueltas por otro— y los dos montones no
+ * se tocaban nunca. En la cubierta del aeropuerto eso dejaba 272 puntas de conducto con otra a
+ * menos de 35 cm que era IMPOSIBLE unir, porque su vecina estaba en el otro montón: un ramal cuyo
+ * tramo central sí se midió y cuyas puntas no salía partido en tres por construcción. De ahí que
+ * la inyección saliera en 235 trocitos de dos metros de media.
+ */
+export function coserEjes(ejes: TramoEje[], union = UNION): {
+	puntos: [number, number][]; ancho: number; medido: boolean;
 }[] {
 	const libres = ejes.map((e) => ({ ...e, usado: false }));
 	/*
@@ -150,33 +182,89 @@ export function coserEjes(ejes: { a: Punto2; b: Punto2; ancho: number }[], union
 		return out;
 	};
 
-	const salida: { puntos: [number, number][]; ancho: number }[] = [];
+	const salida: { puntos: [number, number][]; ancho: number; medido: boolean }[] = [];
 	for (let i = 0; i < libres.length; i++) {
 		if (libres[i].usado) continue;
 		libres[i].usado = true;
 		const cadena: Punto2[] = [libres[i].a, libres[i].b];
-		const anchos = [libres[i].ancho];
+		const anchos: { ancho: number; medido: boolean }[] = [
+			{ ancho: libres[i].ancho, medido: !!libres[i].medido },
+		];
 		// Se sigue por los dos extremos mientras haya con quién continuar.
 		for (const alFinal of [true, false]) {
 			for (;;) {
 				const punta = alFinal ? cadena[cadena.length - 1] : cadena[0];
-				const vecino = cerca(punta)
-					.find((j) => !libres[j].usado && (dist(libres[j].a, punta) < union || dist(libres[j].b, punta) < union));
+				/*
+				 * De entre los candidatos se coge EL MÁS CERCANO, no el primero que aparezca.
+				 *
+				 * Con `.find()` mandaba el orden en que la rejilla devolvía los vecinos, que no es
+				 * ningún orden: en un cruce donde concurren tres conductos, la costura enganchaba
+				 * con el que tocara y el recorrido salía dando un salto raro en vez de seguir
+				 * derecho. Se notaba en que el metraje total no bajaba de forma ordenada al subir
+				 * el umbral, que es imposible si se cose bien.
+				 */
+				// Por dónde se venía al llegar a esta punta: hace falta para no aceptar horquillas.
+				const previo = alFinal ? cadena[cadena.length - 2] : cadena[1];
+				/*
+				 * El más cercano de los candidatos, descartando los que SE CRUZAN con el tramo por
+				 * el que se viene.
+				 *
+				 * Lo de cruzarse no es un detalle: dos rayas en aspa —una rejilla, una cota, el
+				 * símbolo de una pieza— tienen las cuatro puntas cerca unas de otras, así que por
+				 * cercanía se cosen entre sí y salen al 3D convertidas en un conducto que no
+				 * existe. Y dos tramos del MISMO conducto no se cruzan nunca: van uno detrás del
+				 * otro o doblan en codo, pero no se pisan.
+				 */
+				let vecino: number | undefined;
+				let masCerca = union;
+				for (const j of cerca(punta)) {
+					if (libres[j].usado) continue;
+					const cercaA = dist(libres[j].a, punta);
+					const cercaB = dist(libres[j].b, punta);
+					const d = Math.min(cercaA, cercaB);
+					if (d >= masCerca) continue;
+					if (previo && seCruzan(previo, punta, libres[j].a, libres[j].b)) continue;
+					masCerca = d; vecino = j;
+				}
 				if (vecino === undefined) break;
 				libres[vecino].usado = true;
-				anchos.push(libres[vecino].ancho);
-				const otro = dist(libres[vecino].a, punta) < union ? libres[vecino].b : libres[vecino].a;
+				anchos.push({ ancho: libres[vecino].ancho, medido: !!libres[vecino].medido });
+				// Se continúa por el extremo LEJANO del vecino: el cercano es el que se acaba de unir.
+				const otro = dist(libres[vecino].a, punta) <= dist(libres[vecino].b, punta)
+					? libres[vecino].b : libres[vecino].a;
 				if (alFinal) cadena.push(otro); else cadena.unshift(otro);
 			}
 		}
+		/*
+		 * El ancho sale de los tramos MEDIDOS si los hay, y solo si no hay ninguno se usa el de
+		 * proyecto. Promediarlo todo junto sería peor que no medir: en un ramal con dos tramos
+		 * medidos de 200 y ocho puntas sin medir a las que se les puso el ancho de proyecto, el de
+		 * proyecto ganaría la votación y se perdería justo el dato bueno.
+		 */
+		const medidos = anchos.filter((x) => x.medido);
 		salida.push({
 			puntos: cadena.map((p) => [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10] as [number, number]),
-			// El ancho del recorrido es el más repetido de sus tramos: un conducto puede llevar una
-			// reducción por el camino, pero lo que lo define es la sección con la que va.
-			ancho: masRepetido(anchos),
+			// De entre ellos, el más repetido: un conducto puede llevar una reducción por el camino,
+			// pero lo que lo define es la sección con la que va.
+			ancho: masRepetido((medidos.length ? medidos : anchos).map((x) => x.ancho)),
+			medido: medidos.length > 0,
 		});
 	}
 	return salida;
+}
+
+/** ¿Se cruzan de verdad los dos tramos? (Se tocan por la punta no cuenta: eso es una unión.) */
+function seCruzan(p1: Punto2, p2: Punto2, p3: Punto2, p4: Punto2): boolean {
+	const lado = (a: Punto2, b: Punto2, c: Punto2): number =>
+		(b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+	const d1 = lado(p3, p4, p1);
+	const d2 = lado(p3, p4, p2);
+	const d3 = lado(p1, p2, p3);
+	const d4 = lado(p1, p2, p4);
+	// Cada segmento tiene que dejar al otro con una punta a cada lado, y en sentido ESTRICTO: si
+	// alguno da cero es que se tocan o son colineales, que es justo lo que sí se quiere coser.
+	return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0))
+		&& d1 !== 0 && d2 !== 0 && d3 !== 0 && d4 !== 0;
 }
 
 function masRepetido(valores: number[]): number {
@@ -208,7 +296,7 @@ function masRepetido(valores: number[]): number {
  */
 export function ejesDeSistema(
 	trazos: TrazoDibujado[],
-	{ anchoMin = 40, anchoMax = 0, largoMinimoSuelto = 900 } = {},
+	{ anchoMin = 40, anchoMax = 0, largoMinimoSuelto = 900, union = UNION } = {},
 ): EjeInstalacion[] {
 	if (trazos.length === 0) return [];
 	const modelo = trazos[0];
@@ -248,24 +336,29 @@ export function ejesDeSistema(
 	 * cosidos son una tirada de ocho metros que salta a la vista. Se descarta por el largo del
 	 * RECORRIDO ENTERO, que es lo que de verdad dice si eso es una instalación o una rejilla.
 	 */
-	const sinPareja = segs
+	const sinPareja: TramoEje[] = segs
 		.map((sg, i) => ({ sg, i }))
 		.filter(({ i }) => !usado[i])
-		.map(({ sg }) => ({ a: sg.a, b: sg.b, ancho: modelo.ancho }));
+		.map(({ sg }) => ({ a: sg.a, b: sg.b, ancho: modelo.ancho, medido: false }));
 
 	const largoDe = (pts: [number, number][]): number =>
 		pts.slice(1).reduce((s, p, i) => s + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
 
+	/*
+	 * Los dos juntos, en una sola costura. Un ramal real llega con su tramo central dibujado por
+	 * los dos lados —del que sí se saca el ancho— y sus puntas y codos dibujados con una raya
+	 * sola; cosiéndolos por separado, ese ramal salía partido en tres trozos que no se tocaban.
+	 */
+	const medidos: TramoEje[] = ejes.map((e) => ({ ...e, medido: true }));
 	const salida: EjeInstalacion[] = [];
-	for (const [lista, medido] of [[ejes, true], [sinPareja, false]] as const) {
-		for (const c of coserEjes(lista)) {
-			if (largoDe(c.puntos) < largoMinimoSuelto) continue;
-			const ancho = medido ? c.ancho : modelo.ancho;
-			salida.push({
-				sistema: modelo.sistema, z: modelo.z, puntos: c.puntos, ancho, anchoMedido: medido,
-				alto: medido ? altoSegunElAncho(ancho) : modelo.alto,
-			});
-		}
+	for (const c of coserEjes([...medidos, ...sinPareja], union)) {
+		if (largoDe(c.puntos) < largoMinimoSuelto) continue;
+		salida.push({
+			sistema: modelo.sistema, z: modelo.z, puntos: c.puntos,
+			ancho: c.medido ? c.ancho : modelo.ancho,
+			anchoMedido: c.medido,
+			alto: c.medido ? altoSegunElAncho(c.ancho) : modelo.alto,
+		});
 	}
 	return salida;
 }

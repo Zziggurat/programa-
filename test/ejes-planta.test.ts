@@ -107,3 +107,70 @@ test('ejesDeSistema: el alto acompaña al ancho medido, no se queda con el de pr
 	assert.equal(ejes[0].ancho, 200);
 	assert.equal(ejes[0].alto, 100, 'no puede salir más alto que ancho');
 });
+
+test('coserEjes: se cosen los tramos MEDIDOS con los que no lo están', () => {
+	/*
+	 * El caso real de la cubierta: un ramal llega con su tramo central dibujado por los dos lados
+	 * —de ahí se saca el ancho— y sus puntas dibujadas con una raya sola. Antes se cosían en dos
+	 * montones separados que no se tocaban nunca, así que ese ramal salía partido en tres.
+	 */
+	const ejes = coserEjes([
+		{ a: { x: 0, y: 0 }, b: { x: 2000, y: 0 }, ancho: 300, medido: false },
+		{ a: { x: 2160, y: 0 }, b: { x: 6000, y: 0 }, ancho: 300, medido: true },
+		{ a: { x: 6150, y: 0 }, b: { x: 8000, y: 0 }, ancho: 300, medido: false },
+	]);
+	assert.equal(ejes.length, 1, 'es un ramal, no tres trozos');
+	assert.deepEqual(ejes[0].puntos[0], [0, 0]);
+	assert.deepEqual(ejes[0].puntos[ejes[0].puntos.length - 1], [8000, 0]);
+	assert.equal(ejes[0].medido, true, 'basta con que un tramo se midiera para saber el ancho');
+});
+
+test('coserEjes: el ancho sale de los tramos medidos, no de los supuestos', () => {
+	// Dos tramos medidos de 300 y cuatro puntas a las que se les puso el ancho de proyecto (600).
+	// Por mayoría simple ganaría el 600 supuesto, que es justo el dato malo.
+	const ejes = coserEjes([
+		{ a: { x: 0, y: 0 }, b: { x: 1000, y: 0 }, ancho: 600, medido: false },
+		{ a: { x: 1100, y: 0 }, b: { x: 2000, y: 0 }, ancho: 600, medido: false },
+		{ a: { x: 2100, y: 0 }, b: { x: 4000, y: 0 }, ancho: 300, medido: true },
+		{ a: { x: 4100, y: 0 }, b: { x: 6000, y: 0 }, ancho: 300, medido: true },
+		{ a: { x: 6100, y: 0 }, b: { x: 7000, y: 0 }, ancho: 600, medido: false },
+		{ a: { x: 7100, y: 0 }, b: { x: 8000, y: 0 }, ancho: 600, medido: false },
+	]);
+	assert.equal(ejes.length, 1);
+	assert.equal(ejes[0].ancho, 300, 'manda lo medido aunque sea minoría');
+});
+
+test('coserEjes: dos tramos que SE CRUZAN no son el mismo conducto', () => {
+	// Un aspa: una rejilla, una cota o el símbolo de una pieza. Sus cuatro puntas están cerca unas
+	// de otras, así que por pura cercanía se cosían y salía al 3D un conducto que no existe.
+	const ejes = coserEjes([
+		{ a: { x: 0, y: 0 }, b: { x: 400, y: 400 }, ancho: 300 },
+		{ a: { x: 400, y: 0 }, b: { x: 0, y: 400 }, ancho: 300 },
+	]);
+	assert.equal(ejes.length, 2, 'el aspa son dos rayas, no un conducto');
+});
+
+test('coserEjes: un codo de verdad SÍ se cose, aunque las puntas casi se toquen', () => {
+	// Lo contrario del aspa: dos tramos en ángulo recto que se encuentran. Eso es un codo.
+	const ejes = coserEjes([
+		{ a: { x: 0, y: 0 }, b: { x: 3000, y: 0 }, ancho: 300 },
+		{ a: { x: 3150, y: 0 }, b: { x: 3150, y: 2500 }, ancho: 300 },
+	]);
+	assert.equal(ejes.length, 1, 'un codo no parte el conducto');
+	assert.deepEqual(ejes[0].puntos[ejes[0].puntos.length - 1], [3150, 2500]);
+});
+
+test('coserEjes: se cose con el vecino MÁS CERCANO, no con el primero que salga', () => {
+	// Tres tramos en línea. Si se cosiera con «el primero que aparezca» el recorrido podría saltar
+	// al lejano y volver, y salía dando un rodeo que no existe.
+	const ejes = coserEjes([
+		{ a: { x: 0, y: 0 }, b: { x: 1000, y: 0 }, ancho: 300 },
+		{ a: { x: 1300, y: 0 }, b: { x: 2000, y: 0 }, ancho: 300 },
+		{ a: { x: 1100, y: 0 }, b: { x: 1200, y: 0 }, ancho: 300 },
+	]);
+	assert.equal(ejes.length, 1);
+	// El recorrido tiene que ir de menor a mayor sin volverse: 0 → 1000 → 1100 → 1200 → 1300 → 2000.
+	const xs = ejes[0].puntos.map((p) => p[0]);
+	const ordenado = [...xs].sort((a, b) => a - b);
+	assert.deepEqual(xs, ordenado, `el recorrido da un rodeo: ${xs.join(' → ')}`);
+});
