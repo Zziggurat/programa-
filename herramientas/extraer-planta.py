@@ -85,6 +85,12 @@ CAPAS_COLUMNA = re.compile(r'^(STRU-COLUMNA|STRU)$', re.I)
 ALTO_COLUMNA = 7800          # supuesta: altura libre bajo la cubierta de un terminal
 RADIO_COLUMNA = (90, 700)    # fuera de esto un círculo no es una columna
 
+# Cuántas veces se tantea un tramo para ver si cruza el sector modelado teniendo sus dos
+# extremos fuera (ver `recortar`). Con 200, en el tramo más largo que trae este plano el paso
+# queda por debajo de tres metros, y un cruce más corto que eso lo descarta luego el filtro de
+# largo mínimo de cada familia.
+TANTEOS_CRUCE = 200
+
 # Altura de los equipos sobre la cubierta (mm). Una UMA de aeropuerto es una caja grande.
 ALTO_UMA = 2200
 ALTO_VEX = 900
@@ -428,6 +434,22 @@ def main() -> None:
                     fuera = medio
             return dentro
 
+        def atraviesa(a: tuple[float, float], b: tuple[float, float]) -> tuple[float, float] | None:
+            """Punto interior de un tramo cuyos DOS extremos quedan fuera pero que cruza la zona.
+
+            En este plano no hay ninguno —se comprobó sobre los datos—, pero un muro largo
+            dibujado con vértices solo en sus esquinas puede atravesar el sector entero sin
+            pisar ninguna: sin esto se perdería del todo y faltaría un trozo de peto sin que
+            nadie se enterase. Se tantea el tramo a intervalos regulares porque un cruce así no
+            se puede encontrar dividiendo por la mitad: los dos extremos están fuera.
+            """
+            for k in range(1, TANTEOS_CRUCE):
+                t = k / TANTEOS_CRUCE
+                m = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+                if en_zona(*m):
+                    return m
+            return None
+
         trozos: list[list[tuple[float, float]]] = []
         actual: list[tuple[float, float]] = []
         for i, p in enumerate(pts):
@@ -435,11 +457,14 @@ def main() -> None:
                 if not actual and i > 0:
                     actual.append(cruce(p, pts[i - 1]))   # entra: se empieza en el borde
                 actual.append(p)
-            else:
-                if actual:
-                    actual.append(cruce(actual[-1], p))   # se va: se acaba en el borde
-                    trozos.append(actual)
-                    actual = []
+            elif actual:
+                actual.append(cruce(actual[-1], p))       # se va: se acaba en el borde
+                trozos.append(actual)
+                actual = []
+            elif i > 0:
+                medio = atraviesa(pts[i - 1], p)
+                if medio is not None:                     # entra y sale en el mismo tramo
+                    trozos.append([cruce(medio, pts[i - 1]), cruce(medio, p)])
         if actual:
             trozos.append(actual)
         return trozos

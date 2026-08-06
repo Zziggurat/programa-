@@ -773,7 +773,7 @@ export function ponerVistaSims(m: Mundo): void {
 /**
  * Vista de paseo: a la altura de los ojos y JUNTO A UNA MÁQUINA, no en el borde de la cubierta.
  *
- * Puesto en el borde de una planta de 244 m, lo primero que se ve es una línea de cosas diminutas
+ * Puesto en el borde de una planta de 284 m, lo primero que se ve es una línea de cosas diminutas
  * en el horizonte y da la impresión de que no hay nada. Empezar a ocho metros de una UMA, mirándola,
  * enseña de entrada la escala real: una máquina de siete metros de largo por encima de la cabeza.
  */
