@@ -105,21 +105,28 @@ const conPuntos = await page.evaluate(() => {
 	return q ? q.equipos.filter((e) => e.x !== null && e.puntos.length > 0).length : -1;
 });
 must('hay máquinas situadas con puntos de control', conPuntos > 5, `${conPuntos}`);
+// Se exige sobre LOS PUNTOS DE LA MÁQUINA QUE SE ABRE, no sobre unas siglas escritas a mano.
+// Estaban puestas VAF, VAC y EF, que eran las de la máquina que salía primera en la lista; al
+// modelar la terminal entera se sitúan 107 máquinas en vez de 43, la primera pasó a ser otra y
+// la prueba se caía sin que nada estuviera roto. Lo que hay que exigir es que la ficha nombre
+// cada punto de esa máquina y explique qué es cada sigla.
 const ficha = await page.evaluate(() => {
 	const q = window.__plantaQA;
 	const e = q.equipos.find((x) => x.x !== null && x.puntos.length >= 6);
 	q.seleccionar(e.tag);
-	return { tag: e.tag, puntos: e.puntos.length, ctrl: e.controlador };
+	return { tag: e.tag, puntos: e.puntos.map((p) => ({ sigla: p.sigla, que: p.que })), ctrl: e.controlador };
 });
 await page.waitForTimeout(400);
 const html = await texto('#mundo-ficha');
 must(`la ficha muestra ${ficha.tag}`, html.includes(ficha.tag), html.replace(/\s+/g, ' ').slice(0, 80));
 must('la ficha lista sus puntos de control', /Puntos de control/.test(html));
-for (const sig of ['VAF', 'VAC', 'EF']) {
-	must(`la ficha nombra el punto ${sig}`, html.includes(sig));
-}
-must('explica qué es cada sigla, no solo la sigla',
-	/lvula de agua/i.test(html), html.replace(/\s+/g, ' ').slice(0, 120));
+const sinNombrar = ficha.puntos.filter((p) => !html.includes(p.sigla));
+must('la ficha nombra TODOS los puntos de esa máquina', sinNombrar.length === 0,
+	`${ficha.puntos.length} puntos${sinNombrar.length ? ' · faltan: ' + sinNombrar.map((p) => p.sigla).join(',') : ''}`);
+const sinExplicar = ficha.puntos.filter((p) => !html.includes(p.que));
+must('explica qué es cada sigla, no solo la sigla', sinExplicar.length === 0,
+	sinExplicar.length ? 'sin explicar: ' + sinExplicar.map((p) => p.sigla).join(',')
+		: ficha.puntos.slice(0, 3).map((p) => `${p.sigla}=${p.que}`).join(' · '));
 await page.screenshot({ path: join(SAL, 'planta-sims.png') });
 
 console.log('\n--- 5. Las dos vistas ---');

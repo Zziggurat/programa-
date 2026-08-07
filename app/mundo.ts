@@ -560,14 +560,16 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
 	 * La sombra se centra DONDE ESTÁN LAS MÁQUINAS, no en el centro del edificio.
 	 *
 	 * El mapa de sombras es una textura de tamaño fijo repartida por el área que cubre: cuanto
-	 * más área, más basta la sombra. Estirándolo sobre los 690 m de la terminal cada texel
-	 * mediría medio metro y las sombras saldrían con el borde en escalera. Y no hace falta: la
-	 * instalación ocupa un tercio del tejado, y es ahí donde se mira de cerca y donde se pasea.
+	 * más área, más basta la sombra. Estirado sobre los 690 m de la terminal cada texel mediría
+	 * 47 cm y las sombras saldrían con el borde en escalera. Ciñéndolo a las máquinas —con 40 m
+	 * de holgura y un tope de 260 m de semilado— cada texel mide 25 cm, que es casi lo que tenía
+	 * el mundo pequeño (19 cm). Fuera de ese recuadro no hay sombra proyectada, y en una parte
+	 * del tejado sin equipos no se echa de menos.
 	 *
-	 * Así que el recuadro de sombra se ciñe a las máquinas (con holgura para el bulto que
-	 * proyecta cada una) y se limita a 260 m de semilado, que con 4096 texeles deja la misma
-	 * finura que tenía el mundo pequeño. Fuera de ese recuadro no hay sombra proyectada, que en
-	 * una parte del tejado sin equipos no se echa de menos.
+	 * El mapa se queda en 2048 y no en 4096. Se probó: subirlo no cambiaba nada en la vista
+	 * general pero hundía el paseo de 1,8 a 1,0 fotogramas por segundo con render por software,
+	 * que es lo que tendrá quien abra esto en un portátil sin tarjeta gráfica. Cuadruplicar el
+	 * coste para ganar 6 cm de texel no sale a cuenta.
 	 */
 	const situados = inf.equipos.filter((e) => e.x !== null && e.y !== null)
 		.map((e) => aEscena(e.x!, e.y!, 0));
@@ -584,7 +586,7 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
 	sol.position.set(foco.x + lado * 0.25, 90 + s * 0.5, foco.z + lado * 0.2);
 	sol.target.position.copy(foco);
 	escena.add(sol.target);
-	sol.shadow.mapSize.set(4096, 4096);
+	sol.shadow.mapSize.set(2048, 2048);
 	sol.shadow.camera.near = 1;
 	sol.shadow.camera.far = sol.position.distanceTo(foco) + s * 2;
 	Object.assign(sol.shadow.camera, { left: -s, right: s, top: s, bottom: -s });
