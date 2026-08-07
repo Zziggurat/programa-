@@ -82,6 +82,8 @@ ARQUITECTURA = [
 ]
 # Columnas: los círculos de las capas de estructura. El radio es el del plano.
 CAPAS_COLUMNA = re.compile(r'^(STRU-COLUMNA|STRU)$', re.I)
+# El peto es el perímetro del tejado, y por eso es él quien dice hasta dónde llega el edificio.
+CAPA_PETO = re.compile(r'^ROOF\d?$', re.I)
 ALTO_COLUMNA = 7800          # supuesta: altura libre bajo la cubierta de un terminal
 RADIO_COLUMNA = (90, 700)    # fuera de esto un círculo no es una columna
 
@@ -204,6 +206,55 @@ def agrupar(puntos: list[tuple[float, float]], radio: float) -> list[list[int]]:
     return grupos
 
 
+def huellaDelEdificio(peto: list[list[tuple[float, float]]], dentro: dict[str, float],
+                      casilla: float) -> dict[str, float] | None:
+    """Hasta dónde llega el edificio en cuyo tejado está la instalación.
+
+    El peto del plano no es una sola polilínea cerrada: son mil y pico trozos, y en el mismo
+    modelspace están además los petos de los edificios de al lado. Para quedarse con el de ESTE
+    tejado se marcan las casillas por las que pasa el peto, se siembran las que caen dentro de
+    la zona de conductos y se inunda por vecindad; lo que se alcanza es un solo edificio.
+
+    Se rellena cada tramo al andar, y no solo sus vértices: un lado recto de sesenta metros
+    tiene dos puntos, y sin rellenarlo la inundación se pararía en la primera esquina.
+
+    Devuelve la caja del edificio en coordenadas del plano, o None si el peto no toca la zona.
+    """
+    ocupadas: dict[tuple[int, int], None] = {}
+    for pts in peto:
+        for i, (x, y) in enumerate(pts):
+            ocupadas[(int(x // casilla), int(y // casilla))] = None
+            if i:
+                ax, ay = pts[i - 1]
+                largo = math.dist((ax, ay), (x, y))
+                pasos = int(largo / (casilla / 2))
+                for k in range(1, pasos + 1):
+                    t = k * (casilla / 2) / largo
+                    ocupadas[(int((ax + (x - ax) * t) // casilla),
+                              int((ay + (y - ay) * t) // casilla))] = None
+
+    semillas = [c for c in ocupadas
+                if dentro['x0'] <= c[0] * casilla <= dentro['x1']
+                and dentro['y0'] <= c[1] * casilla <= dentro['y1']]
+    if not semillas:
+        return None
+
+    vistas = set(semillas)
+    cola = list(semillas)
+    while cola:
+        x, y = cola.pop()
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                c = (x + dx, y + dy)
+                if c in ocupadas and c not in vistas:
+                    vistas.add(c)
+                    cola.append(c)
+
+    xs = [c[0] * casilla for c in vistas]
+    ys = [c[1] * casilla for c in vistas]
+    return {'x0': min(xs), 'y0': min(ys), 'x1': max(xs) + casilla, 'y1': max(ys) + casilla}
+
+
 def main() -> None:
     if len(sys.argv) < 3:
         sys.exit(__doc__)
@@ -286,8 +337,11 @@ def main() -> None:
     # Los diagramas de control y la planta viven en zonas distintas del modelspace. La planta es
     # la zona donde hay geometría de conductos, que es lo que se quiere dibujar en 3D.
     trazas: list[dict[str, Any]] = []
+    peto: list[list[tuple[float, float]]] = []      # el perímetro del tejado, para medir el edificio
     for e in msp:
         capa = e.dxf.get('layer', '')
+        if CAPA_PETO.search(capa):
+            peto += [list(pts) for pts in polilineas_de(e)]
         sis = next(((sid, z, sec) for sid, pat, z, sec in SISTEMAS if pat.search(capa)), None)
         if sis is None:
             continue
@@ -332,22 +386,39 @@ def main() -> None:
     print(f"  zona de clima:   {(zona['x1']-zona['x0'])/1000:.0f} × {(zona['y1']-zona['y0'])/1000:.0f} m"
           " (donde hay conductos)")
 
-    # EL SECTOR DE CUBIERTA QUE SE MODELA, con su borde.
+    # LA TERMINAL ENTERA, que es lo que se modela.
     #
-    # Se midió el peto en el plano y esta cubierta es una terminal entera: 570 m de largo. La
-    # instalación de clima ocupa 165 de esos metros. Dibujar los 570 daría un mundo tres veces y
-    # media más grande y vacío en sus cuatro quintas partes, que para recorrer una obra es peor,
-    # no mejor: se anda mucho para no encontrar nada.
+    # Se probó a modelar solo el sector de la instalación (la zona de clima más un borde) y se
+    # descartó: para ubicarse en la obra hace falta ver el edificio completo, aunque cuatro
+    # quintas partes de él no lleven ni una UMA. El techo es la referencia — «esto es el ala
+    # que da al estacionamiento» —, y sin él las máquinas flotan sin sitio.
     #
-    # Así que lo que se modela es el SECTOR donde está la instalación, y se le da un borde de
-    # veinte metros para que el peto, las barandas y los muros que la rodean queden dentro y con
-    # suelo debajo. Todo lo que se dibuje se recorta contra esta zona (ver `recortar`), así que
-    # nada vuelve a quedar volando sobre el vacío, que era el problema de verdad.
+    # La huella del edificio la da SU PROPIO PETO, que es lo que es un peto: el perímetro del
+    # tejado. Se toman las casillas de peto y se inunda desde las que pisa el clima, así que
+    # sale la cubierta a la que pertenece la instalación y no la del edificio de al lado. Aquí
+    # da 640 × 220 m en una sola pieza —el peto de esta terminal es continuo— frente a los
+    # 165 × 244 que ocupan los conductos.
+    #
+    # Se une con la zona de clima porque hay conductos que se salen del peto por el norte (la
+    # toma de aire exterior), y ni un metro de instalación puede quedarse fuera del mundo.
+    CASILLA_PETO = 10_000
+    petoZona = huellaDelEdificio(peto, zonaClima, CASILLA_PETO)
+    if petoZona:
+        zona = {'x0': min(zona['x0'], petoZona['x0']), 'y0': min(zona['y0'], petoZona['y0']),
+                'x1': max(zona['x1'], petoZona['x1']), 'y1': max(zona['y1'], petoZona['y1'])}
+        print(f"  peto del edificio: {(petoZona['x1']-petoZona['x0'])/1000:.0f} × "
+              f"{(petoZona['y1']-petoZona['y0'])/1000:.0f} m (la terminal a la que pertenece)")
+    else:
+        print("  ⚠ no se encontró peto conectado al clima: se modela solo la zona de conductos")
+
+    # El borde deja suelo bajo el propio peto y bajo lo que lo acompaña por fuera. Todo lo que
+    # se dibuje se recorta contra esta zona (ver `recortar`), así que nada queda volando sobre
+    # el vacío, que era el problema de «se corta el mapa».
     BORDE_CUBIERTA = 20_000
     zona = {'x0': zona['x0'] - BORDE_CUBIERTA, 'y0': zona['y0'] - BORDE_CUBIERTA,
             'x1': zona['x1'] + BORDE_CUBIERTA, 'y1': zona['y1'] + BORDE_CUBIERTA}
     print(f"  sector modelado: {(zona['x1']-zona['x0'])/1000:.0f} × "
-          f"{(zona['y1']-zona['y0'])/1000:.0f} m (la instalación y su borde)")
+          f"{(zona['y1']-zona['y0'])/1000:.0f} m (la terminal y su borde)")
 
     # Equipos en planta: se agrupa la geometría de las capas de equipo y cada racimo es una máquina.
     centros, cajas = [], []

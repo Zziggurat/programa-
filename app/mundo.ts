@@ -474,6 +474,24 @@ function cartel(texto: string, altura: number, seguro: boolean): THREE.Sprite {
  * anochecer —del azul del horizonte al casi negro del cenit—, que además sienta bien con el
  * resto del programa, que es oscuro.
  */
+/**
+ * Cuadrícula RECTANGULAR sobre la losa, para dar escala al andar.
+ *
+ * `THREE.GridHelper` solo las hace cuadradas, y una cubierta rara vez lo es: sobre esta
+ * terminal, de 690 × 293 m, la cuadrícula cuadrada asomaba doscientos metros por fuera del
+ * tejado. Se dibuja a mano con las líneas justas, que además son menos que las de la cuadrada.
+ */
+function rejillaRectangular(ancho: number, fondo: number, paso: number): THREE.LineSegments {
+	const v: number[] = [];
+	const hx = ancho / 2;
+	const hz = fondo / 2;
+	for (let x = -hx; x <= hx + 1e-6; x += paso) v.push(x, 0, -hz, x, 0, hz);
+	for (let z = -hz; z <= hz + 1e-6; z += paso) v.push(-hx, 0, z, hx, 0, z);
+	const g = new THREE.BufferGeometry();
+	g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+	return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x2a3138 }));
+}
+
 function cieloDeAnochecer(radio: number): THREE.Mesh {
 	const lienzo = document.createElement('canvas');
 	lienzo.width = 4; lienzo.height = 256;
@@ -499,13 +517,21 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
 	const aEscena = hacerConversor(inf);
 	const escena = new THREE.Scene();
 	escena.background = new THREE.Color(0x0c1015);
-	// La niebla se funde con el horizonte del cielo, no con el negro: si no, a media distancia
-	// las máquinas se disuelven en un gris que no se parece a estar a la intemperie.
-	escena.fog = new THREE.Fog(0x243342, 110, 420);
-	escena.add(cieloDeAnochecer(Math.max(inf.zona.x1 - inf.zona.x0, inf.zona.y1 - inf.zona.y0) / 1000));
 
 	const ancho = (inf.zona.x1 - inf.zona.x0) / 1000;
 	const fondo = (inf.zona.y1 - inf.zona.y0) / 1000;
+	const lado = Math.max(ancho, fondo);
+
+	// La niebla se funde con el horizonte del cielo, no con el negro: si no, a media distancia
+	// las máquinas se disuelven en un gris que no se parece a estar a la intemperie.
+	//
+	// Va a escala del mundo y no en metros fijos. Estaba clavada en 110-420 m, que era la
+	// medida de una planta de 284: al pasar a modelar la terminal entera, de 690, la mitad del
+	// edificio quedaba dentro de la niebla y no se veía ni desde arriba. Las proporciones son
+	// las que estaban afinadas para aquella planta (0,39 y 1,48 del lado mayor), así que el
+	// aire se ve igual de lejos EN PROPORCIÓN, mida lo que mida la cubierta.
+	escena.fog = new THREE.Fog(0x243342, lado * 0.39, lado * 1.48);
+	escena.add(cieloDeAnochecer(lado));
 
 	// Losa de la cubierta, con una rejilla encima para dar escala al caminar.
 	const losa = new THREE.Mesh(
@@ -517,18 +543,50 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
 	escena.add(losa);
 	// La rejilla va 4 cm sobre la losa. A 2 cm se peleaban a lo lejos: en una planta de 240 m, a
 	// 200 de distancia el buffer de profundidad no distingue dos centímetros.
-	const rejilla = new THREE.GridHelper(Math.max(ancho, fondo) + 20, Math.round((Math.max(ancho, fondo) + 20) / 5),
-		0x2a3138, 0x1c2126);
+	//
+	// Es rectangular, de la medida exacta de la losa, y no el `GridHelper` de Three, que solo
+	// sabe hacerlas cuadradas: en una terminal de 690 × 293 la cuadrícula cuadrada sobresalía
+	// doscientos metros por delante y por detrás del tejado y parecía que el suelo seguía por
+	// donde no hay nada. Cuadrados de 5 m, que es un paso reconocible al andar.
+	const rejilla = rejillaRectangular(ancho + 20, fondo + 20, 5);
 	rejilla.position.y = 0.04;
 	escena.add(rejilla);
 
 	escena.add(new THREE.HemisphereLight(0xa9c0d6, 0x2a3138, 1.25));
 	const sol = new THREE.DirectionalLight(0xffe8c4, 1.5);
-	sol.position.set(ancho * 0.4, 90, fondo * 0.3);
 	sol.castShadow = true;
-	sol.shadow.mapSize.set(2048, 2048);
-	sol.shadow.camera.near = 1; sol.shadow.camera.far = 400;
-	const s = Math.max(ancho, fondo) * 0.7;
+
+	/*
+	 * La sombra se centra DONDE ESTÁN LAS MÁQUINAS, no en el centro del edificio.
+	 *
+	 * El mapa de sombras es una textura de tamaño fijo repartida por el área que cubre: cuanto
+	 * más área, más basta la sombra. Estirándolo sobre los 690 m de la terminal cada texel
+	 * mediría medio metro y las sombras saldrían con el borde en escalera. Y no hace falta: la
+	 * instalación ocupa un tercio del tejado, y es ahí donde se mira de cerca y donde se pasea.
+	 *
+	 * Así que el recuadro de sombra se ciñe a las máquinas (con holgura para el bulto que
+	 * proyecta cada una) y se limita a 260 m de semilado, que con 4096 texeles deja la misma
+	 * finura que tenía el mundo pequeño. Fuera de ese recuadro no hay sombra proyectada, que en
+	 * una parte del tejado sin equipos no se echa de menos.
+	 */
+	const situados = inf.equipos.filter((e) => e.x !== null && e.y !== null)
+		.map((e) => aEscena(e.x!, e.y!, 0));
+	const foco = new THREE.Vector3();
+	let s = lado * 0.7;
+	if (situados.length) {
+		const caja = new THREE.Box3().setFromPoints(situados);
+		caja.getCenter(foco);
+		const t = caja.getSize(new THREE.Vector3());
+		s = Math.max(t.x, t.z) / 2 + 40;      // 40 m de holgura para lo que rodea a las máquinas
+	}
+	s = Math.min(s, 260);
+
+	sol.position.set(foco.x + lado * 0.25, 90 + s * 0.5, foco.z + lado * 0.2);
+	sol.target.position.copy(foco);
+	escena.add(sol.target);
+	sol.shadow.mapSize.set(4096, 4096);
+	sol.shadow.camera.near = 1;
+	sol.shadow.camera.far = sol.position.distanceTo(foco) + s * 2;
 	Object.assign(sol.shadow.camera, { left: -s, right: s, top: s, bottom: -s });
 	sol.shadow.camera.updateProjectionMatrix();
 	escena.add(sol);
@@ -557,7 +615,9 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
 
 	// `near` a 30 cm y no a 10: a la escala de esta planta, un plano cercano diminuto gasta toda
 	// la precisión de profundidad cerca de la cámara y deja parpadeando lo que se ve al fondo.
-	const camara = new THREE.PerspectiveCamera(58, 1, 0.3, 1200);
+	// El `far` acompaña al tamaño del mundo: la vista general se aleja a 0,62 del lado mayor, y
+	// con 1200 m fijos la terminal entera se habría quedado cortada por el plano de fondo.
+	const camara = new THREE.PerspectiveCamera(58, 1, 0.3, Math.max(1200, lado * 3.2));
 	const orbita = new OrbitControls(camara, lienzo);
 	orbita.enableDamping = true;
 	orbita.dampingFactor = 0.09;
