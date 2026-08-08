@@ -920,7 +920,6 @@ function duplicarDispositivo(id: string): void {
 	const col = g?.colocaciones.find((c) => c.dispositivoId === id);
 	if (!g || !original || !col) { avisar('Selecciona un aparato colocado para duplicarlo.', 'info'); return; }
 	if (original.imagen) { avisar('Las imágenes de referencia no se duplican.', 'info'); return; }
-	capturar();
 
 	const clase = original.clase ?? CLASE_POR_TIPO[original.tipo];
 	let maximo = 0;
@@ -934,8 +933,21 @@ function duplicarDispositivo(id: string): void {
 		numero,
 		designacion: (original.designacion ?? '').replace(/\d+$/, '') + numero,
 	};
-	proyecto.dispositivos.push(copia);
 
+	/*
+	 * PRIMERO se busca sitio, y solo si lo hay se toca el proyecto.
+	 *
+	 * La copia entraba en `proyecto.dispositivos` ANTES de saber si cabía, y cuando no había hueco
+	 * la función hacía `return` dejándola dentro. Ese aparato no se veía —no tenía colocación—
+	 * pero contaba en la lista de materiales, en el DRC y en el archivo guardado: un fantasma que
+	 * acababa en el presupuesto del cliente. Y `capturar()` metía además un paso de historial por
+	 * una operación que no llegó a hacer nada, así que el primer Ctrl+Z no deshacía nada visible.
+	 *
+	 * Se llega ahí cuando `buscarHueco` falla, y eso solo pasa si el gabinete se ha quedado SIN
+	 * NINGÚN RIEL —quitar un riel no se lleva por delante los aparatos que tenía encima, así que
+	 * un tablero con aparatos y cero rieles es un estado normal— y además la fila del original
+	 * está ocupada de lado a lado.
+	 */
 	// A la derecha del original si cabe; si no, al primer hueco libre del tablero.
 	let x = col.x + col.ancho + 2;
 	let y = col.y;
@@ -949,6 +961,8 @@ function duplicarDispositivo(id: string): void {
 			x = hueco.x; y = hueco.y; rielId = hueco.rielId;
 		}
 	}
+	capturar();
+	proyecto.dispositivos.push(copia);
 	const nueva = { dispositivoId: copia.id, x, y, ancho: col.ancho, alto: col.alto, rielId, z: col.z };
 	g.colocaciones.push(nueva);
 	const rielCopia = extenderRielPara(nueva);
@@ -3826,7 +3840,22 @@ function pegarAparatos(): void {
 	const primero = datos.aparatos[0];
 	const hueco = buscarHueco(primero.ancho, primero.alto);
 	if (!hueco) { avisar('Añade un riel antes de pegar.', 'error'); return; }
+
+	/*
+	 * NINGUNA COPIA SE QUEDA ESCONDIDA DEBAJO DE OTRO APARATO.
+	 *
+	 * Solo se miraba el hueco del PRIMERO y luego se pegaban todos con el mismo desfase. Si una
+	 * copia caía sobre un aparato ya montado y su fila estaba llena de lado a lado,
+	 * `xLibreCercano(...) ?? col.x` se quedaba con la posición solapada: la copia entraba justo
+	 * encima de la otra —invisible, porque la tapa— y el aviso decía «2 aparatos pegados» como si
+	 * todo hubiera ido bien. En la placa de verdad eso son dos aparatos comprados y uno montado.
+	 *
+	 * Cuando la fila no da más de sí se manda al final del riel con más sitio, que es exactamente
+	 * lo que hace «Añadir del catálogo» cuando la placa está llena: sobresalir un poco se ve y se
+	 * arregla arrastrando; quedar oculto debajo de otro, no. Y se avisa, que para eso está.
+	 */
 	capturar();
+	const sobresalen: string[] = [];
 
 	const nuevos: string[] = [];
 	for (const a of datos.aparatos) {
@@ -3844,18 +3873,34 @@ function pegarAparatos(): void {
 			ancho: a.ancho, alto: a.alto,
 			rielId: enganche?.rielId ?? hueco.rielId,
 		};
-		// Si cae encima de algo, se busca el hueco libre más cercano en su fila.
+		// Si cae encima de algo se busca hueco libre en su misma fila; y si la fila entera está
+		// ocupada, al final del riel con más sitio (aunque sobresalga), nunca encima de otro.
 		if (solapaCon(col.x, col.y, col.ancho, col.alto, copia.id)) {
-			col.x = xLibreCercano(col.x, col.y, col.ancho, col.alto, copia.id) ?? col.x;
+			const libre = xLibreCercano(col.x, col.y, col.ancho, col.alto, copia.id);
+			if (libre !== undefined) col.x = libre;
+			else {
+				// `buscarHueco` solo devuelve `undefined` si no hay ni un riel, y eso ya se
+				// descartó arriba; el `?? hueco` es para no tener que afirmar nada al compilador.
+				const otro = buscarHueco(col.ancho, col.alto) ?? hueco;
+				col.x = otro.x; col.y = otro.y; col.rielId = otro.rielId;
+				sobresalen.push(copia.designacion ?? copia.id);
+			}
 		}
 		g.colocaciones.push(col);
 		extenderRielPara(col);
 		nuevos.push(copia.id);
 	}
+
 	seleccionExtra = nuevos.slice(1);
 	aplicarSeleccion(nuevos[0] ? { tipo: 'dispositivo', id: nuevos[0] } : undefined);
 	actualizarTodo();
-	avisar(`${nuevos.length} aparato${nuevos.length > 1 ? 's' : ''} pegado${nuevos.length > 1 ? 's' : ''}`, 'ok');
+	const pegados = `${nuevos.length} aparato${nuevos.length > 1 ? 's' : ''} pegado${nuevos.length > 1 ? 's' : ''}`;
+	if (sobresalen.length) {
+		avisar(`${pegados}. No cabía${sobresalen.length > 1 ? 'n' : ''} en la fila: `
+			+ `${sobresalen.join(', ')} quedó al final del riel. Arrástralo a su sitio.`, 'info');
+	} else {
+		avisar(pegados, 'ok');
+	}
 }
 
 /** Da id nuevo y la siguiente designación libre de su clase a un aparato copiado. */
