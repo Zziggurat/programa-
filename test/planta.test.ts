@@ -22,6 +22,8 @@ import { Hallazgo, verificarProyecto } from '../src/motores/drc.js';
 import { calcularPotenciales } from '../src/motores/potenciales.js';
 import { numerarDispositivos } from '../src/motores/numeracion.js';
 import { generarPlanBorneros } from '../src/motores/bornes.js';
+import { simular } from '../src/motores/simulacion.js';
+import { declarado } from '../src/modelo/proyecto.js';
 
 // El archivo de la cubierta se lee del disco y no se importa: son 380 kB de datos del proyecto,
 // no código, y meterlos en la compilación los copiaría a `dist` en cada build.
@@ -304,4 +306,47 @@ test('los aparatos generados caben en la placa que se les asigna', () => {
 			assert.ok(!choca, `${a.dispositivoId} y ${b.dispositivoId} se pisan en la placa`);
 		}
 	}
+});
+
+/*
+ * Auditoría TS-P1-06. El puente creaba la fuente con bornes `+24`/`0V` —como vienen rotuladas las
+ * fuentes de 24 V CC de verdad— pero la simulación buscaba el secundario por el id (`+V`/`S1`,
+ * `-V`/`S2`), así que ese secundario no existía para ella: el PLC quedaba muerto en un tablero
+ * que el propio programa acababa de armar. Ninguna prueba lo vio porque todos los ejemplos usan
+ * aparatos del catálogo, que sí se llaman `+V`/`-V`.
+ */
+test('el tablero armado desde la planta se energiza de verdad', () => {
+	const tags = inf.equipos.filter((e) => e.puntos.length > 0).slice(0, 3).map((e) => e.tag);
+	const { proyecto } = tableroDesdeEquipos(inf, tags);
+
+	const fuente = proyecto.dispositivos.find((d) => d.tipo === 'fuente')!;
+	assert.ok(fuente, 'el puente arma una fuente');
+	assert.equal(fuente.bornes.find((b) => b.id === '+24')?.lado, 'secundario+',
+		'el lado va DECLARADO, no deducido del nombre del borne');
+	assert.equal(fuente.bornes.find((b) => b.id === '0V')?.lado, 'secundario-');
+
+	const r = simular(proyecto);
+	const vivo = (id: string) => [...r.vivos.keys()].some((k) => String(k).startsWith(`${id}::`));
+	assert.ok(vivo(fuente.id), 'la fuente tiene tensión');
+	const secundario = [...r.vivos.entries()]
+		.filter(([k]) => String(k).startsWith(`${fuente.id}::+24`) || String(k).startsWith(`${fuente.id}::0V`));
+	assert.equal(secundario.length, 2, 'los dos bornes del secundario nacen como fuente');
+	assert.equal(secundario[0][1].tension, 24, 'y lo hacen a 24 V');
+
+	const plc = proyecto.dispositivos.find((d) => d.tipo === 'plc');
+	if (plc) assert.ok(vivo(plc.id), 'el controlador queda alimentado');
+});
+
+/*
+ * El puente declaraba Icc 6 kA, ambiente 40 °C y montaje mural. No salen de ninguna parte: el
+ * plano no los trae. Declararlos hacía que el DRC verificase el poder de corte contra una Icc
+ * inventada y que la placa de características los imprimiese como datos del proyecto.
+ */
+test('el puente NO se inventa la Icc, el ambiente ni el montaje', () => {
+	const tags = inf.equipos.filter((e) => e.puntos.length > 0).slice(0, 2).map((e) => e.tag);
+	const { proyecto, notas } = tableroDesdeEquipos(inf, tags);
+	assert.equal(declarado(proyecto, 'iccPresuntaKA'), false);
+	assert.equal(declarado(proyecto, 'temperaturaAmbienteC'), false);
+	assert.equal(declarado(proyecto, 'montajeGabinete'), false);
+	assert.ok(notas.some((n) => /sin declarar/i.test(n)), 'y lo dice en las notas del resultado');
 });

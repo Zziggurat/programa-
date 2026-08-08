@@ -51,10 +51,28 @@ export const CLASE_POR_TIPO: Record<TipoDispositivo, LetraClase> = {
 /** Naturaleza eléctrica de un punto de conexión; la usa el DRC y la numeración de potenciales. */
 export type TipoBorne = 'L' | 'N' | 'PE' | 'control' | 'senal' | 'otro';
 
+/**
+ * De qué LADO de una fuente o un transformador está un borne.
+ *
+ * Existe porque la simulación lo adivinaba por el NOMBRE del borne: buscaba los ids `+V`/`S1` y
+ * `-V`/`S2` y con eso decidía dónde nacía el secundario. Los aparatos del catálogo se llaman así,
+ * pero el tablero que arma el puente desde la Planta 3D usa `+24` y `0V` —que es como vienen
+ * rotuladas las fuentes de 24 V CC de verdad—, así que su secundario no existía para la
+ * simulación: el PLC, los borneros y las máquinas quedaban sin tensión.
+ *
+ * Un id es un rótulo; esto es una declaración eléctrica.
+ */
+export type LadoFuente = 'primario' | 'secundario+' | 'secundario-';
+
 /** Punto de conexión de un dispositivo (pin/borne). En un bornero, cada borna es un Borne. */
 export interface Borne {
 	id: string;              // único dentro del dispositivo, p. ej. "L1", "A1", "13"
 	tipo?: TipoBorne;
+	/**
+	 * Solo en fuentes y transformadores: de qué lado está este borne. Si no se declara, la
+	 * simulación lo deduce del id como hacía antes, para no romper lo ya guardado.
+	 */
+	lado?: LadoFuente;
 	/** Si es true, el DRC marca error cuando queda sin conductor. */
 	obligatorio?: boolean;
 	/** Máximo de conductores admitidos en este punto (por defecto 2). */

@@ -524,8 +524,19 @@ function fuentesDe(proyecto: Proyecto): Fuente[] {
 		// su primario está alimentado. Eso lo resuelve la iteración; aquí solo se declara.
 		if (d.tipo === 'fuente' || d.tipo === 'transformador') {
 			const tension = tensionSecundariaDe(d);
-			const mas = d.bornes.find((b) => b.id === '+V' || b.id === 'S1');
-			const menos = d.bornes.find((b) => b.id === '-V' || b.id === 'S2');
+			/*
+			 * El secundario se busca por el LADO DECLARADO del borne; solo si nadie lo declara se
+			 * recurre al id, para no romper los proyectos ya guardados.
+			 *
+			 * Buscar `+V`/`S1` y `-V`/`S2` a secas dejaba fuera cualquier fuente rotulada de otra
+			 * manera. El tablero que arma el puente desde la Planta usa `+24` y `0V` —como vienen
+			 * rotuladas las fuentes de 24 V CC de verdad—, así que su secundario no existía para la
+			 * simulación y el PLC, los cuatro borneros y las máquinas quedaban sin tensión.
+			 */
+			const mas = d.bornes.find((b) => b.lado === 'secundario+')
+				?? d.bornes.find((b) => !b.lado && (b.id === '+V' || b.id === 'S1'));
+			const menos = d.bornes.find((b) => b.lado === 'secundario-')
+				?? d.bornes.find((b) => !b.lado && (b.id === '-V' || b.id === 'S2'));
 			// El secundario de un transformador de mando o de una fuente es monofásico.
 			if (mas) fuentes.push({ clave: claveBorne({ dispositivoId: d.id, borneId: mas.id }), tension, papel: 'fase', trifasica: false });
 			if (menos) fuentes.push({ clave: claveBorne({ dispositivoId: d.id, borneId: menos.id }), tension, papel: 'retorno', trifasica: false });

@@ -138,7 +138,16 @@ export function tableroDesdeEquipos(
 	const titulo = nombre ?? (equipos.length === 1
 		? `Tablero de control de ${equipos[0].tag}`
 		: `Tablero de control · ${equipos.length} máquinas de la cubierta`);
-	const p = crearProyecto(titulo, { iccPresuntaKA: 6, temperaturaAmbienteC: 40, montajeGabinete: 'mural' });
+	/*
+	 * NO se declaran Icc, ambiente ni montaje.
+	 *
+	 * Estaban puestos —6 kA, 40 °C, mural— y no salen de ninguna parte: el plano no los trae y
+	 * nadie los ha medido. Al declararlos, el DRC verificaba el poder de corte contra una Icc
+	 * inventada y la placa de características los imprimía como si fueran datos del proyecto. Un
+	 * supuesto del programa presentado como dato confirmado es peor que no tener el dato: sin él
+	 * la placa dice «a declarar» y quien la firma sabe que le toca medirlo.
+	 */
+	const p = crearProyecto(titulo);
 	p.datos = {
 		obra: inf.nombre,
 		notas: `Generado desde el plano ${inf.origen.archivo} con las máquinas: `
@@ -172,10 +181,16 @@ export function tableroDesdeEquipos(
 			fabricante: 'Phoenix Contact', referencia: 'STEP-PS/1AC/24DC/2.5', tensionNominal: 24,
 			corrienteNominal: Math.round(consumoFuente * 100) / 100,
 			disipacionW: 6, disipacionEstimada: true, hojaId: 'h1',
+			// El LADO va declarado. `+24` y `0V` son los rótulos de una fuente de 24 V CC de
+			// verdad, pero la simulación buscaba el secundario por el id (`+V`/`-V`) y este no
+			// existía para ella: el PLC, los cuatro borneros y las máquinas quedaban sin tensión
+			// en un tablero que el propio programa acababa de armar.
 			bornes: [
-				{ id: 'L', tipo: 'L', obligatorio: true }, { id: 'N', tipo: 'N', obligatorio: true },
+				{ id: 'L', tipo: 'L', obligatorio: true, lado: 'primario' },
+				{ id: 'N', tipo: 'N', obligatorio: true, lado: 'primario' },
 				{ id: 'PE', tipo: 'PE' },
-				{ id: '+24', tipo: 'control', obligatorio: true }, { id: '0V', tipo: 'control', obligatorio: true },
+				{ id: '+24', tipo: 'control', obligatorio: true, lado: 'secundario+' },
+				{ id: '0V', tipo: 'control', obligatorio: true, lado: 'secundario-' },
 			],
 		},
 	];
@@ -328,6 +343,9 @@ export function tableroDesdeEquipos(
 		+ 'y el cableado se conservan.',
 		'Las secciones son las de una instalación de señal (0,5 y 0,75 mm²) y la alimentación va a '
 		+ '1,5 mm². Revisa la caída de tensión con las distancias reales de tu tirada.',
+		'Quedan SIN DECLARAR la Icc presunta, la temperatura ambiente y el montaje del armario: '
+		+ 'el plano no los trae y el programa no se los inventa. Ponlos en Archivo → Datos del '
+		+ 'proyecto; de ellos dependen la verificación del poder de corte y el balance térmico.',
 	];
 	if (es.bus > 0) {
 		notas.push(`${es.bus} punto${es.bus === 1 ? '' : 's'} del plano son de bus o de otro `
