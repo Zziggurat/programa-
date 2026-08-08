@@ -15,6 +15,57 @@ export { nombreSeguroDeArchivo };
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
+/* --------------------------- Quién va delante de quién --------------------------- */
+
+/*
+ * EL ÚLTIMO QUE SE ABRE ES EL QUE MANDA.
+ *
+ * Todas las ventanas comparten la capa `--capa-modal`, que es lo que hace que ninguna se cuele
+ * por delante del diálogo bloqueante ni de los avisos. Pero entre ELLAS el empate lo desempata el
+ * navegador por orden en el documento, y eso no tiene nada que ver con el orden en que se abren.
+ *
+ * Lo que pasaba: en la primera visita la guía rápida está abierta; se pulsaba «Empezar con un
+ * ejemplo» y la ventana de ejemplos salía DEBAJO de la guía —`#modal-ayuda` va después en el
+ * HTML—, así que se veían las tarjetas atenuadas detrás y no se podía pinchar ninguna. Igual con
+ * la explicación de un ejemplo, o con el DRC abierto desde otra ventana.
+ *
+ * Se arregla donde está el problema y no ventana por ventana: un observador mira el atributo
+ * `hidden` de todo `[id^="modal-"]` y, cuando una se muestra, la pone la última de la pila. Así
+ * vale también para la ventana que se añada mañana, sin que nadie tenga que acordarse.
+ */
+const CAPA_MODAL = Number(getComputedStyle(document.documentElement).getPropertyValue('--capa-modal')) || 60;
+/** Hasta dónde puede subir una ventana: siempre por debajo de `--capa-dialogo` (70). */
+const ESCALONES = 8;
+/*
+ * `#modal-dialogo` se queda fuera a propósito: vive en `--capa-dialogo`, por encima de todas las
+ * ventanas, porque cuando pregunta algo hay alguien esperando la respuesta. Meterlo en esta pila
+ * lo bajaría a la capa de las ventanas y una de ellas podría taparlo.
+ */
+const FUERA_DE_LA_PILA = new Set(['modal-dialogo']);
+
+const pilaDeVentanas: HTMLElement[] = [];
+
+function reordenarVentanas(): void {
+	pilaDeVentanas.forEach((el, i) => { el.style.zIndex = String(CAPA_MODAL + Math.min(i, ESCALONES)); });
+}
+
+function anotarVentana(el: HTMLElement): void {
+	const donde = pilaDeVentanas.indexOf(el);
+	if (donde !== -1) pilaDeVentanas.splice(donde, 1);
+	if (el.hidden) el.style.zIndex = '';
+	else pilaDeVentanas.push(el);
+	reordenarVentanas();
+}
+
+const vigilante = new MutationObserver((cambios) => {
+	for (const c of cambios) anotarVentana(c.target as HTMLElement);
+});
+for (const el of document.querySelectorAll<HTMLElement>('[id^="modal-"]')) {
+	if (FUERA_DE_LA_PILA.has(el.id)) continue;
+	vigilante.observe(el, { attributes: true, attributeFilter: ['hidden'] });
+	if (!el.hidden) anotarVentana(el);   // la guía de la primera visita ya está abierta al cargar
+}
+
 /**
  * Escapa texto para meterlo en HTML sin que un nombre con < o & rompa la página.
  *

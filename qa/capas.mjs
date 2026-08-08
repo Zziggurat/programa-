@@ -67,6 +67,41 @@ for (const id of ['modal-ayuda','modal-ejemplos','modal-proyecto','modal-dialogo
   must(`#${id} se puede pulsar`, r.existe && r.tapados===0, `${r.controles} controles, ${r.tapados} tapados${r.quienTapa?' por '+r.quienTapa:''}`);
   await p.evaluate((i)=>{document.getElementById(i).hidden=true;}, id);
 }
+/*
+ * --- UNA VENTANA ENCIMA DE OTRA ---
+ *
+ * Esto es lo que se le escapó a la prueba de arriba, que abre las ventanas DE UNA EN UNA: todas
+ * comparten `--capa-modal`, así que entre ellas el empate lo desempata el navegador por orden en
+ * el documento, y ese orden no tiene nada que ver con el orden en que se abren.
+ *
+ * En la primera visita la guía rápida está abierta. Se pulsaba «Empezar con un ejemplo» y la
+ * ventana de ejemplos salía DEBAJO de la guía —`#modal-ayuda` va después en el HTML—: se veían
+ * las tarjetas atenuadas al fondo y no se podía pinchar ninguna. Con la guía delante, que es
+ * justo cuando alguien mira el programa por primera vez, esa puerta estaba cerrada.
+ */
+console.log('--- una ventana encima de otra ---');
+await p.reload();
+await p.waitForTimeout(1600);
+// Se abre la guía con su botón: al recargar ya no salta sola —solo lo hace la primera visita— y
+// la situación que importa es la misma, la guía delante y alguien que quiere ver un ejemplo.
+await p.evaluate(()=>document.getElementById('btn-ayuda')?.click());
+await p.waitForTimeout(500);
+must('CONDICIÓN PREVIA: la guía está abierta',
+  await p.evaluate(()=>!document.getElementById('modal-ayuda').hidden), '');
+// Sin cerrar la guía —a propósito— se abre la ventana de ejemplos, como haría cualquiera.
+await p.evaluate(()=>document.getElementById('btn-empezar-ejemplo')?.click());
+await p.waitForTimeout(800);
+const encima = await p.evaluate(()=>{
+  const btn = document.querySelector('.tarjeta-ejemplo button');
+  if (!btn) return {hay:false};
+  const r = btn.getBoundingClientRect();
+  const t = document.elementFromPoint(r.left+r.width/2, r.top+r.height/2);
+  return {hay:true, manda: t?.closest('[id^=modal-]')?.id ?? t?.id ?? t?.tagName};
+});
+must('con la guía abierta, un ejemplo se puede elegir de verdad',
+  encima.hay && encima.manda === 'modal-ejemplos',
+  encima.hay ? `en la tarjeta manda ${encima.manda}` : 'no salieron tarjetas de ejemplo');
+
 await b.close(); s.close();
 console.log(`\n=== ${fallos===0?'TODO OK ✔':fallos+' FALLO(S) ✗'} ===`);
 process.exit(fallos?1:0);
