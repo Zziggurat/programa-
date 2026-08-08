@@ -24,19 +24,54 @@ export function sinTildes(t: string): string {
 }
 
 /**
+ * Las extensiones que entrega el programa, incluidas las compuestas.
+ *
+ * `.tablero.json` y `.dossier.html` son una sola extensión a efectos de esto: partirlas por el
+ * último punto dejaría «.json» y un cuerpo acabado en «.tablero», que al recortar se queda a
+ * medias y ya no se reconoce.
+ */
+const EXTENSION = /\.(tablero\.json|dossier\.html|etiquetas\.html|csv|json|html|pdf|dxf|txt|svg)$/i;
+
+/**
+ * Nombres que Windows tiene reservados para dispositivos, desde MS-DOS.
+ *
+ * No se pueden usar ni con extensión: «CON.txt» tampoco vale. Y no hace falta mala fe para dar
+ * con uno —a un tablero de una máquina se le puede llamar «AUX» sin pensarlo—; lo que pasa
+ * entonces es que la descarga falla sin decir por qué.
+ */
+const RESERVADO_EN_WINDOWS = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
+
+/** Lo más largo que se deja el nombre entero, extensión incluida. */
+const LARGO_MAXIMO = 100;
+
+/**
  * Deja un nombre de archivo en ASCII puro, conservando lo que se lee.
  *
  * Además de las tildes quita lo que los sistemas de archivos no admiten (`/ \ : * ? " < > |`) y
  * recorta a 100 caracteres, que es donde empiezan a quejarse algunos.
+ *
+ * LA EXTENSIÓN TIENE SU SITIO RESERVADO. Antes se recortaba el nombre COMPLETO, extensión
+ * incluida, así que un tablero con un título largo —y los de aquí lo son: «Tablero de fuerza y
+ * control climatizadores cubierta terminal…»— se descargaba con la extensión cortada por la
+ * mitad, o sin ella. El archivo salía bien por dentro y Windows no sabía con qué abrirlo: había
+ * que renombrarlo a mano para recuperar el trabajo. Ahora se aparta la extensión, se recorta solo
+ * el cuerpo, y se vuelve a pegar.
  */
 export function nombreSeguroDeArchivo(nombre: string, porDefecto = 'tablero'): string {
-	const limpio = sinTildes(nombre)
+	const plano = sinTildes(nombre);
+	const conExtension = EXTENSION.exec(plano);
+	const extension = conExtension ? conExtension[0] : '';
+	const cuerpo = conExtension ? plano.slice(0, conExtension.index) : plano;
+
+	let limpio = cuerpo
 		.replace(/[^A-Za-z0-9 ._-]/g, ' ')
 		.replace(/\s+/g, ' ')
 		.trim()
-		.slice(0, 100)
+		.slice(0, LARGO_MAXIMO - extension.length)
 		.trim()
 		// Un nombre no puede acabar en punto ni en espacio: Windows lo rechaza.
 		.replace(/[. ]+$/, '');
-	return limpio || porDefecto;
+	if (!limpio) limpio = porDefecto;
+	if (RESERVADO_EN_WINDOWS.test(limpio)) limpio = `${limpio}-1`;
+	return limpio + extension;
 }

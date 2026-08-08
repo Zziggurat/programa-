@@ -241,6 +241,42 @@ test('los nombres largos se recortan, pero no a la nada', () => {
 	assert.ok(n.startsWith('Tablero de climatizacion'));
 });
 
+/**
+ * Auditoría TS-P2-16. El recorte a 100 se hacía sobre el nombre COMPLETO, extensión incluida.
+ * Un tablero con un título largo —«Tablero de fuerza y control climatizadores cubierta
+ * terminal…», de los que se escriben aquí todos los días— se descargaba con la extensión cortada
+ * por la mitad o sin ella: el archivo estaba bien por dentro y Windows no sabía con qué abrirlo.
+ */
+test('la extensión tiene su sitio reservado: nunca se corta', () => {
+	const largo = 'Tablero de fuerza y control climatizadores cubierta terminal '.repeat(4);
+	for (const ext of ['.tablero.json', '.dossier.html', '.csv', '.pdf', '.dxf']) {
+		const n = nombreSeguroDeArchivo(largo + ext);
+		assert.ok(n.endsWith(ext), `«…${n.slice(-24)}» perdió la extensión ${ext}`);
+		assert.ok(n.length <= 100, `${n.length} caracteres`);
+		assert.ok(n.startsWith('Tablero de fuerza'), `«${n}» ya no se lee`);
+	}
+});
+
+test('un nombre corto no se toca al añadirle la extensión', () => {
+	assert.equal(nombreSeguroDeArchivo('Climatización.tablero.json'), 'Climatizacion.tablero.json');
+	assert.equal(nombreSeguroDeArchivo('Parte de obra Terminal.csv'), 'Parte de obra Terminal.csv');
+});
+
+/**
+ * Windows tiene esos nombres reservados para dispositivos desde MS-DOS, y no valen ni con
+ * extensión: «CON.txt» tampoco. No hace falta mala fe para dar con uno —a un tablero se le puede
+ * llamar «AUX» sin pensarlo—; lo que pasa entonces es que la descarga falla sin decir por qué.
+ */
+test('los nombres que Windows tiene reservados no dejan el archivo sin guardar', () => {
+	assert.equal(nombreSeguroDeArchivo('CON.tablero.json'), 'CON-1.tablero.json');
+	assert.equal(nombreSeguroDeArchivo('aux'), 'aux-1');
+	assert.equal(nombreSeguroDeArchivo('COM1.csv'), 'COM1-1.csv');
+	assert.equal(nombreSeguroDeArchivo('LPT9'), 'LPT9-1');
+	// Y uno que solo se PARECE sigue intacto: la regla es el nombre entero, no que empiece así.
+	assert.equal(nombreSeguroDeArchivo('CONTROL.tablero.json'), 'CONTROL.tablero.json');
+	assert.equal(nombreSeguroDeArchivo('COM10.csv'), 'COM10.csv');
+});
+
 test('el DXF y la descarga comparten la misma transliteración', () => {
 	// Si divergieran, el mismo tablero saldría con un nombre en el archivo y otro dentro del plano.
 	assert.equal(sinAcentos('Climatización'), 'Climatizacion');

@@ -15,6 +15,7 @@
  *
  * Aquí no hay Three.js ni DOM: solo el modelo y sus cuentas, para poder probarlo sin navegador.
  */
+import { aCSV } from '../modelo/csv.js';
 import { EquipoPlanta, Infraestructura } from '../modelo/infraestructura.js';
 
 /* --------------------------------- El parte de obra --------------------------------- */
@@ -190,9 +191,10 @@ export function estadosPorTag(l: Levantamiento): Map<string, EstadoObra> {
 
 /* ---------------------------------- Llevárselo ---------------------------------- */
 
-const csv = (filas: string[][]): string => filas
-	.map((f) => f.map((c) => (/[";\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(';'))
-	.join('\n');
+// El mismo armador de CSV que usan los listados del tablero: separador `;`, comillas donde hagan
+// falta y celdas que no pueden colarse como fórmula en la hoja de cálculo. Aquí importa más que en
+// ninguna otra parte, porque la nota del parte la escribe uno en la cubierta y se manda por correo.
+const csv = aCSV;
 
 /**
  * El parte de obra en CSV: una fila por máquina anotada, con su estado, su nota y sus datos del

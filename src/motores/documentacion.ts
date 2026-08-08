@@ -7,6 +7,7 @@
  *  - Lista de conductores (número, origen, destino, sección, color, longitud ruteada).
  *  - Exportadores CSV y un informe HTML completo.
  */
+import { aCSV } from '../modelo/csv.js';
 import { Proyecto } from '../modelo/tipos.js';
 import { extremoTexto } from '../modelo/proyecto.js';
 import { Hallazgo } from './drc.js';
@@ -73,18 +74,9 @@ export function generarListaConductores(
 
 /* --------------------------------- Exportadores --------------------------------- */
 
-export function aCSV(filas: (string | number | undefined)[][]): string {
-	return filas
-		.map((fila) =>
-			fila
-				.map((celda) => {
-					const s = celda === undefined ? '' : String(celda);
-					return /[";\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-				})
-				.join(';'),
-		)
-		.join('\n');
-}
+// El armador de CSV vive en el núcleo (`modelo/csv.ts`) porque lo comparten los listados del
+// tablero y el parte de obra de la Planta. Se reexporta para no cambiar a quien ya lo importaba.
+export { aCSV };
 
 export function bomACSV(bom: FilaBOM[]): string {
 	return aCSV([
