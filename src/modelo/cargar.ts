@@ -9,7 +9,9 @@
  * Aquí se comprueba de verdad la forma del archivo, se rellena lo que falte con valores
  * sanos y se deja escrito dónde va la migración de la próxima versión.
  */
-import { Conductor, Dispositivo, Gabinete, Hoja, Proyecto } from './tipos.js';
+import {
+	Borne, Canaleta, Colocacion, Conductor, Dispositivo, Gabinete, Hoja, OpcionesProyecto, Proyecto, Riel,
+} from './tipos.js';
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 
 /** Versión de formato que escribe este programa. */
@@ -29,6 +31,37 @@ const esLista = (v: unknown): v is unknown[] => Array.isArray(v);
 const texto = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 const numero = (v: unknown): number | undefined =>
 	typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+
+/*
+ * LO DE DENTRO TAMBIÉN SE MIRA.
+ *
+ * Comprobar que `rieles` es una lista de objetos no basta: lo que se dibuja son sus NÚMEROS. Un
+ * riel con `x: "treinta"`, o una canaleta con `ancho: null`, entraban tal cual y salían del otro
+ * lado convertidos en NaN —medido: con esa canaleta el ruteo devolvía longitudes NaN—, y unos
+ * `bornes: ["1", 2, null]` tiraban la aplicación entera con «Cannot read properties of null».
+ *
+ * No es rebuscado. Estos archivos van por correo y por pendrive entre el taller y la obra, se
+ * copian a medias, se abren con la versión de otro y alguna vez se tocan a mano para arreglar
+ * algo. La regla es siempre la misma —**lo que no es un número no entra**— y lo que se descarta
+ * se cuenta, para que quien abre el archivo se entere en ese momento y no tres horas después,
+ * mirando un plano que no cuadra.
+ */
+
+/** Número dentro de un rango. Fuera de rango, o si no es número, `undefined`. */
+const enRango = (v: unknown, min: number, max: number): number | undefined => {
+	const n = numero(v);
+	return n !== undefined && n >= min && n <= max ? n : undefined;
+};
+
+/** Número que tiene que estar sí o sí; si no vale, se usa el de reserva. */
+const conReserva = (v: unknown, min: number, max: number, reserva: number): number =>
+	enRango(v, min, max) ?? reserva;
+
+/**
+ * Lo más grande que se admite en milímetros. Una placa de cinco metros no existe, y un número
+ * enorme metido en el archivo manda la cámara al infinito y deja la pantalla en negro.
+ */
+const MAX_MM = 5000;
 
 /**
  * Lee un proyecto de un texto JSON. Lanza `ArchivoInvalido` con un motivo entendible si el
@@ -89,7 +122,7 @@ export function cargarProyecto(json: string): ResultadoCarga {
 		dispositivos,
 		conductores,
 		gabinete,
-		opciones: esObjeto(bruto.opciones) ? (bruto.opciones as Proyecto['opciones']) : undefined,
+		opciones: leerOpciones(bruto.opciones),
 		esquema: leerAjustesEsquema(bruto.esquema),
 		dossier: leerAjustesDossier(bruto.dossier),
 	};
@@ -97,24 +130,97 @@ export function cargarProyecto(json: string): ResultadoCarga {
 }
 
 function leerGabinete(bruto: Record<string, unknown>, arreglos: string[]): Gabinete {
-	const ancho = numero(bruto.ancho);
-	const alto = numero(bruto.alto);
-	if (!ancho || !alto || ancho <= 0 || alto <= 0) {
-		throw new ArchivoInvalido('El gabinete del proyecto no tiene medidas válidas.');
+	/*
+	 * La placa se comprueba por arriba y por abajo, y si no cuadra se para aquí.
+	 *
+	 * Es el único dato del que no se puede prescindir: TODO lo demás se coloca respecto a ella, y
+	 * la vista se encuadra a su tamaño. Con 0 no hay nada que dibujar, y con 10⁹ mm la cámara se
+	 * va al infinito y la pantalla se queda en negro sin decir por qué. Vale más un motivo
+	 * entendible al abrir que un programa que arranca y no se ve.
+	 */
+	const ancho = enRango(bruto.ancho, 1, MAX_MM);
+	const alto = enRango(bruto.alto, 1, MAX_MM);
+	if (!ancho || !alto) {
+		throw new ArchivoInvalido(
+			`El gabinete del proyecto no tiene medidas válidas (se admite hasta ${MAX_MM / 1000} m de placa).`,
+		);
 	}
-	const lista = <T>(v: unknown, nombre: string): T[] => {
-		if (esLista(v)) return v.filter(esObjeto) as T[];
-		if (v !== undefined) arreglos.push(`la lista de ${nombre} estaba corrupta`);
-		return [];
+	/** Aplica un lector a cada elemento y cuenta los que no valen. */
+	const lista = <T>(v: unknown, nombre: string, leer: (x: Record<string, unknown>, i: number) => T | undefined): T[] => {
+		if (!esLista(v)) {
+			if (v !== undefined) arreglos.push(`la lista de ${nombre} estaba corrupta`);
+			return [];
+		}
+		const salida: T[] = [];
+		let fuera = 0;
+		v.forEach((x, i) => {
+			const leido = esObjeto(x) ? leer(x, i) : undefined;
+			if (leido === undefined) fuera++;
+			else salida.push(leido);
+		});
+		if (fuera) arreglos.push(`${fuera} ${nombre} con medidas imposibles`);
+		return salida;
 	};
+
+	const orientacion = (v: unknown): 'h' | 'v' => (v === 'v' ? 'v' : 'h');
+
 	return {
 		ancho,
 		alto,
-		caja: esObjeto(bruto.caja) ? (bruto.caja as Gabinete['caja']) : undefined,
-		rieles: lista(bruto.rieles, 'rieles'),
-		canaletas: lista(bruto.canaletas, 'canaletas'),
-		colocaciones: lista(bruto.colocaciones, 'colocaciones'),
+		caja: leerCaja(bruto.caja, ancho, alto),
+		// Un riel sin `largo` o con el largo en negativo se deja del ancho de la placa: así se ve
+		// y se puede arrastrar hasta donde toque, en vez de desaparecer sin explicación.
+		rieles: lista<Riel>(bruto.rieles, 'rieles', (r, i) => ({
+			...(r as unknown as Riel),
+			id: texto(r.id) || `riel${i + 1}`,
+			x: conReserva(r.x, -MAX_MM, MAX_MM, 0),
+			y: conReserva(r.y, -MAX_MM, MAX_MM, 0),
+			largo: conReserva(r.largo, 1, MAX_MM, Math.max(60, ancho - 60)),
+			orientacion: orientacion(r.orientacion),
+		})),
+		canaletas: lista<Canaleta>(bruto.canaletas, 'canaletas', (c, i) => ({
+			...(c as unknown as Canaleta),
+			id: texto(c.id) || `canaleta${i + 1}`,
+			x: conReserva(c.x, -MAX_MM, MAX_MM, 0),
+			y: conReserva(c.y, -MAX_MM, MAX_MM, 0),
+			largo: conReserva(c.largo, 1, MAX_MM, Math.max(60, ancho - 40)),
+			orientacion: orientacion(c.orientacion),
+			// 40 × 60 es el perfil más corriente: es la reserva razonable si el archivo no lo dice.
+			ancho: conReserva(c.ancho, 1, 200, 40),
+			alto: conReserva(c.alto, 1, 200, 60),
+		})),
+		/*
+		 * Aquí NO se inventa nada: una colocación es dónde va montado un aparato de verdad, y
+		 * ponerla «más o menos» sería dibujar un tablero que no existe. Si no trae posición y
+		 * huella creíbles se descarta, el aparato se queda en el proyecto sin colocar y el DRC lo
+		 * canta como aparato sin montar, que es exactamente lo que hay que arreglar a mano.
+		 */
+		colocaciones: lista<Colocacion>(bruto.colocaciones, 'colocaciones', (c) => {
+			const x = enRango(c.x, -MAX_MM, MAX_MM);
+			const y = enRango(c.y, -MAX_MM, MAX_MM);
+			const anchoCol = enRango(c.ancho, 0.1, MAX_MM);
+			const altoCol = enRango(c.alto, 0.1, MAX_MM);
+			if (!texto(c.dispositivoId) || x === undefined || y === undefined
+				|| anchoCol === undefined || altoCol === undefined) return undefined;
+			return {
+				...(c as unknown as Colocacion),
+				dispositivoId: c.dispositivoId as string,
+				x, y, ancho: anchoCol, alto: altoCol,
+				rielId: texto(c.rielId),
+				z: enRango(c.z, -MAX_MM, MAX_MM),
+			};
+		}),
 	};
+}
+
+/** La caja envolvente. Las tres medidas o ninguna: media caja no se puede dibujar. */
+function leerCaja(bruto: unknown, anchoPlaca: number, altoPlaca: number): Gabinete['caja'] {
+	if (!esObjeto(bruto)) return undefined;
+	const ancho = enRango(bruto.ancho, anchoPlaca, MAX_MM);
+	const alto = enRango(bruto.alto, altoPlaca, MAX_MM);
+	const profundidad = enRango(bruto.profundidad, 1, MAX_MM);
+	if (ancho === undefined || alto === undefined || profundidad === undefined) return undefined;
+	return { ancho, alto, profundidad };
 }
 
 /**
@@ -235,13 +341,52 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			continue;
 		}
 		vistos.add(d.id as string);
+		const numerico = <K extends keyof Dispositivo>(campo: K, min: number, max: number) => {
+			const v = enRango((d as Record<string, unknown>)[campo as string], min, max);
+			return v as Dispositivo[K] | undefined;
+		};
 		salida.push({
 			...(d as unknown as Dispositivo),
-			bornes: esLista(d.bornes) ? (d.bornes as Dispositivo['bornes']) : [],
+			bornes: leerBornes(d.bornes),
+			/*
+			 * La ficha eléctrica, campo a campo. Un `corrienteNominal: "diez amperios"` no rompe
+			 * nada al dibujar, pero el DRC lo compara con la sección del cable y la comparación
+			 * con un texto sale siempre falsa: el aviso de «cable insuficiente» no aparecería y el
+			 * tablero se montaría con un hilo que no aguanta. Un dato que no es un número es un
+			 * dato que no está, y sin declarar el programa ya sabe decirlo.
+			 */
+			numero: numerico('numero', 0, 100_000),
+			corrienteNominal: numerico('corrienteNominal', 0, 10_000),
+			tensionNominal: numerico('tensionNominal', 0, 100_000),
+			tensionSecundariaV: numerico('tensionSecundariaV', 0, 100_000),
+			polos: numerico('polos', 1, 6),
+			disipacionW: numerico('disipacionW', 0, 10_000),
+			poderCorteKA: numerico('poderCorteKA', 0, 200),
+			sensibilidadMA: numerico('sensibilidadMA', 0, 100_000),
 			esquema: leerColocacionEsquema((d as Record<string, unknown>).esquema),
 		});
 	}
 	if (descartados) arreglos.push(`${descartados} aparato(s) sin datos suficientes`);
+	return salida;
+}
+
+/**
+ * Las borneras de un aparato: sin ellas no se puede cablear, y con basura dentro no se puede ni
+ * abrir. Un `bornes: ["1", 2, null]` en el archivo tiraba la aplicación al primer recálculo con
+ * «Cannot read properties of null (reading 'id')» —comprobado—, así que aquí solo pasan los que
+ * son un objeto con su identificador.
+ */
+function leerBornes(bruto: unknown): Borne[] {
+	if (!esLista(bruto)) return [];
+	const salida: Borne[] = [];
+	const vistos = new Set<string>();
+	for (const b of bruto) {
+		if (!esObjeto(b)) continue;
+		const id = texto(b.id);
+		if (!id || vistos.has(id)) continue;   // dos bornas con el mismo número no se distinguen
+		vistos.add(id);
+		salida.push({ ...(b as unknown as Borne), id });
+	}
 	return salida;
 }
 
@@ -261,8 +406,60 @@ function leerConductores(bruto: unknown, idsValidos: Set<string>, arreglos: stri
 			huerfanos++;
 			continue;
 		}
-		salida.push(c as unknown as Conductor);
+		salida.push({
+			...(c as unknown as Conductor),
+			// Una sección que no es un número deja al DRC sin poder comparar nada: mejor «sin
+			// declarar», que el programa sabe avisarlo, que un 0 inventado o un NaN silencioso.
+			seccion: enRango(c.seccion, 0, 1000),
+			/*
+			 * El trazado son los puntos por los que el usuario llevó el cable a mano. Un punto con
+			 * una coordenada que no es número sale como NaN en la geometría del tubo, y en Three.js
+			 * eso no es un cable torcido: es un cable que DESAPARECE de la pantalla, mientras sigue
+			 * contando en la lista de conductores y en el dossier. Los puntos malos se tiran y el
+			 * cable vuelve a su recorrido automático, que siempre se ve.
+			 */
+			trazado: esLista(c.trazado)
+				? (c.trazado as unknown[]).filter(esObjeto)
+					.map((p) => ({ x: enRango(p.x, -MAX_MM, MAX_MM), y: enRango(p.y, -MAX_MM, MAX_MM) }))
+					.filter((p): p is { x: number; y: number } => p.x !== undefined && p.y !== undefined)
+				: undefined,
+		});
 	}
 	if (huerfanos) arreglos.push(`${huerfanos} cable(s) sueltos sin aparato en un extremo`);
 	return salida;
+}
+
+/**
+ * Las opciones de la instalación: Icc presunta, temperatura ambiente, frecuencia, corriente
+ * asignada, montaje, régimen de neutro e IP.
+ *
+ * Entraban con un `as` y sin mirar, y eso deja un agujero justo debajo de un arreglo anterior:
+ * los recuadros de la ventana «Datos del proyecto» ya validaban lo que se teclea, pero un archivo
+ * podía traer `iccPresuntaKA: "mucha"` o `temperaturaAmbienteC: null` y colarse por detrás. Esos
+ * dos números son de los que deciden cosas: el primero, si las protecciones elegidas aguantan un
+ * cortocircuito; el segundo, la temperatura interior del armario. Un valor imposible ahí no da un
+ * error visible, da un veredicto tranquilizador sin motivo, que es peor.
+ *
+ * Sin declarar el programa ya sabe decir «a declarar» en el dossier y en la placa de
+ * características. Así que lo que no es un número válido se deja SIN DECLARAR, no en cero.
+ */
+function leerOpciones(bruto: unknown): OpcionesProyecto | undefined {
+	if (!esObjeto(bruto)) return undefined;
+	const montajes = ['mural', 'exento', 'empotrado'];
+	const regimenes = ['', 'TN-S', 'TN-C', 'TN-C-S', 'TT', 'IT'];
+	const ip = texto(bruto.gradoIP)?.trim().toUpperCase();
+	const opciones: OpcionesProyecto = {
+		...(bruto as OpcionesProyecto),
+		iccPresuntaKA: enRango(bruto.iccPresuntaKA, 0, 100),
+		temperaturaAmbienteC: enRango(bruto.temperaturaAmbienteC, -40, 80),
+		frecuenciaHz: enRango(bruto.frecuenciaHz, 0, 400),
+		corrienteAsignadaA: enRango(bruto.corrienteAsignadaA, 0, 10_000),
+		montajeGabinete: montajes.includes(String(bruto.montajeGabinete))
+			? (bruto.montajeGabinete as OpcionesProyecto['montajeGabinete']) : undefined,
+		regimenNeutro: regimenes.includes(String(bruto.regimenNeutro))
+			? (bruto.regimenNeutro as OpcionesProyecto['regimenNeutro']) : undefined,
+		gradoIP: ip && /^IP[0-6][0-9K]$/.test(ip) ? ip : undefined,
+	};
+	// Si no quedó ni un dato en pie, mejor `undefined` que un objeto vacío que se vuelve a guardar.
+	return Object.values(opciones).some((v) => v !== undefined) ? opciones : undefined;
 }
