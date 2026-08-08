@@ -27,7 +27,7 @@ diecinueve motores independientes y testeados:
 | Programa del controlador | `src/motores/logica.ts` | El lenguaje que hace que un PLC del tablero deje de ser un adorno: un renglón por salida, en castellano —`DO1 = DI1 Y NO DI2`, `DO2 = DO1 retardo 8 minimo 30`, `DO3 = UI1 < 21`—, con su lector que **nunca lanza** (el renglón malo se aparta con su explicación y los buenos siguen funcionando), su evaluador, sus retardos a la conexión y sus **tiempos mínimos de marcha** (lo que evita que un compresor arranque y pare cada dos segundos) |
 | Dossier editable | `src/modelo/dossier.ts` | Qué apartados lleva el dossier y qué le añade a mano quien lo firma. Aquí está el **reparto del texto en líneas**: cortar un párrafo donde cabe sabiendo que dentro hay trozos en negrita, en cursiva, de otro tamaño y de otra fuente, y que una palabra suelta puede no caber ni ella sola |
 | Nombres de archivo | `src/modelo/archivos.ts` | Deja en ASCII el nombre de lo que se descarga. No es manía: **un solo carácter con tilde en el atributo `download` y el navegador tira el nombre entero** y guarda el archivo como «download», sin extensión — que es lo que le pasaba a «Climatización» y a casi todos los tableros de aquí |
-| Consulta de planta | `src/motores/planta.ts` | Buscar una máquina entre 129 como se escribe de verdad (sin guiones ni tildes), filtrar por tipo/controlador/señales, colorear por cinco criterios —incluido el **estado en obra**—, y **medir una tirada de cable**: recta, recorrido ortogonal por bandeja, subida y bajada, y los metros a pedir con su reserva |
+| Consulta de planta | `src/motores/planta.ts` | Buscar una máquina entre 134 como se escribe de verdad (sin guiones ni tildes), filtrar por tipo/controlador/señales, colorear por cinco criterios —incluido el **estado en obra**—, y **medir una tirada de cable**: recta, recorrido ortogonal por bandeja, subida y bajada, y los metros a pedir con su reserva |
 | Levantamiento de obra | `src/motores/levantamiento.ts` | Lo que se apunta subiendo a la cubierta y tiene que seguir ahí mañana: el **parte de obra** máquina a máquina (pendiente / en curso / montado / probado / con problema, más la nota de lo que uno se encuentra) y las **tiradas medidas**, de las que sale sola la **lista de cable a pedir** agrupada por manguera (4×2,5, 2×0,75…). Todo se lleva en CSV |
 | Del mundo al tablero | `src/motores/planta-tablero.ts` | Convertir las máquinas elegidas en la cubierta en el tablero que las gobierna: lista de señales, bornera por máquina con sus comunes puenteados, peine de comunes, controlador dimensionado a la E/S real, alimentación y todo el cableado |
 | Balance térmico | `src/motores/termico.ts` | Temperatura interior del armario por el método simplificado de IEC 60890: disipación de cada aparato, superficie efectiva según el montaje y veredicto (natural / rejilla / ventilador / climatizador) |
@@ -67,10 +67,24 @@ npm run ejemplo # genera la documentación de un tablero real en ejemplo/salida/
 ### Pruebas automáticas del editor (`qa/`)
 
 Además de los tests del núcleo, hay varias suites que manejan el editor 3D de verdad
-(con un navegador) y comprueban lo que ve el usuario. `npm run qa` las encadena todas:
+(con un navegador) y comprueban lo que ve el usuario.
+
+`npm run qa` las corre **todas**, y no lleva ninguna lista: `qa/todas.mjs` busca en el
+directorio y ejecuta todo `qa/*.mjs` que no empiece por `_` (los `_` son sondas de
+diagnóstico de usar y tirar, y están fuera del repositorio). Antes la lista iba escrita a mano
+en `package.json` y pasó lo previsible: se quedó atrás, y once suites —entre ellas las que
+vigilan que un fallo ya arreglado no vuelva— no las corría nadie. Una prueba que no se ejecuta
+es una prueba que no existe. **Añadir una suite es dejar el archivo en `qa/`; no hay ningún
+otro sitio donde apuntarla.**
+
+Cada una va en su propio proceso y de una en una: levantan su servidor y su Chromium, así que
+una que se cuelgue no se lleva a las demás, y en paralelo se quitarían la CPU unas a otras
+(con dibujado por software `agarre` tarda media hora ella sola, y acompañada no termina).
+Se puede filtrar por nombre: `node qa/todas.mjs cables riel`.
 
 | Suite | Qué verifica |
 |---|---|
+| `npm run qa:auditoria` | Las siete de la **auditoría externa**, juntas: que un autoguardado ilegible no se pise, que un campo en blanco no se declare como 0 °C, que nada tape a un diálogo o a un aviso, que el texto del usuario no se convierta en HTML, que duplicar y pegar no dejen aparatos que nadie monta, que la rueda de la Planta tenga tope, y que los atajos no editen el tablero cuando el tablero no se ve |
 | `npm run qa:cables` | Cero cables fantasma, cablear por clic, codos, uniones, arrastre, Supr y deshacer |
 | `node qa/controladores.mjs` | Los doce controladores reales del catálogo y el diálogo «a medida»: huella, borneras en su sitio y cableado por terminal |
 | `node qa/dossier.mjs` | Que el PDF describa el tablero que hay en pantalla, y que cambie cuando el tablero cambia |
@@ -87,14 +101,15 @@ Además de los tests del núcleo, hay varias suites que manejan el editor 3D de 
 | `npm run qa:dossier` | La **vista previa editable del dossier**: que el PDF se vea antes de descargarlo y que lo que se ve sea el PDF de verdad, que se quiten apartados, que el texto se escriba con negrita, cursiva, tamaño y fuente, que entren imágenes de archivo y capturas del tablero en 3D y en 2D — y al final se descarga y se **lee el PDF** para comprobar que lo escrito está dentro |
 | `npm run qa:esquema` | El **esquema que se ordena a mano** (arrastrar un símbolo, deshacerlo, volver a ordenar solo, columnas por hoja) y el **dossier que no supone nada**: se exporta sin declarar ningún dato y se lee el PDF para comprobar que dice «a declarar» en vez de inventarse el uso previsto, la frecuencia o la temperatura |
 | `npm run qa:cubierta` | El **levantamiento de la cubierta**: anotar el parte de obra de una máquina, verlo en la lista y en el color del 3D, medir y **guardar tiradas** con su cable, comprobar que los metros se suman por manguera — y que todo eso **sigue ahí al recargar** |
-| `npm run qa:planta-trabajo` | La planta **como herramienta de trabajo**: buscar entre las 129 máquinas, filtrar, colorear, **medir una tirada** (30 y 40 m: recta 50, recorrido 70, a pedir 85) y el puente entero **del plano al tablero** — elegir tres UMAs, revisar su lista de señales y comprobar que el tablero llega al editor con sus borneras rotuladas y **sin un error de DRC** |
+| `npm run qa:planta-trabajo` | La planta **como herramienta de trabajo**: buscar entre las 134 máquinas, filtrar, colorear, **medir una tirada** (30 y 40 m: recta 50, recorrido 70, a pedir 85) y el puente entero **del plano al tablero** — elegir tres UMAs, revisar su lista de señales y comprobar que el tablero llega al editor con sus borneras rotuladas y **sin un error de DRC** |
 | `npm run qa:empaquetado` | **El archivo que se entrega**: abre `dist-final/TableroStudio.html` con `file://`, sin servidor, y comprueba que arranca en la ventana de inicio, que se puede trabajar y que salen el dossier y el proyecto guardado |
 
 Se apoyan en una sonda que solo existe abriendo la página con `?qa=1`; en el uso normal
 del programa no se define nada. La única que no la usa es `qa:empaquetado`: el build que se
 entrega borra la sonda a propósito, así que esa suite comprueba todo por el DOM — exactamente
-lo que ve el usuario. Va aparte de `npm run qa` porque reconstruye la aplicación en modo
-entrega, sin el andamiaje de las pruebas.
+lo que ve el usuario. `npm run qa` la salta —y dice que la salta— si no encuentra
+`dist-final/TableroStudio.html`, porque ese archivo sale de `npm run empaquetar`, que
+reconstruye la aplicación en modo entrega y sin el andamiaje de las pruebas.
 
 ### Visor 3D de la planta (`app/mundo.ts`) — la segunda herramienta
 
@@ -102,18 +117,19 @@ TableroStudio son **dos herramientas separadas en el mismo programa**, y a prop�
 escena, ni cámara, ni estado. Un tablero se diseña y se simula; una planta se recorre y se
 consulta. Se entra con el botón **🏗️ Planta 3D**.
 
-El visor monta la cubierta del aeropuerto tal como sale del plano del proyectista: **96 UMAs**,
-**33 extractores**, y los recorridos de inyección, extracción, cañerías de agua, bandeja y bus LON.
+El visor monta la cubierta del aeropuerto tal como sale del plano del proyectista: **97 UMAs**,
+**37 extractores** —134 máquinas con **774 puntos de BMS** entre todas—, y los recorridos de
+inyección, extracción, cañerías de agua, bandeja y bus LON.
 Al pinchar una máquina se ve su **lista de puntos de control del BMS** —qué válvulas de agua fría y
 caliente tiene, qué sondas de temperatura, su estado de funcionamiento— con el controlador que la
 gobierna (un Honeywell `XL50`) y si sus señales van cableadas en el tablero. Dos vistas: general
 desde arriba, y a pie en primera persona con WASD.
 
-Y monta también **la cubierta en sí**, no solo las máquinas: **4,4 km de bordes y petos**, **1,7 km
-de barandas**, **1,3 km de muros y casetas**, **83 pilares** con su diámetro real, escaleras de
-acceso, lucernarios y estructura de acero. Todo eso estaba dibujado en el plano, debajo de las capas
-de clima. Sin ello el visor enseñaba tubos flotando sobre una losa lisa; con ello se reconoce el
-sitio al pasear.
+Y monta también **la cubierta en sí**, no solo las máquinas: **11,6 km de bordes y petos**, **4,5 km
+de barandas**, **2,4 km de muros y casetas**, **2,5 km de lucernarios**, **264 pilares** con su
+diámetro real, 1,2 km de escaleras de acceso y estructura de acero. Todo eso estaba dibujado en el
+plano, debajo de las capas de clima. Sin ello el visor enseñaba tubos flotando sobre una losa
+lisa; con ello se reconoce el sitio al pasear.
 
 **Honestidad sobre lo que se ve:** el DWG no trae **ninguna** cota Z, ni en las capas de clima ni en
 las de obra, así que las alturas de conductos, máquinas, barandas, muros y pilares son reglas de
@@ -123,7 +139,7 @@ cada pilar.
 
 #### Y sirve para trabajar, no solo para mirar
 
-Un visor bonito de 129 máquinas no vale de nada si para encontrar la tuya hay que pasear entre
+Un visor bonito de 134 máquinas no vale de nada si para encontrar la tuya hay que pasear entre
 todas. El panel izquierdo es el que convierte la maqueta en herramienta:
 
 - **Buscar** por marcado, por controlador o por lo que hace la señal. Se escribe como se escribe de
@@ -134,9 +150,9 @@ todas. El panel izquierdo es el que convierte la maqueta en herramienta:
   señales, o por si está situada en planta.
 - **Colorear** por cinco criterios: tipo de máquina, **canal del controlador** (CH5, CH6, CH8…,
   que es el color que importa para cablear, porque las de un mismo canal comparten bus), número de
-  señales, si van cableadas en el tablero, o el **estado en obra** que tú mismo has apuntado. La leyenda dice además cuántas de las 129 sitúa el
-  plano en planta: elegir «Controlador» y ver dos colores donde la leyenda enumera seis canales
-  parecería un fallo del programa, y no lo es.
+  señales, si van cableadas en el tablero, o el **estado en obra** que tú mismo has apuntado. La
+  leyenda dice además cuántas de las 134 sitúa el plano en planta: elegir «Controlador» y ver dos
+  colores donde la leyenda enumera seis canales parecería un fallo del programa, y no lo es.
 - **📏 Medir** una tirada de cable. Se marcan puntos en la cubierta y sale la recta, el **recorrido
   ortogonal** —que es por donde va la bandeja, y el que de verdad se pide—, la subida y la bajada a
   los 3,2 m de la bandeja, y los metros a pedir con un 10 % de reserva. Entre dos puntos separados
@@ -461,7 +477,7 @@ dibuja igual, con sus borneras y listo para cablear.
    balance térmico y placa de características IEC 61439), esquema en PDF/SVG con cajetín,
    rótulos de bornes y DXF de placa y esquema.
 6. **v0.6 — Más planta, más terreno**: llevarse al tablero también las máquinas que el plano
-   **no sitúa en planta** (88 de las 129 solo salen en la lista), y guardar en el proyecto de
+   **no sitúa en planta** (27 de las 134 solo salen en la lista), y guardar en el proyecto de
    dónde vino cada bornera para poder volver del tablero a su máquina en la cubierta.
    El **levantamiento** (parte de obra por máquina y tiradas medidas) ya está y se guarda solo;
    falta poder llevárselo de un ordenador a otro en un archivo, no solo en CSV.
