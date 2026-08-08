@@ -6,6 +6,27 @@
 <title>TableroStudio — Editor 3D</title>
 <style>
 	:root {
+		/*
+		 * LAS CAPAS, EN UN SOLO SITIO Y EN ORDEN.
+		 *
+		 * Estaban puestas a ojo —5, 10, 20, 30, 40, 42, 44, 46, 48, 50, 60, 70, 90— y cada
+		 * pantalla nueva escogía un hueco. Así, `#mundo` acabó en 70, por encima de TODOS los
+		 * modales (46), del diálogo bloqueante (50) y hasta del toast (60). Consecuencia
+		 * comprobada: con la Planta 3D abierta, los tres botones de «Llevar al tablero»
+		 * —incluido el de cerrar— devolvían `mundo-lienzo` en `elementFromPoint`. El puente
+		 * entre las dos herramientas era inusable, y un aviso o una confirmación tampoco se
+		 * habrían visto.
+		 *
+		 * Ahora hay cuatro niveles y cada cosa dice a cuál pertenece. La regla es simple: una
+		 * HERRAMIENTA a pantalla completa tapa el editor; un MODAL tapa a la herramienta; el
+		 * DIÁLOGO bloqueante tapa a cualquier modal; y el TOAST se ve siempre, porque avisar de
+		 * que no se pudo guardar por debajo de otra ventana no sirve de nada.
+		 */
+		--capa-herramienta: 40;   /* Inicio, Planta 3D, dossier, esquema */
+		--capa-modal: 60;         /* ayuda, ejemplos, DRC, proyecto, puente, guía del mundo */
+		--capa-dialogo: 70;       /* confirmar / pedir texto: bloquea, luego va encima */
+		--capa-toast: 80;         /* avisos: nunca tapados */
+
 		--fondo: #14171a;
 		--panel: #1c2126;
 		--panel-2: #232930;
@@ -25,7 +46,7 @@
 	   directamente en el gabinete daba por hecho que uno viene a dibujar tableros, y la mitad
 	   de las veces se viene a mirar la planta. Aquí se elige, y desde las dos se puede volver. */
 	#inicio {
-		position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column;
+		position: fixed; inset: 0; z-index: var(--capa-herramienta); display: flex; flex-direction: column;
 		align-items: center; justify-content: center; gap: 24px; padding: 30px;
 		background: radial-gradient(120% 90% at 50% 0%, #1e2a38 0%, var(--fondo) 62%);
 		overflow: auto;
@@ -171,7 +192,7 @@
 	#barra.micro .boton { padding: 5px 6px; }
 
 	/* ---- Segunda herramienta: visor 3D de la planta ---- */
-	#mundo { position: fixed; inset: 0; z-index: 70; background: #0c1015; }
+	#mundo { position: fixed; inset: 0; z-index: var(--capa-herramienta); background: #0c1015; }
 	#mundo-lienzo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 	#mundo-barra { position: absolute; top: 0; left: 0; right: 0; height: 46px; display: flex;
 		align-items: center; gap: 10px; padding: 0 12px; background: #12171cE6;
@@ -224,7 +245,7 @@
 	 * más su margen.
 	 */
 	/* La guía del visor reutiliza el aspecto del modal de ayuda del editor. */
-	#modal-guia-mundo { position: fixed; inset: 0; z-index: 44; background: #0009;
+	#modal-guia-mundo { position: fixed; inset: 0; z-index: var(--capa-modal); background: #0009;
 		display: flex; align-items: center; justify-content: center; padding: 20px; }
 	#modal-guia-mundo .caja-modal { position: relative; background: var(--panel);
 		border: 1px solid var(--borde); border-radius: 16px; padding: 26px 30px; max-width: 700px;
@@ -432,7 +453,7 @@
 	.renglon-sim.on code { color: #b6f0c2; }
 
 	/* ---- Vista previa del dossier, con su editor ---- */
-	#panel-dossier { position: fixed; inset: 0; z-index: 48; background: #0b0e12; display: flex;
+	#panel-dossier { position: fixed; inset: 0; z-index: var(--capa-herramienta); background: #0b0e12; display: flex;
 		flex-direction: column; }
 	#dos-barra { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
 		background: var(--panel); border-bottom: 1px solid var(--borde); flex: none; }
@@ -693,7 +714,7 @@
 	#bienvenida .pasos b { color: var(--acento); }
 
 	/* Modal de ayuda */
-	#modal-drc, #modal-controlador, #modal-proyecto, #modal-puente { position: fixed; inset: 0; z-index: 46; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-drc, #modal-controlador, #modal-proyecto, #modal-puente { position: fixed; inset: 0; z-index: var(--capa-modal); background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
 	#modal-drc .caja-modal, #modal-controlador .caja-modal, #modal-proyecto .caja-modal, #modal-puente .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 24px 28px; max-width: 720px; width: 100%; max-height: 82vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
 	#modal-drc .cerrar, #modal-controlador .cerrar, #modal-proyecto .cerrar, #modal-puente .cerrar { position: absolute; top: 14px; right: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px; height: 30px; border-radius: 8px; }
 	#modal-drc h2, #modal-controlador h2, #modal-proyecto h2, #modal-puente h2 { margin: 0 0 4px; font-size: 20px; }
@@ -711,7 +732,7 @@
 	#drc-detalle .marca { flex: none; font-size: 15px; line-height: 1.3; }
 	#drc-detalle .regla { display: block; color: var(--texto-suave); font-size: 11px; margin-top: 2px; letter-spacing: .03em; }
 	#drc-detalle .vacio { justify-content: center; color: var(--ok); }
-	#modal-ayuda { position: fixed; inset: 0; z-index: 40; background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-ayuda { position: fixed; inset: 0; z-index: var(--capa-modal); background: #0008; display: flex; align-items: center; justify-content: center; padding: 20px; }
 	#modal-ayuda .caja-modal { position: relative; background: var(--panel); border: 1px solid var(--borde); border-radius: 16px; padding: 26px 30px; max-width: 640px; max-height: 88vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
 	#modal-ayuda h2 { margin: 0 0 16px; font-size: 20px; }
 	#modal-ayuda h3 { font-size: 14px; margin: 14px 0 6px; }
@@ -751,7 +772,7 @@
 	body.vista-2d #escena canvas { cursor: crosshair; }
 
 	/* Biblioteca de ejemplos y su explicación (reutilizan el aspecto del modal de ayuda) */
-	#modal-ejemplos, #modal-explicacion { position: fixed; inset: 0; z-index: 42; background: #0009;
+	#modal-ejemplos, #modal-explicacion { position: fixed; inset: 0; z-index: var(--capa-modal); background: #0009;
 		display: flex; align-items: center; justify-content: center; padding: 20px; }
 	#modal-ejemplos .caja-modal, #modal-explicacion .caja-modal { position: relative; background: var(--panel);
 		border: 1px solid var(--borde); border-radius: 16px; padding: 26px 30px; max-width: 660px;
@@ -770,7 +791,7 @@
 	#modal-explicacion li { margin-bottom: 6px; }
 
 	/* Diálogo in-app (confirm/prompt propios) */
-	#modal-dialogo { position: fixed; inset: 0; z-index: 50; background: #0009; display: flex; align-items: center; justify-content: center; padding: 20px; }
+	#modal-dialogo { position: fixed; inset: 0; z-index: var(--capa-dialogo); background: #0009; display: flex; align-items: center; justify-content: center; padding: 20px; }
 	#modal-dialogo .caja-dialogo { background: var(--panel); border: 1px solid var(--borde); border-radius: 14px; padding: 22px 24px; max-width: 420px; width: 100%; box-shadow: 0 18px 60px #000a; }
 	#dialogo-msg { font-size: 14px; line-height: 1.5; margin-bottom: 14px; }
 	#dialogo-input { width: 100%; margin-bottom: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
@@ -785,7 +806,7 @@
 		font-weight: 600; white-space: nowrap; box-shadow: 0 4px 16px #0009; }
 	#tip-borne .estado { font-weight: 400; color: var(--texto-suave); }
 	/* Igual que la ayuda: el aviso flotante se lee, no se pincha. */
-	#toast { pointer-events: none; position: fixed; bottom: 54px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--panel-2); color: var(--texto); border: 1px solid var(--borde); border-left: 3px solid var(--acento); border-radius: 10px; padding: 10px 16px; font-size: 13px; box-shadow: 0 8px 30px #0008; max-width: 460px; }
+	#toast { pointer-events: none; position: fixed; bottom: 54px; left: 50%; transform: translateX(-50%); z-index: var(--capa-toast); background: var(--panel-2); color: var(--texto); border: 1px solid var(--borde); border-left: 3px solid var(--acento); border-radius: 10px; padding: 10px 16px; font-size: 13px; box-shadow: 0 8px 30px #0008; max-width: 460px; }
 	#toast.ok { border-left-color: var(--ok); }
 	#toast.error { border-left-color: var(--error); }
 
@@ -800,7 +821,7 @@
 	body:not(.modo-trabajo) #seccion-cables { display: none; }
 	/* Vista de esquema: se superpone al lienzo 3D, como el modo Visualización. */
 	/* Justo por debajo de la barra (46 px): 2 px de más dejaban asomar el lienzo 3D. */
-	#panel-esquema { position: fixed; inset: 46px 0 0 0; z-index: 30; background: #11151a; display: flex; flex-direction: column; }
+	#panel-esquema { position: fixed; inset: 46px 0 0 0; z-index: var(--capa-herramienta); background: #11151a; display: flex; flex-direction: column; }
 	#esquema-barra { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--panel); border-bottom: 1px solid var(--borde); flex: none; }
 	#esquema-barra .sep { width: 1px; height: 20px; background: var(--borde); margin: 0 4px; }
 	#esq-indicador { font-size: 12.5px; min-width: 86px; text-align: center; color: var(--texto-suave); }
