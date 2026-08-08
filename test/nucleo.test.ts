@@ -152,3 +152,26 @@ test('un tablero a la intemperie se puede declarar como tal', () => {
 	const p = crearProyecto('t', { usoPrevisto: 'intemperie' });
 	assert.equal(opcionesDe(p).usoPrevisto, 'intemperie');
 });
+
+/*
+ * Auditoría TS-P1-03. Una clave presente con valor `undefined` pisaba el valor por defecto, y el
+ * formulario escribía justo eso al dejar un campo en blanco. El balance térmico calculaba con
+ * NaN hasta que se recargaba la página —al recargar, JSON ya había omitido la clave—, así que el
+ * resultado dependía de si habías recargado.
+ */
+test('opcionesDe: una opción en undefined NO pisa el valor por defecto', () => {
+	const p = crearProyecto('sin declarar');
+	const porDefecto = opcionesDe(p).temperaturaAmbienteC;
+	assert.ok(Number.isFinite(porDefecto), 'el valor por defecto es un número');
+
+	p.opciones = { ...(p.opciones ?? {}), temperaturaAmbienteC: undefined };
+	assert.equal(opcionesDe(p).temperaturaAmbienteC, porDefecto,
+		'dejar el campo en blanco no puede convertir el ambiente en undefined');
+	assert.equal(declarado(p, 'temperaturaAmbienteC'), false,
+		'y sigue contando como NO declarado, para que la placa diga «a declarar»');
+
+	// Lo declarado sí manda, incluido bajo cero: una cubierta en invierno existe.
+	p.opciones = { ...(p.opciones ?? {}), temperaturaAmbienteC: -10 };
+	assert.equal(opcionesDe(p).temperaturaAmbienteC, -10);
+	assert.equal(declarado(p, 'temperaturaAmbienteC'), true);
+});

@@ -19,7 +19,20 @@ export function crearProyecto(nombre: string, opciones?: OpcionesProyecto): Proy
 }
 
 export function opcionesDe(proyecto: Proyecto): Required<OpcionesProyecto> {
-	return { ...OPCIONES_POR_DEFECTO, ...(proyecto.opciones ?? {}) };
+	/*
+	 * Una clave con valor `undefined` NO pisa el valor por defecto.
+	 *
+	 * `{ ...{t: 35}, ...{t: undefined} }` da `{t: undefined}`: en JavaScript una clave PRESENTE
+	 * con valor `undefined` gana igual. Como el formulario de datos del proyecto escribía
+	 * `temperaturaAmbienteC: undefined` al dejar el campo en blanco, el balance térmico calculaba
+	 * `undefined + salto` = NaN… hasta que se recargaba la página, momento en el que
+	 * `JSON.stringify` ya había omitido la clave y el valor por defecto volvía. Un cálculo que
+	 * depende de si has recargado no es un cálculo.
+	 */
+	const declaradas = Object.fromEntries(
+		Object.entries(proyecto.opciones ?? {}).filter(([, v]) => v !== undefined),
+	);
+	return { ...OPCIONES_POR_DEFECTO, ...declaradas } as Required<OpcionesProyecto>;
 }
 
 /**

@@ -4027,9 +4027,27 @@ function abrirDatosProyecto(): void {
 
 function guardarDatosProyecto(): void {
 	const texto = (id: string) => ($(id) as HTMLInputElement).value.trim() || undefined;
-	const numero = (id: string) => {
-		const v = Number(($(id) as HTMLInputElement).value);
-		return Number.isFinite(v) && v >= 0 ? v : undefined;
+	/**
+	 * Un número del formulario, con su rango propio. VACÍO ES AUSENCIA, no cero.
+	 *
+	 * Era `Number(input.value)` con un `v >= 0` común, y las dos cosas estaban mal:
+	 *
+	 *  · `Number('') === 0`, y `0 >= 0` pasa el filtro. Un campo en blanco quedaba DECLARADO como
+	 *    0. Medido sobre el ejemplo del arranque directo: dejando el ambiente en blanco, el
+	 *    balance térmico daba 7,6 °C interiores en vez de 42,6. Treinta y cinco grados de error, y
+	 *    siempre hacia el lado que tranquiliza. La placa de características, además, salía
+	 *    afirmando «0 °C» y «0 Hz» en un documento que se entrega firmado.
+	 *  · El `>= 0` común rechazaba una temperatura ambiente de −10 °C, que es perfectamente
+	 *    normal en una sala de máquinas o en una cubierta en invierno, y la convertía en ausencia.
+	 *
+	 * También se acepta la coma decimal, que es como se escribe aquí.
+	 */
+	const numero = (id: string, min: number, max: number) => {
+		const crudo = ($(id) as HTMLInputElement).value.trim().replace(',', '.');
+		if (crudo === '') return undefined;                 // en blanco = sin declarar
+		const v = Number(crudo);
+		if (!Number.isFinite(v) || v < min || v > max) return undefined;
+		return v;
 	};
 	capturar();
 	proyecto.datos = {
@@ -4047,10 +4065,12 @@ function guardarDatosProyecto(): void {
 	const montaje = ($('pr-montaje') as HTMLSelectElement).value;
 	proyecto.opciones = {
 		...(proyecto.opciones ?? {}),
-		iccPresuntaKA: numero('pr-icc') ?? 0,
-		temperaturaAmbienteC: numero('pr-ambiente'),
-		corrienteAsignadaA: numero('pr-inominal') ?? 0,
-		frecuenciaHz: numero('pr-frecuencia'),
+		// Rangos: la Icc de una instalación de baja tensión va de casi nada a 100 kA; el ambiente
+		// admite bajo cero; la frecuencia solo tiene sentido en la banda industrial.
+		iccPresuntaKA: numero('pr-icc', 0, 100) ?? 0,
+		temperaturaAmbienteC: numero('pr-ambiente', -40, 80),
+		corrienteAsignadaA: numero('pr-inominal', 0, 10000) ?? 0,
+		frecuenciaHz: numero('pr-frecuencia', 0, 400),
 		gradoIP: ($('pr-ip') as HTMLInputElement).value.trim(),
 		montajeGabinete: montaje ? (montaje as OpcionesProyecto['montajeGabinete']) : undefined,
 		regimenNeutro: ($('pr-neutro') as HTMLSelectElement).value as OpcionesProyecto['regimenNeutro'],
@@ -4408,6 +4428,12 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Hallazgos del DRC en vivo (para comprobar las reglas eléctricas). */
 		hallazgos: () => revision.hallazgos,
+		/**
+		 * Balance térmico calculado. Se expone porque es donde se nota si una opción del proyecto
+		 * llegó como número, como ausencia o como NaN: un campo en blanco daba 7,6 °C interiores
+		 * en vez de 42,6 y el veredicto salía tranquilizador sin motivo.
+		 */
+		termico: () => revision.termico,
 		/** Fuerza un recálculo completo (tras tocar el proyecto desde la prueba). */
 		recalcular: () => actualizarTodo(),
 		/** Estado de la interacción (para diagnosticar un clic que se fue por otro camino). */
