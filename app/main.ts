@@ -3325,17 +3325,57 @@ renderer.domElement.addEventListener('contextmenu', (ev) => {
 });
 
 window.addEventListener('keydown', (ev) => {
-	const activo = document.activeElement?.tagName;
-	const escribiendo = activo === 'INPUT' || activo === 'SELECT' || activo === 'TEXTAREA';
+	const foco = document.activeElement as HTMLElement | null;
+	const activo = foco?.tagName;
 	/*
 	 * Escribiendo, las teclas son para escribir: Supr borra letras y no aparatos.
+	 *
+	 * `isContentEditable` no es un extra: el texto del dossier son bloques `contenteditable`, o
+	 * sea `<div>`, no `<input>`. Mirando solo el nombre de la etiqueta, corregir un párrafo del
+	 * informe y darle a Supr para borrar una letra le abría a uno «¿Eliminar -Q1 y sus cables?»,
+	 * y Ctrl+Z deshacía un cambio del tablero en vez de lo que acababa de escribir.
 	 *
 	 * Escape es la excepción, y por eso se deja pasar. Las ventanas con campos —los datos del
 	 * proyecto, el controlador— ponen el cursor en el primer recuadro al abrirse, así que con la
 	 * regla a secas Escape no cerraba NINGUNA de ellas: escribías el nombre del cliente, pulsabas
 	 * Escape y no pasaba nada. Cerrar con Escape es lo que hace cualquier programa.
 	 */
+	const escribiendo = activo === 'INPUT' || activo === 'SELECT' || activo === 'TEXTAREA'
+		|| !!foco?.isContentEditable;
 	if (escribiendo && ev.key !== 'Escape') return;
+
+	/*
+	 * CADA HERRAMIENTA ATIENDE SUS PROPIAS TECLAS.
+	 *
+	 * La Planta 3D y la ventana de Inicio ocupan la pantalla ENTERA: con cualquiera de las dos
+	 * delante, del tablero no se ve ni un tornillo. Y sin embargo sus atajos seguían llegando.
+	 * Comprobado: con la Planta abierta, Ctrl+Z deshacía un cambio del tablero sin que se notara
+	 * nada —el aparato desaparecía detrás—, y Supr abría un «¿Eliminar -Q1 y sus cables?» sobre
+	 * el plano de la cubierta, preguntando por un aparato que no estabas mirando.
+	 *
+	 * Se sale sin tocar `preventDefault`: la Planta tiene su propio manejador de teclas (WASD,
+	 * H para los paneles) y le tienen que seguir llegando.
+	 */
+	if (!($('mundo') as HTMLElement).hidden || !($('inicio') as HTMLElement).hidden) return;
+
+	/*
+	 * Y con un diálogo bloqueante delante, mandan sus dos teclas y ninguna más.
+	 *
+	 * Estando abierto un «¿Eliminar…?», otro Supr encolaba una segunda pregunta detrás de la
+	 * primera. El propio diálogo escucha Enter y Escape, así que basta con quitarse de en medio.
+	 */
+	if (!($('modal-dialogo') as HTMLElement).hidden) return;
+
+	/*
+	 * Con una ventana abierta encima —ayuda, ejemplos, datos del proyecto, DRC, el puente con la
+	 * Planta— o con el dossier delante, la única tecla que conserva sentido es Escape, que es la
+	 * que las cierra. Supr, Ctrl+Z o Ctrl+V estarían editando el tablero de debajo a ciegas.
+	 */
+	const ventanaEncima = [...document.querySelectorAll<HTMLElement>('[id^="modal-"]')]
+		.some((el) => el.id !== 'modal-dialogo' && !el.hidden)
+		|| !($('panel-dossier') as HTMLElement).hidden;
+	if (ventanaEncima && ev.key !== 'Escape') return;
+
 	// Con el esquema o la Visualización delante, el tablero 3D NO se ve: dejar que Supr borrase
 	// un aparato o Ctrl+V pegase otro sería editar a ciegas. Solo pasan navegar y salir.
 	if (panelEsq.abierto() || visualizacion) {

@@ -50,7 +50,18 @@ export function abrirDialogo(mensaje: string, opciones: {
 	($('dialogo-ok') as HTMLButtonElement).textContent = opciones.ok ?? 'Aceptar';
 	modal.classList.toggle('peligro', !!opciones.peligro);
 	modal.hidden = false;
-	if (opciones.input) setTimeout(() => { input.focus(); input.select(); }, 0);
+	/*
+	 * Al abrirse, el foco entra en el diálogo. Siempre, no solo cuando hay algo que escribir.
+	 *
+	 * Sus teclas —Enter acepta, Escape cancela— cuelgan del propio `#modal-dialogo`, así que solo
+	 * llegan si el foco está DENTRO. Una confirmación sin campo no enfocaba nada, y el foco se
+	 * quedaba donde estuviese: resultado, un «¿Eliminar -Q1 y sus cables?» que no se cerraba con
+	 * Escape por mucho que se pulsara, y había que ir a buscar el ratón. Con el botón enfocado las
+	 * dos teclas funcionan y además se ve de un vistazo cuál es la respuesta por omisión.
+	 */
+	setTimeout(() => {
+		if (opciones.input) { input.focus(); input.select(); } else ($('dialogo-ok') as HTMLButtonElement).focus();
+	}, 0);
 
 	return new Promise((resolve) => {
 		cerrarDialogo = (valor) => {
