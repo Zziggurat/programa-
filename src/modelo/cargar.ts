@@ -117,7 +117,7 @@ export function cargarProyecto(json: string): ResultadoCarga {
 		formato: 'tablero-studio',
 		version: VERSION_FORMATO,
 		nombre: texto(bruto.nombre)?.trim() || 'Tablero sin nombre',
-		datos: esObjeto(bruto.datos) ? (bruto.datos as Proyecto['datos']) : undefined,
+		datos: leerDatos(bruto.datos),
 		hojas,
 		dispositivos,
 		conductores,
@@ -427,6 +427,37 @@ function leerConductores(bruto: unknown, idsValidos: Set<string>, arreglos: stri
 	}
 	if (huerfanos) arreglos.push(`${huerfanos} cable(s) sueltos sin aparato en un extremo`);
 	return salida;
+}
+
+/**
+ * Cliente, obra, quién dibujó, revisión y fecha: lo que va en el CAJETÍN DEL PLANO y en la
+ * portada del dossier.
+ *
+ * Son textos, y como textos se dibujan: el cajetín los mide para encajarlos en su casilla. Si en
+ * el archivo viniera `cliente: {}` o `revision: []`, lo que llegaría al PDF no sería una cadena y
+ * la exportación se rompería, o peor, saldría un «[object Object]» impreso en un plano que se
+ * firma y se manda a obra.
+ *
+ * Se recortan además a un largo razonable: el cajetín encoge la letra para que quepa, pero con
+ * mil caracteres acabaría cortando casi todo y sería más honesto no llegar ahí.
+ */
+function leerDatos(bruto: unknown): Proyecto['datos'] {
+	if (!esObjeto(bruto)) return undefined;
+	const campo = (v: unknown, max: number): string | undefined => {
+		const t = texto(v)?.trim();
+		return t ? t.slice(0, max) : undefined;
+	};
+	const datos: Proyecto['datos'] = {
+		cliente: campo(bruto.cliente, 160),
+		obra: campo(bruto.obra, 160),
+		proyectista: campo(bruto.proyectista, 120),
+		fabricante: campo(bruto.fabricante, 120),
+		revision: campo(bruto.revision, 12),
+		// La fecha va en ISO: si no lo es, no se inventa una, se deja sin fecha.
+		fecha: /^\d{4}-\d{2}-\d{2}$/.test(texto(bruto.fecha) ?? '') ? (bruto.fecha as string) : undefined,
+		notas: campo(bruto.notas, 4000),
+	};
+	return Object.values(datos).some((v) => v !== undefined) ? datos : undefined;
 }
 
 /**

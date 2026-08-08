@@ -372,3 +372,27 @@ test('una placa de tamaño imposible no se abre', () => {
 	// Un número enorme manda la cámara al infinito y deja la pantalla en negro: mejor decirlo.
     assert.throws(() => cargarProyecto(JSON.stringify(p)), ArchivoInvalido);
 });
+
+/*
+ * Cliente, obra, revisión y fecha van al CAJETÍN DEL PLANO, que los mide para encajarlos en su
+ * casilla. Si el archivo trae `cliente: {}`, lo que llega al PDF no es una cadena: o revienta la
+ * exportación, o —peor— sale un «[object Object]» impreso en un plano que se firma y va a obra.
+ */
+test('los datos del cajetín que no son texto no llegan al plano', () => {
+	const p = conEstructura();
+	p.datos = { cliente: {}, obra: 42, proyectista: null, revision: [], fecha: 'ayer' };
+	const { proyecto } = cargarProyecto(JSON.stringify(p));
+	for (const [k, v] of Object.entries(proyecto.datos ?? {})) {
+		assert.equal(typeof v === 'string' || v === undefined, true, `«${k}» salió como ${typeof v}`);
+	}
+	assert.equal(proyecto.datos?.fecha, undefined, 'una fecha que no es ISO no se inventa');
+});
+
+test('los datos buenos del cajetín se respetan', () => {
+	const p = conEstructura();
+	p.datos = { cliente: 'Nuevo Pudahuel', obra: 'Terminal Internacional', revision: 'B', fecha: '2026-08-08' };
+	assert.deepEqual(cargarProyecto(JSON.stringify(p)).proyecto.datos, {
+		cliente: 'Nuevo Pudahuel', obra: 'Terminal Internacional', proyectista: undefined,
+		fabricante: undefined, revision: 'B', fecha: '2026-08-08', notas: undefined,
+	});
+});
