@@ -695,7 +695,8 @@ function pintarCatalogo(): void {
 			+ (p.poderCorteKA !== undefined || p.disipacionW !== undefined
 				? '\n(~ = valor corriente de la familia; corrígelo con la hoja de datos)' : '')
 			+ (p.nota ? `\n${p.nota}` : '');
-		btn.innerHTML = `<span class="chip-color" style="background:${p.color}"></span><span class="nombre">${p.nombre}</span><span class="mas">＋</span>`;
+		btn.innerHTML = `<span class="chip-color" style="background:${escaparHtml(p.color)}"></span>`
+			+ `<span class="nombre">${escaparHtml(p.nombre)}</span><span class="mas">＋</span>`;
 		btn.onclick = () => anadirDesdeCatalogo(p.id);
 		cont.appendChild(btn);
 	}
@@ -1008,7 +1009,8 @@ function pintarPaneles(): void {
 	for (const d of internos) {
 		const li = document.createElement('li');
 		li.className = d.id === idDispositivoSel() ? 'seleccionado' : '';
-		li.innerHTML = `<span class="des">${d.designacion ?? d.id}</span><span class="desc">${d.descripcion ?? ''}</span>`;
+		li.innerHTML = `<span class="des">${escaparHtml(d.designacion ?? d.id)}</span>`
+			+ `<span class="desc">${escaparHtml(d.descripcion ?? '')}</span>`;
 		li.onclick = () => seleccionar(d.id);
 		lista.appendChild(li);
 	}
@@ -1108,9 +1110,9 @@ function pintarListaCables(): void {
 		const estado = c.trazado?.length ? `a mano (${c.trazado.length})` : 'directo';
 		const colorCss = c.color ? hexColor(COLOR_CABLE[c.color] ?? 0x888888) : '#888';
 		li.innerHTML = `<span class="via" style="background:${colorCss}"></span>
-			<span class="num">${c.numero ?? '—'}</span>
-			<span class="ruta">${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}</span>
-			<span class="estado">${estado}</span>`;
+			<span class="num">${escaparHtml(String(c.numero ?? '—'))}</span>
+			<span class="ruta">${escaparHtml(`${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}`)}</span>
+			<span class="estado">${escaparHtml(estado)}</span>`;
 		li.onmouseenter = () => resaltarHoverCable(c.id);
 		li.onmouseleave = () => resaltarHoverCable(undefined);
 		li.onclick = () => { aplicarSeleccion({ tipo: 'cable', id: c.id }); enfocarCamaraEnCable(c.id); };
@@ -1216,11 +1218,11 @@ function pintarSeleccion(): void {
 		<h2>Conectar cable nuevo</h2>
 		<div class="form-cable">
 			<select id="cable-borne-origen" title="Borne de este aparato">
-				${d.bornes.map((b) => `<option value="${b.id}">${d.designacion ?? d.id}:${b.id}${b.tipo && b.tipo !== 'otro' ? ` · ${b.tipo}` : ''}</option>`).join('')}
+				${d.bornes.map((b) => `<option value="${escaparHtml(b.id)}">${escaparHtml(`${d.designacion ?? d.id}:${b.id}`)}${b.tipo && b.tipo !== 'otro' ? ` · ${escaparHtml(b.tipo)}` : ''}</option>`).join('')}
 			</select>
 			<select id="cable-destino" title="Aparato de destino">
 				<option value="">— destino —</option>
-				${otrosAparatos.map((o) => `<option value="${o.id}">${o.designacion ?? o.id} ${o.descripcion ? `· ${o.descripcion.slice(0, 22)}` : ''}</option>`).join('')}
+				${otrosAparatos.map((o) => `<option value="${escaparHtml(o.id)}">${escaparHtml(o.designacion ?? o.id)} ${o.descripcion ? `· ${escaparHtml(o.descripcion.slice(0, 22))}` : ''}</option>`).join('')}
 			</select>
 			<select id="cable-borne-destino" title="Borne del destino" disabled><option>borne…</option></select>
 			<button class="boton ${eligiendoDestino ? 'primario' : ''} ancho-total" id="btn-elegir-destino" title="Elige el aparato de destino haciendo clic sobre él en el tablero 3D">${eligiendoDestino ? '👆 Haz clic en el aparato de destino…' : '🎯 Elegir destino en el tablero'}</button>
@@ -1315,11 +1317,11 @@ function pintarSeleccion(): void {
 
 	panel.style.display = 'block';
 	panel.innerHTML = `
-		<h1>${d.designacion ?? d.id}</h1>
-		<div class="sub">${esImagen ? '🖼️ Imagen de referencia' : (d.descripcion ?? '')}
+		<h1>${escaparHtml(d.designacion ?? d.id)}</h1>
+		<div class="sub">${esImagen ? '🖼️ Imagen de referencia' : escaparHtml(d.descripcion ?? '')}
 			<span style="opacity:.7">· ${esEditor ? '🔧 editor' : '🔌 trabajo'}</span></div>
 		<dl>
-			${esImagen ? '' : `<dt>Referencia</dt><dd>${d.fabricante ?? '—'} ${d.referencia ?? ''}</dd>`}
+			${esImagen ? '' : `<dt>Referencia</dt><dd>${escaparHtml(d.fabricante ?? '—')} ${escaparHtml(d.referencia ?? '')}</dd>`}
 			${col ? `<dt>Posición en placa</dt><dd>x ${Math.round(col.x)} mm · y ${Math.round(col.y)} mm · ${col.ancho}×${col.alto} mm</dd>` : ''}
 			${d.tensionNominal !== undefined ? `<dt>Tensión</dt><dd><span class="chip-volt" style="background:${hexColor(colorVoltaje(d.tensionNominal))}">${d.tensionNominal} V</span></dd>` : ''}
 			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${revision.posicionesEsquema.get(d.id) ?? '—'}</dd>`}
@@ -1365,7 +1367,7 @@ function pintarSeleccion(): void {
 			selBorneDestino.disabled = !destino;
 			btnConectar.disabled = !destino;
 			selBorneDestino.innerHTML = destino
-				? destino.bornes.map((b) => `<option value="${b.id}">${b.id}${b.tipo && b.tipo !== 'otro' ? ` · ${b.tipo}` : ''}</option>`).join('')
+				? destino.bornes.map((b) => `<option value="${escaparHtml(b.id)}">${escaparHtml(b.id)}${b.tipo && b.tipo !== 'otro' ? ` · ${escaparHtml(b.tipo)}` : ''}</option>`).join('')
 				: '<option>borne…</option>';
 		};
 		btnConectar.onclick = () => {
@@ -1693,7 +1695,7 @@ function pintarPanelCable(id: string): void {
 	panel.style.display = 'block';
 	panel.innerHTML = `
 		<h1>Cable ${c.numero ?? ''}</h1>
-		<div class="sub">${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}</div>
+		<div class="sub">${escaparHtml(`${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}`)}</div>
 		<dl>
 			<dt>Recorrido</dt><dd>${manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : '↳ directo (en L, automático)'}</dd>
 		</dl>
@@ -2248,7 +2250,8 @@ function mostrarTipBorne(b: RefBorne | undefined, ev?: MouseEvent): void {
 		(c.de.dispositivoId === b.dispositivoId && c.de.borneId === b.borneId)
 		|| (c.a.dispositivoId === b.dispositivoId && c.a.borneId === b.borneId)).length;
 	const estado = n === 0 ? 'libre' : `${n} ${n === 1 ? 'cable' : 'cables'}`;
-	tip.innerHTML = `${d?.designacion ?? b.dispositivoId}:${b.borneId} <span class="estado">· ${estado}</span>`;
+	tip.innerHTML = `${escaparHtml(`${d?.designacion ?? b.dispositivoId}:${b.borneId}`)} `
+		+ `<span class="estado">· ${escaparHtml(estado)}</span>`;
 	tip.style.left = `${ev.clientX + 14}px`;
 	tip.style.top = `${ev.clientY - 30}px`;
 	tip.hidden = false;

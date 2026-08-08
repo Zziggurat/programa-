@@ -20,9 +20,21 @@ const $ = (id: string): HTMLElement => document.getElementById(id)!;
  *
  * Vive aquí porque la usan todos los paneles que pintan HTML —el editor, el dossier, el panel de
  * la simulación— y tener tres copias iguales era pedir que un día se arreglara solo una.
+ *
+ * ESCAPA TAMBIÉN LAS COMILLAS, y no es un detalle: la mayoría de las veces esto se usa DENTRO de
+ * un atributo —`title="${esc(x)}"`, `value="${esc(x)}"`— y ahí una comilla no rompe el texto, lo
+ * cierra. Con `"` se sale del atributo y con ` onerror="…"` se entra en otro. Antes solo se
+ * escapaban `& < >`, así que una nota de obra con una comilla ya truncaba el `title`, y una
+ * preparada a mala fe podía añadir un manejador de eventos. El proyecto y el parte de obra se
+ * importan de archivos y de otros equipos: ese texto no es de fiar por definición.
  */
 export function escaparHtml(t: string): string {
-	return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	return t
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
 }
 
 export let cerrarDialogo: ((valor: string | null) => void) | undefined;

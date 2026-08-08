@@ -323,9 +323,11 @@ function pintarLista(): void {
 		// queda por hacer, que es la pregunta con la que uno sube a la cubierta.
 		const n = levantamiento.notas[e.tag];
 		const est = ESTADOS_OBRA.find((x) => x.estado === (n?.estado ?? 'pendiente'))!;
+		// La nota la escribe el usuario en la azotea y viaja en el parte de obra, así que se
+		// escapa ENTERA, tooltip incluido: iba cruda al `title` y una comilla lo truncaba.
 		const punto = n
-			? `<span class="punto-obra" style="background:${hex(est.color)}" title="${esc(est.nombre)}`
-				+ `${n.nota ? `: ${n.nota}` : ''}"></span>`
+			? `<span class="punto-obra" style="background:${hex(est.color)}" `
+				+ `title="${esc(est.nombre + (n.nota ? `: ${n.nota}` : ''))}"></span>`
 			: '<span class="punto-obra vacio"></span>';
 		return `<label class="fila-eq${sel}" data-tag="${esc(e.tag)}" title="${esc(e.controlador ?? 'sin controlador en el plano')}">`
 			+ `<input type="checkbox"${marcada}>${punto}<span class="nom">${nombre}</span>`
