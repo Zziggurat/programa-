@@ -1,27 +1,75 @@
 ========================================================================
-  TableroStudio — Editor 3D de tableros eléctricos
-  Cómo abrir el programa
+  TableroStudio
+  Diseño de tableros eléctricos + recorrido de la cubierta en 3D
 ========================================================================
 
-OPCIÓN 1 — LA MÁS FÁCIL (no hay que instalar nada)
+
+QUÉ ES ESTO
 ------------------------------------------------------------------------
-1. Abre el archivo  TableroStudio.html  con doble clic.
-2. Se abre en tu navegador (Chrome, Edge, Firefox…). ¡Listo!
+Un solo archivo que hace dos trabajos:
 
-Funciona sin internet y sin instalar nada. Puedes copiarlo a cualquier PC
-(Windows, Mac o Linux) y usarlo igual. Todo lo que hagas se guarda solo en
-el navegador; para llevarte un proyecto usa el botón «Guardar» (crea un
-archivo .tablero.json que luego abres con «Abrir…»).
+  · TABLERO. Armas el tablero en 3D —aparatos sobre rieles y canaletas—,
+    lo cableas borne a borne, y el programa te lo revisa mientras
+    trabajas: secciones, caída de tensión, poder de corte contra la Icc,
+    selectividad entre protecciones. Luego lo energizas y lo ves
+    funcionar: pulsas un pulsador y el motor arranca. De ahí salen el
+    esquema, el dossier en PDF, los rótulos de bornes y el DXF.
 
-Consejo (Windows): si quieres tenerlo a mano, clic derecho sobre
-TableroStudio.html → «Enviar a» → «Escritorio (crear acceso directo)».
+  · TERRENO. La cubierta del aeropuerto sacada del plano del
+    proyectista, en 3D y a escala: las máquinas de clima con su marcado,
+    los conductos, las cañerías y la bandeja. Se recorre a pie o desde
+    arriba, se consulta qué señales tiene cada máquina, se mide cuánto
+    cable pedir y se lleva el parte de obra.
+
+Las dos están separadas a propósito y se pasa de una a otra sin perder
+el trabajo.
 
 
-OPCIÓN 2 — INSTALARLO COMO APLICACIÓN DE ESCRITORIO (Windows/Mac/Linux)
+CÓMO SE ABRE
 ------------------------------------------------------------------------
-Si prefieres un programa con su propia ventana e icono, hay un instalador
-de escritorio (hecho con Electron). Para generarlo hace falta un PC con
-Node.js instalado e internet la primera vez:
+Doble clic en  TableroStudio.html.  Se abre en el navegador y ya está.
+
+No hay que instalar nada ni hace falta internet. Se puede copiar a
+cualquier PC —Windows, Mac o Linux— y usar igual.
+
+USA CHROME O EDGE. Todo el 3D se dibuja en el navegador y hace falta la
+aceleración por hardware activada. Si tu equipo no puede, el programa te
+lo dice al abrirlo en vez de quedarse en blanco.
+
+Consejo (Windows): clic derecho sobre TableroStudio.html → «Enviar a» →
+«Escritorio (crear acceso directo)» y lo tienes a mano.
+
+
+LOS PRIMEROS CINCO MINUTOS
+------------------------------------------------------------------------
+1. Al abrirlo eliges: «Trabajo de tableros» o «Ir a terreno».
+2. Pulsa «Tableros de ejemplo» y abre el arranque estrella-triángulo.
+   Viene explicado: qué hace y por qué está cableado así.
+3. Pulsa «⚡ Energizar» y haz clic en el pulsador de MARCHA. El motor
+   arranca y sigue girando al soltar: eso es el enclavamiento.
+4. Pulsa «📄 Ver dossier» para ver la documentación que sale sola, y
+   pon ahí el nombre de tu empresa.
+5. Cuando quieras saber cómo se hace algo: «❓ Aprender» → «Guía
+   rápida». Está por apartados, en el orden en que se trabaja.
+
+
+DÓNDE SE GUARDA TU TRABAJO
+------------------------------------------------------------------------
+El tablero se va guardando SOLO en este navegador y sigue ahí mañana
+aunque cierres. El punto de la barra de arriba te dice cómo va.
+
+Pero eso es en ESTE navegador y en ESTE equipo. Para llevarte un
+proyecto —mandarlo por correo, guardarlo en el pendrive o subirlo al
+servidor— usa «📁 Archivo» → «Guardar proyecto»: baja un archivo
+.tablero.json que luego abres con «Abrir proyecto…». Hazlo al terminar
+el día.
+
+
+INSTALARLO COMO APLICACIÓN DE ESCRITORIO (opcional)
+------------------------------------------------------------------------
+Si prefieres un programa con su propia ventana e icono, hay un
+instalador de escritorio (Electron). Para generarlo hace falta un PC con
+Node.js e internet la primera vez:
 
    1) Instala Node.js LTS:  https://nodejs.org/es
    2) En la carpeta del proyecto:
@@ -36,10 +84,12 @@ Node.js instalado e internet la primera vez:
    4) El instalador queda en  desktop/instaladores/
 
 También se generan solos en la nube: al subir una etiqueta «v1.0.0» al
-repositorio, el flujo de GitHub Actions (.github/workflows/instaladores.yml)
-construye los instaladores de Windows, macOS y Linux y los deja como
-artefactos descargables.
+repositorio, el flujo de GitHub Actions
+(.github/workflows/instaladores.yml) construye los instaladores de
+Windows, macOS y Linux y los deja como artefactos descargables.
+
 
 ========================================================================
-Para el uso del programa, pulsa el botón «❓ Ayuda» dentro de la app.
+Toda la ayuda de uso está DENTRO del programa:
+«❓ Aprender» → «Guía rápida», y dentro de la Planta 3D, «❓ Guía».
 ========================================================================

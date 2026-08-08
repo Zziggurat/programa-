@@ -722,6 +722,16 @@
 	#modal-ayuda .guia { margin: 4px 0; padding-left: 18px; line-height: 1.7; color: var(--texto); }
 	#modal-ayuda .guia li { margin-bottom: 4px; }
 	#modal-ayuda .pie { color: var(--texto-suave); font-size: 12.5px; margin-top: 14px; border-top: 1px solid var(--borde); padding-top: 12px; }
+	/* La guía se leía como un muro de texto: ahora va por apartados, con un índice para saltar
+	   al que hace falta. Los títulos se pegan arriba al desplazar para no perder dónde estás. */
+	#modal-ayuda .guia-camino { color: var(--texto-suave); font-size: 12.5px; margin: 14px 0 10px; }
+	#modal-ayuda .guia-indice { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+	#modal-ayuda .guia-indice a { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 999px; padding: 4px 11px; font-size: 12px; color: var(--texto-suave); text-decoration: none; }
+	#modal-ayuda .guia-indice a:hover { color: var(--texto); border-color: var(--acento); }
+	#modal-ayuda h3[id] { position: sticky; top: -18px; background: var(--panel); padding: 8px 0 4px; margin-top: 18px; border-bottom: 1px solid var(--borde); font-size: 15px; z-index: 1; }
+	#modal-ayuda h3[id] small { color: var(--texto-suave); font-weight: normal; }
+	#modal-ayuda .guia-atajos { list-style: none; padding-left: 0; }
+	#modal-ayuda .guia-atajos li { color: var(--texto-suave); }
 
 	/* Modo Visualización: se ve el tablero como quedaría montado, sin nada que estorbe */
 	body.modo-visualizacion #panel-izq,
@@ -1334,9 +1344,10 @@
 			<h2>La cubierta en 3D: para qué sirve</h2>
 			<div id="texto-guia-mundo">
 				<p><b>Esta vista es el TERRENO; la otra herramienta es el TABLERO.</b> Aquí está el
-				plano de la cubierta convertido en 3D: las 129 máquinas de clima con su marcado, los
-				conductos, las cañerías y la bandeja. Se usa para tres cosas, y las tres acaban en el
-				editor de tableros.</p>
+				plano de la cubierta convertido en 3D: las <span data-guia="equipos">129</span> máquinas
+				de clima con su marcado, los conductos, las cañerías y la bandeja, y la terminal entera
+				sobre la que están —peto, barandas, muros y pilares— para poder ubicarse. Se usa para
+				tres cosas, y las tres acaban en el editor de tableros.</p>
 
 				<h3>1 · Saber qué gobierna cada tablero</h3>
 				<p>Pincha una máquina —o búscala por su marcado— y verás su <b>lista de puntos de
@@ -1404,7 +1415,20 @@
 			<div><h3>🔧 Modo Editor</h3><p>Para <b>armar</b> el tablero: añadir aparatos, moverlos, y ajustar la caja, la placa, los rieles y las canaletas. Aquí nada se cablea por accidente.</p></div>
 			<div><h3>🔌 Modo Trabajo</h3><p>Para <b>cablear y revisar</b>. La estructura queda bloqueada: los aparatos no se mueven sin querer.</p></div>
 		</div>
-		<h3>Cómo se hace cada cosa</h3>
+		<p class="guia-camino"><b>El camino de un trabajo, de principio a fin:</b>
+		armar → cablear → revisar → probar → entregar. Cada paso tiene su apartado aquí abajo.</p>
+		<nav class="guia-indice" aria-label="Apartados de la guía">
+			<a href="#g-armar">1 · Armar el tablero</a>
+			<a href="#g-cablear">2 · Cablear</a>
+			<a href="#g-revisar">3 · Revisar que esté bien</a>
+			<a href="#g-probar">4 · Probarlo funcionando</a>
+			<a href="#g-entregar">5 · Entregar al cliente</a>
+			<a href="#g-guardar">6 · Guardar el trabajo</a>
+			<a href="#g-planta">7 · Planta 3D (terreno)</a>
+			<a href="#g-atajos">8 · Atajos de teclado</a>
+		</nav>
+
+		<h3 id="g-armar">1 · Armar el tablero <small>(modo 🔧 Editor)</small></h3>
 		<ul class="guia">
 			<li><b>Añadir un aparato:</b> clic en el catálogo de la izquierda. Sale <b>pegado al ratón</b>:
 			llévalo donde lo quieras —se pega solo al riel más cercano, y se pone rojo si se encima con
@@ -1414,22 +1438,47 @@
 			placa: entran por un prensaestopas del borde inferior. <b>Sin acometida cableada, <i>Energizar</i> no
 			enciende nada</b>, por muy bien montado que esté todo lo demás.</li>
 			<li><b>Mover un aparato:</b> arrástralo (se pega solo al riel más cercano).</li>
+			<li><b>Varios aparatos a la vez:</b> <kbd>Shift</kbd>+clic para añadirlos a la selección; luego se mueven, alinean y borran en bloque. <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd> copia y pega, <kbd>Ctrl</kbd>+<kbd>D</kbd> duplica.</li>
+			<li><b>Canaletas y rieles:</b> selecciónalos y arrástralos, o tira de las esferas de los extremos para alargarlos.</li>
+			<li><b>Ver medidas:</b> marca <i>Ver tamaños</i>; las cotas de colores muestran los cm y puedes hacer clic para cambiarlas.</li>
 			<li><b>Ver la caja en 2D:</b> botón <i>📏 2D</i> — el alzado de frente, a escala y sin perspectiva,
 			como en un plano. Se puede cablear igual; solo se quita el giro de la cámara.</li>
-			<li><b>Cablear:</b> en modo Trabajo, pincha un borne (punto naranja) y <b>arrastra hasta el
+			<li><b>Ver cómo quedará de verdad:</b> botón <i>👁️ Ver</i> — modo Visualización: la puerta
+			abierta, sin transparencias ni ayudas de montaje, como se verá el tablero terminado. Es para
+			mirar y para enseñárselo a alguien; ahí no se edita nada.</li>
+			<li><b>Corregir los datos de un aparato:</b> selecciónalo en modo Editor y edita su ficha en el panel derecho: marcado, referencia, In, polos, medidas, <b>poder de corte</b> y <b>disipación</b>. Lo que escribas ahí es lo que sale en el dossier del cliente.</li>
+			<li><b>Controladores reales:</b> busca en el catálogo por marca o por modelo (Honeywell, Siemens, Schneider, JCI) y quedan colocados con su huella y sus borneras de verdad, listos para cablear terminal a terminal.</li>
+			<li><b>Un controlador que no está:</b> botón <i>🧩 Controlador a medida</i> — copia de la hoja del fabricante sus medidas y los terminales de cada borde (puedes abreviar <code>UI1-8</code>) y el programa lo dibuja en 3D.</li>
+			<li><b>Imagen de referencia:</b> botón <i>🖼️ Imagen</i>, marca sus puntos y cablea sobre la foto.</li>
+		</ul>
+
+		<h3 id="g-cablear">2 · Cablear <small>(modo 🔌 Trabajo)</small></h3>
+		<ul class="guia">
+			<li><b>Cablear:</b> pincha un borne (punto naranja) y <b>arrastra hasta el
 			otro</b> — el cable va saliendo contigo y se conecta al soltar. También vale a dos clics, que
 			además deja marcar <b>codos</b> por el camino con cada clic en un punto libre. Y si el aparato
 			es muy pequeño para acertar, tienes el formulario del panel derecho.</li>
 			<li><b>Ordenar un cable:</b> <b>doble clic</b> sobre él (botón izquierdo o derecho) crea una <b>unión</b>; arrástrala con el clic izquierdo para llevar el cable por donde quieras. Otro doble clic sobre la unión la quita.</li>
-			<li><b>Ver el esquema:</b> botón <i>📐 Esquema</i> — el plano de mando y potencia, con su numeración de hilos, listo para PDF.</li>
-			<li><b>Revisar errores:</b> clic en el indicador del DRC (arriba) para ver el detalle y saltar al aparato o cable que lo provoca.</li>
-			<li><b>Varios aparatos a la vez:</b> <kbd>Shift</kbd>+clic para añadirlos a la selección; luego se mueven, alinean y borran en bloque. <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd> copia y pega, <kbd>Ctrl</kbd>+<kbd>D</kbd> duplica.</li>
-			<li><b>Ver medidas:</b> marca <i>Ver tamaños</i>; las cotas de colores muestran los cm y puedes hacer clic para cambiarlas.</li>
-			<li><b>Canaletas y rieles:</b> selecciónalos y arrástralos, o tira de las esferas de los extremos para alargarlos.</li>
-			<li><b>Controladores reales:</b> busca en el catálogo por marca o por modelo (Honeywell, Siemens, Schneider, JCI) y quedan colocados con su huella y sus borneras de verdad, listos para cablear terminal a terminal.</li>
-			<li><b>Un controlador que no está:</b> botón <i>🧩 Controlador a medida</i> — copia de la hoja del fabricante sus medidas y los terminales de cada borde (puedes abreviar <code>UI1-8</code>) y el programa lo dibuja en 3D.</li>
-			<li><b>Imagen de referencia:</b> botón <i>🖼️ Imagen</i>, marca sus puntos y cablea sobre la foto.</li>
-			<li><b>🏗️ Planta 3D (la otra herramienta):</b> botón <i>🏗️ Planta 3D</i>. Es un programa aparte dentro del mismo: la cubierta del aeropuerto con sus <b>96 UMAs</b> y sus 33 extractores, los conductos de inyección y extracción, las cañerías de agua, la bandeja y el bus LON. Pincha una máquina y verás <b>su lista de puntos de control del BMS</b> con el controlador que la gobierna. Dos vistas: general desde arriba, y a pie con <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>. Ojo: las alturas son de proyecto, no del plano — el visor te lo recuerda.</li>
+			<li><b>No sé cómo se conecta este aparato:</b> selecciónalo y mira <i>Cómo se conecta</i> en el
+			panel derecho: dice para qué sirve cada borne y cuál va con cuál.</li>
+			<li><b>Numeración de hilos:</b> se pone sola y sigue el potencial, así que el mismo número
+			aparece en los dos extremos de una conexión aunque pase por varios aparatos. Es la que sale
+			en el esquema, en los rótulos y en la lista de conductores.</li>
+		</ul>
+
+		<h3 id="g-revisar">3 · Revisar que esté bien</h3>
+		<ul class="guia">
+			<li><b>El semáforo DRC (arriba):</b> revisa el tablero en vivo — verde = todo bien,
+			naranja = avisos, rojo = errores. Clic para ver el detalle y <b>saltar al aparato o cable</b>
+			que lo provoca. Comprueba secciones, caída de tensión, poder de corte contra la Icc,
+			selectividad entre protecciones y aparatos sin colocar, entre otras cosas.</li>
+			<li><b>Datos del proyecto:</b> <i>Archivo → Datos del proyecto</i> — cliente, obra, proyectista y revisión (van al cajetín del esquema y a la portada del dossier), más la <b>Icc presunta</b>, la temperatura ambiente y el montaje del armario, de los que dependen la verificación del poder de corte y el balance térmico.</li>
+			<li><b>Balance térmico:</b> el panel derecho estima la temperatura interior del armario (IEC 60890) y dice si necesita rejilla, ventilador o climatizador antes de que lo pidas.</li>
+			<li><b>Ver el esquema:</b> botón <i>📐 Esquema</i> — el plano de mando y potencia, con su numeración de hilos, repartido en hojas y con su cajetín.</li>
+		</ul>
+
+		<h3 id="g-probar">4 · Probarlo funcionando</h3>
+		<ul class="guia">
 			<li><b>⚡ Dar energía y ver el tablero funcionar:</b> botón <i>⚡ Energizar</i>. El tablero se
 			pone en tensión: los cables con corriente se <b>iluminan</b>, y haciendo clic sobre los
 			aparatos los accionas — un <b>pulsador</b> se pulsa, un <b>sensor</b> o una <b>boya</b> se
@@ -1454,19 +1503,94 @@
 			<li><b>⏱️ Acelerar el reloj:</b> con el tablero energizado, el selector <i>Reloj</i> del panel
 			derecho corre la simulación a ×5 o ×20. Un retardo de 8 s se prueba en menos de un segundo,
 			y lo que se ve es exactamente lo mismo.</li>
-			<li><b>📋 Parte de obra en la cubierta:</b> dentro de la <i>Planta 3D</i>, cada máquina tiene su
-			estado (pendiente, en curso, montado, probado, con problema) y su nota de lo que te has
-			encontrado. Se guarda solo y sigue ahí mañana; colorea el 3D por <i>Estado en obra</i> para
-			ver de un golpe lo que queda, y llévatelo en CSV.</li>
-			<li><b>📏 Tiradas y cable a pedir:</b> midiendo en la cubierta, cada tirada se <b>guarda</b> con su
+		</ul>
+
+		<h3 id="g-entregar">5 · Entregar al cliente</h3>
+		<ul class="guia">
+			<li><b>📄 El dossier en PDF:</b> botón <i>📄 Ver dossier</i>. Se ve el documento entero antes de
+			bajarlo: portada, ficha, disposición de la placa, lista de materiales, índice de aparatos,
+			lista de conductores, referencias cruzadas, balance térmico, verificación y placa de
+			características.</li>
+			<li><b>Que salga a nombre de tu empresa:</b> en ese mismo panel, a la derecha, pon el
+			<b>nombre</b>, el <b>contacto</b> y el <b>logo</b>. Con eso el documento deja de decir
+			«TableroStudio» en la portada, la cabecera y el pie: lo firma quien lo entrega.</li>
+			<li><b>Cómo se ve y qué lleva:</b> elige el <b>color</b> corporativo y el <b>papel</b>
+			(A4 o Carta), quita los apartados que no quieras y <b>súbelos o bájalos</b> con las flechas
+			para cambiar el orden. Los que llevan candado no se quitan: son los que hacen defendible el
+			documento.</li>
+			<li><b>Meter cosas tuyas:</b> con los botones de abajo añades una <b>carta de presentación</b>,
+			una <b>foto de la obra</b>, la <b>foto del 3D</b> o el <b>alzado 2D</b> del tablero. Van donde
+			los pongas y se guardan con el proyecto.</li>
+			<li><b>🏷️ Rótulos de bornes:</b> <i>Entregar → Rótulos de bornes (PDF)</i> — las tiras a tamaño
+			real para imprimir, recortar y meter en el portaetiquetas de la bornera.</li>
+			<li><b>📐 Llevarlo a CAD:</b> <i>Entregar → Placa de montaje (DXF)</i> da la placa con sus
+			taladros y sus aparatos acotados, y <i>Esquema (DXF)</i> la hoja de esquema abierta. Se abren
+			en AutoCAD, LibreCAD o QCAD.</li>
+			<li><b>📋 Dossier en HTML:</b> <i>Entregar → Dossier HTML</i> — el mismo contenido como página
+			web, para mandarlo por correo sin adjuntar un PDF pesado.</li>
+		</ul>
+
+		<h3 id="g-guardar">6 · Guardar el trabajo</h3>
+		<ul class="guia">
+			<li><b>Se guarda solo:</b> el tablero se va guardando en este navegador según trabajas, y
+			sigue ahí mañana aunque cierres. El punto de la barra de arriba dice cómo va:
+			<i>Sin cambios</i> = todo a salvo. Ojo: es <b>este</b> navegador y <b>este</b> equipo.</li>
+			<li><b>💾 Guardar el archivo:</b> <i>Archivo → Guardar proyecto</i> baja un
+			<code>.tablero.json</code> a tu equipo. Ese es el que se manda por correo, se guarda en el
+			pendrive o se sube al servidor de la empresa. Hazlo al terminar el día.</li>
+			<li><b>📂 Abrir un proyecto:</b> <i>Archivo → Abrir proyecto</i> y elige el
+			<code>.tablero.json</code>. Si viene de una versión anterior del programa, se actualiza solo
+			al abrirlo.</li>
+			<li><b>📐 Plantillas:</b> <i>Archivo → Guardar como plantilla</i> guarda el tablero para
+			arrancar el próximo igual. Si haces cinco tableros parecidos al año, esto te ahorra el
+			montaje entero.</li>
+			<li><b>🆕 Empezar de cero:</b> <i>Archivo → Nuevo tablero</i>.</li>
+		</ul>
+
+		<h3 id="g-planta">7 · Planta 3D: el terreno <small>(la otra herramienta)</small></h3>
+		<ul class="guia">
+			<li><b>🏗️ Qué es:</b> botón <i>🏗️ Planta 3D</i>. Es un programa aparte dentro del mismo: la
+			cubierta del aeropuerto sacada del plano del proyectista, con todas sus <b>UMAs</b> y sus
+			<b>extractores</b>, los conductos de inyección y extracción, las cañerías de agua, la
+			bandeja y el bus LON, más el peto, las barandas, los muros y los pilares del edificio.
+			La cuenta exacta de cada cosa la da el propio visor al abrirlo. Pincha una máquina y verás
+			<b>su lista de puntos de control del BMS</b> con el controlador que la gobierna. Dos vistas:
+			general desde arriba, y a pie con <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>.
+			Ojo: las alturas son de proyecto, no del plano — el visor te lo recuerda.</li>
+			<li><b>🔎 Encontrar una máquina:</b> escribe su marcado en el buscador de la izquierda, o
+			filtra por UMAs, extractores, con señales, con controlador o situadas en planta. Con
+			<i>Colorear por</i> pintas la cubierta entera por tipo, por controlador o por estado de obra.</li>
+			<li><b>➡️ Llevar del terreno al tablero:</b> marca en la lista las máquinas que va a gobernar
+			un mismo tablero y pulsa <b>«Llevar al tablero»</b>. El programa arma un tablero de partida
+			con su controlador, sus borneras y sus señales ya repartidas, y te deja en el editor. Es el
+			puente entre las dos herramientas: no hay que contar señales a mano.</li>
+			<li><b>📏 Medir cuánto cable pedir:</b> botón <i>✏️ Medir</i>: cada clic marca un punto por
+			donde irá el cable, y se puede pinchar directamente sobre una máquina para medir hasta ella.
+			El recorrido se cuenta <b>en ortogonal</b>, como va la bandeja de verdad, y le suma la subida
+			y la bajada. Cada punto se quita con su aspa, sin deshacer los demás.</li>
+			<li><b>📏 Tiradas y cable a pedir:</b> cada tirada se <b>guarda</b> con su
 			nombre y su cable (4×2,5, 2×0,75…). El programa suma los metros por tipo de manguera: eso es
 			la lista con la que se pide el cable, y también sale en CSV.</li>
-			<li><b>Corregir los datos de un aparato:</b> selecciónalo en modo Editor y edita su ficha en el panel derecho: marcado, referencia, In, polos, medidas, <b>poder de corte</b> y <b>disipación</b>. Lo que escribas ahí es lo que sale en el dossier del cliente.</li>
-			<li><b>Datos del proyecto:</b> <i>Archivo → Datos del proyecto</i> — cliente, obra, proyectista y revisión (van al cajetín del esquema y a la portada del dossier), más la <b>Icc presunta</b>, la temperatura ambiente y el montaje del armario, de los que dependen la verificación del poder de corte y el balance térmico.</li>
-			<li><b>Balance térmico:</b> el panel derecho estima la temperatura interior del armario (IEC 60890) y dice si necesita rejilla, ventilador o climatizador antes de que lo pidas.</li>
-			<li><b>Deshacer / Rehacer:</b> <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd>. <b>Eliminar:</b> <kbd>Supr</kbd>. <b>Centrar vista:</b> botón 🏠.</li>
+			<li><b>📋 Parte de obra:</b> cada máquina tiene su estado (pendiente, en curso, montado,
+			probado, con problema) y su nota de lo que te has encontrado. Se guarda solo y sigue ahí
+			mañana; colorea por <i>Estado en obra</i> para ver de un golpe lo que queda, y llévatelo en
+			CSV para el informe.</li>
 		</ul>
-		<p class="pie">El semáforo <b>DRC</b> de arriba revisa el tablero en vivo: verde = todo bien, naranja = avisos, rojo = errores. Haz clic en un aviso para ir al aparato.</p>
+
+		<h3 id="g-atajos">8 · Atajos de teclado</h3>
+		<ul class="guia guia-atajos">
+			<li><kbd>Ctrl</kbd>+<kbd>Z</kbd> deshacer · <kbd>Ctrl</kbd>+<kbd>Y</kbd> rehacer</li>
+			<li><kbd>Supr</kbd> eliminar lo seleccionado</li>
+			<li><kbd>Ctrl</kbd>+<kbd>C</kbd> copiar · <kbd>Ctrl</kbd>+<kbd>V</kbd> pegar · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicar</li>
+			<li><kbd>Shift</kbd>+clic añadir a la selección</li>
+			<li><kbd>Esc</kbd> cancelar lo que estés haciendo, y cerrar ventanas</li>
+			<li>Botón 🏠 centrar la vista si te pierdes girando la cámara</li>
+			<li>En la Planta 3D: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> andar,
+			<kbd>Shift</kbd> correr, botón derecho apretado para mirar, <kbd>H</kbd> esconder los paneles</li>
+		</ul>
+		<p class="pie">Hace falta <b>Chrome</b> o <b>Edge</b> con la aceleración por hardware activada:
+		todo el 3D se dibuja en el navegador. Si algo no se ve, el programa te lo dice al abrirlo en vez
+		de quedarse en blanco.</p>
 	</div>
 </div>
 

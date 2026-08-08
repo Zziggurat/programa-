@@ -641,7 +641,29 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 		$('mundo-paseo').onclick = () => cambiarVista('paseo');
 		$('mundo-medir').onclick = () => activarMedir(!midiendo);
 		$('mundo-paneles').onclick = () => verPaneles(!panelesVisibles);
-		const verGuia = (v: boolean) => { ($('modal-guia-mundo') as HTMLElement).hidden = !v; };
+		/*
+		 * Las cifras de la guía salen del DATO, no escritas a mano en el HTML.
+		 *
+		 * Estaban puestas a mano y se quedaron viejas en cuanto cambió el plano: decían 129 máquinas
+		 * cuando ya eran 134. Una guía que miente sobre lo que el usuario tiene delante hace más daño
+		 * que no decir nada, así que ahora se rellenan al abrirla.
+		 */
+		const cifrasDeLaGuia = (): void => {
+			const cuantos: Record<string, number> = {
+				equipos: inf.equipos.length,
+				umas: inf.equipos.filter((e) => e.tipo === 'uma').length,
+				vex: inf.equipos.filter((e) => e.tipo === 'vex').length,
+				situados: inf.equipos.filter((e) => e.x !== null).length,
+			};
+			for (const el of document.querySelectorAll<HTMLElement>('[data-guia]')) {
+				const n = cuantos[el.dataset.guia ?? ''];
+				if (n !== undefined) el.textContent = String(n);
+			}
+		};
+		const verGuia = (v: boolean) => {
+			if (v) cifrasDeLaGuia();
+			($('modal-guia-mundo') as HTMLElement).hidden = !v;
+		};
 		$('mundo-guia').onclick = () => verGuia(true);
 		$('btn-cerrar-guia-mundo').onclick = () => verGuia(false);
 		$('btn-cerrar-guia-mundo-x').onclick = () => verGuia(false);
