@@ -97,17 +97,57 @@ function proyectoNuevo(): Proyecto {
 	return p;
 }
 
-function cargarInicial(): Proyecto {
-	try {
-		const guardado = localStorage.getItem(CLAVE_AUTOSAVE);
-		if (guardado) return cargarProyecto(guardado).proyecto;
-	} catch { /* sin localStorage (p. ej. artifact con storage bloqueado) */ }
-	// Primera vez (sin proyecto guardado): placa vacía con la tarjeta de bienvenida.
-	// El tablero de ejemplo se carga a demanda con el botón «Ver un tablero de ejemplo».
-	return proyectoNuevo();
+/**
+ * EL AUTOGUARDADO NO SE PISA NUNCA SIN QUE EL USUARIO LO DECIDA.
+ *
+ * Esto era un `try { … } catch { return proyectoNuevo(); }`. Daba igual el motivo —almacén
+ * bloqueado, JSON a medias, o un proyecto guardado con una versión MÁS NUEVA del programa—:
+ * siempre se abría un tablero vacío, y el primer `recalcular()` llamaba a `autoguardar()` y
+ * escribía encima. Comprobado: un autosave de versión 999 llamado «MI TABLERO IMPORTANTE»
+ * quedaba convertido en «Tablero nuevo» al recargar, sin copia de ninguna clase.
+ *
+ * Es lo contrario de lo que hace falta, porque el caso típico es abrir el trabajo con otra
+ * versión del programa: el momento en que uno MÁS quiere recuperarlo era justo el momento en que
+ * se lo borrábamos.
+ *
+ * Ahora se distingue por qué falló, el texto original se queda intacto donde está, y el
+ * autoguardado queda CONGELADO hasta que el usuario decida. Mientras esté congelado no se escribe
+ * ni una vez en la clave del proyecto.
+ */
+interface CargaInicial {
+	proyecto: Proyecto;
+	/** Qué salió mal, si salió algo mal. Con esto se decide si se congela el guardado. */
+	problema?: { motivo: string; crudo?: string; sinAlmacen?: boolean };
 }
 
-let proyecto: Proyecto = cargarInicial();
+function cargarInicial(): CargaInicial {
+	let guardado: string | null = null;
+	try {
+		guardado = localStorage.getItem(CLAVE_AUTOSAVE);
+	} catch (e) {
+		// Sin almacén (artifact con storage bloqueado, modo privado): no hay nada guardado que
+		// perder, pero tampoco se va a poder guardar. El chip de la barra ya lo dice.
+		return { proyecto: proyectoNuevo(), problema: { motivo: nombreDeError(e), sinAlmacen: true } };
+	}
+	// Primera vez: placa vacía con la tarjeta de bienvenida. El tablero de ejemplo se carga a
+	// demanda con el botón «Ver un tablero de ejemplo».
+	if (!guardado) return { proyecto: proyectoNuevo() };
+
+	try {
+		return { proyecto: cargarProyecto(guardado).proyecto };
+	} catch (e) {
+		return { proyecto: proyectoNuevo(), problema: { motivo: nombreDeError(e), crudo: guardado } };
+	}
+}
+
+function nombreDeError(e: unknown): string {
+	return (e as Error)?.message || (e as Error)?.name || 'no se pudo leer';
+}
+
+const cargaInicial = cargarInicial();
+let proyecto: Proyecto = cargaInicial.proyecto;
+/** Congelado = hay algo guardado que no se ha podido leer y que NO se puede pisar todavía. */
+let guardadoCongelado = !!cargaInicial.problema?.crudo;
 
 /**
  * Todo lo que el programa sabe del tablero que hay en pantalla. Lo calcula `revisarTablero()`, que
@@ -158,6 +198,9 @@ function pintarEstadoGuardado(motivo?: string): void {
 }
 
 function autoguardar(): void {
+	// Hay un proyecto guardado que no se ha podido leer. Hasta que el usuario diga qué hacer con
+	// él, no se escribe: sobrescribirlo sería destruir justo lo que está intentando recuperar.
+	if (guardadoCongelado) return;
 	try {
 		localStorage.setItem(CLAVE_AUTOSAVE, JSON.stringify(proyecto));
 		if (estadoGuardado === 'fallo') avisar('El guardado automático volvió a funcionar.', 'ok');
@@ -188,6 +231,50 @@ window.addEventListener('beforeunload', (ev) => {
 });
 
 recalcular();
+
+/**
+ * Hay un proyecto guardado que no se pudo leer: se le da salida al usuario ANTES de dejarle
+ * trabajar, porque cualquier cosa que haga a partir de aquí querría guardarse encima.
+ *
+ * Se le ofrecen las dos únicas salidas honestas: bajarse el archivo tal cual está —para abrirlo
+ * con la versión que lo escribió, o para mandarlo— o descartarlo a sabiendas. No hay una tercera:
+ * «reparar» un proyecto que no entendemos sería inventarse su contenido.
+ */
+async function resolverAutoguardadoIlegible(): Promise<void> {
+	const p = cargaInicial.problema;
+	if (!p?.crudo) return;
+	const kb = Math.max(1, Math.round(p.crudo.length / 1024));
+	const quiereBajarlo = await confirmar(
+		`Hay un tablero guardado en este navegador que este programa no puede abrir.\n\n`
+		+ `Motivo: ${p.motivo}\n`
+		+ `Tamaño: ${kb} KB\n\n`
+		+ 'No se ha tocado y no se va a guardar nada encima mientras decides. '
+		+ 'Puedes descargarlo tal cual está y abrirlo con la versión del programa que lo escribió.',
+		{ ok: 'Descargar la copia' },
+	);
+	if (quiereBajarlo) {
+		descargar('tablero-recuperado.tablero.json', p.crudo, 'application/json');
+		avisar('Copia descargada. El guardado automático sigue detenido hasta que empieces de cero.', 'ok');
+		// Se ofrece una vez más la decisión: bajar el archivo no implica querer borrarlo.
+	}
+	const descartar = await confirmar(
+		quiereBajarlo
+			? '¿Empezar de cero? El tablero que no se pudo abrir se borrará de este navegador.'
+			: 'No has descargado la copia. ¿Empezar de cero de todas formas? Se borrará de este navegador.',
+		{ ok: 'Empezar de cero', peligro: true },
+	);
+	if (descartar) {
+		guardadoCongelado = false;
+		autoguardar();
+		avisar('Se empieza de cero. El guardado automático vuelve a funcionar.', 'info');
+	} else {
+		avisar('El guardado automático sigue DETENIDO para no pisar el tablero anterior. '
+			+ 'Descarga tu trabajo con Archivo → Guardar.', 'error');
+		estadoGuardado = 'fallo';
+		pintarEstadoGuardado('hay un tablero anterior sin recuperar');
+	}
+}
+void resolverAutoguardadoIlegible();
 
 /* ------------------------- Historial (deshacer/rehacer) ------------------------- */
 
