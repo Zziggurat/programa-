@@ -625,6 +625,37 @@ export function construirMundo(inf: Infraestructura, lienzo: HTMLCanvasElement):
 	orbita.dampingFactor = 0.09;
 	orbita.maxPolarAngle = Math.PI / 2.05;   // no meter la cámara bajo la losa
 
+	/*
+	 * LA RUEDA TIENE TOPE POR LOS DOS LADOS.
+	 *
+	 * `OrbitControls` viene sin límites: `minDistance` 0 y `maxDistance` infinito. Medido en esta
+	 * planta —que arranca a 468 m del centro—, sesenta muescas de rueda hacia atrás dejan la
+	 * cámara a 103.000 km y ciento veinte la mandan a 2,3·10¹³ m, más lejos que Plutón. Y como el
+	 * plano de fondo está en `far` (unos 2,2 km), muchísimo antes de llegar ahí la cubierta ya no
+	 * se dibuja: la pantalla se queda NEGRA sin decir nada, y quien está mirando no tiene forma de
+	 * saber si el programa se ha colgado o si es que se ha ido de viaje. Hacia dentro pasaba lo
+	 * simétrico: la rueda atraviesa la máquina y se queda uno dentro del chasis, viendo las caras
+	 * por detrás.
+	 *
+	 * El tope de fuera se ata al tamaño real de la planta, no a un número redondo: con `lado`·1,6
+	 * la terminal entera cabe holgada en pantalla y el borde más lejano sigue muy por delante del
+	 * plano de fondo. El de dentro, a 5 m, es la distancia a la que una UMA de siete metros llena
+	 * la vista sin que se le vea el forro.
+	 */
+	orbita.minDistance = 5;
+	orbita.maxDistance = Math.max(600, lado * 1.6);
+
+	/*
+	 * La rueda acerca A DONDE SE ESTÁ MIRANDO, no al centro de la planta.
+	 *
+	 * Sin esto el zoom siempre tira hacia el punto de órbita, que arranca en el centro de la
+	 * terminal. Para mirar de cerca una UMA de la esquina había que acercarse al centro y luego
+	 * arrastrar con el botón derecho hasta encontrarla: en 690 × 293 m eso son varios intentos
+	 * cada vez. Con esto se apunta con el ratón y se gira la rueda, que es lo que espera cualquiera
+	 * que haya usado un plano en el móvil.
+	 */
+	orbita.zoomToCursor = true;
+
 	return { escena, camara, orbita, equipos, instalaciones, obra, losa, obstaculos,
 		centro: new THREE.Vector3(0, 0, 0), tamano: { ancho, fondo }, inf };
 }

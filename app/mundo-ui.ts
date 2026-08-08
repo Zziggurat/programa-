@@ -763,6 +763,19 @@ if (__QA__) {
 			z: mundo?.camara.position.z ?? 0,
 		}),
 		tamano: () => mundo?.tamano ?? { ancho: 0, fondo: 0 },
+		/**
+		 * El punto de la cubierta al que se está mirando (el centro de órbita).
+		 *
+		 * Es lo que separa un zoom que acerca AL CENTRO DE LA PLANTA de uno que acerca a donde
+		 * apunta el ratón: en el primero este punto no se mueve nunca por mucho que se gire la
+		 * rueda, y en el segundo se corre por la cubierta hacia lo que se está señalando. Sin
+		 * esto una prueba solo vería que la cámara se acerca, que es verdad en los dos casos.
+		 */
+		puntoDeOrbita: () => ({
+			x: mundo?.orbita.target.x ?? 0,
+			y: mundo?.orbita.target.y ?? 0,
+			z: mundo?.orbita.target.z ?? 0,
+		}),
 		vista: () => vista,
 		/**
 		 * Arrastra el ratón `dx`,`dy` píxeles y devuelve hacia dónde se mira después.
