@@ -8,6 +8,7 @@
 import { jsPDF } from 'jspdf';
 import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
 import { descargar } from './dialogos.js';
+import { textoDeUnaLinea } from './pdf-texto.js';
 
 const TINTA: [number, number, number] = [15, 18, 22];
 const SUAVE: [number, number, number] = [120, 132, 145];
@@ -82,13 +83,13 @@ function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number, d: 
 		doc.text(rotulo, cx, cy);
 		doc.setFontSize(7.6);
 		doc.setTextColor(...TINTA);
-		doc.text(valor || '—', cx, cy + 4, { maxWidth: max });
+		textoDeUnaLinea(doc, valor || '—', cx, cy + 4, max, 7.6);
 	};
 
 	doc.setFontSize(10);
 	doc.setFont('helvetica', 'bold');
 	doc.setTextColor(...TINTA);
-	doc.text(proyecto, x + 3, y + 6.3, { maxWidth: col3 - x - 6 });
+	textoDeUnaLinea(doc, proyecto, x + 3, y + 6.3, col3 - x - 6, 10);
 	doc.setFontSize(5.4);
 	doc.setFont('helvetica', 'normal');
 	doc.setTextColor(...SUAVE);
