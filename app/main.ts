@@ -778,7 +778,7 @@ function pintarCatalogo(): void {
 		encontrados++;
 		if (p.grupo !== grupoActual) {
 			grupoActual = p.grupo;
-			cont.insertAdjacentHTML('beforeend', `<div class="grupo-catalogo">${p.grupo}</div>`);
+			cont.insertAdjacentHTML('beforeend', `<div class="grupo-catalogo">${escaparHtml(p.grupo)}</div>`);
 		}
 		const btn = document.createElement('button');
 		btn.className = 'item-catalogo';
@@ -802,7 +802,22 @@ function pintarCatalogo(): void {
 		btn.onclick = () => anadirDesdeCatalogo(p.id);
 		cont.appendChild(btn);
 	}
-	if (!encontrados) cont.innerHTML = `<div class="catalogo-vacio">Ningún aparato coincide con «${busqueda}».</div>`;
+	/*
+	 * Segunda auditoría, TS2-P1-05. Esto era `«${busqueda}»` a pelo dentro de `innerHTML`, y lo que
+	 * hay ahí es LO QUE ACABA DE TECLEAR EL USUARIO. Comprobado por la auditoría: buscando
+	 * `<em data-audit-marker="codex">sin-coincidencia</em>` aparecía un `<em>` de verdad dentro de
+	 * `.catalogo-vacio`, o sea que el texto se estaba interpretando como marcado.
+	 *
+	 * Aquí no hay nada que dibujar con etiquetas: es un mensaje con el término buscado dentro. Así
+	 * que se construye con nodos y `textContent`, que no puede interpretar nada por definición.
+	 */
+	if (!encontrados) {
+		cont.textContent = '';
+		const caja = document.createElement('div');
+		caja.className = 'catalogo-vacio';
+		caja.textContent = `Ningún aparato coincide con «${busqueda}».`;
+		cont.appendChild(caja);
+	}
 }
 
 /** Busca el primer hueco libre sobre un riel para una huella ancho×alto. */
@@ -1458,8 +1473,11 @@ function pintarSeleccion(): void {
 			const propio = c.de.dispositivoId === d.id ? c.de : c.a;
 			const fila = document.createElement('div');
 			fila.className = 'fila-cable';
-			fila.innerHTML = `<span class="num">${c.numero ?? '—'}</span>
-				<span>${propio.borneId} → ${etiquetaDe(otro.dispositivoId)}:${otro.borneId}${c.seccion ? ` · ${c.seccion} mm²` : ''}</span>
+			// El número del hilo, los ids de borne y la designación salen del ARCHIVO, y un archivo
+			// se toca a mano y llega por correo. Van escapados, como todo lo que no escribimos aquí.
+			fila.innerHTML = `<span class="num">${escaparHtml(String(c.numero ?? '—'))}</span>
+				<span>${escaparHtml(propio.borneId)} → ${escaparHtml(etiquetaDe(otro.dispositivoId))}`
+				+ `:${escaparHtml(otro.borneId)}${c.seccion ? ` · ${escaparHtml(String(c.seccion))} mm²` : ''}</span>
 				<button class="quitar" title="Quitar cable">✕</button>`;
 			(fila.querySelector('.quitar') as HTMLButtonElement).onclick = () => {
 				capturar();
@@ -1730,7 +1748,7 @@ function pintarSeleccion(): void {
 		for (const b of d.bornes) {
 			const fila = document.createElement('div');
 			fila.className = 'fila-cable';
-			fila.innerHTML = `<span class="num">◉</span><span>${b.id}</span>
+			fila.innerHTML = `<span class="num">◉</span><span>${escaparHtml(b.id)}</span>
 				<button class="quitar" title="Quitar punto">✕</button>`;
 			(fila.querySelector('.quitar') as HTMLButtonElement).onclick = () => {
 				capturar();
@@ -1860,8 +1878,8 @@ function pintarEstructura(): void {
 		items: { id: string; x: number; y: number; largo: number }[],
 		tipo: 'riel' | 'canaleta',
 	) => items.map((r) => `
-		<div class="fila-estructura" data-tipo="${tipo}" data-id="${r.id}">
-			<span class="id">${r.id}</span>
+		<div class="fila-estructura" data-tipo="${tipo}" data-id="${escaparHtml(r.id)}">
+			<span class="id">${escaparHtml(r.id)}</span>
 			<input type="number" data-campo="x" value="${Math.round(r.x)}">
 			<input type="number" data-campo="y" value="${Math.round(r.y)}">
 			<input type="number" data-campo="largo" value="${Math.round(r.largo)}">
@@ -4071,6 +4089,8 @@ function pegarAparatos(): void {
 	actualizarTodo();
 	const pegados = `${nuevos.length} aparato${nuevos.length > 1 ? 's' : ''} pegado${nuevos.length > 1 ? 's' : ''}`;
 	if (sobresalen.length) {
+		// Sin escapar A PROPÓSITO: `avisar()` escribe con `textContent`, que no interpreta nada.
+		// Escapar aquí enseñaría «&lt;» en pantalla, que es el fallo contrario y también es feo.
 		avisar(`${pegados}. No cabía${sobresalen.length > 1 ? 'n' : ''} en la fila: `
 			+ `${sobresalen.join(', ')} quedó al final del riel. Arrástralo a su sitio.`, 'info');
 	} else {
@@ -4650,6 +4670,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		seleccion: () => (sel ? { tipo: sel.tipo, id: sel.id } : undefined),
 		/** Selecciona un aparato por id, como si se hubiera pinchado en él. */
 		seleccionarPorId: (id: string) => seleccionar(id),
+		/** Repinta la lista de rieles y canaletas (para comprobar cómo entra ahí un id del archivo). */
+		pintarEstructura: () => pintarEstructura(),
 		/** Añade un aparato a la selección múltiple, como haría un Shift+clic. */
 		anadirASeleccion: (id: string) => { construyendoSeleccion = true; alternarEnSeleccion(id); construyendoSeleccion = false; },
 		/** Resumen del esquema montado ahora mismo (para comprobar que no pierde aparatos). */

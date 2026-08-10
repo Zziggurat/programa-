@@ -73,6 +73,94 @@ for (const carga of CARGAS.slice(0,2)) {
   if (r.salta) { console.log('  (tablero vacío, se salta)'); break; }
   must(`marcado «${carga.slice(0,22)}…» no ejecuta nada`, !r.pwned && r.imgs===0, JSON.stringify(r));
 }
+/*
+ * ------------------------------------------------------------------------------------------
+ * LAS RUTAS QUE ESTA SUITE NO MIRABA.
+ *
+ * Segunda auditoría, TS2-P1-05. Aquí se comprobaba la nota de obra y el marcado de un aparato, y
+ * con eso se dio por cerrada «la inyección». No lo estaba: la auditoría reprodujo cuatro caminos
+ * más con marcadores inocuos, y los cuatro creaban NODOS de verdad en el DOM.
+ *
+ * Que una suite pase no dice nada de lo que no mira. Aquí van los cuatro, con el mismo método:
+ * se mete un marcador que no ejecuta nada y se comprueba que sale como TEXTO y no como etiqueta.
+ * ------------------------------------------------------------------------------------------ */
+
+console.log('\n--- el buscador del catálogo ---');
+await p.evaluate(() => { document.getElementById('mundo').hidden = true; });
+const MARCA = '<em data-marca-hostil="1">sin-coincidencia-xyz</em>';
+await p.evaluate((c) => {
+	const caja = document.getElementById('buscar-catalogo');
+	if (!caja) return;
+	caja.value = c;
+	caja.dispatchEvent(new Event('input', { bubbles: true }));
+}, MARCA);
+await p.waitForTimeout(500);
+let r = await p.evaluate(() => ({
+	nodos: document.querySelectorAll('#catalogo [data-marca-hostil]').length,
+	texto: document.querySelector('.catalogo-vacio')?.textContent ?? '',
+}));
+must('buscar con etiquetas NO crea nodos', r.nodos === 0, `${r.nodos} nodos`);
+must('   y el término buscado se lee entero, como texto', r.texto.includes('sin-coincidencia-xyz'),
+	r.texto.slice(0, 60));
+
+console.log('\n--- el nombre de una PLANTILLA propia ---');
+await p.evaluate((c) => {
+	const lista = [{ nombre: c, fecha: new Date().toISOString(), proyecto: window.qa.proyecto() }];
+	localStorage.setItem('tablerostudio-plantillas', JSON.stringify(lista));
+}, '<em data-marca-hostil="2">plantilla</em>');
+await p.evaluate(() => document.getElementById('btn-ejemplos')?.click());
+await p.waitForTimeout(700);
+r = await p.evaluate(() => ({
+	nodos: document.querySelectorAll('#lista-ejemplos [data-marca-hostil]').length,
+	texto: document.querySelector('#lista-ejemplos .tarjeta-ejemplo h4')?.textContent ?? '',
+}));
+must('el nombre de una plantilla NO crea nodos', r.nodos === 0, `${r.nodos} nodos`);
+await p.evaluate(() => { document.getElementById('modal-ejemplos').hidden = true; localStorage.removeItem('tablerostudio-plantillas'); });
+
+/*
+ * Un id de RIEL con una comilla. Es el caso que reprodujo la auditoría, y el sitio importa: aquí
+ * el id va dentro de un ATRIBUTO (`data-id="…"`), no entre etiquetas. Entre etiquetas, una comilla
+ * no hace nada; dentro de un atributo, lo cierra y abre el siguiente. Lo probé primero con un id
+ * de borne —que va en el contenido de un `<span>`— y pasaba con el código roto y con el arreglado,
+ * o sea que no probaba nada: el fallo estaba en el otro sitio.
+ */
+console.log('\n--- un id de RIEL con comillas, desde el archivo ---');
+r = await p.evaluate(() => {
+	const pr = window.qa.proyecto();
+	const g = pr.gabinete;
+	if (!g?.rieles?.length) return { salta: true };
+	g.rieles[0].id = 'r1" data-marca-hostil="3';
+	window.qa.recalcular();
+	window.qa.pintarEstructura?.();
+	return { salta: false, nodos: document.querySelectorAll('[data-marca-hostil]').length,
+		texto: document.querySelector('.fila-estructura .id')?.textContent ?? '' };
+});
+if (r.salta) console.log('  (sin rieles, se salta)');
+else {
+	must('un id de riel con comillas NO crea atributos', r.nodos === 0, `${r.nodos} nodos`);
+	must('   y se lee entero, como texto', r.texto.includes('data-marca-hostil'), r.texto.slice(0, 40));
+}
+
+console.log('\n--- la FUENTE de un trozo del dossier ---');
+r = await p.evaluate(() => {
+	const pr = window.qa.proyecto();
+	pr.dossier = pr.dossier ?? {};
+	pr.dossier.bloques = [{ id: 'bx', tipo: 'texto', donde: 'final', trozos: [
+		{ texto: 'hola', fuente: 'serif;x:y" data-marca-hostil="4' },
+	] }];
+	return JSON.stringify(pr).length > 0;
+});
+await p.evaluate(() => document.getElementById('btn-pdf')?.click());
+await p.waitForTimeout(3000);
+const dos = await p.evaluate(() => ({
+	nodos: document.querySelectorAll('#dos-secciones [data-marca-hostil], .dos-texto [data-marca-hostil]').length,
+	estilo: document.querySelector('.dos-texto span')?.getAttribute('style') ?? '',
+}));
+must('la fuente de un trozo NO puede cerrar el atributo style', dos.nodos === 0,
+	`${dos.nodos} nodos · style=«${dos.estilo}»`);
+must('   y una fuente inventada simplemente no se aplica',
+	!dos.estilo.includes('marca-hostil'), dos.estilo.slice(0, 60));
+
 await b.close(); s.close();
 console.log(`\n=== ${fallos===0?'TODO OK ✔':fallos+' FALLO(S) ✗'} ===`);
 process.exit(fallos?1:0);

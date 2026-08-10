@@ -346,11 +346,22 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 		if (!trozos?.length) return '';
 		return trozos.map((t) => {
 			if (t.texto === '\n') return '<br>';
+			/*
+			 * El `style` se monta con VALORES COMPROBADOS, no con lo que traiga el trozo.
+			 *
+			 * Segunda auditoría, TS2-P1-05. `font-family:${t.fuente}` metía dentro del atributo un
+			 * texto que viene del archivo: una comilla ahí cierra el `style` y abre lo que se
+			 * quiera. El cargador ya solo deja pasar las tres fuentes conocidas, pero esto se
+			 * comprueba también aquí: un dato puede llegar por otro camino —un pegado, una
+			 * plantilla vieja— y la defensa no puede depender de que la otra funcione.
+			 */
+			const tam = Number.isFinite(t.tam) && t.tam! > 0 ? Math.min(96, Math.round(t.tam!)) : 0;
+			const fuente = FUENTES.some((f) => f.id === t.fuente) ? t.fuente : undefined;
 			const estilos = [
 				t.negrita ? 'font-weight:700' : '',
 				t.cursiva ? 'font-style:italic' : '',
-				t.tam ? `font-size:${t.tam}pt` : '',
-				t.fuente ? `font-family:${t.fuente}` : '',
+				tam ? `font-size:${tam}pt` : '',
+				fuente ? `font-family:${fuente}` : '',
 			].filter(Boolean).join(';');
 			const texto = escaparHtml(t.texto).replace(/\n/g, '<br>');
 			return estilos ? `<span style="${estilos}">${texto}</span>` : texto;

@@ -278,10 +278,32 @@ function leerAjustesDossier(bruto: unknown): Proyecto['dossier'] {
 				imagen: tipo === 'imagen' ? imagen : undefined,
 				anchoPct: Number.isFinite(Number(b.anchoPct))
 					? Math.max(10, Math.min(100, Number(b.anchoPct))) : undefined,
+				/*
+				 * CAMPO A CAMPO, y `fuente` de una lista cerrada.
+				 *
+				 * Segunda auditoría, TS2-P1-05. Esto era un cast del objeto entero, y `fuente` y
+				 * `tam` acaban dentro del atributo `style` del editor de dossier. Una `fuente`
+				 * con una comilla cierra el atributo y abre otro: el texto de un archivo pasaba a
+				 * ser marcado. Aquí solo entran las tres fuentes que el PDF sabe dibujar, que
+				 * además es lo único que tiene sentido guardar.
+				 */
 				trozos: tipo === 'texto' && esLista(b.trozos)
 					? (b.trozos as unknown[]).filter(esObjeto)
 						.filter((t) => typeof t.texto === 'string')
-						.map((t) => t as unknown as TrozoTexto)
+						.map((t): TrozoTexto => {
+							// Los campos que no valen no se ponen a `undefined`: no se ponen. Un
+							// trozo sin formato tiene que salir igual que entró.
+							const tam = enRango(t.tam, 4, 96);
+							const fuente = (['helvetica', 'times', 'courier'] as const)
+								.find((f) => f === t.fuente);
+							return {
+								texto: t.texto as string,
+								...(typeof t.negrita === 'boolean' ? { negrita: t.negrita } : {}),
+								...(typeof t.cursiva === 'boolean' ? { cursiva: t.cursiva } : {}),
+								...(tam !== undefined ? { tam } : {}),
+								...(fuente ? { fuente } : {}),
+							};
+						})
 					: undefined,
 			});
 		}
