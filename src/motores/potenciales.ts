@@ -8,6 +8,7 @@
  */
 import { Proyecto, TipoBorne, TipoDispositivo } from '../modelo/tipos.js';
 import { claveBorne } from '../modelo/proyecto.js';
+import { tensionDeBorne } from './tensiones.js';
 
 /**
  * Aparatos cuyos «puentes internos» son POLOS QUE ABREN, no uniones permanentes.
@@ -102,10 +103,22 @@ export function calcularPotenciales(proyecto: Proyecto): ResultadoPotenciales {
 	}
 
 	const tipoDeBorne = new Map<string, TipoBorne>();
-	const tensionDeDispositivo = new Map<string, number>();
+	/*
+	 * LA TENSIÓN ES DEL BORNE, NO DEL APARATO.
+	 *
+	 * Antes se colgaba la `tensionNominal` del aparato a todos sus bornes por igual. Con eso, el
+	 * primario de 220 de una fuente 220/24 se leía a 24, y un PE que une la carcasa de un aparato
+	 * de 220 con la masa de un controlador de 24 —que es PARA LO QUE ESTÁ— se leía como un
+	 * conflicto. El tablero que el programa arma desde la Planta salía con tres avisos R6 falsos
+	 * recién generado. El detalle, en `tensiones.ts`.
+	 */
+	const tensionDeBornes = new Map<string, number>();
 	for (const d of proyecto.dispositivos) {
-		if (d.tensionNominal !== undefined) tensionDeDispositivo.set(d.id, d.tensionNominal);
-		for (const b of d.bornes) tipoDeBorne.set(`${d.id}::${b.id}`, b.tipo ?? 'otro');
+		for (const b of d.bornes) {
+			tipoDeBorne.set(`${d.id}::${b.id}`, b.tipo ?? 'otro');
+			const v = tensionDeBorne(d, b);
+			if (v !== undefined) tensionDeBornes.set(`${d.id}::${b.id}`, v);
+		}
 	}
 
 	const potenciales: Potencial[] = [];
@@ -122,7 +135,7 @@ export function calcularPotenciales(proyecto: Proyecto): ResultadoPotenciales {
 		const tensiones = [
 			...new Set(
 				bornes
-					.map((b) => tensionDeDispositivo.get(b.split('::')[0]))
+					.map((b) => tensionDeBornes.get(b))
 					.filter((t): t is number => t !== undefined),
 			),
 		].sort((a, b) => a - b);

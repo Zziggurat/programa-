@@ -178,7 +178,15 @@ export function tableroDesdeEquipos(
 		},
 		{
 			id: 'g1', tipo: 'fuente', descripcion: 'Fuente 220 V / 24 V CC 2,5 A',
-			fabricante: 'Phoenix Contact', referencia: 'STEP-PS/1AC/24DC/2.5', tensionNominal: 24,
+			fabricante: 'Phoenix Contact', referencia: 'STEP-PS/1AC/24DC/2.5',
+			/*
+			 * LAS DOS TENSIONES, DECLARADAS. Una fuente tiene primario y secundario, y aquí se
+			 * declaraba solo `tensionNominal: 24`. Con eso, sus bornes L/N —que están a 220 y van
+			 * atornillados a la salida del automático— se leían a 24, y el DRC avisaba de un
+			 * «conflicto 24/220» en el tablero que el propio programa acababa de armar. La
+			 * convención es la del catálogo: `tensionNominal` es la de ENTRADA.
+			 */
+			tensionNominal: 220, tensionSecundariaV: 24,
 			corrienteNominal: Math.round(consumoFuente * 100) / 100,
 			disipacionW: 6, disipacionEstimada: true, hojaId: 'h1',
 			// El LADO va declarado. `+24` y `0V` son los rótulos de una fuente de 24 V CC de
@@ -217,6 +225,21 @@ export function tableroDesdeEquipos(
 			...serie('AO', nAO), { id: 'AOC', tipo: 'control' },
 			...serie('DO', nDO), { id: 'DOC', tipo: 'control' },
 		],
+		/*
+		 * LO QUE EL DDC TIENE PUENTEADO POR DENTRO.
+		 *
+		 * `UIC`, `DIC` y `AOC` no son terminales sueltos: son la referencia de señal del aparato,
+		 * y por dentro cuelgan del común de 24 V. Sin declararlo, los comunes de las máquinas
+		 * llegaban a un terminal que no estaba conectado a nada y ninguna señal tenía retorno.
+		 *
+		 * `DOC` NO va aquí a propósito: es el terminal por el que entra la tensión que conmutan
+		 * los triacs, y se alimenta por fuera desde el vivo de 24 V (el cable está más abajo). Si
+		 * se puentease aquí, el mando y su retorno quedarían en el mismo punto y la máquina no
+		 * vería tensión entre sus dos bornas.
+		 */
+		puentesInternos: [['24V COM', 'UIC'], ['24V COM', 'DIC'], ['24V COM', 'AOC']]
+			.filter(([, c]) => (c === 'UIC' && nUI) || (c === 'DIC' && nDI) || (c === 'AOC' && nAO))
+			.map(([a, b]) => [a, b] as [string, string]),
 		rasgosFrente: { display: false, leds: 4, puertosRS485: 1 },
 		profundidad: 57,
 	});
@@ -280,9 +303,25 @@ export function tableroDesdeEquipos(
 			bornes: bornesComunes, puentes: grupos,
 		});
 		bornas += bornesComunes.length;
+		/*
+		 * DÓNDE ACABA CADA PEINE. No todos van al mismo sitio, y tratarlos igual dejaba el circuito
+		 * de mando sin cerrar:
+		 *
+		 * - UI, DI y AO son SEÑALES: su común es la referencia del controlador, y el peine sube al
+		 *   terminal `UIC`/`DIC`/`AOC`, que por dentro cuelga del común de 24 V.
+		 * - DO es MANDO: el triac saca tensión por `DO1` y la máquina tiene que devolverla al
+		 *   COMÚN DE LA FUENTE, no al terminal por el que esa misma tensión entró. El peine de
+		 *   los DO va, por tanto, a `g1::0V`, y `DOC` se alimenta del vivo de 24 V.
+		 *
+		 * Con el peine de DO atornillado a `DOC`, la ida y la vuelta del mando eran el mismo punto:
+		 * la máquina no veía tensión entre sus dos bornas por mucho que el controlador cerrase.
+		 */
 		for (const f of familiasUsadas) {
-			cable(['x0', bornaDelPeine.get(`${f}|`)!], ['a1', FAMILIAS[f].comun], FAMILIAS[f].seccion, 'negro');
+			const destino: [string, string] = f === 'DO' ? ['g1', '0V'] : ['a1', FAMILIAS[f].comun];
+			cable(['x0', bornaDelPeine.get(`${f}|`)!], destino, FAMILIAS[f].seccion, 'negro');
 		}
+		// El común de los triacs, alimentado del vivo de 24 V: es lo que conmutan las salidas.
+		if (familiasUsadas.includes('DO')) cable(['g1', '+24'], ['a1', 'DOC'], FAMILIAS.DO.seccion, 'rojo');
 	}
 
 	equipos.forEach((e, i) => {

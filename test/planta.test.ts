@@ -350,3 +350,70 @@ test('el puente NO se inventa la Icc, el ambiente ni el montaje', () => {
 	assert.equal(declarado(proyecto, 'montajeGabinete'), false);
 	assert.ok(notas.some((n) => /sin declarar/i.test(n)), 'y lo dice en las notas del resultado');
 });
+
+/*
+ * Segunda auditoría, TS2-P1-03 y TS2-P1-04. La prueba de arriba comprobaba que la fuente y el
+ * controlador quedaban ALIMENTADOS, y con eso se dio por bueno el puente. No era suficiente: un
+ * tablero puede tener tensión en la alimentación y no operar. Estas dos comprueban lo que de
+ * verdad importa —que el mando LLEGA a la máquina, y que el DRC no avisa de lo que él mismo acaba
+ * de armar—, y las dos fallan contra el código anterior.
+ */
+
+/** Los bornes vivos de un aparato, por su id. */
+const vivosDe = (r: ReturnType<typeof simular>, id: string): string[] =>
+	[...r.vivos.keys()].map(String).filter((k) => k.startsWith(`${id}::`)).map((k) => k.split('::')[1]);
+
+test('el mando del controlador LLEGA a la máquina de la cubierta', () => {
+	const tags = inf.equipos.filter((e) => e.puntos.length > 0).slice(0, 3).map((e) => e.tag);
+	const { proyecto } = tableroDesdeEquipos(inf, tags);
+	const plc = proyecto.dispositivos.find((d) => d.tipo === 'plc')!;
+	const salida = plc.bornes.find((b) => /^DO\d+$/.test(b.id))!.id;
+
+	/*
+	 * Antes NO llegaba. La simulación buscaba el común de las salidas como `+24`/`+V`, y este DDC
+	 * se llama `24V~` / `24V COM` —como se rotula uno de verdad—, así que el `find` devolvía
+	 * `undefined` y ninguna salida cerraba. Medido: forzando DO1 y AO1 quedaban vivos exactamente
+	 * los dos bornes de alimentación del PLC y CERO bornas del bornero y CERO puntos de campo.
+	 */
+	const r = simular(proyecto, { [plc.id]: { salidas: [salida] } });
+	assert.ok(vivosDe(r, plc.id).includes(salida), `${salida} tiene que quedar vivo al cerrar`);
+
+	// Y de ahí, por su hilo, hasta la borna del bornero y la borna de la máquina en la cubierta.
+	const saltos = (dev: string, borne: string): { dispositivoId: string; borneId: string }[] =>
+		proyecto.conductores
+			.filter((c) => (c.de.dispositivoId === dev && c.de.borneId === borne)
+				|| (c.a.dispositivoId === dev && c.a.borneId === borne))
+			.map((c) => (c.de.dispositivoId === dev && c.de.borneId === borne ? c.a : c.de));
+
+	const enBornero = saltos(plc.id, salida);
+	assert.equal(enBornero.length, 1, 'la salida va a una borna, y a una sola');
+	assert.ok(vivosDe(r, enBornero[0].dispositivoId).includes(enBornero[0].borneId),
+		'la borna asignada del bornero queda viva');
+
+	const enCampo = saltos(enBornero[0].dispositivoId, enBornero[0].borneId)
+		.filter((p) => p.dispositivoId !== plc.id);
+	assert.equal(enCampo.length, 1, 'y de la borna sale un hilo a la máquina');
+	const maquina = proyecto.dispositivos.find((d) => d.id === enCampo[0].dispositivoId)!;
+	assert.ok(maquina.campo, 'que es un aparato de campo, en la cubierta');
+	assert.ok(vivosDe(r, maquina.id).includes(enCampo[0].borneId),
+		`${maquina.id}::${enCampo[0].borneId} —el punto de campo— tiene que quedar vivo`);
+
+	// Sin energizar señales ajenas: ninguna otra E/S del controlador se mueve.
+	const otras = vivosDe(r, plc.id).filter((b) => /^(DO|AO|UI|DI)\d+$/.test(b) && b !== salida);
+	assert.deepEqual(otras, [], 'cerrar una salida no puede energizar las demás');
+});
+
+test('el tablero recién armado desde la Planta NO trae avisos de tensión inventados', () => {
+	/*
+	 * Salían tres, y los tres eran mentira: el PE que une el 220 con el 24 —que para eso está— y
+	 * los dos bornes del PRIMARIO de la fuente, que están a 220 y se leían a 24 porque la tensión
+	 * era un dato del aparato y no del borne.
+	 */
+	for (const n of [0, 1, 3, 8]) {
+		const tags = inf.equipos.filter((e) => e.puntos.length > 0).slice(0, n).map((e) => e.tag);
+		const { proyecto } = tableroDesdeEquipos(inf, tags);
+		const r6 = verificarProyecto(proyecto, calcularPotenciales(proyecto))
+			.filter((h) => h.regla === 'R6-conflicto-tension');
+		assert.deepEqual(r6.map((h) => h.mensaje), [], `con ${n} máquinas`);
+	}
+});

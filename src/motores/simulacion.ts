@@ -57,6 +57,7 @@
  */
 import { Conductor, Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tipos.js';
 import { claveBorne } from '../modelo/proyecto.js';
+import { tensionSecundariaDe } from './tensiones.js';
 import {
 	EsperaLogica, LecturaControlador, MemoriaLogica, ReglaLogica, esperasDe, evaluar, leerPrograma,
 	memoriaLogicaVacia, salidasActivas, valoresAnalogicos,
@@ -412,10 +413,39 @@ export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaM
 	// Un controlador cierra las salidas que pide su PROGRAMA, más las que el usuario fuerce a
 	// mano. `salidas` llega ya resuelta: la calcula el motor en cada pasada de la simulación.
 	if (d.tipo === 'plc' && estado.salidas?.length) {
-		const comun = d.bornes.find((b) => b.id === '+24' || b.id === '+V')?.id;
-		if (comun) for (const s of estado.salidas) if (idsBornes.has(s)) pares.push([comun, s]);
+		for (const s of estado.salidas) {
+			if (!idsBornes.has(s)) continue;
+			const comun = comunDeSalida(d, s, idsBornes);
+			if (comun) pares.push([comun, s]);
+		}
 	}
 	return pares;
+}
+
+/**
+ * Contra qué borne cierra una salida de controlador.
+ *
+ * Una salida de un DDC no cierra contra la alimentación del aparato: cierra contra **el común de
+ * su bloque**. En un Excel, el triac de `DO1` está entre `DOC` y `DO1`, y el 0-10 V de `AO1` se
+ * mide contra `AOC`. Eran terminales distintos y el programa buscaba uno solo:
+ *
+ * ```ts
+ * const comun = d.bornes.find((b) => b.id === '+24' || b.id === '+V')?.id;
+ * ```
+ *
+ * El controlador que arma el puente desde la Planta se llama `24V~` / `24V COM` —como se rotula
+ * un DDC de verdad—, así que ese `find` no encontraba nada y NINGUNA salida cerraba: forzando
+ * `DO1` y `AO1` quedaban vivos los dos bornes de alimentación y cero bornas del bornero y cero
+ * puntos de campo. El tablero parecía energizado y su circuito funcional no operaba.
+ *
+ * Se busca por FAMILIA —`DO1`→`DOC`, `AO3`→`AOC`, `UI2`→`UIC`—, que es el modelo real, y solo si
+ * el aparato no declara común de bloque se recurre al de antes, que es como está descrito el
+ * LOGO! del catálogo: sus relés van comunados a `+24` por dentro.
+ */
+function comunDeSalida(d: Dispositivo, salida: string, idsBornes: Set<string>): string | undefined {
+	const familia = `${salida.replace(/\d+$/, '')}C`;
+	if (familia !== salida && idsBornes.has(familia)) return familia;
+	return d.bornes.find((b) => b.id === '+24' || b.id === '+V')?.id;
 }
 
 interface ContactoIEC { comun: string; salida: string; tipo: 'NA' | 'NC' }
@@ -545,24 +575,12 @@ function fuentesDe(proyecto: Proyecto): Fuente[] {
 	return fuentes;
 }
 
-/**
- * Qué tensión reparte el secundario de un transformador o de una fuente.
- *
- * Antes esto devolvía 24 SIEMPRE —la expresión era `d.tensionNominal === 220 ? 24 : 24`, que da
- * 24 mire por donde se mire—, así que un transformador de mando de 380/110 V se simulaba como si
- * sacara 24. Ahora manda el dato declarado; si no lo hay, se lee de la descripción, que es donde
- * de verdad está escrito en casi todos los catálogos («Transformador 220/24 V 3 A»); y si tampoco,
- * se supone 24, que es lo más común en control.
+/*
+ * `tensionSecundariaDe` vive en `tensiones.ts`: la necesitan tanto la simulación como el motor de
+ * potenciales, y este último no puede arrastrar la simulación entera solo para preguntar a cuánto
+ * está el secundario de una fuente. Se reexporta para no cambiarle el sitio a quien ya la usa.
  */
-export function tensionSecundariaDe(d: Dispositivo): number {
-	if (d.tensionSecundariaV && d.tensionSecundariaV > 0) return d.tensionSecundariaV;
-	const m = /(\d{2,4})\s*\/\s*(\d{1,4})\s*V/i.exec(d.descripcion ?? '');
-	if (m) {
-		const secundario = Number(m[2]);
-		if (secundario > 0 && secundario < Number(m[1])) return secundario;
-	}
-	return 24;
-}
+export { tensionSecundariaDe } from './tensiones.js';
 
 /** ¿Está alimentado el primario de esta fuente/transformador? */
 function primarioAlimentado(d: Dispositivo, vivos: Map<string, BorneVivo>): boolean {
