@@ -4260,13 +4260,49 @@ function guardarDatosProyecto(): void {
 	 *
 	 * También se acepta la coma decimal, que es como se escribe aquí.
 	 */
-	const numero = (id: string, min: number, max: number) => {
-		const crudo = ($(id) as HTMLInputElement).value.trim().replace(',', '.');
+	/*
+	 * EN BLANCO NO ES LO MISMO QUE MAL ESCRITO.
+	 *
+	 * Segunda auditoría, TS2-P1-06. Los dos acababan igual: en `undefined`. Se cerraba la ventana y
+	 * salía «Datos del proyecto guardados» aunque lo escrito no se hubiera guardado.
+	 *
+	 * En la Icc importa más que en el resto: la regla R13 —la que comprueba que el poder de corte
+	 * de cada protección aguanta el cortocircuito del sitio— solo se ejecuta si `icc > 0`. Un
+	 * dedazo al teclear la Icc APAGABA esa comprobación entera, en silencio, y el DRC seguía dando
+	 * el visto bueno. Quien firma el tablero no tiene forma de enterarse.
+	 *
+	 * En blanco sigue queriendo decir «sin declarar», que es un dato legítimo y el dossier lo sabe
+	 * decir. Mal escrito es un error, y un error se enseña y no se guarda nada.
+	 */
+	const malos: { id: string; nombre: string; motivo: string }[] = [];
+	const numero = (id: string, nombre: string, min: number, max: number, unidad = '') => {
+		const campo = $(id) as HTMLInputElement;
+		campo.removeAttribute('aria-invalid');
+		const crudo = campo.value.trim().replace(',', '.');
 		if (crudo === '') return undefined;                 // en blanco = sin declarar
 		const v = Number(crudo);
-		if (!Number.isFinite(v) || v < min || v > max) return undefined;
+		if (!Number.isFinite(v)) {
+			malos.push({ id, nombre, motivo: `«${campo.value.trim()}» no es un número` });
+			return undefined;
+		}
+		if (v < min || v > max) {
+			malos.push({ id, nombre, motivo: `${v}${unidad} está fuera de ${min} a ${max}${unidad}` });
+			return undefined;
+		}
 		return v;
 	};
+	// Se leen TODOS antes de decidir, para poder señalar de una vez todo lo que está mal.
+	const icc = numero('pr-icc', 'Icc presunta', 0, 100, ' kA');
+	const ambiente = numero('pr-ambiente', 'Temperatura ambiente', -40, 80, ' °C');
+	const inominal = numero('pr-inominal', 'Corriente asignada', 0, 10000, ' A');
+	const frecuencia = numero('pr-frecuencia', 'Frecuencia', 0, 400, ' Hz');
+	if (malos.length) {
+		for (const m of malos) ($(m.id) as HTMLInputElement).setAttribute('aria-invalid', 'true');
+		($(malos[0].id) as HTMLInputElement).focus();
+		avisar(`No se guardó nada: ${malos.map((m) => `${m.nombre}, ${m.motivo}`).join('; ')}. `
+			+ 'Corrígelo o déjalo en blanco para dejarlo sin declarar.', 'error');
+		return;   // la ventana se queda abierta y el proyecto, intacto
+	}
 	capturar();
 	proyecto.datos = {
 		cliente: texto('pr-cliente'),
@@ -4285,10 +4321,10 @@ function guardarDatosProyecto(): void {
 		...(proyecto.opciones ?? {}),
 		// Rangos: la Icc de una instalación de baja tensión va de casi nada a 100 kA; el ambiente
 		// admite bajo cero; la frecuencia solo tiene sentido en la banda industrial.
-		iccPresuntaKA: numero('pr-icc', 0, 100) ?? 0,
-		temperaturaAmbienteC: numero('pr-ambiente', -40, 80),
-		corrienteAsignadaA: numero('pr-inominal', 0, 10000) ?? 0,
-		frecuenciaHz: numero('pr-frecuencia', 0, 400),
+		iccPresuntaKA: icc ?? 0,
+		temperaturaAmbienteC: ambiente,
+		corrienteAsignadaA: inominal ?? 0,
+		frecuenciaHz: frecuencia,
 		gradoIP: ($('pr-ip') as HTMLInputElement).value.trim(),
 		montajeGabinete: montaje ? (montaje as OpcionesProyecto['montajeGabinete']) : undefined,
 		regimenNeutro: ($('pr-neutro') as HTMLSelectElement).value as OpcionesProyecto['regimenNeutro'],

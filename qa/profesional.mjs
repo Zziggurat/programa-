@@ -160,6 +160,35 @@ if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document
 	}
 	if (muestras.length) info(muestras.slice(0, 5).join(' · '));
 	must(`${nombre}: ningún texto del plano tapa a otro`, solapesTotal === 0, `${solapesTotal} solapes en ${total} hojas`);
+
+	/*
+	 * Y CON MARGEN, no por los pelos.
+	 *
+	 * Segunda auditoría, TS2-P1-10. La comprobación de arriba pasaba aquí y la auditoría veía 8
+	 * solapes por ejemplo, porque la corrió en Windows. `system-ui` es una fuente distinta en cada
+	 * sistema, y el cajetín llevaba las alturas puestas a mano: medido, «DIBUJÓ» tenía 0,13 mm de
+	 * aire con su valor —la `J` baja por debajo de la línea base y se comía el hueco—. Con la
+	 * fuente de este equipo daba positivo por trece centésimas; con la de otro, negativo.
+	 *
+	 * Un plano que se lee bien en la máquina del que lo dibuja y se pisa en la del que lo monta es
+	 * un plano roto, y «cero solapes» no lo detecta: hace falta exigir AIRE.
+	 */
+	const aire = await page.evaluate(() => {
+		const svg = document.querySelector('#esquema-hoja svg');
+		if (!svg) return [];
+		const t = [...svg.querySelectorAll('text')].map((x) => ({ b: x.getBBox(), s: x.textContent }));
+		const rotulos = ['CLIENTE', 'OBRA', 'DIBUJÓ', 'FECHA', 'HOJA', 'REV.'];
+		return t.filter((x) => rotulos.includes(x.s)).map((r) => {
+			const v = t.filter((x) => x !== r && x.b.x < r.b.x + r.b.width && r.b.x < x.b.x + x.b.width
+				&& x.b.y > r.b.y).sort((a, c) => a.b.y - c.b.y)[0];
+			return v ? { rotulo: r.s, mm: +(v.b.y - (r.b.y + r.b.height)).toFixed(2) } : null;
+		}).filter(Boolean);
+	});
+	const MINIMO = 0.6;   // por debajo de esto, otra fuente lo pone en negativo
+	const justos = aire.filter((a) => a.mm < MINIMO);
+	must(`${nombre}: el cajetín deja aire suficiente para cualquier fuente`, justos.length === 0,
+		justos.length ? justos.map((a) => `${a.rotulo} ${a.mm}mm`).join(', ')
+			: `mínimo ${Math.min(...aire.map((a) => a.mm)).toFixed(2)} mm (umbral ${MINIMO})`);
 	await jsClick('esq-cerrar'); await page.waitForTimeout(300);
 }
 

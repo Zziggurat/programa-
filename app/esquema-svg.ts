@@ -77,11 +77,30 @@ function pintarCajetin(hoja: HojaEsq, o: OpcionesEsquema, tinta: string, suave: 
 	const d = o.datos ?? {};
 	const col2 = x + 96;   // segunda columna del cajetín
 	const col3 = x + ancho - 34;
-	const campo = (cx: number, cy: number, rotulo: string, valor: string, ancho: number) => [
-		`<text x="${n(cx)}" y="${n(cy)}" font-size="2.3" fill="${suave}" font-family="system-ui, sans-serif">${esc(rotulo)}</text>`,
-		`<text x="${n(cx)}" y="${n(cy + 4)}" font-size="3.2" fill="${tinta}" font-family="system-ui, sans-serif">`
-			+ `${esc(recortar(valor || '—', ancho))}</text>`,
-	].join('');
+	const PAD = 3;         // aire a los lados de cada casilla
+	// Las dos franjas de campos, y dónde cae la línea base del rótulo dentro de cada una: el bloque
+	// (rótulo + salto + valor) se centra en su franja, así ninguno de los dos toca las rayas.
+	const franja1 = y + 9;
+	const franja2 = y + 17.5;
+	const altoFranja = 8.5;
+	const baseRotulo = (arriba: number): number =>
+		baseCentrada(arriba, altoFranja, CUERPO_ROTULO, CUERPO_VALOR).rotulo;
+	// Y el ancho de cada casilla en MILÍMETROS, sacado de la propia rejilla del cajetín.
+	const anchoIzq = col2 - (x + PAD) - PAD;
+	const anchoDer = col3 - (col2 + PAD) - PAD;
+	/*
+	 * Rótulo y valor. La línea base del valor NO se pone a ojo: se calcula del cuerpo de las dos
+	 * letras, para que quede aire aunque la fuente del sistema sea otra. Y el ancho es el de la
+	 * casilla EN MILÍMETROS, no un número de caracteres.
+	 */
+	const campo = (cx: number, cy: number, rotulo: string, valor: string, anchoCaja: number) => {
+		const v = enCaja(valor || '—', CUERPO_VALOR, anchoCaja);
+		return [
+			`<text x="${n(cx)}" y="${n(cy)}" font-size="${CUERPO_ROTULO}" fill="${suave}" font-family="system-ui, sans-serif">${esc(rotulo)}</text>`,
+			`<text x="${n(cx)}" y="${n(cy + SALTO_CAMPO)}" font-size="${CUERPO_VALOR}" fill="${tinta}" font-family="system-ui, sans-serif"${v.attr}>`
+				+ `${esc(v.texto)}</text>`,
+		].join('');
+	};
 	return [
 		`<rect x="${n(x)}" y="${n(y)}" width="${ancho}" height="${alto}" fill="none" stroke="${tinta}" stroke-width="0.5"/>`,
 		`<line x1="${n(x)}" y1="${n(y + 9)}" x2="${n(x + ancho)}" y2="${n(y + 9)}" stroke="${tinta}" stroke-width="0.3"/>`,
@@ -89,15 +108,26 @@ function pintarCajetin(hoja: HojaEsq, o: OpcionesEsquema, tinta: string, suave: 
 		`<line x1="${n(col2)}" y1="${n(y + 9)}" x2="${n(col2)}" y2="${n(y + alto)}" stroke="${tinta}" stroke-width="0.3"/>`,
 		`<line x1="${n(col3)}" y1="${n(y)}" x2="${n(col3)}" y2="${n(y + alto)}" stroke="${tinta}" stroke-width="0.3"/>`,
 		// Franja superior: proyecto y nº de hoja.
-		`<text x="${n(x + 3)}" y="${n(y + 6.3)}" font-size="4" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${esc(recortar(o.proyecto ?? 'TableroStudio', 44))}</text>`,
-		`<text x="${n(col3 + 17)}" y="${n(y + 2.9)}" font-size="2.3" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">HOJA</text>`,
-		`<text x="${n(col3 + 17)}" y="${n(y + 8.3)}" font-size="4.4" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${hoja.numero}${o.totalHojas ? ` / ${o.totalHojas}` : ''}</text>`,
-		campo(x + 3, y + 12.4, 'CLIENTE', d.cliente ?? '', 40),
-		campo(col2 + 3, y + 12.4, 'OBRA', d.obra ?? '', 34),
-		campo(x + 3, y + 21, 'DIBUJÓ', d.proyectista ?? '', 40),
-		campo(col2 + 3, y + 21, 'FECHA', d.fecha ?? '', 34),
-		`<text x="${n(col3 + 17)}" y="${n(y + 15.5)}" font-size="2.3" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">REV.</text>`,
-		`<text x="${n(col3 + 17)}" y="${n(y + 21)}" font-size="4.6" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${esc(d.revision || '—')}</text>`,
+		tituloProyecto(x + PAD, y + 6.3, o.proyecto ?? 'TableroStudio', col3 - (x + PAD) - PAD, tinta),
+		/*
+		 * HOJA y su número. Iban a 2,9 y 8,3 —5,4 mm de separación— cuando un rótulo de 2,3 sobre
+		 * un número de 4,4 necesita 5,79 para no tocarse. Y el bloque entero no cabía en los 9 mm
+		 * de la franja, así que el número baja a 4,0: sigue leyéndose de lejos y ya cabe con aire.
+		 */
+		`<text x="${n(col3 + 17)}" y="${n(baseCentrada(y, 9, CUERPO_ROTULO, 4).rotulo)}" font-size="${CUERPO_ROTULO}" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">HOJA</text>`,
+		`<text x="${n(col3 + 17)}" y="${n(baseCentrada(y, 9, CUERPO_ROTULO, 4).valor)}" font-size="4" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${hoja.numero}${o.totalHojas ? ` / ${o.totalHojas}` : ''}</text>`,
+		campo(x + PAD, baseRotulo(franja1), 'CLIENTE', d.cliente ?? '', anchoIzq),
+		campo(col2 + PAD, baseRotulo(franja1), 'OBRA', d.obra ?? '', anchoDer),
+		campo(x + PAD, baseRotulo(franja2), 'DIBUJÓ', d.proyectista ?? '', anchoIzq),
+		campo(col2 + PAD, baseRotulo(franja2), 'FECHA', d.fecha ?? '', anchoDer),
+		/*
+		 * REV. y su número. El rótulo va en la franja de arriba y el valor en la de abajo, con la
+		 * raya en medio: el valor iba a 4,6 con la línea base en y+21, y su parte alta caía en
+		 * y+16,5 —POR ENCIMA de la raya de y+17,5—, o sea, dentro de la casilla del rótulo. Ahora
+		 * el rótulo se apoya en la raya por arriba y el número va centrado en SU casilla.
+		 */
+		`<text x="${n(col3 + 17)}" y="${n(franja2 - 0.4 - CUERPO_ROTULO * DESCENDENTE)}" font-size="${CUERPO_ROTULO}" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">REV.</text>`,
+		`<text x="${n(col3 + 17)}" y="${n(franja2 + (altoFranja - 4.6 * (ASCENDENTE + DESCENDENTE)) / 2 + 4.6 * ASCENDENTE)}" font-size="4.6" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${esc(d.revision || '—')}</text>`,
 		// La nota de normas va FUERA de la casilla, a la izquierda del cajetín. Dentro caía justo
 		// encima de los valores de DIBUJÓ y FECHA (la tercera franja ya está ocupada por ellos) y
 		// tapaba el nombre del proyectista, que es de lo poco que nadie puede permitirse no leer.
@@ -105,9 +135,105 @@ function pintarCajetin(hoja: HojaEsq, o: OpcionesEsquema, tinta: string, suave: 
 	].join('');
 }
 
-/** Recorta un texto para que no se salga de su casilla del cajetín. */
-function recortar(t: string, maxCaracteres: number): string {
-	return t.length <= maxCaracteres ? t : `${t.slice(0, maxCaracteres - 1)}…`;
+/*
+ * ----------------------------------------------------------------------------------------------
+ * EL CAJETÍN SE MIDE EN MILÍMETROS, NO EN LETRAS NI A OJO.
+ *
+ * Segunda auditoría, TS2-P1-10. El PDF ya recortaba midiendo de verdad (`app/pdf-texto.ts`), pero
+ * el SVG —que es el plano que se ve en pantalla y el que se exporta a DXF— seguía con dos apaños:
+ *
+ *   1. Recortaba por CANTIDAD DE CARACTERES. «40 caracteres» no es una medida: un nombre de
+ *      cliente en mayúsculas ocupa casi el doble que en minúsculas y se sale de su casilla.
+ *   2. Colocaba rótulo y valor a alturas FIJAS, con 4 mm entre líneas base.
+ *
+ * Lo segundo es lo que dio la cara. Medido sobre el plano dibujado, con la fuente de este equipo:
+ *
+ *      CLIENTE  0,56 mm de aire      OBRA   0,56 mm
+ *      DIBUJÓ   0,13 mm de aire      FECHA  0,56 mm
+ *
+ * Trece centésimas. La `J` de DIBUJÓ baja por debajo de la línea base y se come el hueco. Con la
+ * fuente que ponga OTRO sistema —`system-ui` es Segoe UI en Windows y aquí es otra— eso pasa a
+ * negativo y el rótulo se pisa con el valor. Por eso la auditoría lo vio y aquí la suite pasaba en
+ * verde: el defecto estaba, pero solo asomaba con la fuente del que mira.
+ *
+ * Un plano que se lee bien en la máquina del que lo dibuja y se pisa en la del que lo monta es un
+ * plano roto. Así que la altura ya no se pone a ojo: sale de los cuerpos de letra, con el peor
+ * caso de ascendente y descendente y una holgura declarada. Y el ancho se comprueba en milímetros;
+ * `textLength` obliga además al navegador a meter el texto en su casilla sea cual sea la fuente,
+ * que es la única garantía que no depende de acertar con las métricas.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** Lo que baja una `J` o una `g` por debajo de la línea base, en fracción del cuerpo. */
+const DESCENDENTE = 0.25;
+/** Lo que sube una `Ó` o una `f` por encima de la línea base, en fracción del cuerpo. */
+const ASCENDENTE = 0.98;
+/** Aire que tiene que quedar SIEMPRE entre el rótulo y su valor, pase lo que pase con la fuente. */
+const AIRE_MM = 0.9;
+/** Ancho medio de una letra, en fracción del cuerpo. Conservador para una sans en mayúsculas. */
+const ANCHO_LETRA = 0.62;
+
+/** Cuerpo del rótulo (CLIENTE, OBRA…) y del valor, en mm. */
+export const CUERPO_ROTULO = 2.3;
+export const CUERPO_VALOR = 3.2;
+
+/** Cuánto baja la línea base del valor respecto a la de su rótulo, para que no se toquen nunca. */
+export function saltoDeLinea(cuerpoRotulo: number, cuerpoValor: number): number {
+	return cuerpoRotulo * DESCENDENTE + AIRE_MM + cuerpoValor * ASCENDENTE;
+}
+
+const SALTO_CAMPO = saltoDeLinea(CUERPO_ROTULO, CUERPO_VALOR);
+
+/**
+ * Las dos líneas base de un par rótulo/valor, centrado en su franja.
+ *
+ * Es la cuenta que antes se hacía a ojo. Se pide la franja —dónde empieza y cuánto mide— y los dos
+ * cuerpos de letra, y salen las alturas que dejan el bloque centrado y con aire por los dos lados.
+ */
+export function baseCentrada(
+	arriba: number, alto: number, cuerpoRotulo: number, cuerpoValor: number,
+): { rotulo: number; valor: number } {
+	const salto = saltoDeLinea(cuerpoRotulo, cuerpoValor);
+	const bloque = cuerpoRotulo * ASCENDENTE + salto + cuerpoValor * DESCENDENTE;
+	const rotulo = arriba + (alto - bloque) / 2 + cuerpoRotulo * ASCENDENTE;
+	return { rotulo, valor: rotulo + salto };
+}
+
+/**
+ * El título del proyecto de la franja de arriba, recortado por medida como los demás.
+ *
+ * Iba con `recortar(…, 44)` —cuarenta y cuatro CARACTERES— sobre una casilla de 140 mm. Un nombre
+ * de obra en mayúsculas ocupa casi el doble que en minúsculas: con 44 letras cortas sobra sitio, y
+ * con 44 largas se metía en la casilla de la hoja.
+ */
+function tituloProyecto(cx: number, cy: number, titulo: string, anchoCaja: number, tinta: string): string {
+	const t = enCaja(titulo, 4, anchoCaja);
+	return `<text x="${n(cx)}" y="${n(cy)}" font-size="4" fill="${tinta}" `
+		+ `font-family="system-ui, sans-serif" font-weight="700"${t.attr}>${esc(t.texto)}</text>`;
+}
+
+/** Ancho estimado de un texto en mm. No es exacto: es el techo con el que se decide si cabe. */
+const anchoMm = (t: string, cuerpo: number): number => t.length * cuerpo * ANCHO_LETRA;
+
+/**
+ * Un texto que no se sale de su casilla: recortado por MEDIDA, y apretado por `textLength` si aun
+ * así el navegador lo dibujase más ancho de lo previsto con su fuente.
+ */
+function enCaja(t: string, cuerpo: number, anchoCaja: number): { texto: string; attr: string } {
+	let texto = t;
+	if (anchoMm(texto, cuerpo) > anchoCaja) {
+		const caben = Math.max(1, Math.floor(anchoCaja / (cuerpo * ANCHO_LETRA)) - 1);
+		texto = `${texto.slice(0, caben)}…`;
+	}
+	/*
+	 * `textLength` solo cuando el texto va APRETADO en su casilla —a más del 80 % del ancho—, que
+	 * es donde una fuente más ancha de lo estimado lo sacaría fuera. Ponerlo siempre estiraría un
+	 * «ACME» a lo largo de nueve centímetros, que es peor que el problema que resuelve.
+	 */
+	const apretado = anchoMm(texto, cuerpo) > anchoCaja * 0.8;
+	return {
+		texto,
+		attr: apretado ? ` textLength="${n(anchoCaja)}" lengthAdjust="spacingAndGlyphs"` : '',
+	};
 }
 
 /** Dibuja una hoja completa y devuelve el SVG como texto. */
