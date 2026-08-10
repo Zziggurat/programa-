@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-	altoSegunElAncho, coserEjes, ejesDeSistema, techoDeAncho, TrazoDibujado,
+	altoSegunElAncho, coserEjes, ejesDeSistema, metrosDeInstalacion, techoDeAncho, TrazoDibujado,
 } from '../src/motores/ejes-planta.js';
 
 /** Un conducto dibujado por sus dos lados, como en un plano de verdad. */
@@ -269,4 +269,32 @@ test('dos conductos que se cruzan en planta a distinta altura no son una pieza',
 		largo([[0, 8000], [8000, 0]]),
 	], { largoMinimoSuelto: 0 });
 	assert.ok(ejes.every((e) => !e.pieza), 'son dos conductos que se cruzan, no un accesorio');
+});
+
+/*
+ * Los metros que se enseñan tienen que ser de INSTALACIÓN, no de raya dibujada.
+ *
+ * La leyenda del visor sumaba `inf.trazas` —las líneas del plano— y un conducto dibujado por sus
+ * dos lados cuenta dos veces: decía 861 m de inyección donde hay 409, y 432 de extracción donde
+ * hay 118. Más del doble y casi cuatro veces. Es de las cifras que se miran para hacerse una idea
+ * de la instalación, así que tiene que ser la de verdad.
+ */
+test('metrosDeInstalacion: un conducto de sus dos lados no cuenta doble', () => {
+	// Diez metros de conducto, dibujados por sus dos lados: son 20 m de raya y 10 de conducto.
+	const m = metrosDeInstalacion(conducto(0, 0, 10_000, 400));
+	assert.equal(m.length, 1);
+	assert.equal(m[0].metros, 10, `salió ${m[0].metros} m`);
+});
+
+test('metrosDeInstalacion: las piezas se cuentan aparte, no como tirada', () => {
+	const aspa = (p: [number, number][]): TrazoDibujado =>
+		({ sistema: 'extraccion', z: 4600, ancho: 200, alto: 100, puntos: p });
+	const m = metrosDeInstalacion([
+		...conducto(0, 0, 10_000, 400).map((t) => ({ ...t, sistema: 'extraccion' })),
+		aspa([[-1534, 376], [-934, -512]]),
+		aspa([[-1534, -251], [-934, 638]]),
+	]);
+	const ext = m.find((x) => x.sistema === 'extraccion')!;
+	assert.equal(ext.metros, 10, 'el conducto son 10 m');
+	assert.ok(ext.piezas > 0 && ext.piezas < 5, `las aspas van aparte: ${ext.piezas} m`);
 });

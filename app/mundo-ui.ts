@@ -27,6 +27,21 @@ import {
 	construirMundo, crearCinta, crearPaseo, enfocarEquipo, equipoEnPixel, filtrarEquipos,
 	marcarElegidos, pintarPorModo, ponerVistaPaseo, ponerVistaSims, puntoEnPixel, resaltarEquipo,
 } from './mundo.js';
+import { metrosDeInstalacion } from '../src/motores/ejes-planta.js';
+
+/*
+ * Los metros de instalación DE VERDAD, no las rayas del plano.
+ *
+ * Se calcula una vez y se guarda: sale de emparejar los dos lados de cada conducto y coser los
+ * tramos, que es el mismo trabajo que hace el 3D, y no cambia mientras no cambie el plano.
+ */
+let metrosCache: ReturnType<typeof metrosDeInstalacion> | undefined;
+const metrosPorSistema = (): ReturnType<typeof metrosDeInstalacion> => {
+	if (!metrosCache) {
+		metrosCache = metrosDeInstalacion(inf.trazas as unknown as Parameters<typeof metrosDeInstalacion>[0]);
+	}
+	return metrosCache;
+};
 
 const inf = datosCubierta as unknown as Infraestructura;
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -120,15 +135,26 @@ function pintarResumen(): void {
 	 * antes que por el color.
 	 */
 	const REDONDOS = new Set(['agua', 'agua-fria', 'bus']);
-	$('mundo-clave').innerHTML = r.metrosPorSistema
+	const metros = metrosPorSistema();
+	$('mundo-clave').innerHTML = metros
 		.map((s) => {
 			const sis = SISTEMAS[s.sistema as SistemaTraza];
 			const redondo = REDONDOS.has(s.sistema) ? ' redondo' : '';
 			return `<span><i class="${redondo}" style="background:${hex(sis.color)}"></i>${esc(sis.nombre)}</span>`;
 		}).join('');
-	$('mundo-leyenda').innerHTML = r.metrosPorSistema
+	/*
+	 * METROS DE INSTALACIÓN, no metros de raya dibujada.
+	 *
+	 * Esto sumaba `inf.trazas`, o sea las líneas del plano, y un conducto dibujado por sus dos
+	 * lados cuenta dos veces: decía 861 m de inyección donde hay 409, y 432 de extracción donde
+	 * hay 118. Es de las cifras que se miran para hacerse una idea de la instalación, así que
+	 * tiene que ser la de verdad. Las piezas —transiciones y compuertas— se dicen aparte: son
+	 * accesorios, no metros de tirada.
+	 */
+	$('mundo-leyenda').innerHTML = metros
 		.map((s) => fila(SISTEMAS[s.sistema as SistemaTraza].color,
-			SISTEMAS[s.sistema as SistemaTraza].nombre, `${s.metros} m`))
+			SISTEMAS[s.sistema as SistemaTraza].nombre,
+			`${s.metros} m${s.piezas ? ` <span style="opacity:.65">+ ${s.piezas} m en piezas</span>` : ''}`))
 		.join('');
 	// La obra de la cubierta: lo que hay alrededor de las máquinas, también sacado del plano.
 	const obra = resumenObra(inf);

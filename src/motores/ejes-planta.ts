@@ -457,6 +457,42 @@ export function altoSegunElAncho(ancho: number): number {
 	return Math.max(80, Math.round(ancho / 2));
 }
 
+/**
+ * Metros de instalación DE VERDAD por sistema, separando conducto de accesorios.
+ *
+ * Hasta ahora la leyenda del visor sumaba las líneas DIBUJADAS, y un conducto dibujado por sus dos
+ * lados cuenta dos veces. Los números que salían no eran metros de conducto sino metros de raya:
+ *
+ *   sistema        decía      es      de eso, piezas
+ *   inyección      861 m    409 m         42 m
+ *   extracción     432 m    118 m        107 m
+ *   bandeja        129 m     73 m          0 m
+ *   agua           371 m    330 m          0 m   (va con una sola línea: casi no cambia)
+ *   bus            552 m    549 m          0 m
+ *
+ * Más del doble en inyección y casi cuatro veces en extracción. Quien mirase eso para hacerse una
+ * idea de la instalación se llevaba una idea equivocada, y es de las cifras que se usan para
+ * decidir cosas. Las piezas se cuentan aparte porque son accesorios, no metros de tirada.
+ */
+export function metrosDeInstalacion(trazos: TrazoDibujado[]): {
+	sistema: string; metros: number; piezas: number;
+}[] {
+	const largo = (p: [number, number][]): number =>
+		p.slice(1).reduce((s, q, i) => s + Math.hypot(q[0] - p[i][0], q[1] - p[i][1]), 0);
+	const por = new Map<string, { metros: number; piezas: number }>();
+	for (const e of ejesDeLaPlanta(trazos)) {
+		if (!por.has(e.sistema)) por.set(e.sistema, { metros: 0, piezas: 0 });
+		const acc = por.get(e.sistema)!;
+		if (e.pieza) acc.piezas += largo(e.puntos);
+		else acc.metros += largo(e.puntos);
+	}
+	return [...por]
+		.map(([sistema, v]) => ({
+			sistema, metros: Math.round(v.metros / 1000), piezas: Math.round(v.piezas / 1000),
+		}))
+		.sort((a, b) => b.metros - a.metros);
+}
+
 /** Saca los ejes de TODO lo dibujado, sistema por sistema. */
 export function ejesDeLaPlanta(trazos: TrazoDibujado[]): EjeInstalacion[] {
 	const porSistema = new Map<string, TrazoDibujado[]>();
