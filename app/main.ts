@@ -217,6 +217,23 @@ function autoguardar(): void {
 	}
 }
 
+/**
+ * Cierra las ventanas que estén abiertas encima. Devuelve si cerró alguna.
+ *
+ * Se BUSCAN en vez de llevar una lista escrita a mano: la lista se quedó corta —cerraba tres de
+ * las nueve, así que la ayuda, los ejemplos y la explicación de un aparato no se cerraban con
+ * Escape— y volvería a quedarse corta con la siguiente ventana que se añadiera.
+ *
+ * `modal-dialogo` se queda fuera porque tiene su propio Escape, que además le devuelve
+ * «cancelado» a quien esté esperando la respuesta.
+ */
+function cerrarVentanasDeArriba(): boolean {
+	const abiertas = [...document.querySelectorAll<HTMLElement>('[id^="modal-"]')]
+		.filter((el) => el.id !== 'modal-dialogo' && !el.hidden);
+	for (const el of abiertas) el.hidden = true;
+	return abiertas.length > 0;
+}
+
 /** Solo la señal: hay trabajo que todavía no se ha descargado como archivo. */
 function senalarTrabajoSinExportar(): void {
 	hayCambiosSinExportar = true;
@@ -3376,10 +3393,20 @@ window.addEventListener('keydown', (ev) => {
 	 * nada —el aparato desaparecía detrás—, y Supr abría un «¿Eliminar -Q1 y sus cables?» sobre
 	 * el plano de la cubierta, preguntando por un aparato que no estabas mirando.
 	 *
+	 * ESCAPE ES LA EXCEPCIÓN Y TIENE QUE PASAR. No es un atajo de edición: es la tecla de «cierra
+	 * lo que está encima», y este manejador es el ÚNICO sitio donde se cierran las ventanas. Al
+	 * bloquearlo aquí, con la ventana de Inicio delante —que es CÓMO ARRANCA el programa—, la guía
+	 * rápida y los datos del proyecto dejaban de cerrarse con el teclado. Lo cazó `qa/entrega.mjs`
+	 * sobre el archivo empaquetado, que es el único que arranca en Inicio de verdad; las demás
+	 * suites entran con `?inicio=0` y no pasaban por ahí.
+	 *
 	 * Se sale sin tocar `preventDefault`: la Planta tiene su propio manejador de teclas (WASD,
 	 * H para los paneles) y le tienen que seguir llegando.
 	 */
-	if (!($('mundo') as HTMLElement).hidden || !($('inicio') as HTMLElement).hidden) return;
+	if (!($('mundo') as HTMLElement).hidden || !($('inicio') as HTMLElement).hidden) {
+		if (ev.key === 'Escape') cerrarVentanasDeArriba();
+		return;
+	}
 
 	/*
 	 * Y con un diálogo bloqueante delante, mandan sus dos teclas y ninguna más.
@@ -3465,10 +3492,8 @@ window.addEventListener('keydown', (ev) => {
 		 * ventana que se añadiera. `modal-dialogo` se queda fuera porque tiene su propio Escape,
 		 * que además devuelve «cancelado» a quien esté esperando la respuesta.
 		 */
-		const abiertos = [...document.querySelectorAll<HTMLElement>('[id^="modal-"]')]
-			.filter((el) => el.id !== 'modal-dialogo' && !el.hidden);
 		const dossierAbierto = !($('panel-dossier') as HTMLElement).hidden;
-		if (abiertos.length) { for (const el of abiertos) el.hidden = true; }
+		if (cerrarVentanasDeArriba()) { /* ya se cerró lo de encima */ }
 		else if (dossierAbierto) panelDossier.abrir(false);
 		else if (colocando) cancelarColocacion();
 		else if (cableandoDesde) { cancelarCableado(); avisar('Cableado cancelado.', 'info'); }

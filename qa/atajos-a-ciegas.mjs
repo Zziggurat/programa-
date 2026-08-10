@@ -120,6 +120,24 @@ await p.waitForTimeout(600);
 const panelesDespues = await p.evaluate(() => document.getElementById('mundo').classList.contains('sin-paneles'));
 must('la Planta 3D sigue oyendo sus propias teclas (H)', panelesAntes !== panelesDespues,
 	`paneles escondidos: ${panelesAntes} → ${panelesDespues}`);
+
+/*
+ * Y ESCAPE TIENE QUE SEGUIR CERRANDO LO QUE ESTÁ ENCIMA.
+ *
+ * Escape no es un atajo de edición: es la tecla de «cierra la ventana de arriba», y el manejador
+ * del tablero es el ÚNICO sitio donde se cierran. Al apartarlo con una herramienta delante lo
+ * bloqueé sin querer, y con la ventana de INICIO —que es cómo arranca el programa— la guía rápida
+ * y los datos del proyecto dejaban de cerrarse con el teclado. Lo cazó `qa/entrega.mjs` sobre el
+ * archivo empaquetado, que es el único que arranca en Inicio de verdad; aquí se cubre también.
+ */
+await p.evaluate(() => document.getElementById('mundo-guia')?.click());
+await p.waitForTimeout(600);
+const guiaAbierta = await p.evaluate(() => !document.getElementById('modal-guia-mundo').hidden);
+await p.keyboard.press('Escape');
+await p.waitForTimeout(500);
+must('con la Planta delante, Escape sigue cerrando la ventana de encima',
+	guiaAbierta && await p.evaluate(() => document.getElementById('modal-guia-mundo').hidden),
+	guiaAbierta ? 'la guía de la Planta se cerró' : 'no llegó a abrirse: no prueba nada');
 await p.evaluate(() => document.getElementById('mundo-salir')?.click());
 await p.waitForTimeout(1800);
 
