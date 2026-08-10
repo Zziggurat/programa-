@@ -217,10 +217,31 @@ function autoguardar(): void {
 	}
 }
 
-/** Marca que hay trabajo que todavía no se ha descargado como archivo. */
-function marcarSucio(): void {
+/** Solo la señal: hay trabajo que todavía no se ha descargado como archivo. */
+function senalarTrabajoSinExportar(): void {
 	hayCambiosSinExportar = true;
 	if (estadoGuardado !== 'fallo') { estadoGuardado = 'sucio'; pintarEstadoGuardado(); }
+}
+
+/**
+ * Lo mismo que lo de arriba Y ADEMÁS GUARDA. Es lo que se les pasa a los paneles que viven en
+ * otro archivo —el dossier, el esquema— para decir «acabo de cambiar el proyecto».
+ *
+ * Antes esto solo ponía la bandera. El panel del esquema no lo notaba porque después llama a
+ * `actualizarTodo()`, que sí guarda; pero el del dossier no llama a nadie más, así que el nombre
+ * de la empresa que firma, el color, el papel y los apartados elegidos NO SE GUARDABAN NUNCA.
+ * Y encima el indicador se ponía en «sin exportar», que es el mismo aspecto que tiene un proyecto
+ * bien guardado pendiente de descargar: uno cerraba la pestaña convencido de que estaba a salvo.
+ * Comprobado recargando la página: la empresa desaparecía.
+ *
+ * Es el fallo que la auditoría (TS-P1-08) predijo de forma general —hay muchos sitios que tocan
+ * el proyecto y cada uno tiene que acordarse de guardar—, encontrado en un sitio concreto.
+ * `capturar()` NO pasa por aquí a propósito: se llama ANTES de cambiar nada, así que guardaría el
+ * estado de antes y doblaría el coste en cada edición.
+ */
+function marcarSucio(): void {
+	senalarTrabajoSinExportar();
+	autoguardar();
 }
 
 // Cerrar la pestaña con trabajo sin descargar pide confirmación al navegador.
@@ -283,7 +304,9 @@ const rehacerPila: string[] = [];
 
 /** Guarda el estado ACTUAL antes de una mutación, para poder deshacerla. */
 function capturar(): void {
-	marcarSucio(); // hay trabajo nuevo que todavía no está en ningún archivo
+	// Solo la señal: aquí todavía no ha cambiado nada, así que guardar ahora escribiría el estado
+	// de ANTES. Lo guarda quien haga el cambio, justo después.
+	senalarTrabajoSinExportar();
 	pila.push(JSON.stringify(proyecto));
 	if (pila.length > 60) pila.shift();
 	rehacerPila.length = 0;
