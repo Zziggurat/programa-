@@ -260,6 +260,10 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 		($('modal-ejemplos') as HTMLElement).hidden = true;
 		ctx.limpiarSeleccion();
 		ctx.trasCambiarProyecto();
+		// Y se reencuadra, como al abrir un ejemplo. Segunda auditoría, TS2-P2-13: sin esto, una
+		// plantilla de una placa muy distinta a la que había en pantalla se abría fuera de escala
+		// y parecía vacía, con el tablero fuera del cuadro.
+		ctx.encuadrar();
 		avisar(`Plantilla «${p.nombre}» abierta`, 'ok');
 	}
 
