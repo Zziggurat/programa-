@@ -84,7 +84,8 @@ Se puede filtrar por nombre: `node qa/todas.mjs cables riel`.
 
 | Suite | Qué verifica |
 |---|---|
-| `npm run qa:auditoria` | Las siete de la **auditoría externa**, juntas: que un autoguardado ilegible no se pise, que un campo en blanco no se declare como 0 °C, que nada tape a un diálogo o a un aviso, que el texto del usuario no se convierta en HTML, que duplicar y pegar no dejen aparatos que nadie monta, que la rueda de la Planta tenga tope, y que los atajos no editen el tablero cuando el tablero no se ve |
+| `npm run qa:auditoria` | Las ocho de la **auditoría externa**, juntas: que un autoguardado ilegible no se pise, que un campo en blanco no se declare como 0 °C, que nada tape a un diálogo o a un aviso, que el texto del usuario no se convierta en HTML, que duplicar y pegar no dejen aparatos que nadie monta, que la rueda de la Planta tenga tope, que los atajos no editen el tablero cuando el tablero no se ve, y que **nada de lo que haces se pierda al recargar** |
+| `node qa/se-guarda-solo.mjs` | La pregunta del usuario, no la del programador: **«si se me cierra el navegador, ¿pierdo esto?»**. Hace un rato de trabajo corriente —sacar aparatos, ponerle nombre y cliente al tablero, agrandar la placa, añadir un riel, corregir la ficha de un aparato, tender un cable a clics, poner la empresa que firma el dossier— y luego recarga la página y comprueba **dato a dato** qué sobrevivió. Así se encontró que los ajustes del dossier no se guardaban nunca |
 | `npm run qa:cables` | Cero cables fantasma, cablear por clic, codos, uniones, arrastre, Supr y deshacer |
 | `node qa/controladores.mjs` | Los doce controladores reales del catálogo y el diálogo «a medida»: huella, borneras en su sitio y cableado por terminal |
 | `node qa/dossier.mjs` | Que el PDF describa el tablero que hay en pantalla, y que cambie cuando el tablero cambia |
