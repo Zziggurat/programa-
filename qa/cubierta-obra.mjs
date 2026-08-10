@@ -135,8 +135,21 @@ must('la nota escrita se vuelve a leer en la ficha',
 	await page.evaluate(() => document.getElementById('mundo-nota')?.value?.includes('prensaestopas')));
 
 console.log('\n--- 8. Se puede vaciar lo medido sin perder el parte ---');
-page.on('dialog', (d) => d.accept());
-await click('tiradas-vaciar'); await page.waitForTimeout(300);
+/*
+ * Se confirma en el DIÁLOGO DE LA APLICACIÓN, no en el del navegador.
+ *
+ * Segunda auditoría, TS2-P2-07: «Vaciar tiradas» era el último `confirm()` nativo que quedaba, y
+ * el propio `index.html` explica por qué no se usan —en un `file://` o dentro de un visor con
+ * restricciones puede estar bloqueado, y entonces devuelve `false` sin enseñar nada y el botón
+ * deja de funcionar sin que nadie entienda por qué—. Aquí se aceptaba con
+ * `page.on('dialog', …)`, que es la forma de responder al del navegador; al cambiarlo, esta
+ * comprobación cazó el cambio de camino a la primera vuelta de la batería.
+ */
+await click('tiradas-vaciar'); await page.waitForTimeout(400);
+must('CONDICIÓN PREVIA: pregunta antes de borrar',
+	await page.evaluate(() => !document.getElementById('modal-dialogo').hidden));
+await page.evaluate(() => document.getElementById('dialogo-ok')?.click());
+await page.waitForTimeout(500);
 must('las tiradas se borran', (await qa('pedido')).length === 0);
 must('pero el parte de obra sigue', de(await qa('avance'), 'problema') === 1);
 
