@@ -10,7 +10,8 @@
  * sanos y se deja escrito dónde va la migración de la próxima versión.
  */
 import {
-	Borne, Canaleta, Colocacion, Conductor, Dispositivo, Gabinete, Hoja, OpcionesProyecto, Proyecto, Riel,
+	BloqueTerminales, Borne, Canaleta, Colocacion, Conductor, Dispositivo, Gabinete, Hoja,
+	LadoAparato, OpcionesProyecto, Posicion, Proyecto, Riel, Rol,
 } from './tipos.js';
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 
@@ -326,6 +327,177 @@ function leerColocacionEsquema(bruto: unknown): Dispositivo['esquema'] {
 	return { columna: Math.max(1, Math.round(columna)), fila: Math.max(1, Math.round(fila)) };
 }
 
+/*
+ * ----------------------------------------------------------------------------------------------
+ * LO QUE UN MOTOR RECORRE, SE RECONSTRUYE. NO SE DEJA PASAR.
+ *
+ * Segunda auditoría, TS2-P1-01. El aparato entraba con un spread del objeto externo y solo se
+ * saneaban los campos escalares. Todo lo que es una LISTA o un OBJETO —y que después algún motor
+ * recorre con un `for…of` o desestructura— pasaba tal cual. Reproducido contra el build:
+ *
+ *   puentes: {}                → carga con 0 arreglos → «object is not iterable»
+ *   puentesInternos: [null]    → carga con 0 arreglos → «object null is not iterable»
+ *   puentes: [null]            → carga con 0 arreglos → «Cannot read properties of null»
+ *   puentesInternos: "hola"    → carga con 0 arreglos → «.map is not a function»
+ *
+ * Nada de esto es rebuscado: son archivos que van por correo y por pendrive entre el taller y la
+ * obra, se copian a medias y alguna vez se tocan a mano. Y el efecto no es un aviso feo: es el
+ * editor bloqueado con el proyecto anterior ya sustituido en memoria.
+ *
+ * La regla, la misma de siempre y ahora también para lo anidado: **lo que no tiene la forma que
+ * dice el tipo, no entra**. `test/cargar.test.ts` comprueba que no quede ningún campo estructurado
+ * de `Dispositivo` sin lector, para que añadir uno nuevo y olvidarse no vuelva a abrir el agujero.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** Un valor de una lista cerrada de opciones. Fuera de ella, `undefined`. */
+const unoDe = <T extends string>(v: unknown, opciones: readonly T[]): T | undefined =>
+	(typeof v === 'string' && (opciones as readonly string[]).includes(v) ? v as T : undefined);
+
+/** Booleano de verdad; un `"sí"` o un `1` no lo son. */
+const bool = (v: unknown): boolean | undefined => (typeof v === 'boolean' ? v : undefined);
+
+/** Pares `[borneA, borneB]` unidos por dentro del aparato. */
+function leerPuentesInternos(bruto: unknown): [string, string][] | undefined {
+	if (!esLista(bruto)) return undefined;
+	const salida: [string, string][] = [];
+	for (const par of bruto) {
+		if (!esLista(par)) continue;
+		const a = texto(par[0]);
+		const b = texto(par[1]);
+		if (a && b && a !== b) salida.push([a, b]);
+	}
+	return salida.length ? salida : undefined;
+}
+
+/** Grupos de bornas puenteadas de un bornero. Un grupo de una sola borna no puentea nada. */
+function leerPuentes(bruto: unknown): string[][] | undefined {
+	if (!esLista(bruto)) return undefined;
+	const salida: string[][] = [];
+	for (const grupo of bruto) {
+		if (!esLista(grupo)) continue;
+		const ids = [...new Set(grupo.map(texto).filter((x): x is string => !!x))];
+		if (ids.length > 1) salida.push(ids);
+	}
+	return salida.length ? salida : undefined;
+}
+
+const LADOS_APARATO = ['arriba', 'abajo', 'izquierda', 'derecha'] as const;
+
+/** Disposición física de las borneras de un equipo real. */
+function leerTerminales(bruto: unknown): BloqueTerminales[] | undefined {
+	if (!esLista(bruto)) return undefined;
+	const salida: BloqueTerminales[] = [];
+	for (const b of bruto) {
+		if (!esObjeto(b)) continue;
+		const lado = unoDe(b.lado, LADOS_APARATO) as LadoAparato | undefined;
+		const bornes = esLista(b.bornes) ? b.bornes.map(texto).filter((x): x is string => !!x) : [];
+		// Un bloque sin lado o sin bornas no coloca nada: el reparto automático lo hace mejor.
+		if (!lado || bornes.length === 0) continue;
+		salida.push({
+			lado,
+			bornes,
+			rotulo: texto(b.rotulo),
+			margen: enRango(b.margen, 0, 200),
+			desde: enRango(b.desde, 0, 1),
+			hasta: enRango(b.hasta, 0, 1),
+			color: texto(b.color),
+			extraible: bool(b.extraible),
+		});
+	}
+	return salida.length ? salida : undefined;
+}
+
+/** Un rango `[mínimo, máximo]`. Al revés o incompleto no es un rango. */
+function leerRango(bruto: unknown, min: number, max: number): [number, number] | undefined {
+	if (!esLista(bruto) || bruto.length !== 2) return undefined;
+	const a = enRango(bruto[0], min, max);
+	const b = enRango(bruto[1], min, max);
+	return a !== undefined && b !== undefined && a <= b ? [a, b] : undefined;
+}
+
+/** Temporización de un relé. Sin tipo o sin segundos no temporiza: conmuta al instante. */
+function leerTemporizacion(bruto: unknown): Dispositivo['temporizacion'] {
+	if (!esObjeto(bruto)) return undefined;
+	const tipo = unoDe(bruto.tipo, ['trabajo', 'reposo'] as const);
+	const segundos = enRango(bruto.segundos, 0, 86_400);
+	return tipo && segundos !== undefined ? { tipo, segundos } : undefined;
+}
+
+/** Rasgos del frente que dibuja el modelo 3D. */
+function leerRasgosFrente(bruto: unknown): Dispositivo['rasgosFrente'] {
+	if (!esObjeto(bruto)) return undefined;
+	const r = {
+		display: bool(bruto.display),
+		leds: enRango(bruto.leds, 0, 64),
+		puertosIP: enRango(bruto.puertosIP, 0, 32),
+		puertosRS485: enRango(bruto.puertosRS485, 0, 32),
+	};
+	return Object.values(r).some((v) => v !== undefined) ? r : undefined;
+}
+
+function leerPosicion(bruto: unknown): Posicion | undefined {
+	if (!esObjeto(bruto)) return undefined;
+	const x = enRango(bruto.x, -10_000, 10_000);
+	const y = enRango(bruto.y, -10_000, 10_000);
+	return x !== undefined && y !== undefined ? { x, y } : undefined;
+}
+
+/** Maestro/esclavo de un contacto auxiliar. Un esclavo sin maestro no es nada. */
+function leerRol(bruto: unknown): Rol | undefined {
+	if (!esObjeto(bruto)) return undefined;
+	if (bruto.tipo === 'maestro') return { tipo: 'maestro' };
+	if (bruto.tipo !== 'esclavo') return undefined;
+	const maestroId = texto(bruto.maestroId);
+	const contacto = unoDe(bruto.contacto, ['NA', 'NC', 'potencia'] as const);
+	return maestroId && contacto ? { tipo: 'esclavo', maestroId, contacto } : undefined;
+}
+
+/**
+ * Formatos de imagen que se admiten, y por qué esos.
+ *
+ * Segunda auditoría, TS2-P1-11. El cargador solo exigía que empezase por `data:image/`. Con eso,
+ * un SVG —que el selector de archivos acepta como `image/*`— entraba, se guardaba, y al generar
+ * el PDF jsPDF paraba con «addImage does not support files of type 'UNKNOWN'»: el dossier
+ * quedaba inservible y el motivo no aparecía por ninguna parte. Estos cuatro son los que jsPDF
+ * dibuja, así que lo que entra es lo que después se va a poder imprimir.
+ */
+const IMAGEN_ADMITIDA = /^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=\s]+$/;
+
+/**
+ * Los tipos de aparato que este programa sabe tratar, y las letras de clase de la IEC 81346.
+ *
+ * `tipo` no se comprobaba: bastaba con que fuera un texto cualquiera. Un `tipo: "disyuntor "` con
+ * un espacio de más —o el nombre en inglés de otra herramienta— dejaba un aparato que no es de
+ * ninguna familia: sin símbolo de esquema, sin regla de DRC que lo mire y sin comportamiento en la
+ * simulación, pero dibujado en la placa como si estuviera bien. `otro` es lo que ya hace el
+ * programa con lo que no reconoce, así que es donde caen.
+ */
+const TIPOS_APARATO = [
+	'plc', 'fuente', 'transformador', 'contactor', 'rele',
+	'disyuntor', 'guardamotor', 'diferencial', 'fusible', 'seccionador',
+	'variador', 'motor', 'pulsador', 'selector', 'piloto',
+	'sensor', 'valvula', 'resistencia', 'condensador',
+	'bornero', 'cable', 'otro',
+] as const;
+
+const LETRAS_CLASE = [
+	'A', 'B', 'C', 'E', 'F', 'G', 'K', 'M', 'P',
+	'Q', 'R', 'S', 'T', 'U', 'W', 'X', 'Y',
+] as const;
+
+/**
+ * Tope de una imagen incrustada, en caracteres de su data URL (~6 MB de base64 ≈ 4,5 MB de
+ * archivo). El historial guarda hasta 60 copias del proyecto: una foto de móvil sin límite se
+ * multiplica por sesenta en memoria y revienta la cuota del guardado automático.
+ */
+const MAX_IMAGEN = 6_000_000;
+
+function leerImagen(bruto: unknown): string | undefined {
+	const s = texto(bruto);
+	if (!s || s.length > MAX_IMAGEN || !IMAGEN_ADMITIDA.test(s)) return undefined;
+	return s;
+}
+
 function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 	if (!esLista(bruto)) {
 		if (bruto !== undefined) arreglos.push('la lista de aparatos estaba corrupta');
@@ -363,7 +535,33 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			disipacionW: numerico('disipacionW', 0, 10_000),
 			poderCorteKA: numerico('poderCorteKA', 0, 200),
 			sensibilidadMA: numerico('sensibilidadMA', 0, 100_000),
+			profundidad: numerico('profundidad', 0, 1000),
 			esquema: leerColocacionEsquema((d as Record<string, unknown>).esquema),
+			/*
+			 * Y TODO LO ANIDADO, reconstruido. Estos son los campos que después recorre un motor:
+			 * dejarlos entrar con la forma que traigan es lo que tiraba el editor entero al primer
+			 * recálculo, con el proyecto anterior ya sustituido en memoria.
+			 */
+			puentesInternos: leerPuentesInternos(d.puentesInternos),
+			puentes: leerPuentes(d.puentes),
+			terminales: leerTerminales(d.terminales),
+			rangoRegulacionA: leerRango(d.rangoRegulacionA, 0, 10_000),
+			rangoSonda: leerRango(d.rangoSonda, -10_000, 10_000),
+			temporizacion: leerTemporizacion(d.temporizacion),
+			rasgosFrente: leerRasgosFrente(d.rasgosFrente),
+			posicion: leerPosicion(d.posicion),
+			rol: leerRol(d.rol),
+			imagen: leerImagen(d.imagen),
+			curvaDisparo: unoDe(d.curvaDisparo, ['B', 'C', 'D', 'K', 'Z', 'gG', 'aM'] as const),
+			claseDiferencial: unoDe(d.claseDiferencial, ['AC', 'A', 'F', 'B'] as const),
+			programa: texto(d.programa),
+			unidadSonda: texto(d.unidadSonda),
+			colorCuerpo: texto(d.colorCuerpo),
+			hojaId: texto(d.hojaId),
+			// Un tipo que no es de la lista no tiene símbolo, ni regla de DRC, ni comportamiento:
+			// cae en `otro`, que es lo que el programa ya hace con lo que no reconoce.
+			tipo: unoDe(d.tipo, TIPOS_APARATO) ?? 'otro',
+			clase: unoDe(d.clase, LETRAS_CLASE),
 		});
 	}
 	if (descartados) arreglos.push(`${descartados} aparato(s) sin datos suficientes`);
@@ -385,7 +583,19 @@ function leerBornes(bruto: unknown): Borne[] {
 		const id = texto(b.id);
 		if (!id || vistos.has(id)) continue;   // dos bornas con el mismo número no se distinguen
 		vistos.add(id);
-		salida.push({ ...(b as unknown as Borne), id });
+		// Campo a campo, no con un spread: `tipo` decide el color y la prioridad del potencial,
+		// y `lado` decide qué es primario y qué secundario en una fuente. Un valor inventado en
+		// cualquiera de los dos no da un aviso: da un cálculo que sale mal y parece bueno.
+		salida.push({
+			id,
+			tipo: unoDe(b.tipo, ['L', 'N', 'PE', 'control', 'senal', 'otro'] as const),
+			lado: unoDe(b.lado, ['primario', 'secundario+', 'secundario-'] as const),
+			obligatorio: bool(b.obligatorio),
+			maxConductores: enRango(b.maxConductores, 1, 16),
+			seccionMaxMm2: enRango(b.seccionMaxMm2, 0, 1000),
+			u: enRango(b.u, 0, 1),
+			v: enRango(b.v, 0, 1),
+		});
 	}
 	return salida;
 }

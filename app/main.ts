@@ -117,7 +117,7 @@ function proyectoNuevo(): Proyecto {
 interface CargaInicial {
 	proyecto: Proyecto;
 	/** Qué salió mal, si salió algo mal. Con esto se decide si se congela el guardado. */
-	problema?: { motivo: string; crudo?: string; sinAlmacen?: boolean };
+	problema?: { motivo: string; crudo?: string; sinAlmacen?: boolean; reparado?: boolean };
 }
 
 function cargarInicial(): CargaInicial {
@@ -134,7 +134,27 @@ function cargarInicial(): CargaInicial {
 	if (!guardado) return { proyecto: proyectoNuevo() };
 
 	try {
-		return { proyecto: cargarProyecto(guardado).proyecto };
+		const { proyecto: leido, arreglos } = cargarProyecto(guardado);
+		/*
+		 * UN ARCHIVO REPARADO TAMPOCO SE PISA.
+		 *
+		 * Segunda auditoría, TS2-P0-01. Aquí se cogía solo `.proyecto` y se tiraba el informe de
+		 * reparaciones. El caso que se cubría era el del archivo que NO SE PUEDE LEER —ese lanza,
+		 * y entonces sí se congelaba el guardado—; pero el cargador tiene un segundo camino, que
+		 * es el que se usa a diario: leerlo y ARREGLARLO por el camino. Medido:
+		 *
+		 *   entrada: 29 cables · salida: 28 · arreglos: ["1 cable(s) sueltos sin aparato…"]
+		 *   no lanza → el `recalcular()` de arranque llama a `autoguardar()`
+		 *   → el autosave queda reemplazado por la versión saneada, y el cable, perdido
+		 *
+		 * Y ese cable podía ser lo único que quedaba de un aparato que se borró por error tres
+		 * días antes. Un archivo del que hubo que quitar algo es exactamente el que hay que
+		 * conservar entero hasta que su dueño diga que sí.
+		 */
+		if (arreglos.length > 0) {
+			return { proyecto: leido, problema: { motivo: arreglos.join(', '), crudo: guardado, reparado: true } };
+		}
+		return { proyecto: leido };
 	} catch (e) {
 		return { proyecto: proyectoNuevo(), problema: { motivo: nombreDeError(e), crudo: guardado } };
 	}
@@ -281,6 +301,7 @@ recalcular();
 async function resolverAutoguardadoIlegible(): Promise<void> {
 	const p = cargaInicial.problema;
 	if (!p?.crudo) return;
+	if (p.reparado) { await resolverAutoguardadoReparado(p.motivo, p.crudo); return; }
 	const kb = Math.max(1, Math.round(p.crudo.length / 1024));
 	const quiereBajarlo = await confirmar(
 		`Hay un tablero guardado en este navegador que este programa no puede abrir.\n\n`
@@ -312,6 +333,47 @@ async function resolverAutoguardadoIlegible(): Promise<void> {
 		pintarEstadoGuardado('hay un tablero anterior sin recuperar');
 	}
 }
+/**
+ * El tablero guardado SÍ se pudo abrir, pero hubo que quitarle algo.
+ *
+ * Segunda auditoría, TS2-P0-01. Este caso no existía: el arranque cogía el proyecto saneado, tiraba
+ * el informe de reparaciones y el primer `autoguardar()` reemplazaba el original. Lo que se
+ * quitaba desaparecía sin que nadie lo hubiera visto pasar.
+ *
+ * Es distinto del ilegible y se trata distinto: aquí el tablero está en pantalla y se puede
+ * trabajar. Lo único que no se puede hacer es pisar el original a espaldas de su dueño, así que el
+ * guardado se queda quieto hasta que él diga. Y como el original entero sigue ahí, la opción de
+ * bajárselo es real: dentro está lo que se quitó.
+ */
+async function resolverAutoguardadoReparado(motivo: string, crudo: string): Promise<void> {
+	const quiereBajarlo = await confirmar(
+		'El tablero guardado se abrió, pero hubo que corregirlo para poder abrirlo.\n\n'
+		+ `Se quitó: ${motivo}\n\n`
+		+ 'La copia original está intacta y NO se va a guardar nada encima mientras decides. '
+		+ 'Si lo que se quitó te hace falta, descárgala ahora: dentro está tal cual estaba.',
+		{ ok: 'Descargar el original' },
+	);
+	if (quiereBajarlo) {
+		descargar('tablero-original.tablero.json', crudo, 'application/json');
+		avisar('Original descargado, sin tocar.', 'ok');
+	}
+	const aceptar = await confirmar(
+		'¿Seguir con el tablero corregido? A partir de ahora el guardado automático '
+		+ 'reemplaza la copia original.',
+		{ ok: 'Seguir con el corregido' },
+	);
+	if (aceptar) {
+		guardadoCongelado = false;
+		autoguardar();
+		avisar(`Se sigue con el tablero corregido. Se quitó: ${motivo}.`, 'info');
+	} else {
+		avisar('El guardado automático sigue DETENIDO para no pisar la copia original. '
+			+ 'Descarga tu trabajo con Archivo → Guardar.', 'error');
+		estadoGuardado = 'fallo';
+		pintarEstadoGuardado('el tablero guardado necesitaba correcciones sin aceptar');
+	}
+}
+
 void resolverAutoguardadoIlegible();
 
 /* ------------------------- Historial (deshacer/rehacer) ------------------------- */
@@ -3627,14 +3689,34 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 		(e.target as HTMLInputElement).value = '';
 		return;
 	}
+	const anterior = proyecto;
 	try {
 		const { proyecto: abierto, arreglos } = cargarProyecto(await archivo.text());
 		capturar();
 		proyecto = abierto;
-		seleccionar(undefined);
-		actualizarTodo();
-		pintarEstructura();
-		encuadrar();
+		try {
+			seleccionar(undefined);
+			actualizarTodo();
+			pintarEstructura();
+			encuadrar();
+		} catch (fallo) {
+			/*
+			 * ABRIR ES TODO O NADA.
+			 *
+			 * Segunda auditoría, TS2-P1-01. `proyecto = abierto` se hacía ANTES de que el
+			 * recálculo terminase. Si la revisión, el ruteo o el render fallaban con el archivo
+			 * nuevo, el `catch` avisaba... y el editor se quedaba mostrando —y autoguardando— un
+			 * proyecto a medio montar, con el anterior ya perdido. El aviso decía «no se pudo
+			 * abrir» mientras la pantalla enseñaba justo lo que no se había podido abrir.
+			 *
+			 * Ahora el que falla es el archivo nuevo, y lo que había vuelve a su sitio.
+			 */
+			proyecto = anterior;
+			seleccionar(undefined);
+			actualizarTodo();
+			pintarEstructura();
+			throw fallo;
+		}
 		// Si hubo que sanear algo, se dice: callarlo es dejar que el usuario descubra
 		// más tarde que le faltan cables sin saber por qué.
 		avisar(arreglos.length

@@ -396,3 +396,119 @@ test('los datos buenos del cajetín se respetan', () => {
 		fabricante: undefined, revision: 'B', fecha: '2026-08-08', notas: undefined,
 	});
 });
+
+/* ==============================================================================================
+ * Segunda auditoría, TS2-P1-01: lo anidado también.
+ *
+ * El aparato entraba con un spread del objeto externo y solo se saneaban los campos escalares.
+ * Todo lo que es una lista o un objeto —y que después un motor recorre— pasaba con la forma que
+ * trajera. Medido contra el build de entonces: los cuatro casos de abajo CARGABAN con cero
+ * arreglos y reventaban al primer recálculo, con el proyecto anterior ya sustituido en memoria.
+ * ============================================================================================== */
+
+import { calcularPotenciales } from '../src/motores/potenciales.js';
+import { simular } from '../src/motores/simulacion.js';
+import { verificarProyecto } from '../src/motores/drc.js';
+import { readFileSync } from 'node:fs';
+
+/** Un aparato con un campo cualquiera metido a mano, como llega un archivo tocado por fuera. */
+function conCampo(campo: string, valor: unknown): unknown {
+	const p = bueno() as unknown as Record<string, unknown>;
+	const d = (p.dispositivos as Record<string, unknown>[])[0];
+	d[campo] = valor;
+	return p;
+}
+
+/** Lo que hace la aplicación nada más abrir: si algo revienta, revienta aquí. */
+function usar(p: Proyecto): void {
+	const pot = calcularPotenciales(p);
+	verificarProyecto(p, pot);
+	simular(p);
+}
+
+/*
+ * Las formas con las que llega la basura de verdad: la lista que es un objeto, la lista con un
+ * hueco, el objeto donde iba una lista y el texto donde iba todo.
+ */
+const BASURA: [string, unknown][] = [
+	['objeto vacío', {}],
+	['lista con un nulo', [null]],
+	['texto', 'hola'],
+	['número', 7],
+	['lista de listas rotas', [[null, 'a'], ['b'], []]],
+	['objeto con campos a medias', { tipo: 'ninguno' }],
+	['lista de objetos incompletos', [{}, { bornes: null }, { lado: 'ninguno' }]],
+];
+
+/** Todo campo de `Dispositivo` que no sea un escalar suelto: si algún motor lo recorre, va aquí. */
+const ANIDADOS = [
+	'puentes', 'puentesInternos', 'terminales', 'bornes', 'rangoRegulacionA', 'rangoSonda',
+	'temporizacion', 'rasgosFrente', 'posicion', 'rol', 'esquema',
+];
+
+for (const campo of ANIDADOS) {
+	test(`\`${campo}\` con cualquier forma: o no entra, o entra bien — pero no revienta`, () => {
+		for (const [nombre, valor] of BASURA) {
+			let cargado: Proyecto;
+			try {
+				cargado = abrir(conCampo(campo, valor)).proyecto;
+			} catch (e) {
+				// Rechazarlo con un motivo entendible es una respuesta válida; reventar, no.
+				assert.ok(e instanceof ArchivoInvalido, `${campo}=${nombre}: ${(e as Error).message}`);
+				continue;
+			}
+			assert.doesNotThrow(() => usar(cargado),
+				`${campo} = ${nombre}: cargó y después reventó un motor`);
+		}
+	});
+}
+
+test('un SVG no entra como imagen: jsPDF no sabe dibujarlo y el dossier queda inservible', () => {
+	const svg = 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=';
+	const { proyecto } = abrir(conCampo('imagen', svg));
+	assert.equal(proyecto.dispositivos[0].imagen, undefined,
+		'el selector lo acepta como image/*, pero al generar el PDF paraba con «type UNKNOWN»');
+
+	const png = `data:image/png;base64,${'iVBORw0KGgo='.repeat(3)}`;
+	assert.equal(abrir(conCampo('imagen', png)).proyecto.dispositivos[0].imagen, png,
+		'y un PNG de verdad sí entra');
+});
+
+test('una imagen sin fin no entra: el historial guarda 60 copias del proyecto', () => {
+	const gigante = `data:image/png;base64,${'A'.repeat(7_000_000)}`;
+	assert.equal(abrir(conCampo('imagen', gigante)).proyecto.dispositivos[0].imagen, undefined);
+});
+
+/*
+ * Y QUE NO SE OLVIDE NINGUNO.
+ *
+ * La lista de arriba se escribió a mano mirando `Dispositivo`. Dentro de seis meses alguien añade
+ * un campo nuevo que es una lista, se le olvida el lector, y el agujero vuelve a estar abierto sin
+ * que ninguna prueba lo note. Esto lo impide: lee el tipo y exige que cada campo estructurado
+ * tenga su lector en el cargador.
+ */
+test('ningún campo estructurado de Dispositivo se queda sin lector en el cargador', () => {
+	const tipos = readFileSync(new URL('../../src/modelo/tipos.ts', import.meta.url), 'utf8');
+	const cargador = readFileSync(new URL('../../src/modelo/cargar.ts', import.meta.url), 'utf8');
+	const cuerpo = /export interface Dispositivo \{([\s\S]*?)\n\}/.exec(tipos)?.[1];
+	assert.ok(cuerpo, 'no se encontró la interfaz Dispositivo: la comprobación dejaría de mirar');
+
+	const sinComentarios = cuerpo.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
+	const estructurados: string[] = [];
+	for (const m of sinComentarios.matchAll(/^\t([A-Za-z_$][\w$]*)\??:\s*([^;]+);/gm)) {
+		const [, nombre, tipo] = m;
+		// Escalares: texto, número, booleano y uniones de literales de texto. Lo demás se recorre.
+		const escalar = /^(string|number|boolean)$/.test(tipo.trim())
+			|| /^(['"][^'"]*['"]\s*\|?\s*)+$/.test(tipo.trim());
+		if (!escalar) estructurados.push(nombre);
+	}
+	assert.ok(estructurados.length >= 10, `solo vio ${estructurados.length} campos estructurados`);
+
+	// El nombre tiene que aparecer LEÍDO en `leerDispositivos`, no solo mencionado en un comentario.
+	const leerDisp = /function leerDispositivos[\s\S]*?\n\}/.exec(cargador)![0];
+	const sinLector = estructurados.filter((c) => !new RegExp(`\\b${c}:`).test(leerDisp));
+	assert.deepEqual(sinLector, [], '\n  Estos campos de `Dispositivo` entran sin comprobar su forma:\n  '
+		+ `${sinLector.join(', ')}\n\n`
+		+ '  Un `for…of` sobre uno de ellos con la forma equivocada tira el editor entero con el\n'
+		+ '  proyecto anterior ya sustituido en memoria. Añade su lector en `leerDispositivos`.\n');
+});

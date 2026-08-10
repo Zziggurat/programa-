@@ -10,8 +10,9 @@
  */
 import { EJEMPLOS, EjemploTablero } from '../ejemplo/biblioteca.js';
 import { Proyecto } from '../src/modelo/tipos.js';
+import { cargarProyecto } from '../src/modelo/cargar.js';
 import { numerarDispositivos } from '../src/motores/numeracion.js';
-import { avisar, confirmar, pedirTexto, responderDialogo } from './dialogos.js';
+import { avisar, confirmar, escaparHtml, pedirTexto, responderDialogo } from './dialogos.js';
 
 /** Lo que la ventana de inicio necesita del editor para hacer su trabajo. */
 export interface ContextoInicio {
@@ -169,10 +170,29 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 
 	/* ---------------------------- Plantillas de tablero ---------------------------- */
 
+	/**
+	 * Las plantillas propias, con la forma comprobada.
+	 *
+	 * Segunda auditoría, TS2-P1-01. Esto era un `JSON.parse` con un cast y nada más: lo que hubiera
+	 * en `localStorage` se daba por bueno. Una plantilla `{ proyecto: {} }` —que sale sola si la
+	 * escritura se cortó a la mitad por falta de cupo— tiraba el editor con «Cannot read properties
+	 * of undefined (reading 'length')» nada más abrir la biblioteca, sin haber pulsado nada.
+	 *
+	 * Aquí solo se mira que la FICHA tenga forma de ficha. El proyecto de dentro se valida entero
+	 * al abrirlo, con el mismo cargador que un archivo: ver `abrirPlantilla()`.
+	 */
 	function plantillasGuardadas(): PlantillaTablero[] {
+		let bruto: unknown;
 		try {
-			return JSON.parse(localStorage.getItem(CLAVE_PLANTILLAS) ?? '[]') as PlantillaTablero[];
+			bruto = JSON.parse(localStorage.getItem(CLAVE_PLANTILLAS) ?? '[]');
 		} catch { return []; }
+		if (!Array.isArray(bruto)) return [];
+		return bruto.filter((p): p is PlantillaTablero => (
+			typeof p === 'object' && p !== null
+			&& typeof (p as PlantillaTablero).nombre === 'string'
+			&& typeof (p as PlantillaTablero).proyecto === 'object'
+			&& (p as PlantillaTablero).proyecto !== null
+		));
 	}
 
 	/**
@@ -196,10 +216,12 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 	function pintarPlantillasPropias(): string {
 		const lista = plantillasGuardadas();
 		if (lista.length === 0) return '';
+		// El nombre lo escribe el usuario y va a `innerHTML`: sin escapar, un `<em>` en el nombre
+		// de una plantilla entraba como NODO en la biblioteca en vez de leerse como texto.
 		return `<h3 class="titulo-biblioteca">Tus plantillas</h3><div class="rejilla-ejemplos">`
 			+ lista.map((p, i) => `
 			<article class="tarjeta-ejemplo">
-				<h4>${p.nombre}</h4>
+				<h4>${escaparHtml(p.nombre)}</h4>
 				<p>Guardada el ${new Date(p.fecha).toLocaleDateString('es-CL')} · `
 				+ `${p.proyecto.dispositivos.length} aparatos, ${p.proyecto.conductores.length} cables</p>
 				<div class="acciones-ejemplo">
@@ -210,12 +232,28 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 			+ `</div>`;
 	}
 
-	/** Abre una plantilla guardada como si fuera un proyecto nuevo. */
+	/**
+	 * Abre una plantilla guardada como si fuera un proyecto nuevo.
+	 *
+	 * POR EL MISMO CARGADOR QUE UN ARCHIVO. Antes se clonaba el objeto y se instalaba tal cual: una
+	 * plantilla es un proyecto que lleva meses en `localStorage`, puede venir de una versión
+	 * anterior del programa y puede estar a medio escribir, exactamente igual que un `.tablero`
+	 * que llega por correo. Que se guardase desde aquí no la hace de fiar.
+	 *
+	 * Y si no se puede leer, se dice y NO SE TOCA el tablero que hay en pantalla. Reemplazarlo
+	 * por algo que no se ha podido validar es la forma más rápida de perder una tarde de trabajo.
+	 */
 	function abrirPlantilla(indice: number): void {
 		const p = plantillasGuardadas()[indice];
 		if (!p) return;
+		let nuevo: Proyecto;
+		try {
+			nuevo = cargarProyecto(JSON.stringify(p.proyecto)).proyecto;
+		} catch (e) {
+			avisar(`No se pudo abrir la plantilla «${p.nombre}»: ${(e as Error).message}`, 'error');
+			return;
+		}
 		ctx.capturar();
-		const nuevo = structuredClone(p.proyecto);
 		nuevo.nombre = p.nombre;
 		ctx.ponerProyecto(nuevo);
 		olvidarEjemplo();
@@ -231,7 +269,15 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 		if (!p) return;
 		if (!(await confirmar(`¿Eliminar la plantilla «${p.nombre}»?`, { ok: 'Eliminar', peligro: true }))) return;
 		lista.splice(indice, 1);
-		try { localStorage.setItem(CLAVE_PLANTILLAS, JSON.stringify(lista)); } catch { /* sin storage */ }
+		// Si el navegador no deja escribir —cupo lleno, modo privado—, la plantilla SIGUE AHÍ y
+		// reaparece a la siguiente recarga. Decir «eliminada» de todos modos es mentirle a quien
+		// la acaba de borrar. TS2-P2-13.
+		try {
+			localStorage.setItem(CLAVE_PLANTILLAS, JSON.stringify(lista));
+		} catch {
+			avisar('No se pudo eliminar la plantilla: el navegador no dejó guardar el cambio.', 'error');
+			return;
+		}
 		abrirBibliotecaEjemplos();
 		avisar('Plantilla eliminada', 'ok');
 	}
