@@ -278,7 +278,6 @@
 	#mundo-invertir-caja { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
 		margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--borde); }
 	#mundo-invertir-caja:hover { color: var(--texto); }
-	@media (max-width: 900px) { #mundo-panel, #mundo-buscador, #mundo-cinta { display: none; } }
 	/* Paneles plegados: se apartan hacia su lado en vez de desaparecer de golpe, para que se vea
 	   de dónde salen y adónde vuelven. Quedan sin ratón para no comerse los clics del 3D. */
 	#mundo.sin-paneles #mundo-buscador { transform: translateX(calc(-100% - 20px)); }
@@ -287,6 +286,12 @@
 	#mundo.sin-paneles #mundo-buscador, #mundo.sin-paneles #mundo-panel {
 		pointer-events: none; opacity: 0; }
 	@media (prefers-reduced-motion: reduce) { #mundo-buscador, #mundo-panel { transition: none; } }
+	/* Plegados en pantalla estrecha se van hacia ABAJO, no hacia los lados. Va aquí y no arriba
+	   porque las reglas generales de plegado están justo encima: a igual peso, manda la última. */
+	@media (max-width: 900px) {
+		#mundo.sin-paneles #mundo-buscador, #mundo.sin-paneles #mundo-panel {
+			transform: translateY(calc(100% + 20px)); }
+	}
 
 	/* ---- Buscar, filtrar y colorear la planta (panel izquierdo) ---- */
 	#mundo-buscador { position: absolute; top: 58px; left: 12px; width: 300px;
@@ -363,6 +368,56 @@
 	#mundo-cinta .pedir .cifra { color: #ffd43b; }
 	#mundo-cinta .botones { display: flex; gap: 6px; }
 	#mundo-cinta .botones .boton { flex: 1 1 0; justify-content: center; font-size: 11.5px; }
+
+	/* ------------------------------------------------------------------------------------
+	   LA PLANTA EN UNA PANTALLA ESTRECHA.
+	   Segunda auditoría, TS2-P1-08. Aquí ponía:
+
+	       @media (max-width: 900px) { #mundo-panel, #mundo-buscador, #mundo-cinta { display: none; } }
+
+	   O sea que a 900 px o menos la herramienta se quedaba sin panel, sin buscador y sin cinta.
+	   Activar «Medir» ponía `hidden = false` en la cinta y no aparecía igual, porque esta regla
+	   pesa más; y el buscador reaparecía por una regla posterior de `display:flex`, con lo que la
+	   cascada se contradecía a sí misma. A 480 px, además, «Medir» quedaba en x=478–538: fuera de
+	   la pantalla. No se podía medir, ni ver el parte, ni salir por el botón de salir.
+
+	   Ahora no se esconde nada: los paneles pasan a ser cajones que suben desde abajo —que es como
+	   se usan estas cosas con una mano— y la barra se parte en dos filas en vez de salirse.
+	   ------------------------------------------------------------------------------------ */
+	@media (max-width: 900px) {
+		/* La barra se parte en líneas y se aprieta, pero no pierde ningún botón. */
+		#mundo-barra { flex-wrap: wrap; row-gap: 6px; padding: 6px 8px; }
+		#mundo-barra .marca b { display: none; }
+		#mundo-titulo { flex: 1 1 100%; order: 9; font-size: 12px; }
+		#mundo-barra .boton, #mundo-vistas button { padding: 6px 8px; font-size: 12px; }
+		/* Los paneles, como cajones de abajo: ancho completo y con su propio desplazamiento. */
+		#mundo-panel, #mundo-buscador, #mundo-cinta {
+			position: absolute; top: auto; left: 0; right: 0; bottom: 0; width: auto;
+			max-height: 58vh; overflow-y: auto; border-radius: 14px 14px 0 0;
+			box-shadow: 0 -8px 24px #0008; }
+		/* La cinta se queda MÁS BAJA que los demás cajones a propósito: mientras se mide hay que
+		   poder tocar la cubierta, y un cajón de 58vh deja sin lienzo justo cuando se necesita. */
+		#mundo-cinta { max-height: 40vh; }
+		/* Y guardar la tirada se queda pegado abajo: es la única acción de este cajón, y con la
+		   lista de puntos crecida quedaba por debajo del corte, con lo que había que descubrir
+		   que el cajón se desplaza para encontrarla. */
+		#mundo-guardar-tirada { position: sticky; bottom: 0; background: #12171cF7;
+			padding-top: 6px; margin-top: 2px; }
+		/* Y SOLO UN CAJÓN A LA VEZ. Los tres se apoyan en el borde de abajo: en ancho de sobra
+		   cada uno tiene su sitio, pero aquí se apilan y el de arriba se come los toques del que
+		   está debajo. Mientras se mide manda la cinta, que es lo que se está usando. */
+		#mundo:has(#mundo-cinta:not([hidden])) #mundo-panel,
+		#mundo:has(#mundo-cinta:not([hidden])) #mundo-buscador {
+			transform: translateY(calc(100% + 20px)); pointer-events: none; opacity: 0; }
+		#mundo-pie { display: none; }   /* la ayuda de teclas no aplica sin teclado */
+	}
+	@media (max-width: 520px) {
+		/* Muy estrecho: los rótulos de las vistas estorban más de lo que explican. */
+		#mundo-vistas button { font-size: 0; padding: 6px 10px; }
+		#mundo-vistas button::first-letter { font-size: 15px; }
+		#mundo-buscador { padding: 10px; }
+		#mundo-q { font-size: 16px; }   /* menos de 16 px y iOS hace zoom solo al escribir */
+	}
 
 	/* ---- Tiradas guardadas y lista de cable a pedir ---- */
 	.guardar-tirada { border-top: 1px solid #d9a40033; margin-top: 10px; padding-top: 10px;
@@ -1326,7 +1381,7 @@
 		<select id="mundo-color"></select>
 		<div id="mundo-leyenda-color"></div>
 		<div id="mundo-cuenta"><span id="mundo-cuenta-txt"></span>
-			<button class="chip-mundo" id="mundo-todas" title="Marcar o desmarcar todo lo que se ve">Todas</button></div>
+			<button class="chip-mundo" id="mundo-todas" title="Marcar o desmarcar las máquinas que tienen señales de BMS (las que se pueden llevar a un tablero)">Todas con señales</button></div>
 		<div id="mundo-lista"></div>
 		<div id="mundo-elegidas">
 			<div class="resumen" id="mundo-elegidas-txt"></div>

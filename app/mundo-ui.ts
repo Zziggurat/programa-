@@ -28,6 +28,7 @@ import {
 	marcarElegidos, pintarPorModo, ponerVistaPaseo, ponerVistaSims, puntoEnPixel, resaltarEquipo,
 } from './mundo.js';
 import { metrosDeInstalacion } from '../src/motores/ejes-planta.js';
+import { confirmar } from './dialogos.js';
 
 /*
  * Los metros de instalación DE VERDAD, no las rayas del plano.
@@ -82,20 +83,84 @@ let alLlevarAlTablero: ((p: Proyecto, resumen: string) => void) | undefined;
 const CLAVE_LEVANTAMIENTO = 'tablerostudio.levantamiento';
 let levantamiento: Levantamiento = levantamientoVacio();
 
+/**
+ * Cómo va el guardado del parte. `fallo` es lo que antes no se decía.
+ *
+ * Segunda auditoría, TS2-P1-07. Escribir se hacía con un `catch {}` vacío, y leer reemplazaba en
+ * silencio un parte ilegible por uno en blanco. O sea que la promesa —«esto sigue ahí mañana»— se
+ * rompía sin un solo aviso, justo en la parte del programa que se usa subido a una azotea, donde
+ * lo apuntado no está en ningún otro sitio. Y se agrava solo: las imágenes del proyecto comparten
+ * cupo con esto, así que el día que se llene, se llena mientras alguien está midiendo.
+ */
+let estadoParte: 'guardado' | 'fallo' = 'guardado';
+let motivoParte = '';
+/** El parte ilegible, tal cual estaba. No se pisa: dentro está lo que se apuntó. */
+let parteIlegible: string | undefined;
+
 function cargarLevantamiento(): void {
+	let crudo: string | null = null;
 	try {
-		const crudo = localStorage.getItem(CLAVE_LEVANTAMIENTO);
+		crudo = localStorage.getItem(CLAVE_LEVANTAMIENTO);
 		levantamiento = crudo ? leerLevantamiento(JSON.parse(crudo)) : levantamientoVacio();
-	} catch {
-		// Un parte ilegible no puede impedir abrir la herramienta: se empieza uno nuevo.
+		parteIlegible = undefined;
+	} catch (e) {
+		/*
+		 * Un parte ilegible no puede impedir abrir la herramienta —se empieza uno nuevo—, pero
+		 * TAMPOCO se puede pisar: mientras siga guardado se puede recuperar a mano. Se dice, se
+		 * ofrece descargarlo, y hasta que no se decida no se escribe encima.
+		 */
 		levantamiento = levantamientoVacio();
+		parteIlegible = crudo ?? undefined;
+		estadoParte = 'fallo';
+		motivoParte = `el parte guardado no se pudo leer (${(e as Error).message}). `
+			+ 'No se ha tocado: descárgalo antes de seguir apuntando.';
+	}
+	pintarEstadoParte();
+}
+
+/**
+ * Guarda, y si no puede, LO DICE. Devuelve si se consiguió, para que quien llame no confirme una
+ * acción que en realidad no ha quedado escrita.
+ */
+function guardarLevantamiento(): boolean {
+	if (parteIlegible !== undefined) {
+		motivoParte = 'no se guarda nada para no pisar el parte anterior, que no se pudo leer.';
+		pintarEstadoParte();
+		return false;
+	}
+	try {
+		localStorage.setItem(CLAVE_LEVANTAMIENTO, JSON.stringify(levantamiento));
+		if (estadoParte !== 'guardado') { estadoParte = 'guardado'; motivoParte = ''; pintarEstadoParte(); }
+		return true;
+	} catch (e) {
+		estadoParte = 'fallo';
+		motivoParte = `no se pudo guardar el parte (${(e as Error).message}). `
+			+ 'Descárgalo en CSV antes de cerrar, o lo pierdes.';
+		pintarEstadoParte();
+		return false;
 	}
 }
 
-function guardarLevantamiento(): void {
-	try {
-		localStorage.setItem(CLAVE_LEVANTAMIENTO, JSON.stringify(levantamiento));
-	} catch { /* sin sitio o en modo privado: se sigue trabajando, solo que sin memoria. */ }
+/** El estado del parte, donde se ve: en el aviso del panel de la cubierta. */
+function pintarEstadoParte(): void {
+	const p = document.getElementById('mundo-aviso');
+	if (!p) return;
+	p.dataset.parte = estadoParte;
+	if (estadoParte === 'guardado') { p.textContent = ''; return; }
+	p.textContent = `⚠️ ${motivoParte} `;
+	if (parteIlegible !== undefined) {
+		const b = document.createElement('button');
+		b.className = 'boton';
+		b.textContent = '⬇️ Descargar el parte anterior';
+		b.onclick = () => {
+			descargar('parte-de-obra-anterior.json', parteIlegible!, 'application/json');
+			parteIlegible = undefined;   // ya está a salvo: a partir de aquí se puede escribir
+			estadoParte = 'guardado';
+			motivoParte = '';
+			guardarLevantamiento();
+		};
+		p.appendChild(b);
+	}
 }
 
 /** Descarga un texto con nombre seguro (ASCII): con una tilde, Chromium tira el nombre entero. */
@@ -108,6 +173,109 @@ function descargar(nombre: string, texto: string, tipo = 'text/csv;charset=utf-8
 	a.click();
 	a.remove();
 	setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+
+/* ------------------------- Ventanas de la Planta: un solo sitio ------------------------- */
+
+/**
+ * ABRIR UNA VENTANA TIENE QUE PARAR LO DE DETRÁS.
+ *
+ * Segunda auditoría, TS2-P1-09. Aquí una ventana era un `hidden = false` y nada más. Con la guía
+ * abierta, la H seguía plegando los paneles POR DETRÁS del modal, y en modo Pasear la W movía la
+ * cámara —medido: 4,9 metros— mientras se leía la ayuda. Uno vuelve de leer y está en otro sitio
+ * de la cubierta, sin saber por qué.
+ *
+ * Y no había nada de teclado: ni `role="dialog"`, ni `aria-modal`, ni foco inicial, ni trampa de
+ * tabulador, ni devolver el foco al cerrar. Con el Tab se salía del diálogo a los botones de
+ * detrás, que es peor que no tener diálogo.
+ *
+ * Todo eso vive aquí, una vez, y no en cada sitio que abre una ventana.
+ */
+const ventanasAbiertas: string[] = [];
+/** A dónde vuelve el foco al cerrar. */
+const focoPrevio = new Map<string, HTMLElement | null>();
+
+/** ¿Hay alguna ventana de la Planta encima? Lo consultan los atajos y el paseo. */
+export function hayVentanaDePlanta(): boolean {
+	return ventanasAbiertas.length > 0;
+}
+
+/** Lo que se puede enfocar dentro de un elemento. */
+const enfocables = (raiz: HTMLElement): HTMLElement[] => [
+	...raiz.querySelectorAll<HTMLElement>(
+		'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), '
+		+ 'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+	),
+].filter((e) => e.offsetParent !== null);
+
+function alTabular(ev: KeyboardEvent): void {
+	const id = ventanasAbiertas[ventanasAbiertas.length - 1];
+	if (!id) return;
+	const caja = document.getElementById(id);
+	if (!caja) return;
+	if (ev.key === 'Escape') { ev.preventDefault(); cerrarVentanaDePlanta(id); return; }
+	if (ev.key !== 'Tab') return;
+	const lista = enfocables(caja);
+	if (lista.length === 0) return;
+	const primero = lista[0];
+	const ultimo = lista[lista.length - 1];
+	const activo = document.activeElement as HTMLElement | null;
+	// El foco da la vuelta dentro del diálogo en vez de escaparse a lo de detrás.
+	if (ev.shiftKey && (activo === primero || !caja.contains(activo))) {
+		ev.preventDefault(); ultimo.focus();
+	} else if (!ev.shiftKey && (activo === ultimo || !caja.contains(activo))) {
+		ev.preventDefault(); primero.focus();
+	}
+}
+
+/**
+ * Apaga (o vuelve a encender) todo lo que NO es la ventana abierta.
+ *
+ * `inert` es lo que de verdad bloquea: quita del alcance del ratón, del tabulador y del lector de
+ * pantalla de una vez. Se aplica a los hermanos de la ventana —dentro de la Planta y fuera—, para
+ * que la propia ventana siga viva. La guía cuelga de `#mundo`; el puente, del `<body>`.
+ */
+function fondoInerte(caja: HTMLElement, apagar: boolean): void {
+	const mundo = document.getElementById('mundo');
+	const raices = [mundo, document.body].filter((r): r is HTMLElement => !!r);
+	for (const raiz of raices) {
+		for (const hijo of [...raiz.children] as HTMLElement[]) {
+			if (hijo === caja || hijo.contains(caja)) continue;
+			if (apagar) hijo.setAttribute('inert', ''); else hijo.removeAttribute('inert');
+		}
+	}
+}
+
+export function abrirVentanaDePlanta(id: string): void {
+	const caja = document.getElementById(id);
+	if (!caja || ventanasAbiertas.includes(id)) return;
+	focoPrevio.set(id, document.activeElement as HTMLElement | null);
+	caja.hidden = false;
+	caja.setAttribute('role', 'dialog');
+	caja.setAttribute('aria-modal', 'true');
+	ventanasAbiertas.push(id);
+	// El fondo deja de existir para el ratón y para el teclado.
+	fondoInerte(caja, true);
+	// Y el paseo suelta el teclado: si no, la W sigue andando por debajo del modal.
+	if (vista === 'paseo') paseo?.desactivar();
+    if (ventanasAbiertas.length === 1) window.addEventListener('keydown', alTabular, true);
+	enfocables(caja)[0]?.focus();
+}
+
+export function cerrarVentanaDePlanta(id: string): void {
+	const caja = document.getElementById(id);
+	const i = ventanasAbiertas.indexOf(id);
+	if (!caja || i < 0) return;
+	caja.hidden = true;
+	ventanasAbiertas.splice(i, 1);
+	if (ventanasAbiertas.length === 0) {
+		window.removeEventListener('keydown', alTabular, true);
+		fondoInerte(caja, false);
+		if (vista === 'paseo') paseo?.activar();
+	}
+	focoPrevio.get(id)?.focus();
+	focoPrevio.delete(id);
 }
 
 /* ------------------------------- Cabecera y ficha ------------------------------- */
@@ -550,12 +718,27 @@ function pintarTiradas(): void {
 		};
 	}
 	$('tiradas-csv').onclick = () => descargar(`Tiradas ${inf.nombre}.csv`, tiradasCSV(levantamiento));
-	$('tiradas-vaciar').onclick = () => {
-		if (!confirm('¿Borrar todas las tiradas medidas? Esto no se puede deshacer.')) return;
+	/*
+	 * Con el diálogo de la propia aplicación, no con el `confirm()` del navegador.
+	 *
+	 * Segunda auditoría, TS2-P2-07. Era el último que quedaba, y el propio `index.html` dice por
+	 * qué no se usan: en un `file://` o dentro de un visor con restricciones, `confirm()` puede
+	 * estar bloqueado. Ahí devuelve `false` sin enseñar nada, y el botón deja de funcionar sin
+	 * que nadie entienda por qué. Además no se puede recorrer con el teclado como los demás.
+	 */
+	$('tiradas-vaciar').onclick = () => { void (async () => {
+		if (!(await confirmar('¿Borrar todas las tiradas medidas? Esto no se puede deshacer.',
+			{ ok: 'Borrar', peligro: true }))) return;
+		const antes = levantamiento.tiradas;
 		levantamiento.tiradas = [];
-		guardarLevantamiento();
+		if (!guardarLevantamiento()) {
+			// No se pudo escribir: reaparecerían a la siguiente recarga. Mejor no mentir.
+			levantamiento.tiradas = antes;
+			pintarTiradas();
+			return;
+		}
 		pintarTiradas();
-	};
+	})(); };
 }
 
 /* ------------------------------ Del mundo al tablero ------------------------------ */
@@ -574,7 +757,7 @@ function abrirPuente(): void {
 		? '<div style="padding:16px;color:var(--texto-suave);font-size:12.5px">Ninguna de las '
 			+ 'máquinas elegidas trae señales dibujadas en el plano.</div>'
 		: tablaSenales(r.senales);
-	($('modal-puente') as HTMLElement).hidden = false;
+	abrirVentanaDePlanta('modal-puente');
 }
 
 function tablaSenales(senales: Senal[]): string {
@@ -591,7 +774,7 @@ function tablaSenales(senales: Senal[]): string {
 function armarTablero(): void {
 	if (!puenteListo || !alLlevarAlTablero) return;
 	const r = puenteListo;
-	($('modal-puente') as HTMLElement).hidden = true;
+	cerrarVentanaDePlanta('modal-puente');
 	alLlevarAlTablero(r.proyecto, `${r.senales.length} señales y ${r.bornas} bornas desde el plano`);
 	cerrarMundo();
 }
@@ -657,8 +840,20 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 		lienzo.addEventListener('click', (ev) => {
 			// Midiendo, el clic marca un punto de la tirada; si no, consulta la máquina.
 			if (midiendo) {
+				/*
+				 * El MISMO raycast resuelve el punto y la máquina.
+				 *
+				 * Segunda auditoría, TS2-P2-04. Aquí se llamaba `cinta.anadir(p)` a secas, sin
+				 * tag, y la sonda de QA sí lo inyectaba: la prueba pasaba y el uso real no. En la
+				 * lista salían coordenadas —«-52.3, -98.2 m»— en vez del marcado de la máquina,
+				 * que es justo lo que se necesita para saber de dónde a dónde va esa tirada.
+				 */
 				const p = puntoEnPixel(mundo!, lienzo, ev.clientX, ev.clientY);
-				if (p) { cinta!.anadir(p); pintarCinta(); }
+				if (p) {
+					const sobre = equipoEnPixel(mundo!, lienzo, ev.clientX, ev.clientY);
+					cinta!.anadir(p, sobre?.tag);
+					pintarCinta();
+				}
 				return;
 			}
 			const e = equipoEnPixel(mundo!, lienzo, ev.clientX, ev.clientY);
@@ -689,8 +884,8 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 			}
 		};
 		const verGuia = (v: boolean) => {
-			if (v) cifrasDeLaGuia();
-			($('modal-guia-mundo') as HTMLElement).hidden = !v;
+			if (v) { cifrasDeLaGuia(); abrirVentanaDePlanta('modal-guia-mundo'); }
+			else cerrarVentanaDePlanta('modal-guia-mundo');
 		};
 		$('mundo-guia').onclick = () => verGuia(true);
 		$('btn-cerrar-guia-mundo').onclick = () => verGuia(false);
@@ -712,6 +907,9 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 		// ir al ratón para despejar la vista un momento. No se pisa con W A S D ni con Shift.
 		window.addEventListener('keydown', (ev) => {
 			if ($('mundo').hidden || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+			// Con una ventana encima, los atajos del fondo no actúan: plegar los paneles POR
+			// DETRÁS de un modal es una acción invisible, y desorienta más de lo que ayuda.
+			if (hayVentanaDePlanta()) return;
 			const foco = document.activeElement as HTMLElement | null;
 			if (foco && /^(INPUT|SELECT|TEXTAREA)$/.test(foco.tagName)) return;
 			if (ev.key === 'h' || ev.key === 'H') { ev.preventDefault(); verPaneles(!panelesVisibles); }
@@ -737,8 +935,8 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 		};
 		$('mundo-limpiar').onclick = () => { elegidas.clear(); pintarElegidas(); };
 		$('mundo-a-tablero').onclick = () => abrirPuente();
-		$('btn-cerrar-puente').onclick = () => { ($('modal-puente') as HTMLElement).hidden = true; };
-		$('btn-puente-cancelar').onclick = () => { ($('modal-puente') as HTMLElement).hidden = true; };
+		$('btn-cerrar-puente').onclick = () => cerrarVentanaDePlanta('modal-puente');
+		$('btn-puente-cancelar').onclick = () => cerrarVentanaDePlanta('modal-puente');
 		$('btn-puente-crear').onclick = () => armarTablero();
 		$('mundo-csv-parte').onclick = () =>
 			descargar(`Parte de obra ${inf.nombre}.csv`, parteDeObraCSV(levantamiento, inf));
@@ -769,7 +967,7 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 
 export function cerrarMundo(): void {
 	paseo?.desactivar();
-	($('modal-puente') as HTMLElement).hidden = true;
+	cerrarVentanaDePlanta('modal-puente');
 	($('mundo') as HTMLElement).hidden = true;
 }
 

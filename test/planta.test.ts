@@ -417,3 +417,25 @@ test('el tablero recién armado desde la Planta NO trae avisos de tensión inven
 		assert.deepEqual(r6.map((h) => h.mensaje), [], `con ${n} máquinas`);
 	}
 });
+
+/*
+ * Segunda auditoría, TS2-P2-05. `recta` sumaba la distancia euclidiana de CADA TRAMO, que con tres
+ * o más puntos es la longitud de la polilínea, no la recta entre los extremos. El tipo prometía
+ * «distancia en línea recta entre los extremos» y daba otra cosa, así que las dos medidas que se
+ * dan —la recta como mínimo teórico y el recorrido ortogonal como lo que se pide— dejaban de poder
+ * compararse justo cuando más falta hace: en una tirada que da un rodeo.
+ */
+test('la medida en recta es de punta a punta, no la suma de los tramos', () => {
+	// Una tirada en L: 0,0 → 10,0 → 10,10. La recta es la diagonal; el recorrido, los dos lados.
+	const m = medirTirada([
+		{ x: 0, y: 3.2, z: 0 }, { x: 10, y: 3.2, z: 0 }, { x: 10, y: 3.2, z: 10 },
+	])!;
+	assert.ok(Math.abs(m.recta - Math.hypot(10, 10)) < 0.001, `recta = ${m.recta}, esperada 14,14`);
+	assert.equal(m.recorrido, 20, 'el recorrido sí suma los dos lados');
+	assert.ok(m.recta < m.recorrido, 'y por eso la recta tiene que salir MENOR que el recorrido');
+
+	// Con dos puntos las dos coinciden en línea, que es lo que hacía que el fallo no se viera.
+	const recto = medirTirada([{ x: 0, y: 3.2, z: 0 }, { x: 6, y: 3.2, z: 0 }])!;
+	assert.equal(recto.recta, 6);
+	assert.equal(recto.recorrido, 6);
+});

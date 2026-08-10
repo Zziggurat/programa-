@@ -217,7 +217,14 @@ function mezclar(a: number, b: number, t: number): number {
  * el porcentaje de reserva que todo el mundo deja para las curvas y el conexionado.
  */
 export interface Medida {
-	/** Distancia en línea recta entre los extremos, en metros. */
+	/**
+	 * Distancia en línea recta entre el PRIMER y el ÚLTIMO punto, en metros.
+	 *
+	 * Segunda auditoría, TS2-P2-05. Esto sumaba la distancia euclidiana de cada tramo, que con
+	 * tres o más puntos es la longitud de la polilínea, no la recta: con una tirada en L salía el
+	 * mismo número que el recorrido y la comparación entre las dos —que es para lo que están— no
+	 * decía nada. Se anunciaba «en línea recta» y se daba otra cosa.
+	 */
 	recta: number;
 	/** Recorrido siguiendo la bandeja: los tramos en planta, en ortogonal, en metros. */
 	recorrido: number;
@@ -244,14 +251,17 @@ const RESERVA = 0.1;
  */
 export function medirTirada(puntos: { x: number; y: number; z: number }[]): Medida | undefined {
 	if (puntos.length < 2) return undefined;
-	let recta = 0;
 	let recorrido = 0;
 	for (let i = 1; i < puntos.length; i++) {
 		const a = puntos[i - 1];
 		const b = puntos[i];
-		recta += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
 		recorrido += Math.abs(b.x - a.x) + Math.abs(b.z - a.z);
 	}
+	// La recta es de punta a punta, sin pasar por lo de en medio: es el mínimo teórico contra el
+	// que se compara el recorrido para ver cuánto cable se lleva el rodeo de la bandeja.
+	const ini = puntos[0];
+	const fin = puntos[puntos.length - 1];
+	const recta = Math.hypot(fin.x - ini.x, fin.y - ini.y, fin.z - ini.z);
 	const vertical = Math.max(0, ALTURA_BANDEJA - puntos[0].y) + Math.max(0, ALTURA_BANDEJA - puntos[puntos.length - 1].y);
 	return {
 		recta,
