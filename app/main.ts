@@ -1718,6 +1718,7 @@ function pintarSeleccion(): void {
 			col.z = Math.max(-40, Math.min(140, Math.round(destino)));
 			reconstruirDispositivoUno(d.id);
 			pintarSeleccion();
+			marcarSucio();
 			avisar(col.z <= Z_IMAGEN_FONDO ? 'Imagen al fondo: la estructura queda por delante'
 				: col.z >= 100 ? `Imagen por delante de todo (${col.z} mm)`
 					: col.z >= Z_IMAGEN_FRENTE ? `Imagen delante del riel (${col.z} mm)`
@@ -1834,6 +1835,7 @@ function pintarPanelCable(id: string): void {
 		capturar();
 		c.color = (e.target as HTMLSelectElement).value;
 		reconstruirCables();
+		marcarSucio();   // cambiar el color no recalcula nada, pero SÍ hay que guardarlo
 	};
 	(panel.querySelector('#cbl-auto') as HTMLButtonElement | null)?.addEventListener('click', () => {
 		capturar();
@@ -3324,6 +3326,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		construirHandles();
 		pintarPaneles();
 		pintarSeleccion();
+		marcarSucio();
 		return;
 	}
 
@@ -3378,6 +3381,7 @@ function crearUnionBajoElPuntero(ev: MouseEvent): boolean {
 	construirHandles();
 	pintarPaneles();
 	pintarSeleccion();
+	marcarSucio();
 	avisar('Unión creada — arrástrala para llevar el cable por donde quieras', 'ok');
 	return true;
 }
@@ -3396,6 +3400,7 @@ renderer.domElement.addEventListener('dblclick', (ev) => {
 			construirHandles();
 			pintarPaneles();
 			pintarSeleccion();
+			marcarSucio();
 			avisar('Unión quitada');
 			return;
 		}
@@ -4666,6 +4671,35 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			const w = c?.trazado?.[indice];
 			if (!w) return undefined;
 			const v = aPantalla(escenario.aEscena(w.x, w.y, Z_HANDLE_CABLE));
+			return { x: Math.round(v.x), y: Math.round(v.y) };
+		},
+		/**
+		 * Un punto de PANTALLA sobre el recorrido dibujado de un cable.
+		 *
+		 * Da una coordenada y no hace nada más: la unión la crea el doble clic de verdad sobre ese
+		 * punto, pasando por el mismo manejador que usa quien está trabajando. Una sonda que
+		 * insertara el punto de quiebre por su cuenta probaría OTRA COSA, y fue justo por ahí por
+		 * donde se escapó que crear una unión no se guardaba: en pantalla estaba y al recargar, no.
+		 */
+		puntoSobreCable: (conductorId: string) => {
+			/*
+			 * El punto sale del RECORRIDO REAL que dibuja la escena, no del medio de la recta
+			 * entre los dos bornes: los cables van en ortogonal y por corredores libres, así que
+			 * ese medio cae casi siempre en un sitio donde no hay cable. Se toma el centro del
+			 * tramo más largo, que es el que más margen deja para acertarle.
+			 */
+			const ruta = rutasDeCables(proyecto).find((r) => r.conductorId === conductorId);
+			if (!ruta || ruta.nodos.length < 2) return undefined;
+			let mejor = 0;
+			let largo = -1;
+			for (let i = 0; i < ruta.nodos.length - 1; i++) {
+				const d = Math.abs(ruta.nodos[i + 1].x - ruta.nodos[i].x)
+					+ Math.abs(ruta.nodos[i + 1].y - ruta.nodos[i].y);
+				if (d > largo) { largo = d; mejor = i; }
+			}
+			const a = ruta.nodos[mejor];
+			const b2 = ruta.nodos[mejor + 1];
+			const v = aPantalla(escenario.aEscena((a.x + b2.x) / 2, (a.y + b2.y) / 2, ruta.z));
 			return { x: Math.round(v.x), y: Math.round(v.y) };
 		},
 		/** Estado de las tapas de canaleta (para comprobar que en Visualización son opacas). */

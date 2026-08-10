@@ -76,6 +76,18 @@ const huella = () => p.evaluate(() => {
 		ambiente: pr.opciones?.temperaturaAmbienteC ?? null,
 		columnasEsquema: pr.esquema?.columnasPorHoja ?? null,
 		empresaDossier: pr.dossier?.empresa?.nombre ?? '',
+		/*
+		 * Segunda auditoría, TS2-P1-02. Estos TRES faltaban, y por eso esta suite pasaba en verde
+		 * y concluía «NO SE PIERDE NADA» mientras cinco rutas del editor se perdían al recargar:
+		 * el color de un cable, la profundidad de una imagen de referencia y el trazado movido a
+		 * mano —crear una unión, quitarla con doble clic, arrastrarla y soltarla—.
+		 *
+		 * Comprobar catorce datos no es comprobar «todo»: es comprobar catorce datos. Lo que no
+		 * está en esta lista no lo mira nadie.
+		 */
+		coloresCables: pr.conductores.map((c) => c.color ?? '').join(','),
+		trazadosManuales: pr.conductores.map((c) => (c.trazado ?? []).length).join(','),
+		profundidadImagenes: (g.colocaciones ?? []).map((c) => c.z ?? 0).join(','),
 		// La designación y la ficha del PRIMER aparato: es lo que se edita a mano en el panel.
 		primero: (() => {
 			const d = pr.dispositivos.find((x) => !x.campo);
@@ -153,6 +165,7 @@ for (const a of bornes) {
 }
 must('CONDICIÓN PREVIA: se llegó a tender un cable', cableado,
 	cableado ? 'sí' : 'ningún par de bornes era pinchable: el paso de cablear no prueba nada');
+
 await p.evaluate(() => document.getElementById('modo-editor')?.click());
 await p.waitForTimeout(400);
 
@@ -164,7 +177,7 @@ await p.waitForTimeout(800);
 await p.evaluate(() => document.getElementById('dos-cerrar')?.click());
 await p.waitForTimeout(800);
 
-const antes = await huella();
+let antes = await huella();
 console.log(JSON.stringify(antes, null, 1));
 must('CONDICIÓN PREVIA: el rato de trabajo cambió el proyecto de verdad',
 	antes.aparatos >= 3 && antes.nombre.includes('UMA-3-343'),
@@ -173,6 +186,78 @@ must('CONDICIÓN PREVIA: los campos de la ventana de proyecto existen',
 	campos.includes('pr-cliente') && campos.includes('pr-icc'), campos.slice(0, 8).join(', '));
 
 /* ------------------------- Y ahora se cierra el navegador ------------------------- */
+
+/*
+ * ESTO VA AQUÍ, LO ÚLTIMO, Y NO ES CASUALIDAD.
+ *
+ * Puesto en medio del guion no probaba nada: el color y la unión sí aparecían tras recargar,
+ * pero porque un paso POSTERIOR —tocar el dossier— guardaba el proyecto entero y de paso los
+ * arrastraba. El fallo real solo se ve si no se hace nada más que guarde antes de cerrar, que
+ * es exactamente lo que pasa cuando uno le cambia el color a un cable y se va.
+ *
+ * Comprobado: con el arreglo quitado y este bloque en medio, la suite pasaba en verde.
+ */
+/*
+ * 6b. Con el cable ya tendido: llevarlo por donde uno quiere y cambiarle el color.
+ *
+ * Segunda auditoría, TS2-P1-02. Las dos cosas se hacen a diario y las dos se perdían. Los dos
+ * manejadores hacían la foto para deshacer, cambiaban el modelo y solo repintaban: en pantalla el
+ * cable salía verde y con su codo, y al recargar volvía marrón y recto.
+ *
+ * La unión se crea con un DOBLE CLIC de verdad sobre el cable. La sonda solo dice dónde cae el
+ * cable en pantalla; el manejador que corre es el mismo que el de quien está trabajando. Meter el
+ * punto de quiebre desde la sonda probaría otra cosa —y fue justo por ahí por donde esto se
+ * escapó la primera vez—.
+ */
+// Se deja la pantalla como la tendría alguien trabajando: sin ventanas encima y en modo Trabajo,
+// que es donde se tocan los cables.
+await p.evaluate(() => {
+	for (const m of document.querySelectorAll('.modal, [id^="modal-"]')) m.hidden = true;
+	document.getElementById('btn-cerrar-dossier')?.click();
+	document.getElementById('modo-trabajo')?.click();
+});
+await p.waitForTimeout(700);
+
+let unionPuesta = false;
+let colorCambiado = false;
+const idCable = await p.evaluate(() => window.qa.proyecto().conductores[0]?.id);
+if (idCable) {
+	const punto = await p.evaluate((id) => window.qa.puntoSobreCable(id), idCable);
+	if (punto) {
+		await p.mouse.dblclick(punto.x, punto.y);
+		await p.waitForTimeout(700);
+		unionPuesta = await p.evaluate((id) => !!window.qa.proyecto().conductores
+			.find((x) => x.id === id)?.trazado?.length, idCable);
+	}
+	await p.evaluate((id) => window.qa.seleccionarPorId(id), idCable);
+	await p.waitForTimeout(500);
+	/*
+	 * El color se elige DE LA PROPIA LISTA, no a ojo. Poner «verde» a mano no cambiaba nada
+	 * —un `<select>` ignora un valor que no está entre sus opciones— y la comprobación pasaba
+	 * comparando «sin color» contra «sin color»: verde, y sin probar nada.
+	 */
+	const otroColor = await p.evaluate(() => {
+		const sel = document.getElementById('cbl-color');
+		if (!sel) return undefined;
+		const otro = [...sel.options].map((o) => o.value).find((v) => v && v !== sel.value);
+		return otro;
+	});
+	if (otroColor) {
+		colorCambiado = (await escribir('cbl-color', otroColor))
+			&& await p.evaluate((id) => !!window.qa.proyecto().conductores
+				.find((x) => x.id === id)?.color, idCable);
+		await p.waitForTimeout(500);
+	}
+}
+must('CONDICIÓN PREVIA: se pudo crear una unión con doble clic', unionPuesta,
+	unionPuesta ? 'sí' : 'el doble clic no creó ninguna: el paso de las uniones no prueba nada');
+must('CONDICIÓN PREVIA: se pudo cambiar el color del cable', colorCambiado,
+	colorCambiado ? `quedó en «${await p.evaluate((id) => window.qa.proyecto().conductores.find((x) => x.id === id)?.color, idCable)}»`
+		: 'el color no llegó a cambiar en el modelo: el paso del color no prueba nada');
+
+// La foto de «antes» se vuelve a tomar AQUÍ: el color y la unión son lo último que se hizo, y
+// la de más arriba es anterior a ellos.
+antes = await huella();
 
 console.log('\n--- se recarga la página, como si se hubiera cerrado el navegador ---');
 await p.reload();
@@ -196,13 +281,24 @@ const nombreDe = {
 	columnasEsquema: 'las columnas del esquema',
 	empresaDossier: 'la empresa que firma el dossier',
 	primero: 'la ficha del aparato editada a mano',
+	// Segunda auditoría, TS2-P1-02: los tres que faltaban en la lista, y por eso se perdían.
+	coloresCables: 'el color que se le puso al cable',
+	trazadosManuales: 'la unión que se creó en el cable',
+	profundidadImagenes: 'la profundidad de las imágenes de referencia',
 };
 for (const [clave, comoSeLlama] of Object.entries(nombreDe)) {
 	// Solo se exige lo que la jornada llegó a cambiar: lo que no se tocó no prueba nada.
 	const seTocó = clave === 'columnasEsquema' ? false
 		: clave === 'empresaDossier' ? empresaEditada
 			: clave === 'primero' ? fichaEditada
-				: true;
+				: clave === 'coloresCables' ? colorCambiado
+					: clave === 'trazadosManuales' ? unionPuesta
+						// La profundidad Z solo se puede comprobar si hay una imagen de
+						// referencia, y esta jornada no mete ninguna: se deja fuera en vez de
+						// dar por buena una comparación de «0,0,0» contra «0,0,0», que no
+						// prueba nada. Su ruta la cubre `test/persistencia.test.ts`.
+						: clave === 'profundidadImagenes' ? false
+							: true;
 	if (!seTocó) continue;
 	must(`sobrevive ${comoSeLlama}`, JSON.stringify(antes[clave]) === JSON.stringify(despues[clave]),
 		`antes ${JSON.stringify(antes[clave])} · después ${JSON.stringify(despues[clave])}`);
