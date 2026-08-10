@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { altoSegunElAncho, coserEjes, ejesDeSistema, TrazoDibujado } from '../src/motores/ejes-planta.js';
+import {
+	altoSegunElAncho, coserEjes, ejesDeSistema, techoDeAncho, TrazoDibujado,
+} from '../src/motores/ejes-planta.js';
 
 /** Un conducto dibujado por sus dos lados, como en un plano de verdad. */
 function conducto(x0: number, y: number, x1: number, ancho: number): TrazoDibujado[] {
@@ -173,4 +175,58 @@ test('coserEjes: se cose con el vecino MÁS CERCANO, no con el primero que salga
 	const xs = ejes[0].puntos.map((p) => p[0]);
 	const ordenado = [...xs].sort((a, b) => a - b);
 	assert.deepEqual(xs, ordenado, `el recorrido da un rodeo: ${xs.join(' → ')}`);
+});
+
+/* ============ El techo de ancho: el conducto de extracción de una UMA mide 1.500 mm ============
+
+Había un techo para no emparejar cualquier cosa —dos cañerías de agua que corren en paralelo a
+metro y medio se emparejaban entre sí y salía un «tubo» de 1.875 mm que no existe— pero salía del
+ANCHO DE PROYECTO por tres. Y ese ancho es el de respaldo, o sea el del conducto más pequeño del
+sistema: para extracción son 200 mm, así que el techo quedaba en 600.
+
+En la cubierta, la extracción de cada UMA está dibujada por sus dos lados a 1.500 mm. Se rechazaba
+por ancha, se quedaba sin medir, y salía como trocitos sueltos alrededor de la máquina. */
+
+test('techoDeAncho: un conducto de aire puede ser ancho; una cañería, no', () => {
+	// El aire va por conductos que en una cubierta llegan a dos metros.
+	assert.ok(techoDeAncho('extraccion', 200) >= 1500, 'la extracción de una UMA mide 1.500 mm');
+	assert.ok(techoDeAncho('inyeccion', 355) >= 1500);
+	// El agua no: sin techo estrecho, dos cañerías paralelas se emparejan entre sí.
+	assert.ok(techoDeAncho('agua', 160) < 600, `salió ${techoDeAncho('agua', 160)}`);
+	assert.ok(techoDeAncho('bus', 50) < 600);
+});
+
+test('el techo no puede salir del ancho de proyecto (es el del conducto más PEQUEÑO)', () => {
+	// La regla vieja: 200 × 3 = 600, que deja fuera la extracción real de 1.500.
+	assert.ok(techoDeAncho('extraccion', 200) > 200 * 3);
+});
+
+test('los dos lados de la extracción de una UMA se reconocen como un conducto', () => {
+	// Geometría literal de UMA-2-373, en coordenadas relativas a la máquina.
+	const lado = (y: number): TrazoDibujado => ({
+		sistema: 'extraccion', z: 4600, ancho: 200, alto: 100,
+		puntos: [[2216, y], [1216, y]],
+	});
+	const ejes = ejesDeSistema([lado(813), lado(-687)], { largoMinimoSuelto: 0 });
+	assert.equal(ejes.length, 1, 'tenían que salir UN conducto, no dos líneas sueltas');
+	assert.equal(Math.round(ejes[0].ancho), 1500, 'el ancho es el que mide el plano');
+	assert.equal(ejes[0].anchoMedido, true);
+	// Y el eje va por el medio de los dos lados.
+	assert.equal(Math.round(ejes[0].puntos[0][1]), 63);
+});
+
+/*
+ * Lo que el techo NO arregla, y que conviene que quede escrito para no volver a intentarlo: las
+ * piezas de transición del plano se dibujan en ASPA —dos diagonales que se cruzan— y no son «dos
+ * lados» de nada. Emparejarlas inventaría un conducto donde hay un accesorio.
+ */
+test('una pieza dibujada en aspa no se toma por un conducto', () => {
+	const aspa = (p: [number, number][]): TrazoDibujado =>
+		({ sistema: 'extraccion', z: 4600, ancho: 200, alto: 100, puntos: p });
+	const ejes = ejesDeSistema([
+		aspa([[-1534, 376], [-934, -512]]),
+		aspa([[-1534, -251], [-934, 638]]),
+	], { largoMinimoSuelto: 0 });
+	assert.ok(ejes.every((e) => !e.anchoMedido),
+		'se cruzan: no pueden dar un ancho medido');
 });
