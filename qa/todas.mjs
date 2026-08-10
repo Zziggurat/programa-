@@ -19,7 +19,7 @@
  *   node qa/todas.mjs cables riel  solo las que lleven eso en el nombre
  */
 import { spawn } from 'node:child_process';
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -45,6 +45,32 @@ const suites = readdirSync(AQUI)
 
 if (suites.length === 0) {
 	console.error(`No hay ninguna prueba que encaje con «${filtros.join(' ')}».`);
+	process.exit(1);
+}
+
+/*
+ * ¿ESTÁ CONSTRUIDO CON LA SONDA? Es la trampa que más veces ha mordido.
+ *
+ * Casi todas las suites entran con `?qa=1` y hablan con `window.qa`. La sonda solo se compila con
+ * `QA=1 vite build app`; `npm run empaquetar` construye SIN ella —a propósito, porque el archivo
+ * que se entrega no la lleva—. Si uno empaqueta y luego lanza las pruebas, `app/dist` se ha
+ * quedado sin sonda y lo que sale es «Cannot read properties of undefined (reading …)» treinta
+ * veces seguidas, que no dice absolutamente nada de lo que pasa.
+ *
+ * El marcador es `has("qa")`, que sobrevive a la minificación y solo existe en la construcción de
+ * pruebas. Vale más pararse aquí y decir qué hay que hacer.
+ */
+const bundle = existsSync(join(RAIZ, 'app', 'dist', 'assets'))
+	? readdirSync(join(RAIZ, 'app', 'dist', 'assets')).find((f) => f.endsWith('.js'))
+	: undefined;
+const conSonda = bundle
+	&& readFileSync(join(RAIZ, 'app', 'dist', 'assets', bundle), 'utf8').includes('has("qa")');
+if (!conSonda && suites.some((s) => !NECESITAN_EMPAQUETADO.has(s))) {
+	console.error('\n⚠️  app/dist está construido SIN la sonda de pruebas.\n'
+		+ '   Las suites hablan con `window.qa`, que solo existe si se construye así:\n\n'
+		+ '       QA=1 npx vite build app\n\n'
+		+ '   (`npm run empaquetar` construye sin ella a propósito: el archivo que se entrega\n'
+		+ '   no lleva andamiaje. Si acabas de empaquetar, vuelve a construir con QA=1.)\n');
 	process.exit(1);
 }
 
