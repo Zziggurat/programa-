@@ -2,13 +2,47 @@ name: Construir instaladores
 
 # Genera los instaladores de escritorio (Windows .exe, macOS .dmg, Linux AppImage)
 # y el HTML autocontenido. Se ejecuta al crear una etiqueta v* o manualmente.
+#
+# SEGUNDA AUDITORÍA, TS2-P2-09. Esto compilaba y PUBLICABA sin ejecutar el typecheck, ni las
+# pruebas de núcleo, ni una sola suite de navegador. O sea que una etiqueta `v*` sacaba
+# instaladores de una versión que nadie había comprobado, y el `if-no-files-found: warn` dejaba
+# además que un trabajo terminase en verde habiendo publicado cero archivos.
+#
+# Ahora hay una puerta: si `comprobar` no pasa, no se construye nada.
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 
 jobs:
+  # ---------------------------------------------------------------------------------------
+  # 1. LA PUERTA. Una sola vez, en Linux, porque el núcleo no depende del sistema.
+  # ---------------------------------------------------------------------------------------
+  comprobar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      # Typecheck de la app y del núcleo, y las pruebas de núcleo. Es lo que corre en segundos y
+      # caza lo que de verdad no puede salir: un motor eléctrico que da otro número.
+      - run: npm run check
+      - run: npm test
+
+      # Y el archivo que se entrega, abierto de verdad: se empaqueta y se comprueba que arranca
+      # por `file://`, sin servidor, que es como lo va a abrir quien lo reciba.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run empaquetar
+      - run: node qa/entrega.mjs
+      - run: node qa/empaquetado.mjs
+
+  # ---------------------------------------------------------------------------------------
+  # 2. Los instaladores, solo si la puerta pasó.
+  # ---------------------------------------------------------------------------------------
   construir:
+    needs: comprobar
     strategy:
       matrix:
         include:
@@ -31,12 +65,17 @@ jobs:
       - run: node app/empaquetar.mjs
 
       # 2. Construir el instalador de escritorio para la plataforma actual.
+      #    `npm ci` también aquí: con `npm install` y sin lockfile, cada plataforma podía
+      #    resolver una versión distinta de Electron y publicarse tres instaladores que no son
+      #    la misma aplicación.
       - working-directory: desktop
-        run: npm install
+        run: npm ci
       - working-directory: desktop
         run: npm run ${{ matrix.comando }}
 
       # 3. Publicar los artefactos (instaladores + HTML).
+      #    `error` y no `warn`: un trabajo que termina en verde sin haber subido nada es un
+      #    release que parece hecho y no existe.
       - uses: actions/upload-artifact@v4
         with:
           name: TableroStudio-${{ matrix.os }}
@@ -45,4 +84,4 @@ jobs:
             desktop/instaladores/*.dmg
             desktop/instaladores/*.AppImage
             dist-final/TableroStudio.html
-          if-no-files-found: warn
+          if-no-files-found: error

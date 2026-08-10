@@ -347,12 +347,43 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	/** Mete una imagen respetando su proporción y sin que se salga de la página. */
 	const meterImagen = (bloque: BloqueDossier, anchoMax: number): void => {
 		if (!bloque.imagen) return;
-		const props = doc.getImageProperties(bloque.imagen);
+		/*
+		 * UNA IMAGEN QUE NO SE PUEDE DIBUJAR NO PUEDE TIRAR EL DOSSIER ENTERO.
+		 *
+		 * Segunda auditoría, TS2-P1-11. `getImageProperties()` iba sin red: con un formato que
+		 * jsPDF no conoce lanza «addImage does not support files of type 'UNKNOWN'» y se llevaba
+		 * por delante la generación completa —comprobado por la auditoría con un SVG, que el
+		 * selector de archivos acepta como `image/*`—. El cargador ya no deja entrar formatos que
+		 * no se puedan imprimir, pero un proyecto guardado con la versión anterior puede traer uno
+		 * dentro. Aquí se salta esa imagen, se dice en su sitio, y el resto del documento sale.
+		 */
+		let props: { width: number; height: number; fileType: string };
+		try {
+			props = doc.getImageProperties(bloque.imagen);
+		} catch {
+			doc.setFontSize(9);
+			doc.setTextColor(...GRIS);
+			doc.text('[Imagen en un formato que no se puede imprimir: se omitió]', 12, y, { maxWidth: anchoMax });
+			doc.setTextColor(0);
+			y += 8;
+			return;
+		}
+		if (!props.width || !props.height) return;
 		const ancho = Math.min(anchoMax, anchoMax * ((bloque.anchoPct ?? 100) / 100));
-		const alto = (props.height / props.width) * ancho;
+		let alto = (props.height / props.width) * ancho;
+		/*
+		 * Y UNA IMAGEN MÁS ALTA QUE LA PÁGINA SE REDUCE, no se cambia de página.
+		 *
+		 * Antes se pasaba entera a la siguiente conservando la misma altura, así que una foto
+		 * vertical de móvil seguía desbordándose exactamente igual, ahora en una página en
+		 * blanco. Se limita a lo que cabe, manteniendo la proporción.
+		 */
+		const altoUtil = LIMITE - 24;
+		let anchoFinal = ancho;
+		if (alto > altoUtil) { anchoFinal = ancho * (altoUtil / alto); alto = altoUtil; }
 		// Si no cabe en lo que queda de página, se pasa entera a la siguiente en vez de partirla.
 		if (y + alto > LIMITE) { doc.addPage(); y = 24; }
-		doc.addImage(bloque.imagen, props.fileType, 12, y, ancho, alto, undefined, 'FAST');
+		doc.addImage(bloque.imagen, props.fileType, 12, y, anchoFinal, alto, undefined, 'FAST');
 		y += alto + 3;
 		if (bloque.pie) {
 			doc.setFontSize(8.5);
