@@ -1238,4 +1238,18 @@ export function enfocarEquipo(m: Mundo, tag: string): void {
 	m.orbita.update();
 }
 
+/**
+ * Dónde está una máquina EN LA ESCENA, en metros.
+ *
+ * Lo pide la QA del zoom. Los equipos vienen del plano en milímetros y con el origen del DWG; la
+ * escena está centrada y en metros. Convertir eso a mano en la prueba fue lo que la hizo fallar
+ * con «la vista mira a -53,-99 y la máquina está en 1571,475»: dos sistemas de coordenadas
+ * distintos comparados como si fueran el mismo. Aquí se lee del propio objeto que se dibuja, que
+ * es la única fuente que no puede desincronizarse.
+ */
+export function posicionDeEquipo(m: Mundo, tag: string): { x: number; y: number; z: number } | undefined {
+	const g = m.equipos.children.find((x) => x.userData.tag === tag);
+	return g ? { x: g.position.x, y: g.position.y, z: g.position.z } : undefined;
+}
+
 export { resumenPlanta } from '../src/modelo/infraestructura.js';

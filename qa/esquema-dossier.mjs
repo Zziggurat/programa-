@@ -12,6 +12,7 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { abrirNavegador, ejecutablePython } from './lib/entorno.mjs';
 
 /**
  * El dossier ya no se descarga de golpe: el botón 📄 abre la VISTA PREVIA, y se descarga desde
@@ -45,7 +46,7 @@ const server = http.createServer((req, res) => {
 await new Promise((r) => server.listen(0, r));
 const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 const errs = [];
 page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
@@ -142,7 +143,7 @@ const pdf = await bajar('dos-descargar');
 must('el dossier se descarga con su nombre completo', !!pdf && /\.pdf$/i.test(pdf.nombre),
 	pdf?.nombre ?? '(no descargó)');
 
-const texto = pdf ? execFileSync('python3', [join(AQUI, 'leer-pdf.py'), pdf.destino]).toString() : '';
+const texto = pdf ? execFileSync(ejecutablePython(), [join(AQUI, 'leer-pdf.py'), pdf.destino]).toString() : '';
 must('trae la página de procedencia de los datos', texto.includes('Procedencia de los datos'));
 must('lista lo que falta por declarar', /Pendiente de declarar \(\d+\)/.test(texto),
 	(texto.match(/Pendiente de declarar \([^)]*\)/) ?? [''])[0]);
@@ -168,7 +169,7 @@ await page.evaluate(() => {
 });
 await abrirVistaPreviaDossier(page);
 const pdf2 = await bajar('dos-descargar');
-const texto2 = pdf2 ? execFileSync('python3', [join(AQUI, 'leer-pdf.py'), pdf2.destino]).toString() : '';
+const texto2 = pdf2 ? execFileSync(ejecutablePython(), [join(AQUI, 'leer-pdf.py'), pdf2.destino]).toString() : '';
 must('ya no queda nada pendiente',
 	texto2.includes('declara todos los datos necesarios'),
 	(texto2.match(/Pendiente de declarar \([^)]*\)/) ?? ['(ninguno)'])[0]);

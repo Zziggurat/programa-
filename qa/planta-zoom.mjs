@@ -23,6 +23,7 @@
 import { chromium } from 'playwright-core';
 import http from 'node:http'; import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path'; import { fileURLToPath } from 'node:url';
+import { abrirNavegador } from './lib/entorno.mjs';
 const AQUI = dirname(fileURLToPath(import.meta.url)); const ROOT = join(AQUI, '..', 'app', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
 const s = http.createServer((q, r) => {
@@ -31,10 +32,7 @@ const s = http.createServer((q, r) => {
 	r.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); r.end(readFileSync(f));
 });
 await new Promise((r) => s.listen(0, r));
-const b = await chromium.launch({
-	executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-	args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'],
-});
+const b = await abrirNavegador(chromium);
 const p = await b.newPage({ viewport: { width: 1400, height: 900 } });
 let fallos = 0;
 const must = (n, c, x = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${x ? ' → ' + x : ''}`); };
@@ -99,8 +97,28 @@ const objetivo = await p.evaluate(() => {
 	const e = window.__plantaQA.equipos.find((x) => x.x != null && x.ancho);
 	return { tag: e.tag, ancho: (e.ancho ?? 0) / 1000, fondo: (e.fondo ?? 0) / 1000 };
 });
-await p.evaluate((t) => window.__plantaQA.seleccionar(t), objetivo.tag);
-await p.waitForTimeout(600);
+/*
+ * CON EL SEGUNDO ARGUMENTO. Segunda auditoría, TS2-P2-10: aquí se llamaba `seleccionar(t)` a
+ * secas, y `enfocar` vale `false` por defecto. O sea que el caso que esta suite anunciaba como
+ * «máquina enfocada» no enfocaba la cámara: comprobaba el tope de acercamiento contra el encuadre
+ * general, que es otra cosa y además la que ya comprueban los casos de arriba.
+ */
+await p.evaluate((t) => window.__plantaQA.seleccionar(t, true), objetivo.tag);
+await p.waitForTimeout(900);
+// Y se comprueba que ENFOCÓ de verdad, en vez de darlo por hecho: el punto de órbita tiene que
+// haberse ido hasta la máquina. Sin esto, un cambio que rompa el enfoque dejaría la suite en
+// verde midiendo otra cosa, que es exactamente lo que pasaba.
+const dondeMira = await p.evaluate(() => window.__plantaQA.puntoDeOrbita());
+// La posición se pide EN COORDENADAS DE ESCENA. Convertir las del plano a mano aquí fue el
+// primer intento y salía «la vista mira a -53,-99 y la máquina está en 1571,475»: los equipos
+// vienen en milímetros con el origen del DWG y la escena está centrada y en metros.
+const posMaquina = await p.evaluate((t) => window.__plantaQA.posicionDeEquipo(t), objetivo.tag);
+must('enfocar una máquina lleva la vista HASTA ella',
+	!!posMaquina && Math.hypot(dondeMira.x - posMaquina.x, dondeMira.z - posMaquina.z) < 5,
+	posMaquina
+		? `la vista mira a ${dondeMira.x.toFixed(1)},${dondeMira.z.toFixed(1)} y la máquina está en `
+			+ `${posMaquina.x.toFixed(1)},${posMaquina.z.toFixed(1)}`
+		: 'la sonda no encontró la máquina en la escena');
 const antesDeAcercar = await donde();
 await rueda(-400, 60);
 const cerca = await donde();

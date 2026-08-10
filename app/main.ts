@@ -46,6 +46,7 @@ import { instalarInicio } from './ui-inicio.js';
 import { instalarEsquema } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
 import { dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
+import { idUnico } from '../src/modelo/ids.js';
 import {
 	dentroDelArea, distPuntoSegmento, fueraDeLaHuella, Huella, longitudSolapada, orthogonalize,
 	redondearEsquinas,
@@ -1046,7 +1047,7 @@ function duplicarDispositivo(id: string): void {
 	const numero = maximo + 1;
 	const copia: Dispositivo = {
 		...structuredClone(original),
-		id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`,
+		id: idUnico('d'),
 		numero,
 		designacion: (original.designacion ?? '').replace(/\d+$/, '') + numero,
 	};
@@ -1509,7 +1510,7 @@ function pintarSeleccion(): void {
 			if (!destino) return;
 			capturar();
 			proyecto.conductores.push({
-				id: `c${Date.now().toString(36)}`,
+				id: idUnico('c'),
 				de: { dispositivoId: d.id, borneId: (panel.querySelector('#cable-borne-origen') as HTMLSelectElement).value },
 				a: { dispositivoId: destino, borneId: selBorneDestino.value },
 				seccion: Number((panel.querySelector('#cable-seccion') as HTMLSelectElement).value),
@@ -2494,7 +2495,7 @@ function completarCableado(destino: RefBorne): void {
 	capturar();
 	const codos = codosCableado.slice(); // los codos marcados al tender el cable quedan fijados
 	proyecto.conductores.push({
-		id: `c${Date.now().toString(36)}`,
+		id: idUnico('c'),
 		de: { dispositivoId: origen.dispositivoId, borneId: origen.borneId },
 		a: { dispositivoId: destino.dispositivoId, borneId: destino.borneId },
 		seccion: 1.5,
@@ -3683,7 +3684,7 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 			// Tamaño inicial ~1/3 del ancho de placa, conservando proporción de la imagen.
 			const ancho = Math.round(g.ancho * 0.35);
 			const alto = Math.round(ancho * (img.height / img.width));
-			const id = `img${Date.now().toString(36)}`;
+			const id = idUnico('img');
 			proyecto.dispositivos.push({
 				id, tipo: 'otro', imagen: url, campo: true,
 				descripcion: archivo.name, bornes: [],
@@ -3844,8 +3845,21 @@ const panelSim = instalarSimulacion({
 });
 
 
-/* La segunda herramienta se carga solo cuando se abre: son 240 KB de planta y un visor entero
-   que quien solo diseña tableros no tiene por qué pagar al arrancar. */
+/*
+ * La segunda herramienta se CONSTRUYE solo cuando se abre.
+ *
+ * Segunda auditoría, TS2-P2-12. Aquí ponía que «se carga solo cuando se abre: son 240 KB que
+ * quien solo diseña tableros no tiene por qué pagar al arrancar». Eso NO es lo que pasa, y el
+ * comentario mentía sobre el propio código: `app/vite.config.ts` fuerza `inlineDynamicImports:
+ * true` —a propósito, porque lo que se entrega es UN SOLO archivo HTML que se abre con doble
+ * clic—, así que este `import()` no descarga nada: los bytes ya están dentro y ya se han
+ * interpretado. Lo que sí se difiere es construir la escena de la cubierta, que es el trabajo
+ * caro de verdad: 134 máquinas, 264 pilares y la red de conductos.
+ *
+ * Diferir también los BYTES exigiría renunciar al archivo único, que es la razón por la que este
+ * programa se puede pasar por pendrive y abrir en una obra sin instalar nada. No se cambia; se
+ * cuenta bien, que es lo que faltaba.
+ */
 async function irAPlanta(): Promise<void> {
 	try {
 		const { abrirMundo, cerrarMundo } = await import('./mundo-ui.js');
@@ -4108,7 +4122,7 @@ function renumerar(d: Dispositivo): Dispositivo {
 	const numero = maximo + 1;
 	return {
 		...d,
-		id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`,
+		id: idUnico('d'),
 		numero,
 		designacion: (d.designacion ?? '').replace(/\d+$/, '') + numero,
 	};
@@ -4428,7 +4442,7 @@ function crearControladorAMedida(): void {
 	const altoFinal = Math.max(alto, minimo.alto);
 
 	const plantilla: PlantillaAparato = {
-		id: `ctrl-medida-${Date.now().toString(36)}`,
+		id: idUnico('ctrl-medida-'),
 		nombre: `${texto('ctrl-fabricante')} ${referencia}`.trim(),
 		tipo: 'plc',
 		grupo: 'Control',
@@ -4593,7 +4607,24 @@ reconstruirCotas();
 aplicarModo('editor');
 actualizarBotonesHistorial();
 
+/**
+ * Fotogramas dibujados por el editor. Lo lee la sonda de QA para comprobar que, con la Planta
+ * abierta, este bucle está de verdad parado y no solo «debería».
+ */
+let fotogramasEditor = 0;
+
 renderer.setAnimationLoop(() => {
+	/*
+	 * SOLO DIBUJA LA HERRAMIENTA QUE SE VE.
+	 *
+	 * Segunda auditoría, TS2-P2-01. Este bucle seguía corriendo con la Planta 3D encima, y la
+	 * Planta tiene el suyo: dos escenas de Three.js dibujándose a la vez, una de ellas tapada.
+	 * No causa el zoom exponencial de antes —eso ya se arregló— pero es el doble de trabajo de
+	 * GPU y de batería en un portátil que se lleva a la obra, y en una máquina justa se nota en
+	 * el retardo del ratón. El de la Planta ya se paraba solo al esconderse; este no.
+	 */
+	if (!($('mundo') as HTMLElement).hidden) return;
+	fotogramasEditor++;
 	(vista2D ? controlesOrto : controles).update();
 	renderer.render(escena, camaraViva());
 });
@@ -4670,6 +4701,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		seleccion: () => (sel ? { tipo: sel.tipo, id: sel.id } : undefined),
 		/** Selecciona un aparato por id, como si se hubiera pinchado en él. */
 		seleccionarPorId: (id: string) => seleccionar(id),
+		/** Fotogramas que ha dibujado el editor (para ver si su bucle está parado). */
+		fotogramas: () => fotogramasEditor,
 		/** Repinta la lista de rieles y canaletas (para comprobar cómo entra ahí un id del archivo). */
 		pintarEstructura: () => pintarEstructura(),
 		/** Añade un aparato a la selección múltiple, como haría un Shift+clic. */

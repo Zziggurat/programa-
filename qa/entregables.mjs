@@ -9,6 +9,7 @@ import { chromium } from 'playwright-core';
 import http from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, extname } from 'node:path';
+import { abrirNavegador, RAIZ } from './lib/entorno.mjs';
 
 /**
  * El dossier ya no se descarga de golpe: el botón 📄 abre la VISTA PREVIA, y se descarga desde
@@ -29,7 +30,7 @@ async function abrirVistaPreviaDossier(page) {
 	);
 }
 
-const ROOT = join('/workspace/programa-', 'app', 'dist');
+const ROOT = join(RAIZ, 'app', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
 const server = http.createServer((q, r) => {
 	let p = decodeURIComponent(q.url.split('?')[0]); if (p === '/') p = '/index.html';
@@ -37,7 +38,7 @@ const server = http.createServer((q, r) => {
 	r.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); r.end(readFileSync(f));
 });
 await new Promise((r) => server.listen(0, r));
-const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const b = await abrirNavegador(chromium);
 const page = await b.newPage({ viewport: { width: 1400, height: 900 }, acceptDownloads: true });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
 const click = (id) => page.evaluate((i) => document.getElementById(i)?.click(), id);

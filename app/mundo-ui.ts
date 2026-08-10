@@ -25,10 +25,12 @@ import {
 import { Senal, tableroDesdeEquipos } from '../src/motores/planta-tablero.js';
 import {
 	construirMundo, crearCinta, crearPaseo, enfocarEquipo, equipoEnPixel, filtrarEquipos,
-	marcarElegidos, pintarPorModo, ponerVistaPaseo, ponerVistaSims, puntoEnPixel, resaltarEquipo,
+	marcarElegidos, pintarPorModo, ponerVistaPaseo, ponerVistaSims, posicionDeEquipo, puntoEnPixel,
+	resaltarEquipo,
 } from './mundo.js';
 import { metrosDeInstalacion } from '../src/motores/ejes-planta.js';
 import { confirmar } from './dialogos.js';
+import { idUnico } from '../src/modelo/ids.js';
 
 /*
  * Los metros de instalación DE VERDAD, no las rayas del plano.
@@ -670,7 +672,7 @@ function pintarGuardarTirada(extremos: string[]): void {
 		if (!m) return;
 		const nombre = ($('tirada-nombre') as HTMLInputElement).value.trim() || sugerido;
 		const nueva: Tirada = {
-			id: `t${Date.now().toString(36)}`,
+			id: idUnico('t'),
 			nombre,
 			desde: extremos[0],
 			hasta: extremos.length >= 2 ? extremos[extremos.length - 1] : undefined,
@@ -987,6 +989,8 @@ if (__QA__) {
 			z: mundo?.camara.position.z ?? 0,
 		}),
 		tamano: () => mundo?.tamano ?? { ancho: 0, fondo: 0 },
+		/** Dónde está una máquina en la escena, en metros (no en las coordenadas del plano). */
+		posicionDeEquipo: (tag: string) => (mundo ? posicionDeEquipo(mundo, tag) : undefined),
 		/**
 		 * El punto de la cubierta al que se está mirando (el centro de órbita).
 		 *

@@ -13,6 +13,7 @@ import http from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { abrirNavegador } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(AQUI, '..', 'app', 'dist');
@@ -25,7 +26,7 @@ const server = http.createServer((req, res) => {
 await new Promise((r) => server.listen(0, r));
 const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const errs = [];
 page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));

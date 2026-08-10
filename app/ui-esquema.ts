@@ -60,6 +60,12 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let hojaActual = 0;
 	let zoomEsquema = 1;
 
+	/**
+	 * Cuántas hojas hay para donde arrastrar. Se cuenta UNA MÁS que las montadas: cuando una hoja
+	 * se llena, lo que se hace es llevar un aparato a la siguiente, y esa todavía no existe.
+	 */
+	const totalHojas = (): number => Math.max(1, hojasEsquema.length) + 1;
+
 	/** Vuelve a montar el esquema desde el modelo actual y lo pinta. */
 	function refrescarEsquema(): void {
 		if (!esquemaAbierto) return;
@@ -134,11 +140,26 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			const ymm = ((cy - caja.top) / caja.height) * hoja.altoMm;
 			const paso = anchoColumna(HOJA_A3, hoja.columnas);
 			const enHoja = Math.floor((xmm - MARGEN.izq) / paso);
-			// La columna es global: la hoja 2 empieza donde acaba la 1, y por eso arrastrar más allá
-			// del borde derecho pasa el aparato a la hoja siguiente.
+			/*
+			 * La columna es GLOBAL: la hoja 2 empieza donde acaba la 1, y por eso arrastrar más
+			 * allá del borde derecho pasa el aparato a la hoja siguiente.
+			 *
+			 * Eso decía el comentario y no lo hacía el cálculo. Segunda auditoría, TS2-P2-03: el
+			 * `Math.min(hoja.columnas - 1, …)` recortaba la columna DENTRO de la hoja actual antes
+			 * de sumarle la base, así que pasarse del borde derecho dejaba el aparato pegado a la
+			 * última columna de la misma hoja, y del izquierdo, en la primera. Cruzar de hoja era
+			 * imposible por la única vía que el propio comentario anunciaba.
+			 *
+			 * Ahora se recorta CONTRA EL PLANO ENTERO: al pasarse por la derecha se cae en la
+			 * primera columna de la hoja siguiente, y por la izquierda, en la última de la
+			 * anterior. El tope sigue estando en la primera y la última columna del esquema, que
+			 * es donde tiene que estar.
+			 */
 			const base = (hoja.numero - 1) * hoja.columnas;
+			const global = base + enHoja + 1;
+			const ultima = totalHojas() * hoja.columnas;
 			return {
-				columna: Math.max(1, base + Math.min(hoja.columnas - 1, Math.max(0, enHoja)) + 1),
+				columna: Math.max(1, Math.min(ultima, global)),
 				fila: filaDeAltura(ymm),
 			};
 		};
@@ -290,8 +311,19 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	};
 
 	($('btn-dxf-esquema') as HTMLButtonElement).onclick = () => {
-		// Si el esquema no está abierto se monta al vuelo: el usuario no tiene por qué abrirlo antes.
-		const hojas = hojasEsquema.length ? hojasEsquema : montarEsquema(proyecto(), ctx.potenciales());
+		/*
+		 * SIEMPRE DESDE EL PROYECTO DE AHORA, no desde lo que quedó montado.
+		 *
+		 * Segunda auditoría, TS2-P2-02. Ponía `hojasEsquema.length ? hojasEsquema : montar…`, o
+		 * sea: si el esquema se había abierto ALGUNA VEZ se reutilizaban aquellas hojas, aunque
+		 * el tablero hubiera cambiado desde entonces. Reproducción: abrir el esquema, cerrarlo,
+		 * mover aparatos o cablear, y exportar el DXF sin volver a abrirlo → sale el esquema de
+		 * antes. `refrescarEsquema()` no ayuda porque empieza con `if (!esquemaAbierto) return`.
+		 *
+		 * Montarlo cuesta un instante y el usuario acaba de pedir un archivo: el precio de
+		 * hacerlo siempre es nada, y el de no hacerlo es entregar un plano que no es el tablero.
+		 */
+		const hojas = montarEsquema(proyecto(), ctx.potenciales());
 		const hoja = hojas[Math.min(hojaActual, hojas.length - 1)];
 		if (!hoja) { avisar('Todavía no hay esquema que exportar.', 'info'); return; }
 		descargar(`${nombreArchivo()}-esquema-${hoja.numero}.dxf`, dxfDeEsquema(hoja), 'image/vnd.dxf');

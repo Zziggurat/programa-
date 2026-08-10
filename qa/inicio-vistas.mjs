@@ -15,6 +15,7 @@ import http from 'node:http';
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { abrirNavegador } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SAL = join(AQUI, '_salida'); mkdirSync(SAL, { recursive: true });
@@ -28,7 +29,7 @@ const server = http.createServer((req, res) => {
 await new Promise((r) => server.listen(0, r));
 const base = `http://127.0.0.1:${server.address().port}/`;
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const errs = [];
 page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));

@@ -10,6 +10,7 @@ import http from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { abrirNavegador } from './lib/entorno.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ico': 'image/x-icon' };
@@ -21,7 +22,7 @@ const server = http.createServer((req, res) => {
 await new Promise((r) => server.listen(0, r));
 const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
 const errs = [];
 page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404|Not Found/i.test(m.text())) errs.push(m.text()); });

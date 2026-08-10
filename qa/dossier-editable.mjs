@@ -14,6 +14,7 @@ import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { abrirNavegador, ejecutablePython } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SAL = join(AQUI, '_salida'); mkdirSync(SAL, { recursive: true });
@@ -27,7 +28,7 @@ const server = http.createServer((req, res) => {
 await new Promise((r) => server.listen(0, r));
 const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 const errs = [];
 page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
@@ -170,7 +171,7 @@ if (d) {
 	const destino = join(SAL, 'dossier-editado.pdf');
 	await d.saveAs(destino);
 	// El extractor separa las piezas de texto con espacios: se normalizan para poder comparar.
-	texto = execFileSync('python3', [join(AQUI, 'leer-pdf.py'), destino]).toString()
+	texto = execFileSync(ejecutablePython(), [join(AQUI, 'leer-pdf.py'), destino]).toString()
 		.replace(/\s+/g, ' ');
 }
 must('el texto que se escribió está DENTRO del PDF', texto.includes('Tablero fabricado'),

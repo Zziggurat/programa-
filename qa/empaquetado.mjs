@@ -19,6 +19,7 @@ import { chromium } from 'playwright-core';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { abrirNavegador } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARCHIVO = join(AQUI, '..', 'dist-final', 'TableroStudio.html');
@@ -54,7 +55,7 @@ for (const id of ['modal-proyecto', 'modal-controlador', 'modal-drc', 'modal-ayu
 
 /* ---------- 2. Arranca de verdad, abierto con doble clic ---------- */
 console.log('\n--- 2. Arranca abriéndolo con doble clic (file://) ---');
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 const errs = [];
 page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));

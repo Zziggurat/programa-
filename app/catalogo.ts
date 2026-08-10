@@ -7,6 +7,7 @@ import { BloqueTerminales, Borne, Dispositivo, LetraClase, Proyecto, Rol, TipoDi
 import { aplicarPlantilla } from '../src/motores/numeracion.js';
 import { opcionesDe } from '../src/modelo/proyecto.js';
 import { bornesDeControlador, CONTROLADORES, disipacionDeControlador, FichaControlador, notaMedidas } from './controladores.js';
+import { idUnico } from '../src/modelo/ids.js';
 
 export interface PlantillaAparato {
 	id: string;
@@ -605,7 +606,7 @@ export function crearDesdePlantilla(plantilla: PlantillaAparato, proyecto: Proye
 	const numero = maximo + 1;
 	const designacion = aplicarPlantilla(opcionesDe(proyecto).formatoDesignacion, { clase, n: numero });
 	return {
-		id: `d${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`,
+		id: idUnico('d'),
 		tipo: plantilla.tipo,
 		clase: plantilla.clase,
 		// La marca de campo es la que hace que el simulador reconozca una acometida como origen

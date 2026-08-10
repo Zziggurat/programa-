@@ -13,6 +13,7 @@ import http from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { abrirNavegador } from './lib/entorno.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'dist');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
@@ -30,7 +31,7 @@ const rnd = () => { semilla = (semilla * 1664525 + 1013904223) % 4294967296; ret
 const elegir = (a) => a[Math.floor(rnd() * a.length)];
 
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 const errs = [];
 page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));

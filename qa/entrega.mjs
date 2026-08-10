@@ -13,11 +13,12 @@
 import { chromium } from 'playwright-core';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { abrirNavegador } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARCHIVO = join(AQUI, '..', 'dist-final', 'TableroStudio.html');
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const browser = await abrirNavegador(chromium);
 const contexto = await browser.newContext({ viewport: { width: 1500, height: 900 }, acceptDownloads: true });
 const page = await contexto.newPage();
 

@@ -21,6 +21,7 @@ import {
 	SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion, seccionesOrdenadas,
 } from '../src/modelo/dossier.js';
 import { descargar, escaparHtml } from './dialogos.js';
+import { idUnico } from '../src/modelo/ids.js';
 
 /** Lo que el editor del dossier necesita del resto del programa. */
 export interface ContextoDossier {
@@ -372,7 +373,7 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 	function anadirBloque(b: Omit<BloqueDossier, 'id'>): void {
 		capturar();
 		const a = ajustesDossier();
-		a.bloques = [...(a.bloques ?? []), { ...b, id: `b${Date.now().toString(36)}` }];
+		a.bloques = [...(a.bloques ?? []), { ...b, id: idUnico('b') }];
 		actualizarDossier();
 	}
 

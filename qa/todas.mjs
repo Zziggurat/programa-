@@ -52,7 +52,7 @@ if (suites.length === 0) {
  * ¿ESTÁ CONSTRUIDO CON LA SONDA? Es la trampa que más veces ha mordido.
  *
  * Casi todas las suites entran con `?qa=1` y hablan con `window.qa`. La sonda solo se compila con
- * `QA=1 vite build app`; `npm run empaquetar` construye SIN ella —a propósito, porque el archivo
+ * `vite build app --mode qa`; `npm run empaquetar` construye SIN ella —a propósito, porque el archivo
  * que se entrega no la lleva—. Si uno empaqueta y luego lanza las pruebas, `app/dist` se ha
  * quedado sin sonda y lo que sale es «Cannot read properties of undefined (reading …)» treinta
  * veces seguidas, que no dice absolutamente nada de lo que pasa.
@@ -70,7 +70,7 @@ if (!conSonda && suites.some((s) => !NECESITAN_EMPAQUETADO.has(s))) {
 		+ '   Las suites hablan con `window.qa`, que solo existe si se construye así:\n\n'
 		+ '       QA=1 npx vite build app\n\n'
 		+ '   (`npm run empaquetar` construye sin ella a propósito: el archivo que se entrega\n'
-		+ '   no lleva andamiaje. Si acabas de empaquetar, vuelve a construir con QA=1.)\n');
+		+ '   no lleva andamiaje. Si acabas de empaquetar, vuelve a construir con --mode qa.)\n');
 	process.exit(1);
 }
 

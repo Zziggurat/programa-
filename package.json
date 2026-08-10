@@ -11,7 +11,7 @@
     "editor": "vite app",
     "editor:build": "vite build app",
     "empaquetar": "vite build app && node app/empaquetar.mjs",
-    "qa": "QA=1 vite build app && node qa/todas.mjs",
+    "qa": "vite build app --mode qa && node qa/todas.mjs",
     "qa:cables": "node qa/cables.mjs",
     "qa:fusion": "node qa/cables-fusion.mjs",
     "qa:agarre": "node qa/agarre.mjs",
@@ -35,7 +35,7 @@
     "qa:cubierta": "node qa/cubierta-obra.mjs",
     "extraer-planta": "python3 herramientas/extraer-planta.py",
     "qa:empaquetado": "npm run empaquetar && node qa/empaquetado.mjs",
-    "qa:auditoria": "QA=1 vite build app && node qa/todas.mjs recuperacion datos-proyecto capas texto-hostil sin-fantasmas planta-zoom atajos-a-ciegas se-guarda-solo planta-estrecha",
+    "qa:auditoria": "vite build app --mode qa && node qa/todas.mjs recuperacion datos-proyecto capas texto-hostil sin-fantasmas planta-zoom atajos-a-ciegas se-guarda-solo planta-estrecha",
     "check": "tsc --noEmit -p tsconfig.app.json"
   },
   "devDependencies": {
