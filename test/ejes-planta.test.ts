@@ -230,3 +230,43 @@ test('una pieza dibujada en aspa no se toma por un conducto', () => {
 	assert.ok(ejes.every((e) => !e.anchoMedido),
 		'se cruzan: no pueden dar un ancho medido');
 });
+
+/* ==================== Las PIEZAS: lo que el plano dibuja en aspa ====================
+
+La costura ya sabía que dos tramos que se cruzan no son el mismo conducto, y por eso no los unía.
+Lo que faltaba era la otra mitad: si al terminar quedan dos recorridos cortos, rectos y cruzados,
+eso no es una costura perdida — es una transición, una compuerta o un acoplamiento flexible.
+
+Comprobado en la cubierta: de los 66 recorridos cortos de inyección, los 32 que tenían una punta
+vecina a menos de 350 mm (o sea, dentro del umbral de costura y aun así sin unir) son aspas, y las
+32 estaban bien rechazadas. No había ni una costura perdida. Y en total son 129 de los 398
+recorridos, 149 m: un tercio de lo que se estaba dibujando como conducto. */
+
+test('dos diagonales cruzadas se marcan como PIEZA, no como conducto', () => {
+	// La transición de UMA-2-373, tal cual sale del plano.
+	const aspa = (p: [number, number][]): TrazoDibujado =>
+		({ sistema: 'extraccion', z: 4600, ancho: 200, alto: 100, puntos: p });
+	const ejes = ejesDeSistema([
+		aspa([[-1534, 376], [-934, -512]]),
+		aspa([[-1534, -251], [-934, 638]]),
+	], { largoMinimoSuelto: 0 });
+	assert.equal(ejes.length, 2, 'siguen ahí: están en un sitio real y hay que verlas');
+	assert.ok(ejes.every((e) => e.pieza), 'las dos tenían que quedar marcadas como pieza');
+});
+
+test('un conducto de verdad NO se marca como pieza', () => {
+	const ejes = ejesDeSistema(conducto(0, 0, 8000, 400), { largoMinimoSuelto: 0 });
+	assert.equal(ejes.length, 1);
+	assert.ok(!ejes[0].pieza, 'un tramo recto y largo es conducto, no accesorio');
+});
+
+test('dos conductos que se cruzan en planta a distinta altura no son una pieza', () => {
+	// Se cruzan, sí, pero son LARGOS: un accesorio no mide ocho metros.
+	const largo = (p: [number, number][]): TrazoDibujado =>
+		({ sistema: 'inyeccion', z: 4200, ancho: 355, alto: 180, puntos: p });
+	const ejes = ejesDeSistema([
+		largo([[0, 0], [8000, 8000]]),
+		largo([[0, 8000], [8000, 0]]),
+	], { largoMinimoSuelto: 0 });
+	assert.ok(ejes.every((e) => !e.pieza), 'son dos conductos que se cruzan, no un accesorio');
+});

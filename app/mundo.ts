@@ -219,8 +219,21 @@ function construirInstalaciones(
 	 * separado?»—. `ejesDeLaPlanta` empareja los lados, traza el eje por el medio y cose los tramos
 	 * seguidos, así que aquí ya llegan recorridos de verdad y con el ancho MEDIDO del plano.
 	 */
-	for (const t of ejesDeLaPlanta(trazas as unknown as Parameters<typeof ejesDeLaPlanta>[0]) as unknown as TrazaPlanta[]) {
-		const g = geometriaTraza(t, aEscena);
+	const ejes = ejesDeLaPlanta(trazas as unknown as Parameters<typeof ejesDeLaPlanta>[0]);
+	for (const eje of ejes) {
+		const t = eje as unknown as TrazaPlanta;
+		/*
+		 * Las PIEZAS no son conducto y no se dibujan como conducto.
+		 *
+		 * El plano dibuja las transiciones, las compuertas y los acoplamientos flexibles EN ASPA,
+		 * con sus dos diagonales cruzadas. Tomadas por tramos de conducto salían dos palos
+		 * cruzándose en el aire junto a cada máquina —129 de los 398 recorridos de esta cubierta,
+		 * un tercio— y eso es lo que hacía que la instalación pareciera rota al pasear.
+		 *
+		 * Se dibuja UNA pieza compacta en el cruce, que es donde está de verdad el accesorio, en
+		 * vez de las dos diagonales. Ni se borra —está ahí y hay que verla— ni se miente.
+		 */
+		const g = eje.pieza ? geometriaPieza(eje, aEscena) : geometriaTraza(t, aEscena);
 		if (!g) continue;
 		// Los atributos tienen que coincidir para poder fusionar: solo posición y normal.
 		g.deleteAttribute('uv');
@@ -237,6 +250,32 @@ function construirInstalaciones(
 		grupo.add(malla);
 	}
 	return grupo;
+}
+
+/**
+ * Una PIEZA de la instalación: la transición, la compuerta o el acoplamiento flexible que el
+ * plano dibuja en aspa.
+ *
+ * Se pone una caja corta EN EL CRUCE de las dos diagonales, que es donde está el accesorio, con
+ * el ancho del conducto al que sirve. Es lo que se ve en la cubierta: un cajón un poco más gordo
+ * entre dos tramos, no dos palos cruzándose en el aire.
+ */
+function geometriaPieza(
+	eje: { puntos: [number, number][]; z: number; ancho: number; alto: number },
+	aEscena: ReturnType<typeof hacerConversor>,
+): THREE.BufferGeometry | undefined {
+	const [a, b] = eje.puntos;
+	if (!a || !b) return undefined;
+	const centro = aEscena((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, eje.z);
+	const ancho = Math.max(0.15, eje.ancho / 1000);
+	const alto = Math.max(0.12, eje.alto / 1000);
+	// El largo de la pieza es corto por definición: media diagonal, que es lo que ocupa de verdad.
+	const largo = Math.max(0.2, Math.hypot(b[0] - a[0], b[1] - a[1]) / 2000);
+	const g = new THREE.BoxGeometry(largo, alto, ancho);
+	g.deleteAttribute('uv');
+	g.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.atan2(-(b[1] - a[1]), b[0] - a[0])));
+	g.translate(centro.x, centro.y, centro.z);
+	return g;
 }
 
 /**

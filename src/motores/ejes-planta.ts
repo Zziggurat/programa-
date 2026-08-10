@@ -36,6 +36,15 @@ export interface EjeInstalacion {
 	puntos: [number, number][];
 	/** true si el ancho se midió entre los dos lados; false si es el de proyecto. */
 	anchoMedido: boolean;
+	/**
+	 * true si esto no es un tramo de conducto sino una PIEZA: una transición, una compuerta o un
+	 * acoplamiento flexible, que el plano dibuja EN ASPA —dos diagonales cortas que se cruzan—.
+	 *
+	 * Son 129 de los 398 recorridos de esta cubierta, 149 m: un tercio de lo que se estaba
+	 * dibujando como conducto. Y al dibujarlas como conducto salían dos palos cruzándose en el
+	 * aire junto a cada máquina, que es lo que hacía que la instalación pareciera rota.
+	 */
+	pieza?: boolean;
 }
 
 interface Segmento { a: Punto2; b: Punto2; largo: number }
@@ -393,7 +402,46 @@ export function ejesDeSistema(
 			alto: c.medido ? altoSegunElAncho(c.ancho) : modelo.alto,
 		});
 	}
+	marcarPiezas(salida);
 	return salida;
+}
+
+/**
+ * Marca las PIEZAS: lo que el plano dibuja en aspa y no es un tramo de conducto.
+ *
+ * La costura ya sabe que dos tramos que se cruzan no son el mismo conducto y por eso no los une
+ * (`seCruzan`). Lo que faltaba es la otra mitad: si al terminar quedan DOS recorridos cortos,
+ * rectos y cruzados entre sí, eso no es que se haya perdido una costura — es una transición, una
+ * compuerta o un acoplamiento flexible, que se dibujan con sus dos diagonales.
+ *
+ * Se comprobó en la cubierta: de los 66 recorridos cortos de inyección con una punta vecina a
+ * menos de 350 mm —o sea, dentro del umbral de costura y aun así sin unir— los 32 que quedaban
+ * son aspas, y las 32 estaban bien rechazadas. No había ni una costura perdida.
+ *
+ * No se BORRAN, porque están en un sitio real y son una pieza de verdad: se marcan, para que el
+ * visor las dibuje como lo que son en vez de como dos palos cruzándose en el aire, y para que no
+ * cuenten como metros de conducto.
+ */
+function marcarPiezas(ejes: EjeInstalacion[]): void {
+	// Una pieza es corta y recta; un conducto que va a alguna parte, ni lo uno ni lo otro.
+	const LARGO_MAXIMO_PIEZA = 3000;
+	const candidatos = ejes
+		.map((e, i) => ({ e, i }))
+		.filter(({ e }) => e.puntos.length === 2
+			&& Math.hypot(e.puntos[1][0] - e.puntos[0][0], e.puntos[1][1] - e.puntos[0][1]) < LARGO_MAXIMO_PIEZA);
+	for (let a = 0; a < candidatos.length; a++) {
+		for (let b = a + 1; b < candidatos.length; b++) {
+			const p = candidatos[a].e;
+			const q = candidatos[b].e;
+			if (p.pieza && q.pieza) continue;
+			if (!seCruzan(
+				{ x: p.puntos[0][0], y: p.puntos[0][1] }, { x: p.puntos[1][0], y: p.puntos[1][1] },
+				{ x: q.puntos[0][0], y: q.puntos[0][1] }, { x: q.puntos[1][0], y: q.puntos[1][1] },
+			)) continue;
+			p.pieza = true;
+			q.pieza = true;
+		}
+	}
 }
 
 /**

@@ -793,9 +793,13 @@ if (__QA__) {
 		/** ¿Hay alguna tecla de andar apretada ahora mismo? (para el bug del «no puedo parar»). */
 		andando: () => paseo?.andando() ?? false,
 		/** Selecciona una máquina por su marcado, como si se hubiera pinchado en ella. */
-		seleccionar: (tag: string) => {
+		/**
+		 * Selecciona una máquina; con `enfocar`, además lleva la cámara junto a ella, que es lo
+		 * que hace falta para mirar de cerca cómo queda dibujada su instalación.
+		 */
+		seleccionar: (tag: string, enfocar = false) => {
 			const e = inf.equipos.find((x) => x.tag === tag);
-			seleccionar(e?.tag);
+			seleccionar(e?.tag, enfocar);
 			return !!e;
 		},
 		/* --- Buscar, filtrar y colorear --- */
