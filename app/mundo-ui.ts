@@ -30,7 +30,7 @@ import {
 } from './mundo.js';
 import { metrosDeInstalacion } from '../src/motores/ejes-planta.js';
 import { avisar, confirmar } from './dialogos.js';
-import { abrirVentana, cerrarVentana, hayVentanaAbierta } from './ventanas.js';
+import { abrirVentana, cerrarTodasLasVentanas, cerrarVentana, hayVentanaAbierta } from './ventanas.js';
 import { idUnico } from '../src/modelo/ids.js';
 
 /*
@@ -799,6 +799,8 @@ function ajustar(): void {
 /** Abre la herramienta. Se construye la escena la primera vez y se reutiliza después. */
 export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): void {
 	alLlevarAlTablero = alTablero ?? alLlevarAlTablero;
+	// Igual que el dossier y el esquema: una ventana abierta dejaría la Planta debajo e inerte.
+	cerrarTodasLasVentanas();
 	($('mundo') as HTMLElement).hidden = false;
 	const lienzo = $('mundo-lienzo') as HTMLCanvasElement;
 	if (!mundo) {

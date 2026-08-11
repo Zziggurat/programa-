@@ -97,6 +97,47 @@ must('con la guía abierta, un ejemplo se puede elegir de verdad',
   encima.hay && encima.manda === 'modal-ejemplos',
   encima.hay ? `en la tarjeta manda ${encima.manda}` : 'no salieron tarjetas de ejemplo');
 
+/* ============ Una herramienta a pantalla completa se abre USABLE ============ */
+
+/*
+ * Las herramientas viven en `--capa-herramienta` (40) y las ventanas en `--capa-modal` (60). Si al
+ * abrir el dossier, el esquema o la Planta queda una ventana abierta, la herramienta sale DEBAJO
+ * de ella y encima marcada `inert`: ni se ve ni se puede tocar.
+ *
+ * Lo destapó `qa/dossier-personalizado.mjs`, que no cierra la guía del primer arranque: Playwright
+ * rellenaba el campo de la empresa sin protestar y sin escribir nada, y el fallo aparecía tres
+ * pasos más allá como «lo que se escribe se guarda con el proyecto → undefined».
+ */
+console.log('\n--- una herramienta a pantalla completa se abre usable ---');
+for (const [herramienta, boton, dentro] of [
+  ['panel-dossier', 'btn-pdf', 'dos-empresa-nombre'],
+  ['panel-esquema', 'btn-esquema', 'esq-acercar'],
+]) {
+  // Se deja la guía abierta A PROPÓSITO: es la situación que rompía.
+  await p.evaluate(()=>document.getElementById('btn-ayuda')?.click()
+    ?? document.getElementById('modal-ayuda')?.removeAttribute('hidden'));
+  await p.waitForTimeout(300);
+  await p.evaluate((b)=>document.getElementById(b)?.click(), boton);
+  await p.waitForTimeout(2500);
+  const v = await p.evaluate(([h,d])=>{
+    const caja = document.getElementById(h);
+    const campo = document.getElementById(d);
+    return {
+      visible: !!caja && !caja.hidden,
+      inerte: !!caja?.closest('[inert]') || !!caja?.hasAttribute('inert'),
+      guiaAbierta: !document.getElementById('modal-ayuda')?.hidden,
+      alcanzable: !!campo && campo.offsetParent !== null && !campo.closest('[inert]'),
+    };
+  }, [herramienta, dentro]);
+  must(`#${herramienta}: se abre`, v.visible);
+  must(`#${herramienta}: NO queda inerte con una ventana abierta detrás`, !v.inerte);
+  must(`#${herramienta}: la guía se cierra al abrirlo`, !v.guiaAbierta);
+  must(`#${herramienta}: sus controles se pueden usar`, v.alcanzable);
+  // Se cierra para la siguiente vuelta.
+  await p.evaluate((h)=>{ const c=document.getElementById(h); if(c) c.hidden = true; }, herramienta);
+  await p.waitForTimeout(200);
+}
+
 await b.close(); s.close();
 console.log(`\n=== ${fallos===0?'TODO OK ✔':fallos+' FALLO(S) ✗'} ===`);
 process.exit(fallos?1:0);

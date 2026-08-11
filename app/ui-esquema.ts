@@ -9,6 +9,7 @@
  * No importa nada de `main.ts`: lo que necesita del editor entra por `ContextoEsquema`.
  */
 import { Proyecto } from '../src/modelo/tipos.js';
+import { cerrarTodasLasVentanas } from './ventanas.js';
 import { ResultadoPotenciales } from '../src/motores/potenciales.js';
 import {
 	anchoColumna, filaDeAltura, HOJA_A3, HojaEsq, MARGEN, montarEsquema,
@@ -209,6 +210,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	}
 
 	function abrirEsquema(abrir: boolean): void {
+		// Igual que el dossier: una ventana abierta dejaría el esquema debajo e inerte.
+		if (abrir) cerrarTodasLasVentanas();
 		esquemaAbierto = abrir;
 		($('panel-esquema') as HTMLElement).hidden = !abrir;
 		$('btn-esquema').classList.toggle('activo', abrir);

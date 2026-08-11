@@ -21,6 +21,7 @@ import {
 	SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion, seccionesOrdenadas,
 } from '../src/modelo/dossier.js';
 import { descargar, escaparHtml } from './dialogos.js';
+import { cerrarTodasLasVentanas } from './ventanas.js';
 import { idUnico } from '../src/modelo/ids.js';
 import { imagenAdmisible } from '../src/modelo/cargar.js';
 
@@ -386,6 +387,13 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 	 * antes. Para el alzado se cambia a 2D, se dibuja, se lee y se deja la vista como estaba.
 	 */
 	function abrirDossier(abrir: boolean): void {
+		/*
+		 * Las ventanas abiertas se cierran ANTES. Una herramienta a pantalla completa vive en
+		 * `--capa-herramienta` (40) y las ventanas en `--capa-modal` (60): con una abierta, esto
+		 * saldría debajo de ella y además inerte, o sea invisible e intocable. Lo cazó
+		 * `qa/dossier-personalizado.mjs`, que no cierra la guía del primer arranque.
+		 */
+		if (abrir) cerrarTodasLasVentanas();
 		($('panel-dossier') as HTMLElement).hidden = !abrir;
 		if (!abrir) {
 			if (urlDossier) { URL.revokeObjectURL(urlDossier); urlDossier = undefined; }

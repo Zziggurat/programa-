@@ -218,3 +218,27 @@ export function cerrarVentanaDeArriba(): boolean {
 	cerrarVentana(id);
 	return true;
 }
+
+/**
+ * CIERRA TODAS. La llama una herramienta de pantalla completa al abrirse.
+ *
+ * Las herramientas —el dossier, el esquema, la Planta, la ventana de inicio— viven en
+ * `--capa-herramienta` (40) y las ventanas en `--capa-modal` (60). O sea que una herramienta
+ * abierta con una ventana encima queda DEBAJO de ella, y además el gestor la ha marcado `inert`
+ * por ser hermana en `<body>`: ni se ve ni se puede tocar.
+ *
+ * No es teórico, y no lo encontré mirando el código: `qa/dossier-personalizado.mjs` no cierra la
+ * guía del primer arranque, así que al abrir el dossier el panel entero salía inerte. Playwright
+ * rellenaba el campo de la empresa sin protestar y sin escribir nada —el campo se quedaba vacío—,
+ * el `change` guardaba una cadena vacía, y lo que se leía era «lo que se escribe se guarda con el
+ * proyecto → undefined». La prueba decía la verdad; el fallo era mío, de la ronda anterior.
+ *
+ * Cerrar es lo correcto y no un apaño: quien abre el dossier ha terminado con la guía. Dejar un
+ * modal esperando debajo de una herramienta a pantalla completa no significa nada.
+ */
+export function cerrarTodasLasVentanas(): number {
+	let n = 0;
+	// El tope es una red por si alguna ventana no se dejara descontar: mejor salir que colgarse.
+	while (cerrarVentanaDeArriba() && n < 50) n++;
+	return n;
+}
