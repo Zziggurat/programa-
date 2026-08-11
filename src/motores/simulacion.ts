@@ -71,8 +71,19 @@ export interface EstadoAparato {
 	disparado?: boolean;
 	/** Pulsadores y sensores: activado ahora mismo (pulsado, detectando). */
 	activo?: boolean;
-	/** Salidas de un controlador que el usuario fuerza a ON, por su id de borne. */
+	/** Salidas DIGITALES de un controlador que el usuario fuerza a ON, por su id de borne. */
 	salidas?: string[];
+	/**
+	 * Salidas ANALÓGICAS forzadas a mano, en % de su rango: `{ AO1: 50 }`.
+	 *
+	 * Tercera auditoría, TS3-P1-02. Antes una AO se forzaba metiéndola en `salidas`, y el motor
+	 * la trataba como un contacto: cerraba `AO1`↔`AOC` y el borne salía «vivo, 24 V, papel
+	 * retorno». Eso no es una salida 0-10 V: es un binario, y en pantalla daba la impresión de
+	 * que el lazo de la válvula estaba bien cuando no se había simulado nada de él.
+	 *
+	 * Una salida analógica no está encendida ni apagada: está en 3,4 V. Va por su lado.
+	 */
+	analogicas?: Record<string, number>;
 	/**
 	 * Lo que marca una sonda analógica: grados, bar, %… Es el número con el que el programa del
 	 * controlador compara («UI1 > 24»), y lo mueve quien simula girando el mando de la sonda.
@@ -214,6 +225,14 @@ export interface ResultadoSimulacion {
 	 * decir «apagada» o «abierta el 0 %», que no es lo mismo delante de una válvula.
 	 */
 	analogicas: Map<string, number>;
+	/**
+	 * Lo mismo, en VOLTIOS y contra su común: `{ voltios: 5, referencia: 'AOC' }`.
+	 *
+	 * Tercera auditoría, TS3-P1-02. `analogicas` guarda el valor lógico que calcula el programa
+	 * —un 50 %—, y eso no se puede enseñar como si fuera el estado de un hilo. Esto es lo que de
+	 * verdad hay en el borne, que es lo que se mide con un multímetro en la obra.
+	 */
+	salidasAnalogicas: Map<string, { voltios: number; referencia?: string; rango: [number, number]; supuesto: boolean }>;
 	/** Temporizadores contando ahora mismo, para poder enseñar la cuenta atrás. */
 	temporizadores: CuentaAtras[];
 	/** Consumos que están recibiendo una tensión distinta de la suya. */
@@ -415,6 +434,17 @@ export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaM
 	if (d.tipo === 'plc' && estado.salidas?.length) {
 		for (const s of estado.salidas) {
 			if (!idsBornes.has(s)) continue;
+			/*
+			 * UNA SALIDA ANALÓGICA NO ES UN CONTACTO. Tercera auditoría, TS3-P1-02.
+			 *
+			 * Este mismo mecanismo cerraba `AO1`↔`AOC` y dejaba la AO «viva a 24 V»: el mando de
+			 * una válvula proporcional presentado como un hilo binario. Lo comprobó la auditoría:
+			 * `AO1 = {tension:24, papel:"retorno", fuente:"g1::0V"}`.
+			 *
+			 * Las analógicas van por `estado.analogicas`, en % de su rango, y salen del motor como
+			 * voltios contra su común — no como tensión de red propagada por el circuito.
+			 */
+			if (esSalidaAnalogica(s)) continue;
 			const comun = comunDeSalida(d, s, idsBornes);
 			if (comun) pares.push([comun, s]);
 		}
@@ -442,6 +472,42 @@ export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaM
  * el aparato no declara común de bloque se recurre al de antes, que es como está descrito el
  * LOGO! del catálogo: sus relés van comunados a `+24` por dentro.
  */
+/**
+ * ¿Este borne es una salida ANALÓGICA? Por el rótulo, que es como se llaman en todos los DDC.
+ *
+ * `AO1`, `AO2`… (analog output) y `Y1`, `Y2`… (la nomenclatura de válvula de Honeywell). Lo que no
+ * es analógico —`DO`, `Q`— sigue siendo un contacto y se comporta como tal.
+ */
+export function esSalidaAnalogica(borne: string): boolean {
+	return /^(AO|Y)\d+$/.test(borne);
+}
+
+/** Rango de una salida analógica, en voltios, si el aparato no declara otro. */
+export const RANGO_AO_POR_DEFECTO: [number, number] = [0, 10];
+
+/**
+ * Lo que ENTREGA una salida analógica: su valor en voltios y contra qué borne se mide.
+ *
+ * Es lo que faltaba. Un 0-10 V no es «vivo» ni «muerto»: son 0, 5 o 10 voltios respecto de su
+ * común, y sin decir respecto de qué, el número no significa nada. `rangoSalidaAnalogica` deja
+ * declararlo por aparato —hay DDC de 2-10 V y de 4-20 mA—; sin declarar, se supone 0-10 V, que
+ * es lo más común en clima, y se dice que se ha supuesto.
+ */
+export function salidaAnalogicaEn(
+	d: Dispositivo, borne: string, porcentaje: number,
+): { voltios: number; referencia: string | undefined; rango: [number, number]; supuesto: boolean } {
+	const declarado = d.rangoSalidaAnalogica;
+	const rango = declarado ?? RANGO_AO_POR_DEFECTO;
+	const pct = Math.max(0, Math.min(100, porcentaje));
+	const idsBornes = new Set(d.bornes.map((b) => b.id));
+	return {
+		voltios: Math.round((rango[0] + (rango[1] - rango[0]) * (pct / 100)) * 100) / 100,
+		referencia: comunDeSalida(d, borne, idsBornes),
+		rango,
+		supuesto: !declarado,
+	};
+}
+
 function comunDeSalida(d: Dispositivo, salida: string, idsBornes: Set<string>): string | undefined {
 	const familia = `${salida.replace(/\d+$/, '')}C`;
 	if (familia !== salida && idsBornes.has(familia)) return familia;
@@ -749,6 +815,16 @@ export function simular(
 	let pasadas = 0;
 	let estable = false;
 	const analogicas = new Map<string, number>();
+	/*
+	 * Las que fuerza el usuario a mano entran ANTES de la primera pasada: si no, el programa del
+	 * controlador —que las recalcula cada vuelta— las pisaría, y forzar una salida a mano dejaría
+	 * de servir para nada, que es justo lo que hace uno cuando quiere probar una válvula.
+	 */
+	for (const [id, e] of Object.entries(estado)) {
+		for (const [borne, v] of Object.entries(e.analogicas ?? {})) {
+			if (Number.isFinite(v)) analogicas.set(`${id}::${borne}`, v);
+		}
+	}
 	let prop: Propagacion = { vivos, alcances: [], conductorEntre: new Map() };
 
 	while (pasadas < MAX_PASADAS && !estable) {
@@ -765,7 +841,9 @@ export function simular(
 			// Y lo que valen sus salidas analógicas: la apertura de una válvula, la velocidad de un
 			// variador. No encienden nada, así que no entran en la propagación.
 			for (const [borne, v] of Object.entries(valoresAnalogicos(reglas, lectura))) {
-				analogicas.set(`${id}::${borne}`, v);
+				// Lo forzado a mano manda sobre lo que calcula el programa: quien fuerza está
+				// probando, y el programa volvería a poner su valor en cada pasada.
+				if (estado[id]?.analogicas?.[borne] === undefined) analogicas.set(`${id}::${borne}`, v);
 			}
 		}
 		const nuevosActivos = new Set<string>();
@@ -1002,8 +1080,25 @@ export function simular(
 
 	const corrienteTotal = consumos.reduce((s, c) => s + c.corriente, 0);
 
+	/*
+	 * Y lo que de verdad hay en cada salida analógica: voltios contra su común.
+	 *
+	 * Es el número que se mide con un multímetro en el borne, y el que hace falta para saber si
+	 * el lazo de una válvula está bien. Antes no existía: la AO salía «viva a 24 V» porque se la
+	 * trataba como un contacto (TS3-P1-02).
+	 */
+	const salidasAnalogicas = new Map<string, {
+		voltios: number; referencia?: string; rango: [number, number]; supuesto: boolean;
+	}>();
+	for (const [clave, pct] of analogicas) {
+		const [id, borne] = clave.split('::');
+		const d = aparatos.find((x) => x.id === id);
+		if (!d || !esSalidaAnalogica(borne)) continue;
+		salidasAnalogicas.set(clave, salidaAnalogicaEn(d, borne, pct));
+	}
+
 	return {
-		vivos, conductoresVivos, activos, funcionando, avisos, analogicas,
+		vivos, conductoresVivos, activos, funcionando, avisos, analogicas, salidasAnalogicas,
 		pasadas, oscila: !estable,
 		consumos,
 		corrientePorConductor: porConductor,

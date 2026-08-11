@@ -264,6 +264,14 @@ export interface Dispositivo {
 	programa?: string;
 	/** Rasgos visibles del frente del equipo (los dibuja el modelo 3D tal cual). */
 	rasgosFrente?: { display?: boolean; leds?: number; puertosIP?: number; puertosRS485?: number };
+	/**
+	 * Rango de las SALIDAS ANALÓGICAS de un controlador, en voltios: `[0, 10]`, `[2, 10]`…
+	 *
+	 * Tercera auditoría, TS3-P1-02. Sin este dato, una salida analógica no se puede simular: un
+	 * 50 % no es nada hasta que se sabe entre qué y qué. Si falta, se supone 0-10 V —lo más común
+	 * en clima— y el motor lo declara como supuesto, que es distinto de saberlo.
+	 */
+	rangoSalidaAnalogica?: [number, number];
 	/** Pares de bornes unidos internamente (paso directo), p. ej. entrada/salida de una borna. */
 	puentesInternos?: [string, string][];
 	/** Grupos de bornas puenteadas de un bornero, por id de borne. */

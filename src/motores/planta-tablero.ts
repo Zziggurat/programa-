@@ -159,7 +159,39 @@ export function tableroDesdeEquipos(
 	];
 
 	/* --- Alimentación: acometida, protección y fuente de 24 V --- */
+	/*
+	 * LA CARGA QUE SE CALCULA Y LA FUENTE QUE SE ELIGE SON DOS COSAS DISTINTAS.
+	 *
+	 * Tercera auditoría, TS3-P1-03. Antes se creaba SIEMPRE la misma fuente —referencia
+	 * `STEP-PS/1AC/24DC/2.5`, que es un modelo de 2,5 A— y se le SOBRESCRIBÍA la corriente
+	 * nominal con la carga estimada. Con las 120 máquinas de la cubierta salía esto:
+	 *
+	 *     referencia: STEP-PS/1AC/24DC/2.5   ·   corrienteNominal: 37 A
+	 *
+	 * El mismo aparato presentado a la vez como un modelo de 2,5 A y como uno de 37: catorce
+	 * veces y media. Y no es un problema de rotulado. La lista de material lleva esa referencia,
+	 * alguien la pide, y lo que llega no aguanta ni la décima parte de la carga.
+	 *
+	 * Ahora la carga estimada es un dato del proyecto —no la placa del componente— y la fuente se
+	 * ELIGE de un catálogo real que cubra esa carga con su reserva. Si ninguna llega, se dice en
+	 * las notas y el DRC lo marca: es mejor un tablero que declara que le falta fuente que uno
+	 * que miente sobre la que lleva.
+	 */
+	const RESERVA_FUENTE = 1.25;   // 25 % de margen, que es lo que se deja en un cuadro de clima
 	const consumoFuente = 0.15 + 0.05 * senales.length;     // el DDC más lo que cuelga de él
+	const cargaConReserva = consumoFuente * RESERVA_FUENTE;
+	/** Fuentes de carril DIN de 24 V CC que existen de verdad, de menor a mayor. */
+	const CATALOGO_FUENTES: { referencia: string; amperios: number; disipacionW: number }[] = [
+		{ referencia: 'STEP-PS/1AC/24DC/2.5', amperios: 2.5, disipacionW: 6 },
+		{ referencia: 'STEP-PS/1AC/24DC/5', amperios: 5, disipacionW: 10 },
+		{ referencia: 'QUINT4-PS/1AC/24DC/10', amperios: 10, disipacionW: 18 },
+		{ referencia: 'QUINT4-PS/1AC/24DC/20', amperios: 20, disipacionW: 32 },
+		{ referencia: 'QUINT4-PS/1AC/24DC/40', amperios: 40, disipacionW: 60 },
+	];
+	const elegida = CATALOGO_FUENTES.find((f) => f.amperios >= cargaConReserva);
+	const fuente = elegida ?? CATALOGO_FUENTES[CATALOGO_FUENTES.length - 1];
+	/** El automático de cabecera se dimensiona con la fuente, no con un 6 A fijo. */
+	const calibreCabecera = [6, 10, 16].find((a) => a >= (fuente.amperios * 24 * 1.3) / 220 * 1.5) ?? 16;
 	const dispositivos: Dispositivo[] = [
 		{
 			id: 'red', tipo: 'otro', clase: 'W', descripcion: 'Acometida 220 V + PE', campo: true,
@@ -167,9 +199,11 @@ export function tableroDesdeEquipos(
 			bornes: [{ id: 'L', tipo: 'L' }, { id: 'N', tipo: 'N' }, { id: 'PE', tipo: 'PE' }],
 		},
 		{
-			id: 'q1', tipo: 'disyuntor', descripcion: 'Automático 2P C6 (protege el tablero)',
-			fabricante: 'Schneider Electric', referencia: 'iC60N 2P C6', tensionNominal: 220,
-			corrienteNominal: 6, curvaDisparo: 'C', poderCorteKA: 6, poderCorteEstimado: true,
+			id: 'q1', tipo: 'disyuntor',
+			descripcion: `Automático 2P C${calibreCabecera} (protege el tablero)`,
+			fabricante: 'Schneider Electric', referencia: `iC60N 2P C${calibreCabecera}`,
+			tensionNominal: 220,
+			corrienteNominal: calibreCabecera, curvaDisparo: 'C', poderCorteKA: 6, poderCorteEstimado: true,
 			disipacionW: 2.5, disipacionEstimada: true, hojaId: 'h1',
 			bornes: [
 				{ id: '1', tipo: 'L', obligatorio: true }, { id: '2', tipo: 'L', obligatorio: true },
@@ -177,8 +211,10 @@ export function tableroDesdeEquipos(
 			],
 		},
 		{
-			id: 'g1', tipo: 'fuente', descripcion: 'Fuente 220 V / 24 V CC 2,5 A',
-			fabricante: 'Phoenix Contact', referencia: 'STEP-PS/1AC/24DC/2.5',
+			id: 'g1', tipo: 'fuente',
+			descripcion: `Fuente 220 V / 24 V CC ${fuente.amperios} A`
+				+ ` (carga estimada ${Math.round(consumoFuente * 100) / 100} A + 25 % de reserva)`,
+			fabricante: 'Phoenix Contact', referencia: fuente.referencia,
 			/*
 			 * LAS DOS TENSIONES, DECLARADAS. Una fuente tiene primario y secundario, y aquí se
 			 * declaraba solo `tensionNominal: 24`. Con eso, sus bornes L/N —que están a 220 y van
@@ -187,8 +223,9 @@ export function tableroDesdeEquipos(
 			 * convención es la del catálogo: `tensionNominal` es la de ENTRADA.
 			 */
 			tensionNominal: 220, tensionSecundariaV: 24,
-			corrienteNominal: Math.round(consumoFuente * 100) / 100,
-			disipacionW: 6, disipacionEstimada: true, hojaId: 'h1',
+			// La corriente nominal es la DE LA PLACA del modelo elegido, no la carga calculada.
+			corrienteNominal: fuente.amperios,
+			disipacionW: fuente.disipacionW, disipacionEstimada: true, hojaId: 'h1',
 			// El LADO va declarado. `+24` y `0V` son los rótulos de una fuente de 24 V CC de
 			// verdad, pero la simulación buscaba el secundario por el id (`+V`/`-V`) y este no
 			// existía para ella: el PLC, los cuatro borneros y las máquinas quedaban sin tensión
@@ -240,6 +277,9 @@ export function tableroDesdeEquipos(
 		puentesInternos: [['24V COM', 'UIC'], ['24V COM', 'DIC'], ['24V COM', 'AOC']]
 			.filter(([, c]) => (c === 'UIC' && nUI) || (c === 'DIC' && nDI) || (c === 'AOC' && nAO))
 			.map(([a, b]) => [a, b] as [string, string]),
+		// El rango de las salidas analógicas, declarado: sin él, un 50 % no significa nada. Es lo
+		// que permite decir «AO1 está a 5 V» en vez de «AO1 está viva». TS3-P1-02.
+		rangoSalidaAnalogica: [0, 10],
 		rasgosFrente: { display: false, leds: 4, puertosRS485: 1 },
 		profundidad: 57,
 	});
@@ -396,6 +436,21 @@ export function tableroDesdeEquipos(
 	if (inf.alturasSupuestas) {
 		notas.push('Las posiciones del plano son de planta; las alturas del visor son de proyecto. '
 			+ 'Eso no afecta a este tablero, pero sí a cualquier metraje que saques del 3D.');
+	}
+	/*
+	 * Los supuestos de alimentación, DICHOS. Tercera auditoría, TS3-P1-03: el generador fijaba
+	 * 220/24 V, un C6 y referencias comerciales exactas sin pedir antes datos de suministro,
+	 * reserva ni criterio de protección. Se siguen suponiendo —hay que armar algo— pero ahora se
+	 * dice cuáles son, para que quien firma sepa qué tiene que confirmar.
+	 */
+	notas.push(`Alimentación supuesta: 220 V monofásica, fuente de 24 V CC y automático de `
+		+ `cabecera C${calibreCabecera}. Carga de señales estimada en `
+		+ `${Math.round(consumoFuente * 100) / 100} A; con un 25 % de reserva se ha elegido una `
+		+ `fuente de ${fuente.amperios} A. Confírmalo con el suministro real de la obra.`);
+	if (!elegida) {
+		notas.push(`⚠️ NINGUNA fuente del catálogo cubre los ${Math.round(cargaConReserva * 10) / 10} A `
+			+ `que pide este conjunto. Se ha puesto la mayor (${fuente.amperios} A) y NO basta: `
+			+ 'hay que repartir las máquinas en varios tableros o alimentarlas en grupos.');
 	}
 	return { proyecto: p, senales, notas, sinPuntos, bornas };
 }

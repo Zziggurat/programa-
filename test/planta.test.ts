@@ -439,3 +439,71 @@ test('la medida en recta es de punta a punta, no la suma de los tramos', () => {
 	assert.equal(recto.recta, 6);
 	assert.equal(recto.recorrido, 6);
 });
+
+/* ==============================================================================================
+ * Tercera auditoría, TS3-P1-02 y TS3-P1-03.
+ *
+ * La prueba del puente que había seleccionaba a propósito `/^DO\d+$/`, así que demostraba las
+ * salidas DIGITALES y nada más. El informe lo dice y tiene razón: con el mismo mecanismo, forzar
+ * una AO la dejaba «viva a 24 V, papel retorno» —o sea, un mando de válvula proporcional
+ * presentado como un hilo binario—, y eso da una falsa impresión de que el lazo está bien.
+ * ============================================================================================== */
+
+test('una salida ANALÓGICA da voltios contra su común, no 24 V de contacto', () => {
+	const tags = inf.equipos.filter((e) => e.puntos.length > 0).slice(0, 3).map((e) => e.tag);
+	const { proyecto } = tableroDesdeEquipos(inf, tags);
+	const plc = proyecto.dispositivos.find((d) => d.tipo === 'plc')!;
+	const ao = plc.bornes.find((b) => /^AO\d+$/.test(b.id))?.id;
+	if (!ao) return;   // este conjunto no tiene salidas analógicas
+
+	for (const [pct, esperado] of [[0, 0], [50, 5], [100, 10]] as const) {
+		const r = simular(proyecto, { [plc.id]: { analogicas: { [ao]: pct } } });
+		const señal = r.salidasAnalogicas.get(`${plc.id}::${ao}`);
+		assert.ok(señal, `al forzar ${ao} al ${pct} % tiene que haber una señal analógica`);
+		assert.equal(señal.voltios, esperado, `${pct} % de 0-10 V son ${esperado} V`);
+		assert.equal(señal.referencia, 'AOC', 'y se miden contra el común de las analógicas');
+
+		// Y NO como un contacto: el borne no puede salir vivo a la tensión de la red.
+		const vivo = r.vivos.get(`${plc.id}::${ao}`);
+		assert.ok(!vivo || vivo.tension !== 24,
+			`${ao} salió vivo a 24 V: se está simulando como contacto, que es el fallo de TS3-P1-02`);
+	}
+});
+
+test('forzar una AO no energiza las salidas digitales, ni al revés', () => {
+	const tags = inf.equipos.filter((e) => e.puntos.length > 0).slice(0, 3).map((e) => e.tag);
+	const { proyecto } = tableroDesdeEquipos(inf, tags);
+	const plc = proyecto.dispositivos.find((d) => d.tipo === 'plc')!;
+	const ao = plc.bornes.find((b) => /^AO\d+$/.test(b.id))?.id;
+	const doo = plc.bornes.find((b) => /^DO\d+$/.test(b.id))?.id;
+	if (!ao || !doo) return;
+
+	const soloAO = simular(proyecto, { [plc.id]: { analogicas: { [ao]: 100 } } });
+	assert.ok(!soloAO.vivos.has(`${plc.id}::${doo}`), 'una AO no cierra ninguna DO');
+
+	const soloDO = simular(proyecto, { [plc.id]: { salidas: [doo] } });
+	assert.ok(soloDO.vivos.has(`${plc.id}::${doo}`), 'y la DO sí cierra, como antes');
+	assert.equal(soloDO.salidasAnalogicas.size, 0, 'sin que aparezca ninguna analógica de la nada');
+});
+
+test('la fuente que se elige aguanta la carga que declara, con 1, 3 y todas', () => {
+	/*
+	 * TS3-P1-03. Se creaba SIEMPRE la misma fuente —un modelo de 2,5 A— y se le sobrescribía la
+	 * corriente nominal con la carga estimada. Con las 120 máquinas de la cubierta salía una
+	 * `STEP-PS/1AC/24DC/2.5` declarando 37 A: catorce veces y media su placa. Y esa referencia va
+	 * en la lista de material que alguien pide.
+	 */
+	const conPuntos = inf.equipos.filter((e) => e.puntos.length > 0);
+	for (const n of [1, 3, conPuntos.length]) {
+		const { proyecto, notas } = tableroDesdeEquipos(inf, conPuntos.slice(0, n).map((e) => e.tag));
+		const g = proyecto.dispositivos.find((d) => d.tipo === 'fuente')!;
+		// La referencia comercial acaba en los amperios del modelo: se comparan con su placa.
+		const rotulada = Number(/([\d.]+)$/.exec(g.referencia ?? '')?.[1]);
+		assert.ok(Number.isFinite(rotulada), `la referencia no dice su calibre: ${g.referencia}`);
+		assert.equal(g.corrienteNominal, rotulada,
+			`con ${n} máquinas, la ficha dice ${g.corrienteNominal} A y la referencia es de ${rotulada} A`);
+		// Y los supuestos de alimentación van dichos, que era la otra mitad del hallazgo.
+		assert.ok(notas.some((x) => /Alimentación supuesta/.test(x)),
+			'el puente tiene que declarar qué supuso de alimentación, protección y reserva');
+	}
+});
