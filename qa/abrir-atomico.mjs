@@ -29,6 +29,25 @@ let fallos = 0;
 const must = (n, c, x = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${x ? ' → ' + x : ''}`); };
 const qa = (fn, ...a) => p.evaluate(([f, args]) => window.qa[f](...args), [fn, a]);
 
+/**
+ * Espera a que salga el «tienes trabajo sin descargar» y contesta que sí. Devuelve si llegó a
+ * salir. Espera de verdad —hasta 8 s— porque bajo carga tarda, y una espera fija hacía que la
+ * prueba midiera el estado de un archivo que nunca se abrió.
+ */
+async function esperarDialogo() {
+	try {
+		// 20 s y no 8: con la máquina cargada —dentro de la batería entera— la página va lenta y el
+		// diálogo tarda más en salir. Con 8 s esta condición previa fallaba una vez de cada dos.
+		await p.waitForSelector('#modal-dialogo:not([hidden])', { timeout: 20_000 });
+	} catch {
+		return false;
+	}
+	await p.evaluate(() => document.getElementById('dialogo-ok')?.click());
+	// Y se espera a que se cierre, para que la siguiente llamada no dé por bueno ESTE diálogo.
+	await p.waitForSelector('#modal-dialogo[hidden]', { timeout: 10_000 }).catch(() => {});
+	return true;
+}
+
 await p.goto(`http://127.0.0.1:${servidor.address().port}/?qa=1&inicio=0`);
 await p.waitForTimeout(1500);
 await p.evaluate(() => document.getElementById('btn-cerrar-ayuda')?.click());
@@ -47,9 +66,15 @@ for (let i = 0; i < 4; i++) { await catalogo.nth(i).click({ force: true }); awai
 await p.evaluate(() => document.getElementById('btn-deshacer')?.click()); await p.waitForTimeout(300);
 await p.evaluate(() => document.getElementById('btn-deshacer')?.click()); await p.waitForTimeout(300);
 
+/*
+ * Se guarda el proyecto ENTERO serializado, no solo el número de aparatos. Es lo que pide el punto
+ * 12 de las pruebas de aceptación del informe: «proyecto, Undo, Redo y autosave deben quedar byte a
+ * byte iguales». Contar aparatos dejaría pasar un cambio que no añade ni quita ninguno.
+ */
 const antes = {
 	historial: await qa('historial'),
 	aparatos: (await qa('proyecto')).dispositivos.length,
+	proyecto: JSON.stringify(await qa('proyecto')),
 	guardado: await qa('autoguardado'),
 };
 console.log(`\nestado de partida: deshacer=${antes.historial.deshacer} rehacer=${antes.historial.rehacer} aparatos=${antes.aparatos}`);
@@ -76,26 +101,34 @@ await p.evaluate((texto) => {
 	entrada.files = dt.files;
 	entrada.dispatchEvent(new Event('change', { bubbles: true }));
 }, otro);
-await p.waitForTimeout(500);
 /*
  * Hay trabajo sin descargar, así que antes de abrir otro archivo pregunta. Hay que contestar que
  * sí: sin esto la apertura se queda esperando y la prueba mide el estado de un archivo que nunca
  * se llegó a abrir —pasaba todo, y no comprobaba nada—.
+ *
+ * Se ESPERA al diálogo en vez de mirar si está a los 500 ms. Con un `waitForTimeout` fijo la
+ * prueba se volvía inestable en cuanto la máquina iba cargada: dentro de la batería completa el
+ * diálogo tardaba más en salir, el clic no llegaba y salían dos fallos que en solitario no
+ * aparecían. Un número de milisegundos puesto a ojo no es una espera, es una apuesta.
  */
-const preguntó = await p.isVisible('#modal-dialogo');
+const preguntó = await esperarDialogo();
 must('CONDICIÓN PREVIA: avisa de que hay trabajo sin descargar', preguntó);
-if (preguntó) { await p.evaluate(() => document.getElementById('dialogo-ok')?.click()); }
-await p.waitForTimeout(1200);
+// Se espera al AVISO de que no se pudo abrir, que es cuando la operación ha terminado de verdad.
+await p.waitForFunction(() => /no se pudo/i.test(document.getElementById('toast')?.textContent ?? ''),
+	{ timeout: 15_000 }).catch(() => {});
 
 const despues = {
 	historial: await qa('historial'),
 	aparatos: (await qa('proyecto')).dispositivos.length,
+	proyecto: JSON.stringify(await qa('proyecto')),
 	guardado: await qa('autoguardado'),
 };
 console.log(`estado tras el fallo: deshacer=${despues.historial.deshacer} rehacer=${despues.historial.rehacer} aparatos=${despues.aparatos}`);
 
 must('el proyecto en pantalla sigue siendo el de antes', despues.aparatos === antes.aparatos,
 	`${antes.aparatos} → ${despues.aparatos} aparatos`);
+must('y queda IDÉNTICO, campo a campo', despues.proyecto === antes.proyecto,
+	despues.proyecto === antes.proyecto ? '' : `${antes.proyecto.length} → ${despues.proyecto.length} caracteres`);
 must('la pila de DESHACER no crece con un paso que no hizo nada',
 	despues.historial.deshacer === antes.historial.deshacer,
 	`${antes.historial.deshacer} → ${despues.historial.deshacer}`);
@@ -130,9 +163,18 @@ await p.evaluate((texto) => {
 	entrada.files = dt.files;
 	entrada.dispatchEvent(new Event('change', { bubbles: true }));
 }, otro);
-await p.waitForTimeout(500);
-if (await p.isVisible('#modal-dialogo')) await p.evaluate(() => document.getElementById('dialogo-ok')?.click());
-await p.waitForTimeout(1200);
+await esperarDialogo();
+/*
+ * SE ESPERA A QUE EL ARCHIVO ESTÉ ABIERTO, no un puñado de milisegundos.
+ *
+ * Con `waitForTimeout(1200)` esto fallaba dentro de la batería completa y pasaba en solitario: el
+ * estado se leía antes de que la apertura terminase y salía «deshacer 3 → 3». Al meter dos
+ * `console.log` de depuración —que hablan con la página y tardan— empezaba a pasar, que es la
+ * señal inconfundible de que la prueba mide un reloj y no un hecho.
+ */
+await p.waitForFunction(() => window.qa.proyecto().nombre === 'EL QUE NO SE DEBE ABRIR',
+	{ timeout: 20_000 });
+await p.waitForTimeout(300);
 
 const bueno = {
 	historial: await qa('historial'),
@@ -182,7 +224,11 @@ const antesDeRomper = {
 	guardado: await qa('autoguardado'),
 };
 await qa('romperProximoMontaje');
-await p.keyboard.press('Control+v'); await p.waitForTimeout(900);
+await p.keyboard.press('Control+v');
+// Igual que arriba: se espera al aviso de que no se pudo, no a un número de milisegundos.
+await p.waitForFunction(() => /no se pudo/i.test(document.getElementById('toast')?.textContent ?? ''),
+	{ timeout: 15_000 }).catch(() => {});
+await p.waitForTimeout(300);
 const trasRomper = {
 	aparatos: (await qa('proyecto')).dispositivos.length,
 	historial: await qa('historial'),

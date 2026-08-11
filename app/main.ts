@@ -4257,42 +4257,52 @@ function pegarAparatos(): void {
 	 */
 	const sobresalen: string[] = [];
 	const nuevos: string[] = [];
-	mutarProyecto(() => {
-		for (const a of datos!.aparatos) {
-			const copia = renumerar(structuredClone(a.dispositivo));
-			proyecto.dispositivos.push(copia);
-			const x = Math.min(Math.max(hueco.x + a.dx, 0), Math.max(0, g.ancho - a.ancho));
-			const y = Math.min(Math.max(hueco.y + a.dy, 0), Math.max(0, g.alto - a.alto));
-			// Cada copia se apoya en el riel que le toque por su posición, no en el del primero del
-			// grupo: si el grupo abarca dos rieles, cada aparato tiene que quedar anclado al suyo.
-			const enganche = snapAriel(x + a.ancho / 2, y + a.alto / 2, a.ancho, a.alto);
-			const col = {
-				dispositivoId: copia.id,
-				x: enganche ? Math.min(Math.max(enganche.cx - a.ancho / 2, 0), Math.max(0, g.ancho - a.ancho)) : x,
-				y: enganche ? Math.min(Math.max(enganche.cy - a.alto / 2, 0), Math.max(0, g.alto - a.alto)) : y,
-				ancho: a.ancho, alto: a.alto,
-				rielId: enganche?.rielId ?? hueco.rielId,
-			};
-			// Si cae encima de algo se busca hueco libre en su misma fila; y si la fila entera está
-			// ocupada, al final del riel con más sitio (aunque sobresalga), nunca encima de otro.
-			if (solapaCon(col.x, col.y, col.ancho, col.alto, copia.id)) {
-				const libre = xLibreCercano(col.x, col.y, col.ancho, col.alto, copia.id);
-				if (libre !== undefined) col.x = libre;
-				else {
-					// `buscarHueco` solo devuelve `undefined` si no hay ni un riel, y eso ya se
-					// descartó arriba; el `?? hueco` es para no tener que afirmar nada al compilador.
-					const otro = buscarHueco(col.ancho, col.alto) ?? hueco;
-					col.x = otro.x; col.y = otro.y; col.rielId = otro.rielId;
-					sobresalen.push(copia.designacion ?? copia.id);
+	try {
+		mutarProyecto(() => {
+			for (const a of datos!.aparatos) {
+				const copia = renumerar(structuredClone(a.dispositivo));
+				proyecto.dispositivos.push(copia);
+				const x = Math.min(Math.max(hueco.x + a.dx, 0), Math.max(0, g.ancho - a.ancho));
+				const y = Math.min(Math.max(hueco.y + a.dy, 0), Math.max(0, g.alto - a.alto));
+				// Cada copia se apoya en el riel que le toque por su posición, no en el del primero del
+				// grupo: si el grupo abarca dos rieles, cada aparato tiene que quedar anclado al suyo.
+				const enganche = snapAriel(x + a.ancho / 2, y + a.alto / 2, a.ancho, a.alto);
+				const col = {
+					dispositivoId: copia.id,
+					x: enganche ? Math.min(Math.max(enganche.cx - a.ancho / 2, 0), Math.max(0, g.ancho - a.ancho)) : x,
+					y: enganche ? Math.min(Math.max(enganche.cy - a.alto / 2, 0), Math.max(0, g.alto - a.alto)) : y,
+					ancho: a.ancho, alto: a.alto,
+					rielId: enganche?.rielId ?? hueco.rielId,
+				};
+				// Si cae encima de algo se busca hueco libre en su misma fila; y si la fila entera está
+				// ocupada, al final del riel con más sitio (aunque sobresalga), nunca encima de otro.
+				if (solapaCon(col.x, col.y, col.ancho, col.alto, copia.id)) {
+					const libre = xLibreCercano(col.x, col.y, col.ancho, col.alto, copia.id);
+					if (libre !== undefined) col.x = libre;
+					else {
+						// `buscarHueco` solo devuelve `undefined` si no hay ni un riel, y eso ya se
+						// descartó arriba; el `?? hueco` es para no tener que afirmar nada al compilador.
+						const otro = buscarHueco(col.ancho, col.alto) ?? hueco;
+						col.x = otro.x; col.y = otro.y; col.rielId = otro.rielId;
+						sobresalen.push(copia.designacion ?? copia.id);
+					}
 				}
+				g.colocaciones.push(col);
+				extenderRielPara(col);
+				nuevos.push(copia.id);
 			}
-			g.colocaciones.push(col);
-			extenderRielPara(col);
-			nuevos.push(copia.id);
-		}
-		seleccionExtra = nuevos.slice(1);
-		aplicarSeleccion(nuevos[0] ? { tipo: 'dispositivo', id: nuevos[0] } : undefined);
-	});
+			seleccionExtra = nuevos.slice(1);
+			aplicarSeleccion(nuevos[0] ? { tipo: 'dispositivo', id: nuevos[0] } : undefined);
+		});
+	} catch {
+		/*
+		 * Si la transacción se echa atrás hay que DECIRLO. Sin esto, el usuario pulsa Ctrl+V, no
+		 * pasa absolutamente nada y no hay forma de saber si es que no había nada copiado, si el
+		 * atajo no llegó o si algo falló. Un no-op silencioso es el peor de los tres.
+		 */
+		avisar('No se pudo pegar. El tablero se queda como estaba.', 'error');
+		return;
+	}
 	const pegados = `${nuevos.length} aparato${nuevos.length > 1 ? 's' : ''} pegado${nuevos.length > 1 ? 's' : ''}`;
 	if (sobresalen.length) {
 		// Sin escapar A PROPÓSITO: `avisar()` escribe con `textContent`, que no interpreta nada.
