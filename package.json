@@ -35,7 +35,7 @@
     "qa:cubierta": "node qa/cubierta-obra.mjs",
     "extraer-planta": "python3 herramientas/extraer-planta.py",
     "qa:empaquetado": "npm run empaquetar && node qa/empaquetado.mjs",
-    "qa:auditoria": "vite build app --mode qa && node qa/todas.mjs recuperacion datos-proyecto capas texto-hostil sin-fantasmas planta-zoom atajos-a-ciegas se-guarda-solo planta-estrecha entradas-hostiles modales-teclado",
+    "qa:auditoria": "vite build app --mode qa && node qa/todas.mjs recuperacion datos-proyecto capas texto-hostil sin-fantasmas planta-zoom atajos-a-ciegas se-guarda-solo planta-estrecha entradas-hostiles modales-teclado abrir-atomico",
     "check": "tsc --noEmit -p tsconfig.app.json"
   },
   "devDependencies": {

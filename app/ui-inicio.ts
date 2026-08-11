@@ -24,17 +24,23 @@ declare const __FECHA_BUILD__: string;
 export interface ContextoInicio {
 	/** El proyecto abierto ahora mismo (se lee para el nombre y para guardarlo como plantilla). */
 	proyecto: () => Proyecto;
-	/** Reemplaza el proyecto abierto. */
-	ponerProyecto: (p: Proyecto) => void;
-	/** Guarda un punto de deshacer antes de reemplazar nada. */
-	capturar: () => void;
-	/** Deja la selección vacía (principal y múltiple). */
-	limpiarSeleccion: () => void;
+	/**
+	 * Cambia el tablero de la pantalla por otro, ENTERO O NADA.
+	 *
+	 * Antes esto eran cinco llamadas sueltas —`capturar`, `ponerProyecto`, `limpiarSeleccion`,
+	 * `trasCambiarProyecto` y `encuadrar`— y las dos puertas de entrada las repetían en distinto
+	 * orden. Tercera auditoría, TS3-P2-03: si el montaje del tablero nuevo falla a mitad, el
+	 * historial se queda con un paso de deshacer que no deshace nada y sin nada que rehacer, y en
+	 * estas dos ni siquiera volvía el proyecto anterior. Ahora es una sola operación que mueve
+	 * proyecto, historial y guardado a la vez, o no mueve ninguno y lanza.
+	 *
+	 * `ajustes` es lo que haya que dejar puesto ANTES de pintar —el modo Trabajo de los ejemplos—,
+	 * para que la primera pintada ya salga bien y quede dentro de la transacción.
+	 */
+	reemplazarProyecto: (p: Proyecto, ajustes?: () => void) => void;
 	/** Da por vista la tarjeta de bienvenida del lienzo vacío. */
 	descartarBienvenida: () => void;
 	aplicarModo: (nuevo: 'editor' | 'trabajo') => void;
-	/** Rehace escena, paneles y verificación tras cambiar el objeto `proyecto`. */
-	trasCambiarProyecto: () => void;
 	encuadrar: () => void;
 	/** ¿Hay trabajo hecho que todavía no se ha descargado? */
 	hayCambiosSinExportar: () => boolean;
@@ -128,15 +134,16 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 
 	/** Abre un tablero de ejemplo y ofrece su explicación. */
 	function abrirEjemplo(ej: EjemploTablero): void {
-		ctx.capturar();
 		const nuevo = ej.crear();
 		numerarDispositivos(nuevo);
-		ctx.ponerProyecto(nuevo);
-		ctx.limpiarSeleccion();
+		try {
+			// El modo Trabajo entra dentro: el ejemplo se abre listo para recorrer el cableado.
+			ctx.reemplazarProyecto(nuevo, () => ctx.aplicarModo('trabajo'));
+		} catch {
+			avisar(`No se pudo abrir el ejemplo «${ej.titulo}». El tablero que tenías sigue como estaba.`, 'error');
+			return;
+		}
 		ctx.descartarBienvenida();
-		ctx.aplicarModo('trabajo'); // se abre listo para recorrer el cableado
-		ctx.trasCambiarProyecto();
-		ctx.encuadrar();
 		cerrarVentana('modal-ejemplos');
 		ejemploAbierto = ej;
 		($('btn-explicacion') as HTMLElement).hidden = false; // queda a mano para releerla
@@ -322,17 +329,18 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 			avisar(`No se pudo abrir la plantilla «${p.nombre}»: ${(e as Error).message}`, 'error');
 			return;
 		}
-		ctx.capturar();
 		nuevo.nombre = p.nombre;
-		ctx.ponerProyecto(nuevo);
+		try {
+			// Reencuadra por dentro. Segunda auditoría, TS2-P2-13: sin eso, una plantilla de una
+			// placa muy distinta a la que había en pantalla se abría fuera de escala y parecía
+			// vacía, con el tablero fuera del cuadro.
+			ctx.reemplazarProyecto(nuevo);
+		} catch {
+			avisar(`No se pudo abrir la plantilla «${p.nombre}». El tablero que tenías sigue como estaba.`, 'error');
+			return;
+		}
 		olvidarEjemplo();
 		cerrarVentana('modal-ejemplos');
-		ctx.limpiarSeleccion();
-		ctx.trasCambiarProyecto();
-		// Y se reencuadra, como al abrir un ejemplo. Segunda auditoría, TS2-P2-13: sin esto, una
-		// plantilla de una placa muy distinta a la que había en pantalla se abría fuera de escala
-		// y parecía vacía, con el tablero fuera del cuadro.
-		ctx.encuadrar();
 		avisar(`Plantilla «${p.nombre}» abierta`, 'ok');
 	}
 

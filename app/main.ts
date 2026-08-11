@@ -402,6 +402,68 @@ function capturar(): void {
 }
 
 /**
+ * REEMPLAZAR EL PROYECTO ENTERO ES TODO O NADA: proyecto, historial Y guardado.
+ *
+ * Tercera auditoría, TS3-P2-03. Abrir un archivo hacía esto:
+ *
+ *     capturar();            // apila el estado actual y VACÍA la pila de rehacer
+ *     proyecto = abierto;
+ *     try { actualizarTodo(); … } catch { proyecto = anterior; … }
+ *
+ * El `catch` devolvía `proyecto` a su sitio —eso ya se arregló en la segunda auditoría— pero las
+ * pilas se quedaban como las había dejado `capturar()`. Medido con el montaje roto a propósito:
+ * la pila de deshacer pasaba de 2 a 3 —un paso que no deshace nada— y la de REHACER, de 2 a 0.
+ * Perdida del todo, sin decir nada. El caso real no tiene nada de raro: llevas un rato trabajando,
+ * deshaces un par de cosas porque te lo estás pensando, pruebas a abrir un archivo que resulta
+ * estar mal, y te quedas sin poder rehacer lo tuyo.
+ *
+ * Además `actualizarTodo()` autoguarda por el camino —`recalcular()` llama a `autoguardar()`—, así
+ * que el navegador llegaba a quedarse con el proyecto a medio montar.
+ *
+ * Aquí se prueba primero y se apunta después: el historial no se toca hasta que el proyecto nuevo
+ * está montado y pintado, y mientras se prueba el guardado está congelado. Si algo revienta, las
+ * tres cosas se quedan exactamente como estaban.
+ */
+function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void): void {
+	const anterior = proyecto;
+	const instantanea = JSON.stringify(proyecto);
+	const pilaAntes = [...pila];
+	const rehacerAntes = [...rehacerPila];
+	const congeladoAntes = guardadoCongelado;
+	guardadoCongelado = true;   // nada se escribe en el navegador mientras esto sea un intento
+	/** Deja la pantalla contando lo que hay en `proyecto`, sea el nuevo o el que se recupera. */
+	const pintarloTodo = (): void => {
+		seleccionar(undefined);
+		ajustes?.();          // el modo de trabajo, por ejemplo: va DENTRO, para pintar ya con él
+		actualizarTodo();
+		construirHandles();   // los tiradores son de los aparatos de antes: hay que rehacerlos
+		pintarCatalogo();
+		pintarEstructura();
+	};
+	try {
+		proyecto = nuevo;
+		pintarloTodo();
+		encuadrar();
+	} catch (fallo) {
+		proyecto = anterior;
+		pila.length = 0; pila.push(...pilaAntes);
+		rehacerPila.length = 0; rehacerPila.push(...rehacerAntes);
+		actualizarBotonesHistorial();
+		pintarloTodo();
+		throw fallo;
+	} finally {
+		guardadoCongelado = congeladoAntes;
+	}
+	// Salió bien: ahora sí entra en el historial y se escribe, las dos cosas juntas.
+	senalarTrabajoSinExportar();
+	pila.push(instantanea);
+	if (pila.length > 60) pila.shift();
+	rehacerPila.length = 0;
+	actualizarBotonesHistorial();
+	autoguardar();
+}
+
+/**
  * Deshace la última `capturar()` SIN dejar rastro en el historial: se usa cuando el propio
  * programa rechaza una operación (p. ej. una alineación que dejaría aparatos encimados). Con
  * `deshacer()` normal quedaría un «Rehacer» que volvería a aplicar justo lo que se rechazó.
@@ -674,8 +736,19 @@ function reconstruirBornes(): void {
 	escenario.bornes.visible = modo === 'trabajo';
 }
 
+/**
+ * Rompe el próximo montaje de la escena. SOLO en la construcción de pruebas.
+ *
+ * Tercera auditoría, TS3-P2-03: «No se reprodujo una excepción natural postvalidación en el
+ * recorrido normal; es un defecto condicional de atomicidad. Debe probarse inyectando un fallo
+ * después de `capturar` y antes del commit». Esto es ese inyector: `montarEscenario()` corre
+ * justo ahí, dentro de `actualizarTodo()`, después de que el proyecto ya se haya sustituido.
+ */
+let romperMontaje = false;
+
 /** Desmonta y vuelve a construir todo el gabinete. */
 function montarEscenario(): void {
+	if (__QA__ && romperMontaje) { romperMontaje = false; throw new Error('QA: montaje roto a propósito'); }
 	escena.remove(escenario.raiz);
 	liberar(escenario.raiz); // sin esto, cada reconstrucción deja el tablero entero en la GPU
 	escenario = construirEscenario(proyecto, visualizacion);
@@ -3740,34 +3813,21 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 		(e.target as HTMLInputElement).value = '';
 		return;
 	}
-	const anterior = proyecto;
 	try {
 		const { proyecto: abierto, arreglos } = cargarProyecto(await archivo.text());
-		capturar();
-		proyecto = abierto;
-		try {
-			seleccionar(undefined);
-			actualizarTodo();
-			pintarEstructura();
-			encuadrar();
-		} catch (fallo) {
-			/*
-			 * ABRIR ES TODO O NADA.
-			 *
-			 * Segunda auditoría, TS2-P1-01. `proyecto = abierto` se hacía ANTES de que el
-			 * recálculo terminase. Si la revisión, el ruteo o el render fallaban con el archivo
-			 * nuevo, el `catch` avisaba... y el editor se quedaba mostrando —y autoguardando— un
-			 * proyecto a medio montar, con el anterior ya perdido. El aviso decía «no se pudo
-			 * abrir» mientras la pantalla enseñaba justo lo que no se había podido abrir.
-			 *
-			 * Ahora el que falla es el archivo nuevo, y lo que había vuelve a su sitio.
-			 */
-			proyecto = anterior;
-			seleccionar(undefined);
-			actualizarTodo();
-			pintarEstructura();
-			throw fallo;
-		}
+		/*
+		 * ABRIR ES TODO O NADA.
+		 *
+		 * Segunda auditoría, TS2-P1-01: `proyecto = abierto` se hacía ANTES de que el recálculo
+		 * terminase, y si la revisión, el ruteo o el render fallaban con el archivo nuevo, el
+		 * editor se quedaba mostrando —y autoguardando— un proyecto a medio montar, con el
+		 * anterior ya perdido.
+		 *
+		 * Tercera auditoría, TS3-P2-03: aquello devolvía el proyecto pero no el HISTORIAL, que se
+		 * quedaba con un paso de deshacer inútil y sin nada que rehacer. `reemplazarProyecto()`
+		 * mueve las tres cosas —proyecto, historial y guardado— o ninguna.
+		 */
+		reemplazarProyecto(abierto);
 		// Si hubo que sanear algo, se dice: callarlo es dejar que el usuario descubra
 		// más tarde que le faltan cables sin saber por qué.
 		avisar(arreglos.length
@@ -4563,12 +4623,9 @@ $('modal-controlador').addEventListener('click', (e) => {
 
 const panelInicio = instalarInicio({
 	proyecto: () => proyecto,
-	ponerProyecto: (p) => { proyecto = p; },
-	capturar,
-	limpiarSeleccion: () => aplicarSeleccion(undefined),
+	reemplazarProyecto,
 	descartarBienvenida: () => { bienvenidaDescartada = true; },
 	aplicarModo,
-	trasCambiarProyecto,
 	encuadrar,
 	hayCambiosSinExportar: () => hayCambiosSinExportar,
 	ajustarTamano: () => ajustarTamano(),
@@ -4734,6 +4791,18 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			borne: m.userData.borneId as string,
 			...aPantalla(m.getWorldPosition(new THREE.Vector3())),
 		})),
+		/**
+		 * Hace que el PRÓXIMO montaje de la escena reviente. TS3-P2-03.
+		 *
+		 * Sirve para comprobar que abrir un archivo es de verdad todo o nada: si el render falla
+		 * después de haber sustituido el proyecto, ni el proyecto, ni el historial, ni lo guardado
+		 * pueden quedarse a medias.
+		 */
+		romperProximoMontaje: () => { romperMontaje = true; },
+		/** El historial, para poder mirar que un fallo no se lo lleva por delante. */
+		historial: () => ({ deshacer: pila.length, rehacer: rehacerPila.length }),
+		/** Lo que hay guardado en el navegador ahora mismo, tal cual. */
+		autoguardado: () => localStorage.getItem(CLAVE_AUTOSAVE),
 		/** Nº de cables realmente dibujados en 3D (para detectar «cables fantasma»). */
 		cablesDibujados: () => new Set(
 			escenario.cables.children.flatMap((g) => g.children.map((m) => m.userData.conductorId as string)).filter(Boolean),
