@@ -404,6 +404,38 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 		if (ctx.encuadrePendiente()) ctx.encuadrar();
 	}
 
+	/*
+	 * QUÉ PANTALLA PIDE CADA HERRAMIENTA, DICHO ANTES DE ENTRAR.
+	 *
+	 * Tercera auditoría, TS3-P2-09: «La mejora responsive se concentra en Planta. El editor
+	 * mantiene paneles laterales de aproximadamente 306 px y 300 px; en anchuras pequeñas el área
+	 * útil del tablero queda cubierta o casi nula. […] No presentar "responsive" como propiedad de
+	 * toda la aplicación mientras solo una herramienta lo sea».
+	 *
+	 * Es verdad, y la salida honesta es la segunda que propone el informe: fijar una anchura mínima
+	 * y decirla. Los 1024 px salen de la cuenta: 306 + 300 de paneles dejan menos de 420 px de
+	 * placa, y en 420 px no se coloca un aparato en un riel ni se cablea un borne. Poner cajones
+	 * como los de la Planta sería otra cosa —y otro trabajo—, no un ajuste de CSS.
+	 *
+	 * Se avisa aquí, en la pantalla donde se ELIGE herramienta, y no cuando ya está el tablero
+	 * abierto y tapado. Y se dice también lo que sí sirve: la Planta, que es justo la que se lleva
+	 * a la cubierta.
+	 */
+	const ANCHO_MINIMO_EDITOR = 1024;
+	function declararAnchoMinimo(): void {
+		const aviso = $('inicio-aviso-ancho');
+		const estrecho = window.innerWidth < ANCHO_MINIMO_EDITOR;
+		aviso.hidden = !estrecho;
+		if (!estrecho) return;
+		aviso.textContent = `Esta pantalla mide ${window.innerWidth} px de ancho. El editor de `
+			+ `tableros necesita ${ANCHO_MINIMO_EDITOR} px o más: por debajo, los dos paneles `
+			+ 'laterales se comen la placa y no queda sitio para trabajar. La Planta 3D sí funciona '
+			+ 'aquí —buscar máquinas, ver sus puntos y medir tiradas—, que es para lo que se baja a '
+			+ 'la cubierta con el teléfono.';
+	}
+	declararAnchoMinimo();
+	window.addEventListener('resize', declararAnchoMinimo);
+
 	($('btn-inicio') as HTMLButtonElement).onclick = mostrarInicio;
 	($('inicio-tableros') as HTMLButtonElement).onclick = ocultarInicio;
 	($('inicio-terreno') as HTMLButtonElement).onclick = () => { ocultarInicio(); void ctx.irAPlanta(); };

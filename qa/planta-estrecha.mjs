@@ -179,6 +179,52 @@ if (!camaraAntes || !camaraDespues) {
 	must('con la guía abierta, la W NO mueve la cámara', movido < 0.2, `${movido.toFixed(2)} m`);
 }
 
+/* ============ 4. Lo que NO se puede hacer aquí, dicho antes de intentarlo ============ */
+
+/*
+ * Tercera auditoría, TS3-P2-08 y TS3-P2-09.
+ *
+ * El informe da dos salidas para cada uno: implementarlo, o declararlo y no fingir. Se ha elegido
+ * declararlo —Pasear necesita teclado, el editor necesita ancho—, así que lo que hay que comprobar
+ * es que la declaración EXISTE y dice la verdad. Un botón que se pulsa y no lleva a ninguna parte,
+ * o un editor que se abre con la placa tapada, es peor que un mensaje claro.
+ */
+console.log('\n--- lo que esta pantalla no da, se dice ---');
+
+// Un teléfono de verdad: solo dedo, sin ratón. Es lo que distingue `pointer: fine`.
+const movil = await b.newContext({
+	viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true,
+});
+const t = await movil.newPage();
+await t.goto(`http://127.0.0.1:${s.address().port}/?qa=1`);
+await t.waitForTimeout(1600);
+
+const avisoAncho = await t.evaluate(() => {
+	const e = document.getElementById('inicio-aviso-ancho');
+	return { existe: !!e, visible: !!e && !e.hidden, texto: e?.textContent ?? '' };
+});
+must('el inicio avisa de que el editor necesita más ancho', avisoAncho.visible);
+must('el aviso dice la anchura que hace falta', /1024/.test(avisoAncho.texto), avisoAncho.texto.slice(0, 90));
+must('y dice que la Planta sí funciona aquí', /Planta/i.test(avisoAncho.texto));
+
+await t.evaluate(() => document.getElementById('inicio-terreno')?.click());
+await t.waitForTimeout(4000);
+await t.evaluate(() => document.getElementById('btn-cerrar-guia-mundo')?.click());
+await t.waitForTimeout(400);
+
+const paseo = await t.evaluate(() => {
+	const bt = document.getElementById('mundo-paseo');
+	return { existe: !!bt, apagado: !!bt?.disabled, porque: bt?.title ?? '' };
+});
+must('CONDICIÓN PREVIA: el botón de Pasear está ahí', paseo.existe);
+must('en un equipo solo táctil, Pasear queda apagado', paseo.apagado);
+must('y explica por qué', /teclado/i.test(paseo.porque), paseo.porque.slice(0, 80));
+// Lo demás de la Planta sí tiene que funcionar: si no, apagar Pasear no arregla nada.
+const utiles = await t.evaluate(() => ['mundo-q', 'mundo-medir', 'mundo-salir']
+	.filter((i) => { const e = document.getElementById(i); return e && e.offsetParent !== null; }));
+must('buscar, medir y salir siguen ahí', utiles.length === 3, utiles.join(', '));
+await movil.close();
+
 await b.close(); s.close();
 console.log(`\n=== ${fallos === 0 ? 'la Planta se usa en pantalla estrecha y sus ventanas bloquean el fondo ✔' : `${fallos} FALLO(S) ✗`} ===`);
 process.exit(fallos ? 1 : 0);

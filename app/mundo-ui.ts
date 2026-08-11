@@ -29,7 +29,7 @@ import {
 	resaltarEquipo,
 } from './mundo.js';
 import { metrosDeInstalacion } from '../src/motores/ejes-planta.js';
-import { confirmar } from './dialogos.js';
+import { avisar, confirmar } from './dialogos.js';
 import { abrirVentana, cerrarVentana, hayVentanaAbierta } from './ventanas.js';
 import { idUnico } from '../src/modelo/ids.js';
 
@@ -720,8 +720,46 @@ function verPaneles(mostrar: boolean): void {
 		: 'Volver a mostrar el buscador y la lista de máquinas (tecla H)');
 }
 
+/**
+ * PASEAR PIDE TECLADO Y RATÓN, Y HAY QUE DECIRLO.
+ *
+ * Tercera auditoría, TS3-P2-08: «La vista general y Medir ya funcionan a 360 × 800. El modo Pasear
+ * depende de WASD y control de cámara pensado para ratón/teclado. Si no se implementa, declarar
+ * explícitamente que Pasear requiere teclado/ratón y deshabilitarlo con explicación en un equipo
+ * solo táctil».
+ *
+ * Eso es lo que se hace, y a conciencia: no hay joystick virtual. Un botón que se pulsa y no lleva
+ * a ninguna parte —porque no hay teclas que pulsar y el gesto de mirar choca con el de girar la
+ * cámara— es peor que un botón apagado que explica por qué. Lo demás de la Planta sí sirve en un
+ * teléfono: buscar, filtrar, ver la máquina y medir distancias, que es a lo que se baja a la
+ * cubierta con el móvil en la mano.
+ *
+ * `pointer: fine` es lo que distingue un puntero que apunta con precisión —ratón, trackpad, lápiz—
+ * del dedo. Un portátil táctil tiene los dos y responde `true`, que es lo correcto: allí Pasear
+ * funciona con su teclado.
+ */
+function hayTecladoYRaton(): boolean {
+	return window.matchMedia('(pointer: fine)').matches;
+}
+
+function declararSiSePuedePasear(): void {
+	const boton = $('mundo-paseo') as HTMLButtonElement;
+	if (hayTecladoYRaton()) return;
+	boton.disabled = true;
+	boton.title = 'Pasear necesita teclado y ratón: se anda con W A S D y se mira arrastrando con el '
+		+ 'botón derecho. En un equipo solo táctil no hay con qué. Lo demás de la Planta sí funciona: '
+		+ 'buscar, filtrar, tocar una máquina y medir distancias.';
+	boton.setAttribute('aria-disabled', 'true');
+}
+
 function cambiarVista(nueva: 'sims' | 'paseo'): void {
 	if (!mundo) return;
+	// Por si llega por teclado o por un atajo: la razón se da una vez y no se entra a ciegas.
+	if (nueva === 'paseo' && !hayTecladoYRaton()) {
+		avisar('Pasear necesita teclado y ratón (W A S D para andar, arrastrar para mirar). '
+			+ 'En esta pantalla puedes usar la vista general, el buscador y Medir.', 'info');
+		return;
+	}
 	vista = nueva;
 	$('mundo-sims').classList.toggle('activo', nueva === 'sims');
 	$('mundo-paseo').classList.toggle('activo', nueva === 'paseo');
@@ -784,6 +822,7 @@ export function abrirMundo(alTablero?: (p: Proyecto, resumen: string) => void): 
 		window.addEventListener('resize', ajustar);
 		$('mundo-sims').onclick = () => cambiarVista('sims');
 		$('mundo-paseo').onclick = () => cambiarVista('paseo');
+		declararSiSePuedePasear();
 		$('mundo-medir').onclick = () => activarMedir(!midiendo);
 		$('mundo-paneles').onclick = () => verPaneles(!panelesVisibles);
 		/*
