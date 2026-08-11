@@ -240,12 +240,27 @@ function pintarResumen(): void {
 	 * hay 118. Es de las cifras que se miran para hacerse una idea de la instalación, así que
 	 * tiene que ser la de verdad. Las piezas —transiciones y compuertas— se dicen aparte: son
 	 * accesorios, no metros de tirada.
+	 *
+	 * Y SE CUENTAN PIEZAS, NO DIAGONALES. Tercera auditoría, TS3-P2-07: el plano dibuja cada
+	 * accesorio en aspa, y las 129 diagonales de esta cubierta son 48 piezas. Para pedir material
+	 * lo que sirve es «cuántas hay», no cuántos metros de raya cruzada dibujó el proyectista.
 	 */
 	$('mundo-leyenda').innerHTML = metros
 		.map((s) => fila(SISTEMAS[s.sistema as SistemaTraza].color,
 			SISTEMAS[s.sistema as SistemaTraza].nombre,
-			`${s.metros} m${s.piezas ? ` <span style="opacity:.65">+ ${s.piezas} m en piezas</span>` : ''}`))
+			`${s.metros} m${s.accesorios
+				? ` <span style="opacity:.65">+ ${s.accesorios} pieza${s.accesorios === 1 ? '' : 's'}</span>`
+				: ''}`))
 		.join('');
+	/*
+	 * DE DÓNDE SALEN ESTAS CIFRAS, dicho al lado de las cifras.
+	 *
+	 * TS3-P2-07 pide «rotular la métrica como estimación del DXF hasta validarla contra obra», y
+	 * tiene razón: esto sale de medir el plano del proyectista, no de subir con una huincha. Sirve
+	 * para hacerse una idea y para pedir material con margen, no para certificar un as-built.
+	 */
+	$('mundo-leyenda-origen').textContent = 'Medido sobre el plano del proyectista (DXF): sirve '
+		+ 'para estimar y pedir con margen, no como as-built. Falta comprobarlo en la cubierta.';
 	// La obra de la cubierta: lo que hay alrededor de las máquinas, también sacado del plano.
 	const obra = resumenObra(inf);
 	const pilares = inf.columnas?.length ?? 0;

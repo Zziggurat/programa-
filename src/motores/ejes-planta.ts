@@ -45,6 +45,14 @@ export interface EjeInstalacion {
 	 * aire junto a cada máquina, que es lo que hacía que la instalación pareciera rota.
 	 */
 	pieza?: boolean;
+	/**
+	 * A QUÉ ACCESORIO pertenece esta diagonal. Tercera auditoría, TS3-P2-07.
+	 *
+	 * Un aspa son dos diagonales y UNA pieza. Sin esto, el visor dibujaba una caja por diagonal
+	 * —129 cajas en esta cubierta— y el metrado sumaba las dos como si fueran dos accesorios. Las
+	 * diagonales del mismo cruce comparten número, así que se puede dibujar y contar una vez.
+	 */
+	accesorio?: number;
 }
 
 interface Segmento { a: Punto2; b: Punto2; largo: number }
@@ -429,18 +437,45 @@ function marcarPiezas(ejes: EjeInstalacion[]): void {
 		.map((e, i) => ({ e, i }))
 		.filter(({ e }) => e.puntos.length === 2
 			&& Math.hypot(e.puntos[1][0] - e.puntos[0][0], e.puntos[1][1] - e.puntos[0][1]) < LARGO_MAXIMO_PIEZA);
+
+	/*
+	 * QUÉ DIAGONALES SON EL MISMO ACCESORIO. Tercera auditoría, TS3-P2-07.
+	 *
+	 * Marcar las dos diagonales y dibujar una caja por cada una daba 129 cajas para esta cubierta,
+	 * y 129 no es el número de accesorios: un aspa son DOS diagonales y UNA sola pieza. El informe
+	 * lo dijo así: «se observaron 129 cajas para un conjunto menor de cruces/componentes. No es una
+	 * "pieza" agregada ni un metrado as-built».
+	 *
+	 * Se agrupan con un union-find sobre los cruces. Va por componente conexa a propósito: donde el
+	 * plano dibuja tres o cuatro diagonales encadenadas —pasa en las transiciones con compuerta—
+	 * eso sigue siendo UN accesorio, no dos y medio. Cada grupo recibe un número, y con él el visor
+	 * dibuja una pieza por accesorio y el metrado cuenta accesorios en vez de diagonales.
+	 */
+	const padre = candidatos.map((_, i) => i);
+	const raiz = (i: number): number => (padre[i] === i ? i : (padre[i] = raiz(padre[i])));
+	const unir = (a: number, b: number): void => { padre[raiz(a)] = raiz(b); };
+	const cruzados = new Set<number>();
+
 	for (let a = 0; a < candidatos.length; a++) {
 		for (let b = a + 1; b < candidatos.length; b++) {
 			const p = candidatos[a].e;
 			const q = candidatos[b].e;
-			if (p.pieza && q.pieza) continue;
 			if (!seCruzan(
 				{ x: p.puntos[0][0], y: p.puntos[0][1] }, { x: p.puntos[1][0], y: p.puntos[1][1] },
 				{ x: q.puntos[0][0], y: q.puntos[0][1] }, { x: q.puntos[1][0], y: q.puntos[1][1] },
 			)) continue;
-			p.pieza = true;
-			q.pieza = true;
+			cruzados.add(a); cruzados.add(b);
+			unir(a, b);
 		}
+	}
+
+	// Los números de accesorio salen correlativos: 0, 1, 2… y no los índices sueltos del union-find.
+	const numeroDeRaiz = new Map<number, number>();
+	for (const i of [...cruzados].sort((x, y) => x - y)) {
+		const r = raiz(i);
+		if (!numeroDeRaiz.has(r)) numeroDeRaiz.set(r, numeroDeRaiz.size);
+		candidatos[i].e.pieza = true;
+		candidatos[i].e.accesorio = numeroDeRaiz.get(r);
 	}
 }
 
@@ -475,20 +510,31 @@ export function altoSegunElAncho(ancho: number): number {
  * decidir cosas. Las piezas se cuentan aparte porque son accesorios, no metros de tirada.
  */
 export function metrosDeInstalacion(trazos: TrazoDibujado[]): {
-	sistema: string; metros: number; piezas: number;
+	sistema: string; metros: number; piezas: number; accesorios: number;
 }[] {
 	const largo = (p: [number, number][]): number =>
 		p.slice(1).reduce((s, q, i) => s + Math.hypot(q[0] - p[i][0], q[1] - p[i][1]), 0);
-	const por = new Map<string, { metros: number; piezas: number }>();
+	const por = new Map<string, { metros: number; piezas: number; accesorios: Set<number> }>();
 	for (const e of ejesDeLaPlanta(trazos)) {
-		if (!por.has(e.sistema)) por.set(e.sistema, { metros: 0, piezas: 0 });
+		if (!por.has(e.sistema)) por.set(e.sistema, { metros: 0, piezas: 0, accesorios: new Set() });
 		const acc = por.get(e.sistema)!;
-		if (e.pieza) acc.piezas += largo(e.puntos);
-		else acc.metros += largo(e.puntos);
+		if (e.pieza) {
+			acc.piezas += largo(e.puntos);
+			/*
+			 * Se cuentan ACCESORIOS, no diagonales. Tercera auditoría, TS3-P2-07: un aspa son dos
+			 * diagonales y una sola pieza, y en esta cubierta las 129 diagonales son 48 piezas. Los
+			 * metros de aspa siguen ahí porque dicen cuánto conducto NO son, pero para pedir
+			 * material lo que hace falta es cuántas piezas hay.
+			 */
+			if (e.accesorio !== undefined) acc.accesorios.add(e.accesorio);
+		} else acc.metros += largo(e.puntos);
 	}
 	return [...por]
 		.map(([sistema, v]) => ({
-			sistema, metros: Math.round(v.metros / 1000), piezas: Math.round(v.piezas / 1000),
+			sistema,
+			metros: Math.round(v.metros / 1000),
+			piezas: Math.round(v.piezas / 1000),
+			accesorios: v.accesorios.size,
 		}))
 		.sort((a, b) => b.metros - a.metros);
 }

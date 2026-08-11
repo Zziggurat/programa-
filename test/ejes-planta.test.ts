@@ -298,3 +298,55 @@ test('metrosDeInstalacion: las piezas se cuentan aparte, no como tirada', () => 
 	assert.equal(ext.metros, 10, 'el conducto son 10 m');
 	assert.ok(ext.piezas > 0 && ext.piezas < 5, `las aspas van aparte: ${ext.piezas} m`);
 });
+
+/*
+ * UN ASPA ES UNA PIEZA, NO DOS DIAGONALES.
+ *
+ * Tercera auditoría, TS3-P2-07: «Cada diagonal produce geometría propia; se observaron 129 cajas
+ * para un conjunto menor de cruces/componentes. No es una "pieza" agregada ni un metrado
+ * as-built». Es exacto: en la cubierta del proyecto las 129 diagonales marcadas son 48 accesorios
+ * —38 aspas normales de dos diagonales, y 10 nudos de cinco o seis donde el plano encadena una
+ * transición con su compuerta—. Contar diagonales es contar casi el triple de piezas de las que
+ * hay que pedir.
+ */
+test('las dos diagonales de un aspa son UN accesorio', () => {
+	const aspa = (p: [number, number][]): TrazoDibujado =>
+		({ sistema: 'extraccion', z: 4600, ancho: 200, alto: 100, puntos: p });
+	const ejes = ejesDeSistema([
+		aspa([[-1534, 376], [-934, -512]]),
+		aspa([[-1534, -251], [-934, 638]]),
+	], { largoMinimoSuelto: 0 });
+	const piezas = ejes.filter((e) => e.pieza);
+	assert.equal(piezas.length, 2, 'las dos diagonales siguen marcadas');
+	assert.ok(piezas.every((e) => e.accesorio !== undefined), 'y las dos llevan número de accesorio');
+	assert.equal(new Set(piezas.map((e) => e.accesorio)).size, 1,
+		'pero son el MISMO accesorio: un aspa es una pieza');
+});
+
+test('dos aspas separadas son dos accesorios distintos', () => {
+	const aspa = (p: [number, number][]): TrazoDibujado =>
+		({ sistema: 'extraccion', z: 4600, ancho: 200, alto: 100, puntos: p });
+	const ejes = ejesDeSistema([
+		aspa([[-1534, 376], [-934, -512]]),
+		aspa([[-1534, -251], [-934, 638]]),
+		// La segunda, a treinta metros: no toca la primera ni por asomo.
+		aspa([[28_466, 376], [29_066, -512]]),
+		aspa([[28_466, -251], [29_066, 638]]),
+	], { largoMinimoSuelto: 0 });
+	const piezas = ejes.filter((e) => e.pieza);
+	assert.equal(piezas.length, 4);
+	assert.equal(new Set(piezas.map((e) => e.accesorio)).size, 2,
+		'cada aspa es su propia pieza');
+});
+
+test('metrosDeInstalacion cuenta accesorios, no diagonales', () => {
+	const aspa = (p: [number, number][]): TrazoDibujado =>
+		({ sistema: 'extraccion', z: 4600, ancho: 200, alto: 100, puntos: p });
+	const m = metrosDeInstalacion([
+		...conducto(0, 0, 10_000, 400).map((t) => ({ ...t, sistema: 'extraccion' })),
+		aspa([[-1534, 376], [-934, -512]]),
+		aspa([[-1534, -251], [-934, 638]]),
+	]);
+	const ext = m.find((x) => x.sistema === 'extraccion')!;
+	assert.equal(ext.accesorios, 1, `dos diagonales cruzadas son UNA pieza, salieron ${ext.accesorios}`);
+});

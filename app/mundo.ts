@@ -220,25 +220,41 @@ function construirInstalaciones(
 	 * seguidos, así que aquí ya llegan recorridos de verdad y con el ancho MEDIDO del plano.
 	 */
 	const ejes = ejesDeLaPlanta(trazas as unknown as Parameters<typeof ejesDeLaPlanta>[0]);
+	/*
+	 * Las PIEZAS no son conducto y no se dibujan como conducto.
+	 *
+	 * El plano dibuja las transiciones, las compuertas y los acoplamientos flexibles EN ASPA, con
+	 * sus diagonales cruzadas. Tomadas por tramos de conducto salían palos cruzándose en el aire
+	 * junto a cada máquina —129 de los 398 recorridos de esta cubierta, un tercio— y eso es lo que
+	 * hacía que la instalación pareciera rota al pasear.
+	 *
+	 * Y UNA PIEZA POR ACCESORIO, no por diagonal. Tercera auditoría, TS3-P2-07: las 129 diagonales
+	 * son 48 accesorios. Se juntan por el número que les puso `marcarPiezas` y de cada grupo sale
+	 * una sola caja. Ni se borran —están ahí y hay que verlas— ni se cuentan de más.
+	 */
+	const porAccesorio = new Map<number, typeof ejes>();
 	for (const eje of ejes) {
 		const t = eje as unknown as TrazaPlanta;
-		/*
-		 * Las PIEZAS no son conducto y no se dibujan como conducto.
-		 *
-		 * El plano dibuja las transiciones, las compuertas y los acoplamientos flexibles EN ASPA,
-		 * con sus dos diagonales cruzadas. Tomadas por tramos de conducto salían dos palos
-		 * cruzándose en el aire junto a cada máquina —129 de los 398 recorridos de esta cubierta,
-		 * un tercio— y eso es lo que hacía que la instalación pareciera rota al pasear.
-		 *
-		 * Se dibuja UNA pieza compacta en el cruce, que es donde está de verdad el accesorio, en
-		 * vez de las dos diagonales. Ni se borra —está ahí y hay que verla— ni se miente.
-		 */
-		const g = eje.pieza ? geometriaPieza(eje, aEscena) : geometriaTraza(t, aEscena);
+		if (eje.pieza && eje.accesorio !== undefined) {
+			if (!porAccesorio.has(eje.accesorio)) porAccesorio.set(eje.accesorio, []);
+			porAccesorio.get(eje.accesorio)!.push(eje);
+			continue;
+		}
+		const g = geometriaTraza(t, aEscena);
 		if (!g) continue;
 		// Los atributos tienen que coincidir para poder fusionar: solo posición y normal.
 		g.deleteAttribute('uv');
 		if (!porSistema.has(t.sistema)) porSistema.set(t.sistema, []);
 		porSistema.get(t.sistema)!.push(g);
+	}
+	for (const diagonales of porAccesorio.values()) {
+		const g = geometriaAccesorio(diagonales, aEscena);
+		if (!g) continue;
+		g.deleteAttribute('uv');
+		// El accesorio va con el sistema del conducto al que sirve, que es el de sus diagonales.
+		const sistema = diagonales[0].sistema;
+		if (!porSistema.has(sistema)) porSistema.set(sistema, []);
+		porSistema.get(sistema)!.push(g);
 	}
 	for (const [sistema, geos] of porSistema) {
 		const info = SISTEMAS[sistema as keyof typeof SISTEMAS];
@@ -256,21 +272,40 @@ function construirInstalaciones(
  * Una PIEZA de la instalación: la transición, la compuerta o el acoplamiento flexible que el
  * plano dibuja en aspa.
  *
- * Se pone una caja corta EN EL CRUCE de las dos diagonales, que es donde está el accesorio, con
- * el ancho del conducto al que sirve. Es lo que se ve en la cubierta: un cajón un poco más gordo
- * entre dos tramos, no dos palos cruzándose en el aire.
+ * UNA CAJA POR ACCESORIO, no por diagonal. Tercera auditoría, TS3-P2-07: «cada diagonal produce
+ * geometría propia; se observaron 129 cajas para un conjunto menor de cruces/componentes».
+ * Contadas por cruce, las 129 diagonales de esta cubierta son 48 accesorios: 38 aspas normales de
+ * dos diagonales, y 10 nudos de cinco o seis donde el plano encadena una transición con su
+ * compuerta. Eso último es UNA pieza en la cubierta, no dos y media.
+ *
+ * La caja se pone en el centro del grupo, orientada según su diagonal más larga, y con el ancho
+ * del conducto al que sirve. Es lo que se ve subiendo: un cajón un poco más gordo entre dos
+ * tramos, no dos palos cruzándose en el aire.
  */
-function geometriaPieza(
-	eje: { puntos: [number, number][]; z: number; ancho: number; alto: number },
+function geometriaAccesorio(
+	diagonales: { puntos: [number, number][]; z: number; ancho: number; alto: number }[],
 	aEscena: ReturnType<typeof hacerConversor>,
 ): THREE.BufferGeometry | undefined {
-	const [a, b] = eje.puntos;
-	if (!a || !b) return undefined;
-	const centro = aEscena((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, eje.z);
-	const ancho = Math.max(0.15, eje.ancho / 1000);
-	const alto = Math.max(0.12, eje.alto / 1000);
-	// El largo de la pieza es corto por definición: media diagonal, que es lo que ocupa de verdad.
-	const largo = Math.max(0.2, Math.hypot(b[0] - a[0], b[1] - a[1]) / 2000);
+	const validas = diagonales.filter((d) => d.puntos[0] && d.puntos[1]);
+	if (validas.length === 0) return undefined;
+	const puntos = validas.flatMap((d) => d.puntos);
+	const cx = puntos.reduce((s, q) => s + q[0], 0) / puntos.length;
+	const cy = puntos.reduce((s, q) => s + q[1], 0) / puntos.length;
+	const z = Math.max(...validas.map((d) => d.z));
+	const centro = aEscena(cx, cy, z);
+	// El accesorio sirve al conducto más gordo que toca: es el que manda en cómo se ve.
+	const ancho = Math.max(0.15, Math.max(...validas.map((d) => d.ancho)) / 1000);
+	const alto = Math.max(0.12, Math.max(...validas.map((d) => d.alto)) / 1000);
+	/*
+	 * El largo sale de la diagonal más larga, a la mitad: es lo que ocupa el accesorio de verdad.
+	 * Con la suma de todas, un nudo de seis diagonales daría un cajón de varios metros que no
+	 * existe en ningún sitio.
+	 */
+	const mayor = validas
+		.map((d) => ({ d, l: Math.hypot(d.puntos[1][0] - d.puntos[0][0], d.puntos[1][1] - d.puntos[0][1]) }))
+		.sort((p, q) => q.l - p.l)[0];
+	const largo = Math.max(0.2, mayor.l / 2000);
+	const [a, b] = mayor.d.puntos;
 	const g = new THREE.BoxGeometry(largo, alto, ancho);
 	g.deleteAttribute('uv');
 	g.applyMatrix4(new THREE.Matrix4().makeRotationY(Math.atan2(-(b[1] - a[1]), b[0] - a[0])));
