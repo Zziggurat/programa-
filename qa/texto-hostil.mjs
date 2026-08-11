@@ -162,6 +162,51 @@ must('la fuente de un trozo NO puede cerrar el atributo style', dos.nodos === 0,
 must('   y una fuente inventada simplemente no se aplica',
 	!dos.estilo.includes('marca-hostil'), dos.estilo.slice(0, 60));
 
+/*
+ * ------------------------------------------------------------------------------------------
+ * TERCERA AUDITORÍA, TS3-P1-04. Tres rutas más que seguían construyendo `innerHTML` con datos
+ * del proyecto. La prueba de la auditoría metió dos designaciones con markup y creó DOS NODOS
+ * DOM reales en la selección múltiple, aunque el texto se leyera como «MARCA-A, MARCA-B».
+ *
+ * La CSP del entregable reduce que se pueda EJECUTAR algo, y no se demostró ejecución. Pero no
+ * impide alterar el DOM, los estilos ni la interfaz, y el build de desarrollo no lleva esa CSP.
+ * ------------------------------------------------------------------------------------------ */
+
+console.log('\n--- selección múltiple, DRC del aparato y panel de riel ---');
+const MARCA3 = '<em data-marca-hostil="5">X</em>';
+r = await p.evaluate((c) => {
+	const pr = window.qa.proyecto();
+	if (pr.dispositivos.length < 2) return { salta: true };
+	pr.dispositivos[0].designacion = `${c}A`;
+	pr.dispositivos[1].designacion = `${c}B`;
+	window.qa.recalcular();
+	window.qa.seleccionarPorId(pr.dispositivos[0].id);
+	window.qa.anadirASeleccion(pr.dispositivos[1].id);
+	return { salta: false,
+		nodos: document.querySelectorAll('#panel-der [data-marca-hostil]').length,
+		texto: document.querySelector('#panel-der .pista')?.textContent ?? '' };
+}, MARCA3);
+if (r.salta) console.log('  (menos de dos aparatos, se salta)');
+else {
+	must('la selección múltiple NO crea nodos con las designaciones', r.nodos === 0, `${r.nodos} nodos`);
+	must('   y las enseña como texto', r.texto.includes('data-marca-hostil'), r.texto.slice(0, 50));
+}
+
+// El id de un riel, que va dentro de un <h1> del panel de estructura.
+r = await p.evaluate((c) => {
+	const g = window.qa.proyecto().gabinete;
+	if (!g?.rieles?.length) return { salta: true };
+	g.rieles[0].id = `r1${c}`;
+	window.qa.recalcular();
+	window.qa.pintarEstructura?.();
+	// Se selecciona el riel para que se pinte su panel, que es el otro sink.
+	const fila = document.querySelector('.fila-estructura');
+	fila?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+	return { salta: false, nodos: document.querySelectorAll('[data-marca-hostil]').length };
+}, MARCA3);
+if (r.salta) console.log('  (sin rieles, se salta)');
+else must('el panel de un riel NO crea nodos con su id', r.nodos === 0, `${r.nodos} nodos`);
+
 await b.close(); s.close();
 console.log(`\n=== ${fallos===0?'TODO OK ✔':fallos+' FALLO(S) ✗'} ===`);
 process.exit(fallos?1:0);

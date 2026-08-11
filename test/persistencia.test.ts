@@ -68,7 +68,14 @@ function bloques(fuente: string): Bloque[] {
 		const m = ARRANQUES.map((r) => r.exec(lineas[i])).find(Boolean);
 		if (!m) continue;
 		let prof = 0; let visto = false; let j = i;
-		for (; j < lineas.length && j < i + 400; j++) {
+		/*
+		 * El tope existe para que un archivo con las llaves descuadradas no haga barrer el fichero
+		 * entero por cada línea. 400 se quedó corto en cuanto `pintarSeleccion()` pasó de las 400
+		 * líneas: su cierre caía fuera del tope, los manejadores anidados de más abajo dejaban de
+		 * restarse y su `capturar()` aparecía como si fuera de la función madre. Un falso positivo
+		 * por una constante, que es la peor clase: parece un fallo del programa.
+		 */
+		for (; j < lineas.length && j < i + 2000; j++) {
 			for (const c of lineas[j]) { if (c === '{') { prof++; visto = true; } else if (c === '}') prof--; }
 			if (visto && prof <= 0) break;
 		}

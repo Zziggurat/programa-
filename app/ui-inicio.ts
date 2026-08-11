@@ -162,6 +162,22 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 				if (await puedoReemplazarElTablero('esta plantilla')) abrirPlantilla(Number(b.dataset.plantilla));
 			})(); };
 		}
+		for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-bajar-plantilla]')) {
+			b.onclick = () => {
+				const p = plantillasGuardadas()[Number(b.dataset.bajarPlantilla)];
+				if (!p) return;
+				const url = URL.createObjectURL(new Blob([JSON.stringify(p, null, 2)],
+					{ type: 'application/json' }));
+				const a = document.createElement('a');
+				a.href = url;
+				a.download = 'plantilla-danada.json';
+				document.body.appendChild(a);
+				a.click();
+				a.remove();
+				setTimeout(() => URL.revokeObjectURL(url), 1000);
+				avisar('Plantilla descargada tal cual estaba guardada.', 'ok');
+			};
+		}
 		for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-borrar-plantilla]')) {
 			b.onclick = () => { void borrarPlantilla(Number(b.dataset.borrarPlantilla)); };
 		}
@@ -213,22 +229,55 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 	}
 
 	/** Lista las plantillas propias dentro de la biblioteca de ejemplos. */
+	/**
+	 * UNA PLANTILLA ROTA NO PUEDE LLEVARSE POR DELANTE LA BIBLIOTECA ENTERA.
+	 *
+	 * Tercera auditoría, TS3-P1-06. Aquí se leía `p.proyecto.dispositivos.length` para pintar la
+	 * tarjeta, y con una entrada `{proyecto:{}}` eso es
+	 * «Cannot read properties of undefined (reading 'length')»: la biblioteca no llegaba a
+	 * abrirse, aunque las otras cinco plantillas estuvieran perfectas. El cargador se invoca
+	 * después, al pulsar «Abrir», así que nunca alcanzaba a aislar esa tarjeta.
+	 *
+	 * Cada tarjeta se pinta ahora por su cuenta y la que no se puede leer sale EN CUARENTENA: se
+	 * ve, se dice que no vale, y se puede descargar tal cual está o quitarla. Que una plantilla
+	 * esté rota es un problema de esa plantilla, no de las demás.
+	 */
 	function pintarPlantillasPropias(): string {
 		const lista = plantillasGuardadas();
 		if (lista.length === 0) return '';
 		// El nombre lo escribe el usuario y va a `innerHTML`: sin escapar, un `<em>` en el nombre
 		// de una plantilla entraba como NODO en la biblioteca en vez de leerse como texto.
 		return `<h3 class="titulo-biblioteca">Tus plantillas</h3><div class="rejilla-ejemplos">`
-			+ lista.map((p, i) => `
+			+ lista.map((p, i) => {
+				let resumen: string;
+				try {
+					const d = (p.proyecto as { dispositivos?: unknown[] }).dispositivos;
+					const c = (p.proyecto as { conductores?: unknown[] }).conductores;
+					if (!Array.isArray(d) || !Array.isArray(c)) throw new Error('sin aparatos ni cables');
+					resumen = `${d.length} aparatos, ${c.length} cables`;
+				} catch {
+					return `
+			<article class="tarjeta-ejemplo en-cuarentena">
+				<h4>${escaparHtml(p.nombre)}</h4>
+				<p>⚠️ Esta plantilla está dañada y no se puede abrir. Las demás sí.</p>
+				<div class="acciones-ejemplo">
+					<button class="boton" data-bajar-plantilla="${i}" title="Descargar el texto guardado, tal cual está">⬇️ Descargar</button>
+					<button class="boton peligro" data-borrar-plantilla="${i}" title="Quitarla de la lista">🗑️</button>
+				</div>
+			</article>`;
+				}
+				const fecha = Number.isFinite(Date.parse(p.fecha))
+					? new Date(p.fecha).toLocaleDateString('es-CL') : 'fecha desconocida';
+				return `
 			<article class="tarjeta-ejemplo">
 				<h4>${escaparHtml(p.nombre)}</h4>
-				<p>Guardada el ${new Date(p.fecha).toLocaleDateString('es-CL')} · `
-				+ `${p.proyecto.dispositivos.length} aparatos, ${p.proyecto.conductores.length} cables</p>
+				<p>Guardada el ${escaparHtml(fecha)} · ${escaparHtml(resumen)}</p>
 				<div class="acciones-ejemplo">
 					<button class="boton primario" data-plantilla="${i}">Abrir</button>
 					<button class="boton peligro" data-borrar-plantilla="${i}" title="Eliminar esta plantilla">🗑️</button>
 				</div>
-			</article>`).join('')
+			</article>`;
+			}).join('')
 			+ `</div>`;
 	}
 

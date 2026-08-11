@@ -1264,7 +1264,9 @@ function pintarPanelGrupo(): void {
 	panel.style.display = 'block';
 	panel.innerHTML = `
 		<h2>${ids.length} aparatos seleccionados</h2>
-		<p class="pista">${nombres}</p>
+		<!-- Las designaciones salen del archivo: escapadas. Tercera auditoría, TS3-P1-04: dos
+		     marcados con markup creaban DOS NODOS de verdad aquí, aunque el texto se leyera bien. -->
+		<p class="pista">${escaparHtml(nombres)}</p>
 		<p class="pista">Shift + clic añade o quita aparatos. Arrastra uno y se mueven todos.</p>
 		<h3>Alinear</h3>
 		<div class="rejilla-botones">
@@ -1341,7 +1343,9 @@ function pintarSeleccion(): void {
 			<div id="lista-pines" style="margin-top:6px"></div>`
 		: '';
 	const bloqueDRC = propios.length
-		? `<h2>Hallazgos DRC</h2><ul>${propios.map((h) => `<li class="hallazgo ${h.severidad}">${h.mensaje}</li>`).join('')}</ul>`
+		// El mensaje del DRC lleva dentro la designación del aparato, o sea, texto del archivo.
+		// La lista general de abajo ya usaba `textContent`; esta se había quedado atrás.
+		? `<h2>Hallazgos DRC</h2><ul>${propios.map((h) => `<li class="hallazgo ${escaparHtml(h.severidad)}">${escaparHtml(h.mensaje)}</li>`).join('')}</ul>`
 		: '';
 	const bloqueCableado = esEditor ? '' : `
 		<h2>Cables conectados ${metros ? `· ${(metros / 1000).toFixed(2)} m` : ''}</h2>
@@ -1779,7 +1783,7 @@ function pintarPanelEstructura(s: Seleccion): void {
 
 	panel.style.display = 'block';
 	panel.innerHTML = `
-		<h1>${esCanaleta ? '📦 Canaleta' : '➖ Riel DIN'} ${obj.id}</h1>
+		<h1>${esCanaleta ? '📦 Canaleta' : '➖ Riel DIN'} ${escaparHtml(obj.id)}</h1>
 		<div class="sub">${esCanaleta ? `Ranurada · ${can!.ancho}×${can!.alto} mm` : 'Perfil sombrero 35 mm'} · ${esV ? 'vertical' : 'horizontal'}</div>
 
 		<button class="boton primario" id="e-girar" style="width:100%;margin:10px 0 4px">🔄 Girar a ${esV ? 'horizontal' : 'vertical'}</button>
@@ -4017,6 +4021,49 @@ interface Portapapeles {
 	aparatos: { dispositivo: Dispositivo; ancho: number; alto: number; dx: number; dy: number }[];
 }
 const CLAVE_PORTAPAPELES = 'tablerostudio-portapapeles';
+
+/**
+ * Lee lo copiado comprobando su forma, como se hace con un archivo.
+ *
+ * Devuelve `undefined` si no hay nada aprovechable, y lanza si lo que hay está tan roto que
+ * merece decírselo al usuario. Cada aparato pasa por `cargarProyecto`: es el mismo codec que
+ * valida un `.tablero`, así que un aparato pegado no puede entrar con una forma que un aparato
+ * abierto no podría. Eso era lo que pedía la auditoría —un solo codec para todos los canales— y
+ * de paso sale gratis: no hay una segunda lista de reglas que mantener sincronizada.
+ */
+function leerPortapapeles(bruto: unknown): Portapapeles | undefined {
+	if (typeof bruto !== 'object' || bruto === null) return undefined;
+	const lista = (bruto as { aparatos?: unknown }).aparatos;
+	if (!Array.isArray(lista)) return undefined;
+	if (lista.length > 200) throw new Error('trae más de 200 aparatos');
+	const aparatos: Portapapeles['aparatos'] = [];
+	for (const x of lista) {
+		if (typeof x !== 'object' || x === null) continue;
+		const e = x as Record<string, unknown>;
+		const d = e.dispositivo;
+		if (typeof d !== 'object' || d === null) continue;
+		const num = (v: unknown, min: number, max: number): number | undefined =>
+			(typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : undefined);
+		const ancho = num(e.ancho, 1, 5000);
+		const alto = num(e.alto, 1, 5000);
+		if (ancho === undefined || alto === undefined) continue;
+		// El aparato, por el codec de verdad: se mete en un proyecto mínimo y se lee.
+		const sobre = JSON.stringify({
+			formato: 'tablero-studio', version: 1, nombre: 'portapapeles',
+			gabinete: { ancho: 600, alto: 600, rieles: [], canaletas: [], colocaciones: [] },
+			hojas: [{ id: 'h1', numero: 1, titulo: 'Hoja 1' }],
+			dispositivos: [d], conductores: [],
+		});
+		const leido = cargarProyecto(sobre).proyecto.dispositivos[0];
+		if (!leido) continue;
+		aparatos.push({
+			dispositivo: leido, ancho, alto,
+			dx: num(e.dx, -5000, 5000) ?? 0,
+			dy: num(e.dy, -5000, 5000) ?? 0,
+		});
+	}
+	return aparatos.length ? { aparatos } : undefined;
+}
 const CLAVE_PLANTILLAS = 'tablerostudio-plantillas';
 
 /**
@@ -4055,8 +4102,22 @@ function pegarAparatos(): void {
 	let datos: Portapapeles | undefined;
 	try {
 		const bruto = localStorage.getItem(CLAVE_PORTAPAPELES);
-		if (bruto) datos = JSON.parse(bruto) as Portapapeles;
-	} catch { /* portapapeles ilegible */ }
+		if (bruto) datos = leerPortapapeles(JSON.parse(bruto));
+	} catch (e) {
+		/*
+		 * Tercera auditoría, TS3-P2-01. Esto era un `JSON.parse` y a usar la estructura tal cual,
+		 * que era el único canal de entrada que quedaba fuera del cargador. Con un
+		 * `{"aparatos":[null]}` en la clave, Ctrl+V daba
+		 * «Cannot read properties of null (reading 'ancho')» y el editor se quedaba a medias.
+		 *
+		 * El portapapeles no es un archivo que llegue por correo, pero vive en `localStorage`
+		 * entre sesiones y lo escribe una versión del programa que puede no ser la que lo lee.
+		 * Con eso basta para tratarlo como lo que es: una entrada.
+		 */
+		avisar(`Lo copiado no se pudo leer (${(e as Error).message}). Vuelve a copiar el aparato.`, 'error');
+		try { localStorage.removeItem(CLAVE_PORTAPAPELES); } catch { /* sin almacén */ }
+		return;
+	}
 	if (!datos?.aparatos?.length) { avisar('No hay nada copiado todavía (Ctrl+C sobre un aparato).', 'info'); return; }
 
 	const primero = datos.aparatos[0];
