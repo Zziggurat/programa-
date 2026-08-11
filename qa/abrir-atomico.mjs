@@ -150,6 +150,52 @@ await p.evaluate(() => document.getElementById('btn-deshacer')?.click()); await 
 must('y se puede deshacer la apertura', (await qa('proyecto')).nombre !== 'EL QUE NO SE DEBE ABRIR',
 	(await qa('proyecto')).nombre);
 
+/*
+ * PEGAR TAMPOCO PUEDE QUEDARSE A MEDIAS.
+ *
+ * Tercera auditoría, TS3-P3-01: «Empezar por importación/clipboard y las cinco mutaciones ya
+ * cubiertas». Pegar empujaba aparatos y colocaciones al proyecto de uno en uno y luego llamaba a
+ * `actualizarTodo()`. Si el render reventaba a media lista quedaba media pegada en pantalla y ya
+ * escrita en el navegador, porque `recalcular()` autoguarda antes de montar la escena.
+ */
+console.log('\n--- pegar con el montaje roto ---');
+await p.evaluate(() => document.getElementById('btn-nuevo')?.click());
+await p.waitForTimeout(300);
+if (await p.isVisible('#modal-dialogo')) await p.evaluate(() => document.getElementById('dialogo-ok')?.click());
+await p.waitForTimeout(500);
+for (let i = 0; i < 2; i++) { await catalogo.nth(i).click({ force: true }); await p.waitForTimeout(300); }
+/*
+ * Se copia el primero y se pega una vez, para saber que copiar/pegar funciona antes de romperlo.
+ * Se selecciona pulsando su fila en el panel de la izquierda, que es como se hace: Ctrl+C solo
+ * atiende con un aparato seleccionado y en modo Editor.
+ */
+await p.locator('#lista-dispositivos li').first().click();
+await p.waitForTimeout(300);
+await p.keyboard.press('Control+c'); await p.waitForTimeout(300);
+await p.keyboard.press('Control+v'); await p.waitForTimeout(700);
+const trasPegar = (await qa('proyecto')).dispositivos.length;
+must('CONDICIÓN PREVIA: copiar y pegar funciona', trasPegar === 3, `${trasPegar} aparatos`);
+
+const antesDeRomper = {
+	aparatos: trasPegar,
+	historial: await qa('historial'),
+	guardado: await qa('autoguardado'),
+};
+await qa('romperProximoMontaje');
+await p.keyboard.press('Control+v'); await p.waitForTimeout(900);
+const trasRomper = {
+	aparatos: (await qa('proyecto')).dispositivos.length,
+	historial: await qa('historial'),
+	guardado: await qa('autoguardado'),
+};
+must('pegar con el render roto no deja medio aparato puesto',
+	trasRomper.aparatos === antesDeRomper.aparatos,
+	`${antesDeRomper.aparatos} → ${trasRomper.aparatos} aparatos`);
+must('ni toca el historial', trasRomper.historial.deshacer === antesDeRomper.historial.deshacer,
+	`${antesDeRomper.historial.deshacer} → ${trasRomper.historial.deshacer}`);
+must('ni deja lo pegado a medias guardado en el navegador',
+	trasRomper.guardado === antesDeRomper.guardado);
+
 console.log(fallos === 0 ? '\n=== TODO OK ✔ ===' : `\n=== ${fallos} FALLOS ===`);
 await b.close(); servidor.close();
 process.exit(fallos === 0 ? 0 : 1);

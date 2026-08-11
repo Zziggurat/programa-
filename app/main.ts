@@ -464,6 +464,50 @@ function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void): void {
 }
 
 /**
+ * UN CAMBIO SOBRE EL TABLERO DE AHORA, TAMBIÉN TODO O NADA.
+ *
+ * Lo mismo que `reemplazarProyecto()`, pero para lo que EDITA el tablero abierto en vez de
+ * cambiarlo por otro: la cámara no se toca y la selección la deja quien haga el cambio, porque
+ * después de pegar lo pegado tiene que quedar seleccionado.
+ *
+ * Es el segundo paso de la ruta que propone la tercera auditoría en TS3-P3-01: «No hace falta
+ * reescribir el programa entero. Empezar por importación/clipboard y las cinco mutaciones ya
+ * cubiertas; mover una familia de operaciones por vez y conservar pruebas de comportamiento».
+ * Importar ya pasa por `reemplazarProyecto()`; esto es el portapapeles.
+ *
+ * El cambio se hace SOBRE `proyecto`, como está escrito todo lo demás —`snapAriel`, `solapaCon`,
+ * `xLibreCercano` y `buscarHueco` leen el proyecto global, y hacerlos trabajar sobre un borrador
+ * sería reescribir media placa—; lo que se guarda es la foto de antes, para poder volver.
+ */
+function mutarProyecto(cambiar: () => void): void {
+	const instantanea = JSON.stringify(proyecto);
+	const pilaAntes = [...pila];
+	const rehacerAntes = [...rehacerPila];
+	const congeladoAntes = guardadoCongelado;
+	guardadoCongelado = true;
+	try {
+		cambiar();
+		actualizarTodo();
+	} catch (fallo) {
+		proyecto = JSON.parse(instantanea) as Proyecto;
+		pila.length = 0; pila.push(...pilaAntes);
+		rehacerPila.length = 0; rehacerPila.push(...rehacerAntes);
+		actualizarBotonesHistorial();
+		aplicarSeleccion(undefined);
+		actualizarTodo();
+		throw fallo;
+	} finally {
+		guardadoCongelado = congeladoAntes;
+	}
+	senalarTrabajoSinExportar();
+	pila.push(instantanea);
+	if (pila.length > 60) pila.shift();
+	rehacerPila.length = 0;
+	actualizarBotonesHistorial();
+	autoguardar();
+}
+
+/**
  * Deshace la última `capturar()` SIN dejar rastro en el historial: se usa cuando el propio
  * programa rechaza una operación (p. ej. una alineación que dejaría aparatos encimados). Con
  * `deshacer()` normal quedaría un «Rehacer» que volvería a aplicar justo lo que se rechazó.
@@ -4205,46 +4249,50 @@ function pegarAparatos(): void {
 	 * lo que hace «Añadir del catálogo» cuando la placa está llena: sobresalir un poco se ve y se
 	 * arregla arrastrando; quedar oculto debajo de otro, no. Y se avisa, que para eso está.
 	 */
-	capturar();
+	/*
+	 * Pegar es TODO O NADA. Tercera auditoría, TS3-P3-01, que pide empezar la frontera transaccional
+	 * justamente por «importación/clipboard». Esto empujaba aparatos y colocaciones al proyecto de
+	 * uno en uno y luego llamaba a `actualizarTodo()`: si el render reventaba a media lista, quedaba
+	 * media pegada en pantalla y ya escrita en el navegador, porque `recalcular()` autoguarda.
+	 */
 	const sobresalen: string[] = [];
-
 	const nuevos: string[] = [];
-	for (const a of datos.aparatos) {
-		const copia = renumerar(structuredClone(a.dispositivo));
-		proyecto.dispositivos.push(copia);
-		const x = Math.min(Math.max(hueco.x + a.dx, 0), Math.max(0, g.ancho - a.ancho));
-		const y = Math.min(Math.max(hueco.y + a.dy, 0), Math.max(0, g.alto - a.alto));
-		// Cada copia se apoya en el riel que le toque por su posición, no en el del primero del
-		// grupo: si el grupo abarca dos rieles, cada aparato tiene que quedar anclado al suyo.
-		const enganche = snapAriel(x + a.ancho / 2, y + a.alto / 2, a.ancho, a.alto);
-		const col = {
-			dispositivoId: copia.id,
-			x: enganche ? Math.min(Math.max(enganche.cx - a.ancho / 2, 0), Math.max(0, g.ancho - a.ancho)) : x,
-			y: enganche ? Math.min(Math.max(enganche.cy - a.alto / 2, 0), Math.max(0, g.alto - a.alto)) : y,
-			ancho: a.ancho, alto: a.alto,
-			rielId: enganche?.rielId ?? hueco.rielId,
-		};
-		// Si cae encima de algo se busca hueco libre en su misma fila; y si la fila entera está
-		// ocupada, al final del riel con más sitio (aunque sobresalga), nunca encima de otro.
-		if (solapaCon(col.x, col.y, col.ancho, col.alto, copia.id)) {
-			const libre = xLibreCercano(col.x, col.y, col.ancho, col.alto, copia.id);
-			if (libre !== undefined) col.x = libre;
-			else {
-				// `buscarHueco` solo devuelve `undefined` si no hay ni un riel, y eso ya se
-				// descartó arriba; el `?? hueco` es para no tener que afirmar nada al compilador.
-				const otro = buscarHueco(col.ancho, col.alto) ?? hueco;
-				col.x = otro.x; col.y = otro.y; col.rielId = otro.rielId;
-				sobresalen.push(copia.designacion ?? copia.id);
+	mutarProyecto(() => {
+		for (const a of datos!.aparatos) {
+			const copia = renumerar(structuredClone(a.dispositivo));
+			proyecto.dispositivos.push(copia);
+			const x = Math.min(Math.max(hueco.x + a.dx, 0), Math.max(0, g.ancho - a.ancho));
+			const y = Math.min(Math.max(hueco.y + a.dy, 0), Math.max(0, g.alto - a.alto));
+			// Cada copia se apoya en el riel que le toque por su posición, no en el del primero del
+			// grupo: si el grupo abarca dos rieles, cada aparato tiene que quedar anclado al suyo.
+			const enganche = snapAriel(x + a.ancho / 2, y + a.alto / 2, a.ancho, a.alto);
+			const col = {
+				dispositivoId: copia.id,
+				x: enganche ? Math.min(Math.max(enganche.cx - a.ancho / 2, 0), Math.max(0, g.ancho - a.ancho)) : x,
+				y: enganche ? Math.min(Math.max(enganche.cy - a.alto / 2, 0), Math.max(0, g.alto - a.alto)) : y,
+				ancho: a.ancho, alto: a.alto,
+				rielId: enganche?.rielId ?? hueco.rielId,
+			};
+			// Si cae encima de algo se busca hueco libre en su misma fila; y si la fila entera está
+			// ocupada, al final del riel con más sitio (aunque sobresalga), nunca encima de otro.
+			if (solapaCon(col.x, col.y, col.ancho, col.alto, copia.id)) {
+				const libre = xLibreCercano(col.x, col.y, col.ancho, col.alto, copia.id);
+				if (libre !== undefined) col.x = libre;
+				else {
+					// `buscarHueco` solo devuelve `undefined` si no hay ni un riel, y eso ya se
+					// descartó arriba; el `?? hueco` es para no tener que afirmar nada al compilador.
+					const otro = buscarHueco(col.ancho, col.alto) ?? hueco;
+					col.x = otro.x; col.y = otro.y; col.rielId = otro.rielId;
+					sobresalen.push(copia.designacion ?? copia.id);
+				}
 			}
+			g.colocaciones.push(col);
+			extenderRielPara(col);
+			nuevos.push(copia.id);
 		}
-		g.colocaciones.push(col);
-		extenderRielPara(col);
-		nuevos.push(copia.id);
-	}
-
-	seleccionExtra = nuevos.slice(1);
-	aplicarSeleccion(nuevos[0] ? { tipo: 'dispositivo', id: nuevos[0] } : undefined);
-	actualizarTodo();
+		seleccionExtra = nuevos.slice(1);
+		aplicarSeleccion(nuevos[0] ? { tipo: 'dispositivo', id: nuevos[0] } : undefined);
+	});
 	const pegados = `${nuevos.length} aparato${nuevos.length > 1 ? 's' : ''} pegado${nuevos.length > 1 ? 's' : ''}`;
 	if (sobresalen.length) {
 		// Sin escapar A PROPÓSITO: `avisar()` escribe con `textContent`, que no interpreta nada.
@@ -4801,6 +4849,29 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		romperProximoMontaje: () => { romperMontaje = true; },
 		/** El historial, para poder mirar que un fallo no se lo lleva por delante. */
 		historial: () => ({ deshacer: pila.length, rehacer: rehacerPila.length }),
+		/**
+		 * Lo que cuesta DIBUJAR un fotograma, en ms. TS3-P3-02.
+		 *
+		 * Se llama al render directamente, `n` veces seguidas, en vez de cronometrar
+		 * `requestAnimationFrame`. No es un capricho: en una pestaña sin pantalla el navegador
+		 * estrangula el rAF, y midiéndolo así salían 1.814 ms por fotograma. Eso no es lo que
+		 * cuesta dibujar el tablero — es cada cuánto le da la gana al navegador llamarnos.
+		 * Cronometrando el `render` se mide el programa y no el andamiaje.
+		 */
+		medirDibujado: (n = 30) => {
+			renderer.render(escena, camaraViva());   // el primero calienta: sube texturas a la GPU
+			const t: number[] = [];
+			for (let i = 0; i < n; i++) {
+				const desde = performance.now();
+				renderer.render(escena, camaraViva());
+				t.push(performance.now() - desde);
+			}
+			t.sort((a, b) => a - b);
+			return {
+				mediana: Math.round(t[Math.floor(t.length / 2)] * 100) / 100,
+				peor: Math.round(t[t.length - 1] * 100) / 100,
+			};
+		},
 		/** Lo que hay guardado en el navegador ahora mismo, tal cual. */
 		autoguardado: () => localStorage.getItem(CLAVE_AUTOSAVE),
 		/** Nº de cables realmente dibujados en 3D (para detectar «cables fantasma»). */

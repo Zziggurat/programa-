@@ -31,6 +31,7 @@ let fallos = 0;
 const must = (n, c, x = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${x ? ' → ' + x : ''}`); };
 const cifras = [];
 const apuntar = (que, valor, unidad) => { cifras.push({ que, valor, unidad }); };
+const qa = (fn, ...a) => p.evaluate(([f, args]) => window.qa[f](...args), [fn, a]);
 
 const memoriaMB = () => p.evaluate(() => {
 	const m = performance.memory;
@@ -81,43 +82,39 @@ must('CONDICIÓN PREVIA: hay un tablero de verdad en pantalla', aparatos > 3, `$
 /* ---- 3 · Frame time ---- */
 
 /*
- * Se mide con `requestAnimationFrame` sobre 60 fotogramas seguidos, que es lo que se nota moviendo
- * la cámara. Se descarta el primero: siempre lleva de más la subida de texturas a la GPU.
+ * SE CRONOMETRA EL RENDER, NO EL `requestAnimationFrame`.
+ *
+ * El primer intento midió el hueco entre llamadas de rAF sobre 60 fotogramas, y dio 1.814 ms por
+ * fotograma: medio fotograma por segundo. Eso no es lo que cuesta dibujar el tablero —el editor va
+ * fino— sino que en una pestaña sin pantalla el navegador estrangula el rAF y llama cuando quiere.
+ * La prueba estaba midiendo el andamiaje y llamándolo rendimiento del programa.
+ *
+ * Con `window.qa.medirDibujado()` se llama al render 30 veces seguidas y se cronometra cada una,
+ * que es el coste de verdad de pintar la escena que hay montada.
  */
 console.log('\n--- fluidez ---');
-const frame = await p.evaluate(() => new Promise((ok) => {
-	const t = [];
-	let previo = performance.now();
-	const paso = () => {
-		const ahora = performance.now();
-		t.push(ahora - previo);
-		previo = ahora;
-		if (t.length < 61) requestAnimationFrame(paso);
-		else {
-			const util = t.slice(1).sort((a, b) => a - b);
-			ok({
-				mediana: Math.round(util[Math.floor(util.length / 2)] * 10) / 10,
-				peor: Math.round(util[util.length - 1] * 10) / 10,
-			});
-		}
-	};
-	requestAnimationFrame(paso);
-}));
-apuntar('frame time (mediana)', frame.mediana, 'ms');
-apuntar('frame time (el peor)', frame.peor, 'ms');
-must('el dibujado no está atascado (tope de rotura: 500 ms de mediana)', frame.mediana < 500,
+const frame = await qa('medirDibujado', 30);
+apuntar('dibujar un fotograma (mediana)', frame.mediana, 'ms');
+apuntar('dibujar un fotograma (el peor)', frame.peor, 'ms');
+must('el dibujado no está atascado (tope de rotura: 500 ms por fotograma)', frame.mediana < 500,
 	`${frame.mediana} ms`);
 
 /* ---- 4 · El dossier en PDF, que es lo más caro que hace el programa ---- */
 
+/*
+ * Este es el número que más BAILA de todos: dos medidas seguidas, sin tocar nada, dieron 7,4 s y
+ * 63,7 s. No es el programa —es que el contenedor comparte CPU con lo que haya al lado—. Por eso
+ * el tope está donde está: lo que se vigila aquí es que el dossier TERMINE, no cuánto tarda. La
+ * cifra de la tabla solo sirve comparada consigo misma en la misma máquina y en la misma tarde.
+ */
 console.log('\n--- dossier en PDF ---');
 const tPdf = Date.now();
 await p.evaluate(() => document.getElementById('btn-pdf').click());
 await p.waitForFunction(() => /KB/.test(document.getElementById('dos-estado')?.textContent ?? ''),
-	{ timeout: 120_000 });
+	{ timeout: 240_000 });
 const msPdf = Date.now() - tPdf;
-apuntar('dossier en PDF', msPdf, 'ms');
-must('el dossier termina (tope de rotura: 90 s)', msPdf < 90_000, `${msPdf} ms`);
+apuntar('dossier en PDF (muy variable)', msPdf, 'ms');
+must('el dossier termina (tope de rotura: 180 s)', msPdf < 180_000, `${msPdf} ms`);
 await p.evaluate(() => document.getElementById('dos-cerrar').click());
 await p.waitForTimeout(400);
 
