@@ -22,6 +22,7 @@ import {
 } from '../src/modelo/dossier.js';
 import { descargar, escaparHtml } from './dialogos.js';
 import { idUnico } from '../src/modelo/ids.js';
+import { imagenAdmisible } from '../src/modelo/cargar.js';
 
 /** Lo que el editor del dossier necesita del resto del programa. */
 export interface ContextoDossier {
@@ -430,9 +431,16 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 			return;
 		}
 		const lector = new FileReader();
-		lector.onload = () => tocarIdentidad((a) => {
-			a.empresa = { ...a.empresa, logo: String(lector.result) };
-		});
+		lector.onload = () => {
+			// El MISMO criterio que el cargador y que la imagen de referencia. TS3-P1-05: aquí
+			// solo se miraba el peso, así que un SVG entraba y desaparecía al recargar.
+			const juicio = imagenAdmisible(String(lector.result));
+			if (!juicio.ok) {
+				avisar(`Ese logo no se puede usar: ${juicio.motivo}.`, 'error');
+				return;
+			}
+			tocarIdentidad((a) => { a.empresa = { ...a.empresa, logo: String(lector.result) }; });
+		};
 		lector.readAsDataURL(archivo);
 	};
 	($('dos-color') as HTMLInputElement).onchange = (ev) => {
@@ -457,10 +465,18 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 		(ev.target as HTMLInputElement).value = '';
 		if (!archivo) return;
 		const lector = new FileReader();
-		lector.onload = () => anadirBloque({
-			tipo: 'imagen', donde: 'final', imagen: String(lector.result), anchoPct: 100,
-			pie: archivo.name.replace(/\.[^.]+$/, ''),
-		});
+		lector.onload = () => {
+			const juicio = imagenAdmisible(String(lector.result));
+			if (!juicio.ok) {
+				avisar(`Esa imagen no se puede usar en el dossier: ${juicio.motivo}. `
+					+ 'Guárdala como PNG o JPEG y vuelve a intentarlo.', 'error');
+				return;
+			}
+			anadirBloque({
+				tipo: 'imagen', donde: 'final', imagen: String(lector.result), anchoPct: 100,
+				pie: archivo.name.replace(/\.[^.]+$/, ''),
+			});
+		};
 		lector.readAsDataURL(archivo);
 	};
 	($('dos-add-3d') as HTMLButtonElement).onclick = () => anadirBloque({

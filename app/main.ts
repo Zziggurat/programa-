@@ -22,7 +22,7 @@ import {
 	AjustesDossier, BloqueDossier, FUENTES, SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion,
 } from '../src/modelo/dossier.js';
 import { leerPrograma } from '../src/motores/logica.js';
-import { ArchivoInvalido, cargarProyecto } from '../src/modelo/cargar.js';
+import { ArchivoInvalido, cargarProyecto, imagenAdmisible } from '../src/modelo/cargar.js';
 import { numerarDispositivos } from '../src/motores/numeracion.js';
 import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
@@ -3676,6 +3676,21 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 	const lector = new FileReader();
 	lector.onload = () => {
 		const url = lector.result as string;
+		/*
+		 * SE COMPRUEBA ANTES DE METERLA, con la misma regla que el cargador.
+		 *
+		 * Tercera auditoría, TS3-P0-01. El selector acepta `image/*` y `new Image()` decodifica un
+		 * SVG sin rechistar, así que entraba, se dibujaba y se autoguardaba — y al recargar, el
+		 * cargador la quitaba porque el PDF no sabe imprimirla. Trabajo aceptado por un lado y
+		 * tirado por el otro. Lo que no se va a poder guardar no se acepta, y se dice en el momento.
+		 */
+		const juicio = imagenAdmisible(url);
+		if (!juicio.ok) {
+			avisar(`Esa imagen no se puede usar: ${juicio.motivo}. `
+				+ 'Guárdala como PNG o JPEG y vuelve a intentarlo.', 'error');
+			(e.target as HTMLInputElement).value = '';
+			return;
+		}
 		const img = new Image();
 		img.onload = () => {
 			if (modo !== 'editor') aplicarModo('editor');

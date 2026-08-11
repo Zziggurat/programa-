@@ -22,6 +22,57 @@ export interface ResultadoCarga {
 	proyecto: Proyecto;
 	/** Cosas que se arreglaron solas al abrir (se le cuentan al usuario). */
 	arreglos: string[];
+	/** Lo mismo, con el sitio exacto y el motivo. Es lo que hace verificable el contrato. */
+	diagnosticos: Diagnostico[];
+}
+
+/**
+ * TODO CAMBIO DESTRUCTIVO SE APUNTA. Ese es el contrato, y es lo que faltaba.
+ *
+ * Tercera auditoría, TS3-P0-01. La protección del autosave —congelar el guardado si el archivo
+ * hubo que repararlo— depende de que el cargador DIGA que lo reparó. Y eso era una lista que cada
+ * lector podía olvidar rellenar. `leerImagen()` la olvidaba: quitaba la imagen y devolvía cero
+ * arreglos, así que el arranque no congelaba nada y el primer `autoguardar()` reemplazaba el
+ * original. Medido por la auditoría, de punta a punta y por la interfaz: **1.046 bytes antes, 910
+ * después, imagen perdida, cero diálogos**.
+ *
+ * El fallo no era de `leerImagen`: era del contrato. «Acuérdate de apuntarlo» no es una garantía,
+ * es una intención. Así que ahora lo apunta un solo sitio —`quitado()`— por el que pasan todos los
+ * lectores: si la entrada TRAÍA algo y a la salida no está, se anota con su ruta y su motivo, y de
+ * ahí sale el arreglo que congela el guardado. Un lector nuevo que se olvide de llamarlo se cae
+ * por la prueba paramétrica de `test/cargar.test.ts`, que muta campo por campo y exige que cada
+ * uno se conserve, se rechace o se declare.
+ */
+export interface Diagnostico {
+	/** Dónde estaba, como se escribe en el archivo: `dispositivos[0].imagen`. */
+	ruta: string;
+	motivo: string;
+}
+
+/**
+ * Lo apuntado en la lectura que está en curso.
+ *
+ * Va en el módulo y no pasando un parámetro por veinte funciones a propósito: el objetivo es que
+ * apuntar cueste lo mínimo, porque un contrato que estorba se acaba saltando. `cargarProyecto()`
+ * lo vacía al empezar y no hay lecturas concurrentes: esto es síncrono de arriba abajo.
+ */
+let diagnosticos: Diagnostico[] = [];
+
+/** Apunta que algo se cambió o se quitó, con su sitio y su motivo. */
+function anotar(ruta: string, motivo: string): void {
+	diagnosticos.push({ ruta, motivo });
+}
+
+/**
+ * Devuelve `valor`, y si la entrada TRAÍA algo que no ha sobrevivido, lo apunta.
+ *
+ * Es el paso por el que tiene que ir todo lector que pueda devolver `undefined`. Un campo ausente
+ * en la entrada no es un cambio destructivo y no se apunta: lo que se apunta es haber tenido que
+ * tirar algo que estaba escrito.
+ */
+function oQuitado<T>(bruto: unknown, valor: T | undefined, ruta: string, motivo: string): T | undefined {
+	if (bruto !== undefined && valor === undefined) anotar(ruta, motivo);
+	return valor;
 }
 
 export class ArchivoInvalido extends Error {}
@@ -65,10 +116,48 @@ const conReserva = (v: unknown, min: number, max: number, reserva: number): numb
 const MAX_MM = 5000;
 
 /**
+ * Cuánto se admite de cada cosa, y por qué hay un tope.
+ *
+ * Tercera auditoría, TS3-P2-04. No había ninguno: un archivo con 60.000 aparatos se leía entero,
+ * se le construía la escena 3D y se guardaba en `localStorage`. Eso no es un tablero, es una
+ * pestaña bloqueada y una cuota reventada — y el que lo abre no tiene forma de saber qué pasó.
+ *
+ * Los números salen de lo que es un tablero de verdad con mucho margen: el más grande de esta
+ * cubierta tiene 134 máquinas y algo más de 500 conductores. Mil aparatos es diez veces cualquier
+ * tablero que quepa en una placa, y cinco mil cables es más de lo que cabe en las canaletas.
+ * Pasarse de aquí no se rechaza: se recorta y se dice, que es lo que permite abrir un archivo
+ * dañado y ver qué tenía dentro.
+ */
+const TOPES = {
+	dispositivos: 1000,
+	conductores: 5000,
+	hojas: 100,
+	rieles: 200,
+	canaletas: 200,
+	bornesPorAparato: 500,
+	/** Caracteres del JSON entero. Un proyecto normal con fotos anda por debajo de los 8 MB. */
+	json: 40_000_000,
+};
+
+/** Recorta una lista al tope y lo apunta. Devuelve la lista tal cual si cabía. */
+function conTope(v: unknown, tope: number, nombre: string, arreglos: string[]): unknown {
+	if (!esLista(v) || v.length <= tope) return v;
+	arreglos.push(`el archivo traía ${v.length} ${nombre} y el máximo es ${tope}: se leyeron los primeros`);
+	return v.slice(0, tope);
+}
+
+/**
  * Lee un proyecto de un texto JSON. Lanza `ArchivoInvalido` con un motivo entendible si el
  * archivo no es un proyecto; nunca devuelve algo a medias que rompa la aplicación después.
  */
 export function cargarProyecto(json: string): ResultadoCarga {
+	// El tope del archivo se mira ANTES de interpretarlo: `JSON.parse` de 400 MB ya es el problema.
+	if (json.length > TOPES.json) {
+		throw new ArchivoInvalido(
+			`El archivo ocupa ${Math.round(json.length / 1e6)} MB y el máximo es ${TOPES.json / 1e6} MB. `
+			+ 'Un proyecto así no se puede abrir sin bloquear el navegador.',
+		);
+	}
 	let bruto: unknown;
 	try {
 		bruto = JSON.parse(json);
@@ -89,25 +178,44 @@ export function cargarProyecto(json: string): ResultadoCarga {
 	}
 
 	const arreglos: string[] = [];
+	diagnosticos = [];
 	// Aquí irán las migraciones: `if (version < 2) { …; arreglos.push('…'); }`. Se dejan
 	// encadenadas para que un proyecto viejo suba de versión en versión hasta la actual.
 
 	if (!esObjeto(bruto.gabinete)) throw new ArchivoInvalido('Al proyecto le falta el gabinete.');
 	const gabinete = leerGabinete(bruto.gabinete, arreglos);
 
-	const dispositivos = leerDispositivos(bruto.dispositivos, arreglos);
-	const idsValidos = new Set(dispositivos.map((d) => d.id));
-	const conductores = leerConductores(bruto.conductores, idsValidos, arreglos);
+	const dispositivos = leerDispositivos(
+		conTope(bruto.dispositivos, TOPES.dispositivos, 'aparatos', arreglos), arreglos);
+	/*
+	 * Los BORNES que existen de verdad, por aparato.
+	 *
+	 * Tercera auditoría, TS3-P1-01. Se comprobaba el `dispositivoId` de cada extremo pero no el
+	 * `borneId`, así que un cable a `borneId: "NO_EXISTE"` cargaba con cero arreglos, el motor de
+	 * potenciales le creaba una clave fantasma y el 3D lo dibujaba con su respaldo de «al centro
+	 * del aparato». O sea: un cable que en pantalla parece bien conectado, que entra en el DRC y
+	 * que no va a ninguna parte. Es de los errores que se descubren con el tablero montado.
+	 */
+	const bornesDe = new Map(dispositivos.map((d) => [d.id, new Set(d.bornes.map((b) => b.id))]));
+	const conductores = leerConductores(
+		conTope(bruto.conductores, TOPES.conductores, 'cables', arreglos), bornesDe, arreglos);
 
-	// Una colocación que apunta a un aparato que ya no existe deja un hueco fantasma.
+	// Una colocación que apunta a un aparato que ya no existe deja un hueco fantasma. Y dos
+	// colocaciones del mismo aparato lo dibujan dos veces: se queda la primera.
 	const antesColocaciones = gabinete.colocaciones.length;
-	gabinete.colocaciones = gabinete.colocaciones.filter((c) => idsValidos.has(c.dispositivoId));
+	const colocados = new Set<string>();
+	gabinete.colocaciones = gabinete.colocaciones.filter((c) => {
+		if (!bornesDe.has(c.dispositivoId) || colocados.has(c.dispositivoId)) return false;
+		colocados.add(c.dispositivoId);
+		return true;
+	});
 	if (gabinete.colocaciones.length !== antesColocaciones) {
-		arreglos.push(`${antesColocaciones - gabinete.colocaciones.length} colocación(es) sin aparato`);
+		arreglos.push(`${antesColocaciones - gabinete.colocaciones.length} colocación(es) sin aparato o repetida(s)`);
 	}
 
-	const hojas = esLista(bruto.hojas)
-		? (bruto.hojas.filter(esObjeto) as unknown as Hoja[]).filter((h) => texto(h.id))
+	const brutoHojas = conTope(bruto.hojas, TOPES.hojas, 'hojas de esquema', arreglos);
+	const hojas = esLista(brutoHojas)
+		? (brutoHojas.filter(esObjeto) as unknown as Hoja[]).filter((h) => texto(h.id))
 		: [];
 	if (hojas.length === 0) {
 		hojas.push({ id: 'h1', numero: 1, titulo: 'Hoja 1' });
@@ -127,7 +235,23 @@ export function cargarProyecto(json: string): ResultadoCarga {
 		esquema: leerAjustesEsquema(bruto.esquema),
 		dossier: leerAjustesDossier(bruto.dossier),
 	};
-	return { proyecto, arreglos };
+	/*
+	 * Y lo apuntado por el camino sube a `arreglos`, que es lo que congela el guardado.
+	 *
+	 * Se agrupa por motivo para no soltarle al usuario ochenta líneas iguales cuando lo que pasa
+	 * es que un archivo viejo trae ochenta imágenes en un formato que ya no se admite. La ruta
+	 * exacta de cada una sigue estando en `diagnosticos`, para quien quiera mirar.
+	 */
+	const porMotivo = new Map<string, string[]>();
+	for (const d of diagnosticos) {
+		const lista = porMotivo.get(d.motivo) ?? [];
+		lista.push(d.ruta);
+		porMotivo.set(d.motivo, lista);
+	}
+	for (const [motivo, rutas] of porMotivo) {
+		arreglos.push(rutas.length === 1 ? `${motivo} (${rutas[0]})` : `${motivo} — ${rutas.length} veces`);
+	}
+	return { proyecto, arreglos, diagnosticos };
 }
 
 function leerGabinete(bruto: Record<string, unknown>, arreglos: string[]): Gabinete {
@@ -267,8 +391,16 @@ function leerAjustesDossier(bruto: unknown): Proyecto['dossier'] {
 			const tipo = b.tipo === 'imagen' ? 'imagen' : 'texto';
 			const donde = ['portada', 'principio', 'final'].includes(String(b.donde))
 				? (b.donde as BloqueDossier['donde']) : 'final';
-			const imagen = texto(b.imagen);
-			if (tipo === 'imagen' && !(imagen && /^data:image\//i.test(imagen))) continue;
+			// Mismo validador que el logo y que la imagen de aparato: un solo criterio para todas
+			// las entradas, que es lo que pedía TS3-P1-05.
+			const imagen = leerImagen(b.imagen);
+			if (tipo === 'imagen' && !imagen) {
+				if (b.imagen !== undefined) {
+					anotar(`dossier.bloques[${b.id}].imagen`,
+						'la imagen no era un PNG, JPEG o WebP admisible');
+				}
+				continue;
+			}
 			bloques.push({
 				id: b.id as string,
 				tipo,
@@ -328,7 +460,13 @@ function leerAjustesDossier(bruto: unknown): Proyecto['dossier'] {
 		const empresa = {
 			nombre: texto(bruto.empresa.nombre)?.slice(0, 120),
 			contacto: texto(bruto.empresa.contacto)?.slice(0, 200),
-			logo: logo && /^data:image\//i.test(logo) ? logo : undefined,
+			/*
+			 * El logo pasa por el MISMO validador que las demás imágenes. Tercera auditoría,
+			 * TS3-P1-05: aquí solo se miraba el prefijo `data:image/`, así que un SVG entraba —y
+			 * un SVG es justo lo que jsPDF no sabe dibujar—. Que sea «suyo» no lo hace imprimible.
+			 */
+			logo: oQuitado(bruto.empresa.logo, leerImagen(logo),
+				'dossier.empresa.logo', 'el logo no era un PNG, JPEG o WebP admisible'),
 		};
 		if (empresa.nombre || empresa.contacto || empresa.logo) ajustes.empresa = empresa;
 	}
@@ -514,6 +652,28 @@ const LETRAS_CLASE = [
  */
 const MAX_IMAGEN = 6_000_000;
 
+/**
+ * ¿Esta imagen se puede guardar en un proyecto?
+ *
+ * Se EXPORTA a propósito. Tercera auditoría, TS3-P0-01 y TS3-P1-05: la interfaz aceptaba un SVG
+ * —el selector lo admite como `image/*` y `new Image()` lo decodifica sin rechistar—, lo metía en
+ * el proyecto y lo autoguardaba; al recargar, el cargador lo quitaba. Trabajo aceptado por un lado
+ * y tirado por el otro, con la única copia automática que lo tenía ya sobrescrita.
+ *
+ * La regla tiene que ser UNA, y la de la puerta de entrada tiene que ser la misma que la del
+ * cargador. Si algún día se admite un formato más, se admite aquí y vale para los dos.
+ */
+export function imagenAdmisible(dato: string): { ok: true } | { ok: false; motivo: string } {
+	if (dato.length > MAX_IMAGEN) {
+		return { ok: false, motivo: `pesa más de ${Math.round(MAX_IMAGEN / 1e6)} MB en el proyecto` };
+	}
+	if (!IMAGEN_ADMITIDA.test(dato)) {
+		const que = /^data:([^;,]+)/.exec(dato)?.[1] ?? 'desconocido';
+		return { ok: false, motivo: `es ${que} y solo se admiten PNG, JPEG y WebP` };
+	}
+	return { ok: true };
+}
+
 function leerImagen(bruto: unknown): string | undefined {
 	const s = texto(bruto);
 	if (!s || s.length > MAX_IMAGEN || !IMAGEN_ADMITIDA.test(s)) return undefined;
@@ -536,12 +696,49 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 		}
 		vistos.add(d.id as string);
 		const numerico = <K extends keyof Dispositivo>(campo: K, min: number, max: number) => {
-			const v = enRango((d as Record<string, unknown>)[campo as string], min, max);
+			const bruto = (d as Record<string, unknown>)[campo as string];
+			const v = oQuitado(bruto, enRango(bruto, min, max), `dispositivos[${d.id}].${String(campo)}`,
+				`debía ser un número de ${min} a ${max}`);
 			return v as Dispositivo[K] | undefined;
 		};
+		const ruta = (campo: string) => `dispositivos[${d.id}].${campo}`;
+		/** Texto que TIENE que ser texto. Un objeto aquí revienta la BOM al ordenar. */
+		const cadena = (campo: string): string | undefined => {
+			const v = (d as Record<string, unknown>)[campo];
+			return oQuitado(v, texto(v), ruta(campo), 'debía ser un texto y no lo era');
+		};
+		/** Booleano que TIENE que ser booleano. `"false"` es un texto, y un texto es verdadero. */
+		const bandera = (campo: string): boolean | undefined => {
+			const v = (d as Record<string, unknown>)[campo];
+			return oQuitado(v, typeof v === 'boolean' ? v : undefined,
+				ruta(campo), 'debía ser sí o no y era otra cosa');
+		};
+		/*
+		 * SIN SPREAD. Tercera auditoría, TS3-P1-01.
+		 *
+		 * Antes se hacía `...(d as unknown as Dispositivo)` y solo se saneaba lo de debajo, así que
+		 * todo escalar que no estuviera en la lista entraba con la forma que trajera. Reproducido:
+		 *
+		 *   congelado: "false"  → un texto es verdadero, y la renumeración masiva dejaba de tocar
+		 *                         ese aparato: se queda con la designación vieja y nadie sabe por qué
+		 *   fabricante: {}      → la lista de material revienta al ordenar, en `localeCompare`
+		 *
+		 * Ahora se construye desde una lista blanca: lo que no está aquí, no entra. Cuesta más de
+		 * escribir y es la única forma de que la frase «el cargador valida el proyecto» sea cierta.
+		 */
 		salida.push({
-			...(d as unknown as Dispositivo),
+			id: d.id as string,
 			bornes: leerBornes(d.bornes),
+			designacion: cadena('designacion'),
+			descripcion: cadena('descripcion'),
+			fabricante: cadena('fabricante'),
+			referencia: cadena('referencia'),
+			funcion: cadena('funcion'),
+			ubicacion: cadena('ubicacion'),
+			congelado: bandera('congelado'),
+			campo: bandera('campo'),
+			poderCorteEstimado: bandera('poderCorteEstimado'),
+			disipacionEstimada: bandera('disipacionEstimada'),
 			/*
 			 * La ficha eléctrica, campo a campo. Un `corrienteNominal: "diez amperios"` no rompe
 			 * nada al dibujar, pero el DRC lo compara con la sección del cable y la comparación
@@ -558,32 +755,48 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			poderCorteKA: numerico('poderCorteKA', 0, 200),
 			sensibilidadMA: numerico('sensibilidadMA', 0, 100_000),
 			profundidad: numerico('profundidad', 0, 1000),
-			esquema: leerColocacionEsquema((d as Record<string, unknown>).esquema),
+			esquema: oQuitado((d as Record<string, unknown>).esquema,
+				leerColocacionEsquema((d as Record<string, unknown>).esquema),
+				ruta('esquema'), 'la colocación en el esquema no tenía columna y fila numéricas'),
 			/*
 			 * Y TODO LO ANIDADO, reconstruido. Estos son los campos que después recorre un motor:
 			 * dejarlos entrar con la forma que traigan es lo que tiraba el editor entero al primer
 			 * recálculo, con el proyecto anterior ya sustituido en memoria.
 			 */
-			puentesInternos: leerPuentesInternos(d.puentesInternos),
-			puentes: leerPuentes(d.puentes),
-			terminales: leerTerminales(d.terminales),
-			rangoRegulacionA: leerRango(d.rangoRegulacionA, 0, 10_000),
-			rangoSonda: leerRango(d.rangoSonda, -10_000, 10_000),
-			temporizacion: leerTemporizacion(d.temporizacion),
-			rasgosFrente: leerRasgosFrente(d.rasgosFrente),
-			posicion: leerPosicion(d.posicion),
-			rol: leerRol(d.rol),
-			imagen: leerImagen(d.imagen),
-			curvaDisparo: unoDe(d.curvaDisparo, ['B', 'C', 'D', 'K', 'Z', 'gG', 'aM'] as const),
-			claseDiferencial: unoDe(d.claseDiferencial, ['AC', 'A', 'F', 'B'] as const),
-			programa: texto(d.programa),
-			unidadSonda: texto(d.unidadSonda),
-			colorCuerpo: texto(d.colorCuerpo),
-			hojaId: texto(d.hojaId),
+			puentesInternos: oQuitado(d.puentesInternos, leerPuentesInternos(d.puentesInternos),
+				ruta('puentesInternos'), 'los puentes internos no eran pares de bornes'),
+			puentes: oQuitado(d.puentes, leerPuentes(d.puentes),
+				ruta('puentes'), 'los puentes no eran grupos de bornes'),
+			terminales: oQuitado(d.terminales, leerTerminales(d.terminales),
+				ruta('terminales'), 'los bloques de terminales no tenían lado o bornas válidos'),
+			rangoRegulacionA: oQuitado(d.rangoRegulacionA, leerRango(d.rangoRegulacionA, 0, 10_000),
+				ruta('rangoRegulacionA'), 'el rango de regulación no era [mínimo, máximo] en amperios'),
+			rangoSonda: oQuitado(d.rangoSonda, leerRango(d.rangoSonda, -10_000, 10_000),
+				ruta('rangoSonda'), 'el rango de la sonda no era [mínimo, máximo]'),
+			temporizacion: oQuitado(d.temporizacion, leerTemporizacion(d.temporizacion),
+				ruta('temporizacion'), 'la temporización no era de trabajo ni de reposo con segundos'),
+			rasgosFrente: oQuitado(d.rasgosFrente, leerRasgosFrente(d.rasgosFrente),
+				ruta('rasgosFrente'), 'los rasgos del frente no eran números ni booleanos'),
+			posicion: oQuitado(d.posicion, leerPosicion(d.posicion),
+				ruta('posicion'), 'la posición no tenía dos coordenadas numéricas'),
+			rol: oQuitado(d.rol, leerRol(d.rol),
+				ruta('rol'), 'el rol no era maestro ni esclavo con maestro y contacto'),
+			// Y la imagen APUNTA que la ha quitado. Ese olvido era el P0 de esta auditoría.
+			imagen: oQuitado(d.imagen, leerImagen(d.imagen), ruta('imagen'),
+				'la imagen no era un PNG, JPEG o WebP admisible, o pasaba del tamaño máximo'),
+			curvaDisparo: oQuitado(d.curvaDisparo, unoDe(d.curvaDisparo, ['B', 'C', 'D', 'K', 'Z', 'gG', 'aM'] as const),
+				ruta('curvaDisparo'), 'la curva de disparo no era una de la norma'),
+			claseDiferencial: oQuitado(d.claseDiferencial, unoDe(d.claseDiferencial, ['AC', 'A', 'F', 'B'] as const),
+				ruta('claseDiferencial'), 'la clase de diferencial no era AC, A, F ni B'),
+			programa: cadena('programa'),
+			unidadSonda: cadena('unidadSonda'),
+			colorCuerpo: cadena('colorCuerpo'),
+			hojaId: cadena('hojaId'),
 			// Un tipo que no es de la lista no tiene símbolo, ni regla de DRC, ni comportamiento:
 			// cae en `otro`, que es lo que el programa ya hace con lo que no reconoce.
 			tipo: unoDe(d.tipo, TIPOS_APARATO) ?? 'otro',
-			clase: unoDe(d.clase, LETRAS_CLASE),
+			clase: oQuitado(d.clase, unoDe(d.clase, LETRAS_CLASE),
+				ruta('clase'), 'la letra de clase no era una de la IEC 81346'),
 		});
 	}
 	if (descartados) arreglos.push(`${descartados} aparato(s) sin datos suficientes`);
@@ -622,27 +835,48 @@ function leerBornes(bruto: unknown): Borne[] {
 	return salida;
 }
 
-function leerConductores(bruto: unknown, idsValidos: Set<string>, arreglos: string[]): Conductor[] {
+function leerConductores(
+	bruto: unknown, bornesDe: Map<string, Set<string>>, arreglos: string[],
+): Conductor[] {
 	if (!esLista(bruto)) {
 		if (bruto !== undefined) arreglos.push('la lista de cables estaba corrupta');
 		return [];
 	}
 	const salida: Conductor[] = [];
+	const vistos = new Set<string>();
 	let huerfanos = 0;
+	let repetidos = 0;
+	/** ¿Este extremo apunta a un aparato que existe Y a un borne que ese aparato tiene? */
+	const extremoValido = (p: Record<string, unknown>): boolean => {
+		const bornes = bornesDe.get(texto(p.dispositivoId) ?? '');
+		return !!bornes && bornes.has(texto(p.borneId) ?? '');
+	};
 	for (const c of bruto) {
 		if (!esObjeto(c) || !texto(c.id) || !esObjeto(c.de) || !esObjeto(c.a)) { huerfanos++; continue; }
+		/*
+		 * Dos cables con el mismo id son el mismo cable para todo lo que los busca por id —el
+		 * panel, la selección, el resaltado— y dos para todo lo que los recorre —la lista de
+		 * material, los metros—. Se queda el primero. TS3-P2-04.
+		 */
+		if (vistos.has(c.id as string)) { repetidos++; continue; }
 		const de = c.de as Record<string, unknown>;
 		const a = c.a as Record<string, unknown>;
-		// Un cable que apunta a un aparato inexistente queda «colgando» y rompe el ruteo.
-		if (!idsValidos.has(texto(de.dispositivoId) ?? '') || !idsValidos.has(texto(a.dispositivoId) ?? '')) {
+		// Un cable que apunta a un aparato o a un BORNE inexistente queda «colgando»: rompe el
+		// ruteo, crea un potencial fantasma y en pantalla parece perfectamente conectado.
+		if (!extremoValido(de) || !extremoValido(a)) {
 			huerfanos++;
 			continue;
 		}
+		vistos.add(c.id as string);
 		salida.push({
 			...(c as unknown as Conductor),
 			// Una sección que no es un número deja al DRC sin poder comparar nada: mejor «sin
 			// declarar», que el programa sabe avisarlo, que un 0 inventado o un NaN silencioso.
 			seccion: enRango(c.seccion, 0, 1000),
+			// El número de hilo es un TEXTO: en un esquema real es «1», pero también «L1» o «24a».
+			numero: oQuitado(c.numero, texto(c.numero),
+				`conductores[${c.id}].numero`, 'el número de hilo no era un texto'),
+			color: oQuitado(c.color, texto(c.color), `conductores[${c.id}].color`, 'el color no era un texto'),
 			/*
 			 * El trazado son los puntos por los que el usuario llevó el cable a mano. Un punto con
 			 * una coordenada que no es número sale como NaN en la geometría del tubo, y en Three.js
@@ -657,7 +891,8 @@ function leerConductores(bruto: unknown, idsValidos: Set<string>, arreglos: stri
 				: undefined,
 		});
 	}
-	if (huerfanos) arreglos.push(`${huerfanos} cable(s) sueltos sin aparato en un extremo`);
+	if (huerfanos) arreglos.push(`${huerfanos} cable(s) sin aparato o sin borne en un extremo`);
+	if (repetidos) arreglos.push(`${repetidos} cable(s) con el mismo identificador`);
 	return salida;
 }
 
@@ -706,23 +941,64 @@ function leerDatos(bruto: unknown): Proyecto['datos'] {
  * Sin declarar el programa ya sabe decir «a declarar» en el dossier y en la placa de
  * características. Así que lo que no es un número válido se deja SIN DECLARAR, no en cero.
  */
+/**
+ * Las opciones del proyecto, CAMPO A CAMPO. Sin spread.
+ *
+ * Tercera auditoría, TS3-P1-01. Aquí había un `...(bruto as OpcionesProyecto)`, así que los campos
+ * que no se saneaban explícitamente llegaban tal cual a los motores. Reproducido:
+ *
+ *   formatoDesignacion: false   → numeración revienta en `plantilla.replace is not a function`
+ *   reservaCable: "mucho"       → el ruteo devuelve una longitud NaN, y NaN no avisa: se imprime
+ *
+ * Un NaN en la longitud de un cable acaba en la lista de material que alguien lleva a la
+ * ferretería. Por eso no vale con «no revienta»: tiene que no entrar.
+ */
 function leerOpciones(bruto: unknown): OpcionesProyecto | undefined {
 	if (!esObjeto(bruto)) return undefined;
-	const montajes = ['mural', 'exento', 'empotrado'];
-	const regimenes = ['', 'TN-S', 'TN-C', 'TN-C-S', 'TT', 'IT'];
 	const ip = texto(bruto.gradoIP)?.trim().toUpperCase();
+	const r = (campo: string) => `opciones.${campo}`;
 	const opciones: OpcionesProyecto = {
-		...(bruto as OpcionesProyecto),
-		iccPresuntaKA: enRango(bruto.iccPresuntaKA, 0, 100),
-		temperaturaAmbienteC: enRango(bruto.temperaturaAmbienteC, -40, 80),
-		frecuenciaHz: enRango(bruto.frecuenciaHz, 0, 400),
-		corrienteAsignadaA: enRango(bruto.corrienteAsignadaA, 0, 10_000),
-		montajeGabinete: montajes.includes(String(bruto.montajeGabinete))
-			? (bruto.montajeGabinete as OpcionesProyecto['montajeGabinete']) : undefined,
-		regimenNeutro: regimenes.includes(String(bruto.regimenNeutro))
-			? (bruto.regimenNeutro as OpcionesProyecto['regimenNeutro']) : undefined,
-		gradoIP: ip && /^IP[0-6][0-9K]$/.test(ip) ? ip : undefined,
+		iccPresuntaKA: oQuitado(bruto.iccPresuntaKA, enRango(bruto.iccPresuntaKA, 0, 100),
+			r('iccPresuntaKA'), 'la Icc presunta no era un número de 0 a 100 kA'),
+		temperaturaAmbienteC: oQuitado(bruto.temperaturaAmbienteC, enRango(bruto.temperaturaAmbienteC, -40, 80),
+			r('temperaturaAmbienteC'), 'la temperatura ambiente no era un número de −40 a 80 °C'),
+		frecuenciaHz: oQuitado(bruto.frecuenciaHz, enRango(bruto.frecuenciaHz, 0, 400),
+			r('frecuenciaHz'), 'la frecuencia no era un número de 0 a 400 Hz'),
+		corrienteAsignadaA: oQuitado(bruto.corrienteAsignadaA, enRango(bruto.corrienteAsignadaA, 0, 10_000),
+			r('corrienteAsignadaA'), 'la corriente asignada no era un número de 0 a 10.000 A'),
+		montajeGabinete: oQuitado(bruto.montajeGabinete,
+			unoDe(bruto.montajeGabinete, ['mural', 'exento', 'empotrado'] as const),
+			r('montajeGabinete'), 'el montaje del gabinete no era mural, exento ni empotrado'),
+		regimenNeutro: oQuitado(bruto.regimenNeutro,
+			unoDe(bruto.regimenNeutro, ['', 'TN-S', 'TN-C', 'TN-C-S', 'TT', 'IT'] as const),
+			r('regimenNeutro'), 'el régimen de neutro no era uno de los de la norma'),
+		usoPrevisto: oQuitado(bruto.usoPrevisto, unoDe(bruto.usoPrevisto, ['', 'interior', 'intemperie'] as const),
+			r('usoPrevisto'), 'el uso previsto no era interior ni intemperie'),
+		gradoIP: oQuitado(bruto.gradoIP, ip && /^IP[0-6][0-9K]$/.test(ip) ? ip : undefined,
+			r('gradoIP'), 'el grado IP no tenía la forma IPxy'),
+		// Estos tres alimentan la numeración y el ruteo, que es donde un tipo falso se nota tarde.
+		formatoDesignacion: oQuitado(bruto.formatoDesignacion, texto(bruto.formatoDesignacion),
+			r('formatoDesignacion'), 'el formato de designación no era un texto'),
+		inicioNumeracionConductores: oQuitado(bruto.inicioNumeracionConductores,
+			enRango(bruto.inicioNumeracionConductores, 0, 100_000),
+			r('inicioNumeracionConductores'), 'el inicio de numeración no era un número'),
+		reservaCable: oQuitado(bruto.reservaCable, enRango(bruto.reservaCable, 0, 10),
+			r('reservaCable'), 'la reserva de cable no era un número de 0 a 10'),
+		extraPorConexionMm: oQuitado(bruto.extraPorConexionMm, enRango(bruto.extraPorConexionMm, 0, 10_000),
+			r('extraPorConexionMm'), 'el extra por conexión no era un número de mm'),
+		ocupacionMaxCanaleta: oQuitado(bruto.ocupacionMaxCanaleta, enRango(bruto.ocupacionMaxCanaleta, 0, 1),
+			r('ocupacionMaxCanaleta'), 'la ocupación máxima de canaleta no era una fracción de 0 a 1'),
 	};
+	/*
+	 * Los campos que no valían no se dejan puestos a `undefined`: se quitan.
+	 *
+	 * `JSON.stringify` ya los tira, así que en el archivo daría igual; pero en memoria un
+	 * `{ formatoDesignacion: undefined }` no es lo mismo que un objeto sin esa clave, y hay
+	 * comparaciones que lo notan. Un proyecto que entra sin un campo tiene que salir sin él.
+	 */
+	const limpias = Object.fromEntries(
+		Object.entries(opciones).filter(([, v]) => v !== undefined),
+	) as OpcionesProyecto;
 	// Si no quedó ni un dato en pie, mejor `undefined` que un objeto vacío que se vuelve a guardar.
-	return Object.values(opciones).some((v) => v !== undefined) ? opciones : undefined;
+	return Object.keys(limpias).length ? limpias : undefined;
 }

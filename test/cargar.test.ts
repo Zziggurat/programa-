@@ -512,3 +512,112 @@ test('ningún campo estructurado de Dispositivo se queda sin lector en el cargad
 		+ '  Un `for…of` sobre uno de ellos con la forma equivocada tira el editor entero con el\n'
 		+ '  proyecto anterior ya sustituido en memoria. Añade su lector en `leerDispositivos`.\n');
 });
+
+/* ==============================================================================================
+ * EL CONTRATO DE DIAGNÓSTICOS. Tercera auditoría, TS3-P0-01.
+ *
+ * La protección del autosave —congelar el guardado si hubo que reparar el archivo— depende de que
+ * el cargador DIGA que lo reparó. Y eso era una lista que cada lector podía olvidar rellenar.
+ * `leerImagen()` la olvidaba: quitaba la imagen, devolvía cero arreglos, el arranque no congelaba
+ * nada y el primer autoguardado reemplazaba el original. Medido por la auditoría, por la interfaz:
+ * 1.046 bytes antes, 910 después, imagen perdida, cero diálogos.
+ *
+ * Lo que sigue no comprueba un caso: comprueba la REGLA, campo por campo. Si mañana alguien añade
+ * un lector y se olvida de apuntar lo que tira, esto lo dice con el nombre del campo.
+ * ============================================================================================== */
+
+/** Un valor que ningún campo del modelo puede aceptar tal cual. */
+const VENENO: Record<string, unknown> = {
+	imagen: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+	fabricante: {},
+	referencia: [],
+	descripcion: 42,
+	designacion: { a: 1 },
+	congelado: 'false',
+	campo: 'sí',
+	poderCorteEstimado: 1,
+	corrienteNominal: 'diez amperios',
+	tensionNominal: {},
+	polos: 99,
+	disipacionW: 'mucho',
+	poderCorteKA: -5,
+	sensibilidadMA: [],
+	profundidad: 'hondo',
+	curvaDisparo: 'Ñ',
+	claseDiferencial: 'Z',
+	clase: 'ÑÑ',
+	programa: 7,
+	unidadSonda: {},
+	colorCuerpo: [],
+	hojaId: 3,
+	temporizacion: { tipo: 'siempre', segundos: 'muchos' },
+	rangoSonda: [10, 0],
+	rangoRegulacionA: 'de 1 a 10',
+	posicion: { x: 'a', y: 'b' },
+	rol: { tipo: 'esclavo' },
+	rasgosFrente: { leds: 'tres' },
+	terminales: [{ lado: 'diagonal', bornes: [] }],
+	puentes: {},
+	puentesInternos: [null],
+};
+
+for (const [campo, valor] of Object.entries(VENENO)) {
+	test(`«${campo}» malo: o se conserva, o se rechaza, pero SIEMPRE se declara`, () => {
+		const p = bueno() as unknown as Record<string, unknown>;
+		const d = (p.dispositivos as Record<string, unknown>[])[0];
+		d[campo] = valor;
+		const r = abrir(p);
+		const quedo = (r.proyecto.dispositivos[0] as unknown as Record<string, unknown>)[campo];
+
+		if (quedo !== undefined) return;   // se conservó tal cual: no hubo cambio destructivo
+		assert.ok(r.arreglos.length > 0,
+			`se tiró «${campo}» y el cargador no dijo nada. Eso deja el autosave sin congelar y `
+			+ 'el original se pisa: es exactamente el P0 de la tercera auditoría.');
+		assert.ok(r.diagnosticos.some((x) => x.ruta.endsWith(`.${campo}`)),
+			`el diagnóstico no dice DÓNDE estaba. Rutas: ${r.diagnosticos.map((x) => x.ruta).join(', ')}`);
+	});
+}
+
+test('un proyecto limpio no genera ni un diagnóstico', () => {
+	const r = abrir(bueno());
+	assert.deepEqual(r.diagnosticos, []);
+	assert.deepEqual(r.arreglos, []);
+});
+
+test('un cable a un borne que no existe no entra, y se dice', () => {
+	const p = bueno();
+	p.conductores = [{ id: 'w1', de: { dispositivoId: 'q1', borneId: '1' },
+		a: { dispositivoId: 'q1', borneId: 'NO_EXISTE' } }];
+	const r = abrir(p);
+	assert.equal(r.proyecto.conductores.length, 0);
+	assert.ok(r.arreglos.some((a) => /borne/.test(a)), r.arreglos.join(' · '));
+});
+
+test('dos cables con el mismo id: se queda uno', () => {
+	const p = bueno();
+	const c = { de: { dispositivoId: 'q1', borneId: '1' }, a: { dispositivoId: 'q1', borneId: '1' } };
+	p.conductores = [{ id: 'w1', ...c }, { id: 'w1', ...c }];
+	const r = abrir(p);
+	assert.equal(r.proyecto.conductores.length, 1);
+	assert.ok(r.arreglos.some((a) => /identificador/.test(a)));
+});
+
+test('un archivo con más aparatos de los que caben se recorta y se dice', () => {
+	const p = bueno() as unknown as Record<string, unknown>;
+	p.dispositivos = Array.from({ length: 3000 }, (_, i) => ({
+		id: `d${i}`, tipo: 'disyuntor', bornes: [{ id: '1', tipo: 'L' }],
+	}));
+	const r = abrir(p);
+	assert.ok(r.proyecto.dispositivos.length < 3000);
+	assert.ok(r.arreglos.some((a) => /máximo/.test(a)), r.arreglos.join(' · '));
+});
+
+test('las opciones mal tipadas no llegan a los motores', () => {
+	const p = bueno() as unknown as Record<string, unknown>;
+	p.opciones = { formatoDesignacion: false, reservaCable: 'mucho', inicioNumeracionConductores: {} };
+	const r = abrir(p);
+	assert.equal(r.proyecto.opciones?.formatoDesignacion, undefined);
+	assert.equal(r.proyecto.opciones?.reservaCable, undefined);
+	assert.equal(r.proyecto.opciones?.inicioNumeracionConductores, undefined);
+	assert.equal(r.diagnosticos.filter((d) => d.ruta.startsWith('opciones.')).length, 3);
+});
