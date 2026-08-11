@@ -7,12 +7,11 @@
  *   node qa/esquema-dossier.mjs
  */
 import { chromium } from 'playwright-core';
-import http from 'node:http';
-import { readFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, extname, dirname } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { abrirNavegador, ejecutablePython } from './lib/entorno.mjs';
+import { abrirNavegador, ejecutablePython, servidorDeQA } from './lib/entorno.mjs';
 
 /**
  * El dossier ya no se descarga de golpe: el botón 📄 abre la VISTA PREVIA, y se descarga desde
@@ -33,17 +32,9 @@ async function abrirVistaPreviaDossier(page) {
 	);
 }
 
-
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SAL = join(AQUI, '_salida'); mkdirSync(SAL, { recursive: true });
-const ROOT = join(AQUI, '..', 'app', 'dist');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.json': 'application/json' };
-const server = http.createServer((req, res) => {
-	let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html';
-	const f = join(ROOT, p); if (!existsSync(f)) { res.statusCode = 404; res.end(''); return; }
-	res.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); res.end(readFileSync(f));
-});
-await new Promise((r) => server.listen(0, r));
+const { servidor: server } = await servidorDeQA();
 const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
 const browser = await abrirNavegador(chromium);

@@ -31,12 +31,27 @@ jobs:
       - run: npm run check
       - run: npm test
 
-      # Y el archivo que se entrega, abierto de verdad: se empaqueta y se comprueba que arranca
-      # por `file://`, sin servidor, que es como lo va a abrir quien lo reciba.
-      - run: npx playwright install --with-deps chromium
+      # El navegador de las pruebas, FIJADO. Tercera auditoría, TS3-P2-05: `npx playwright install`
+      # resolvía el paquete `playwright` —que no está en el lock, donde solo hay `playwright-core`—
+      # así que cada ejecución podía bajarse una versión distinta. Una batería que no corre dos
+      # veces sobre lo mismo no sirve para comparar.
+      - run: npx --yes playwright@1.56.1 install --with-deps chromium
+
+      # Y la REGRESIÓN CRÍTICA, no solo el empaquetado. Antes la puerta corría dos suites; las que
+      # cubren lo que de verdad no puede salir roto —recuperación del guardado, datos del proyecto,
+      # texto hostil, entradas hostiles, el puente eléctrico— no entraban.
+      - run: npm run qa:auditoria
       - run: npm run empaquetar
       - run: node qa/entrega.mjs
       - run: node qa/empaquetado.mjs
+
+      # El resumen de dependencias va con el release, para que se pueda comparar entre versiones.
+      - run: npm audit --omit=dev --json > auditoria-dependencias.json || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: auditoria-dependencias
+          path: auditoria-dependencias.json
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------------------
   # 2. Los instaladores, solo si la puerta pasó.

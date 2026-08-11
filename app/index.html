@@ -798,6 +798,7 @@
 	#modal-ayuda .guia { margin: 4px 0; padding-left: 18px; line-height: 1.7; color: var(--texto); }
 	#modal-ayuda .guia li { margin-bottom: 4px; }
 	#modal-ayuda .pie { color: var(--texto-suave); font-size: 12.5px; margin-top: 14px; border-top: 1px solid var(--borde); padding-top: 12px; }
+	#modal-ayuda .acerca-de { border-top: none; margin-top: 6px; padding-top: 0; font-size: 11.5px; opacity: .8; }
 	/* La guía se leía como un muro de texto: ahora va por apartados, con un índice para saltar
 	   al que hace falta. Los títulos se pegan arriba al desplazar para no perder dónde estás. */
 	#modal-ayuda .guia-camino { color: var(--texto-suave); font-size: 12.5px; margin: 14px 0 10px; }
@@ -1669,6 +1670,13 @@
 		<p class="pie">Hace falta <b>Chrome</b> o <b>Edge</b> con la aceleración por hardware activada:
 		todo el 3D se dibuja en el navegador. Si algo no se ve, el programa te lo dice al abrirlo en vez
 		de quedarse en blanco.</p>
+		<!--
+			QUÉ COPIA ES ESTA. Tercera auditoría, TS3-P3-03.
+			El programa se pasa como un archivo HTML suelto, por correo y por WhatsApp. Cuando el
+			compañero avisa de un fallo hay que saber de qué versión habla, y hasta ahora no había
+			forma. Se rellena al arrancar con los datos que mete el build.
+		-->
+		<p class="pie acerca-de" id="acerca-de"></p>
 	</div>
 </div>
 

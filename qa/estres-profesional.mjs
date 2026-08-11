@@ -9,27 +9,17 @@
  *   node qa/estres-profesional.mjs [semilla]
  */
 import { chromium } from 'playwright-core';
-import http from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
-import { join, extname, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { abrirNavegador } from './lib/entorno.mjs';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'dist');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-const server = http.createServer((req, res) => {
-	let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html';
-	const f = join(ROOT, p); if (!existsSync(f)) { res.statusCode = 404; res.end(''); return; }
-	res.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); res.end(readFileSync(f));
-});
-await new Promise((r) => server.listen(0, r));
+import { join } from 'node:path';
+import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+
+const { servidor: server } = await servidorDeQA();
 const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
 // Generador reproducible: si algo falla, se repite con la misma semilla.
 let semilla = Number(process.argv[2] ?? 20260726);
 const rnd = () => { semilla = (semilla * 1664525 + 1013904223) % 4294967296; return semilla / 4294967296; };
 const elegir = (a) => a[Math.floor(rnd() * a.length)];
-
 
 const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });

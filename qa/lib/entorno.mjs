@@ -59,3 +59,45 @@ export async function abrirNavegador(chromium) {
 export function ejecutablePython() {
 	return process.env.PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3');
 }
+
+/**
+ * UN SERVIDOR DE PRUEBAS QUE NO SIRVE NADA DE FUERA DE `app/dist`.
+ *
+ * Tercera auditoría, TS3-P2-06. Las 35 suites levantaban su propio servidor con la misma línea
+ * copiada, y esa línea componía la ruta pedida con `join(ROOT, p)`. En Windows:
+ *
+ *     path.join('C:\\repo\\app\\dist', '/../../secret') -> C:\\repo\\secret
+ *
+ * Son herramientas locales, no el producto que se entrega, así que la gravedad es la que es. Pero
+ * corren en CI y en equipos compartidos, y un servidor que sirve el repositorio entero no tiene
+ * defensa posible si algún día alguien le pide una ruta que no debería. Además escuchaban sin
+ * fijar host, o sea en todas las interfaces de la máquina.
+ *
+ * Aquí se resuelve la ruta y se comprueba que el resultado SIGUE debajo de la raíz —que es la
+ * única comprobación que funciona, porque `..` puede llegar codificado de varias formas— y se
+ * escucha solo en `127.0.0.1`.
+ */
+export async function servidorDeQA(raizServida = join(RAIZ, 'app', 'dist')) {
+	const { createServer } = await import('node:http');
+	const { resolve, sep, extname: ext } = await import('node:path');
+	const { existsSync, readFileSync, statSync } = await import('node:fs');
+	const base = resolve(raizServida);
+	const MIME = {
+		'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+		'.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml',
+		'.woff2': 'font/woff2', '.map': 'application/json',
+	};
+	const s = createServer((q, r) => {
+		let u;
+		try { u = decodeURIComponent(q.url.split('?')[0]); } catch { r.statusCode = 400; r.end(''); return; }
+		if (u === '/') u = '/index.html';
+		const f = resolve(base, `.${u}`);
+		// La comprobación que de verdad importa: el archivo resuelto tiene que seguir dentro.
+		if (f !== base && !f.startsWith(base + sep)) { r.statusCode = 403; r.end(''); return; }
+		if (!existsSync(f) || !statSync(f).isFile()) { r.statusCode = 404; r.end(''); return; }
+		r.setHeader('Content-Type', MIME[ext(f)] ?? 'application/octet-stream');
+		r.end(readFileSync(f));
+	});
+	await new Promise((ok) => s.listen(0, '127.0.0.1', ok));
+	return { servidor: s, url: `http://127.0.0.1:${s.address().port}` };
+}

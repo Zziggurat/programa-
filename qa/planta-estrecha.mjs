@@ -15,19 +15,11 @@
  *   node qa/planta-estrecha.mjs
  */
 import { chromium } from 'playwright-core';
-import http from 'node:http'; import { readFileSync, existsSync } from 'node:fs';
-import { join, extname, dirname } from 'node:path'; import { fileURLToPath } from 'node:url';
-import { abrirNavegador } from './lib/entorno.mjs';
+import { join, dirname } from 'node:path';import { fileURLToPath } from 'node:url';
+import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
-const ROOT = join(AQUI, '..', 'app', 'dist');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
-const s = http.createServer((q, r) => {
-	let u = decodeURIComponent(q.url.split('?')[0]); if (u === '/') u = '/index.html';
-	const f = join(ROOT, u); if (!existsSync(f)) { r.statusCode = 404; r.end(''); return; }
-	r.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); r.end(readFileSync(f));
-});
-await new Promise((r) => s.listen(0, r));
+const { servidor: s } = await servidorDeQA();
 const b = await abrirNavegador(chromium);
 let fallos = 0;
 const must = (n, c, x = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${x ? ' → ' + x : ''}`); };

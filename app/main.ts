@@ -23,6 +23,7 @@ import {
 } from '../src/modelo/dossier.js';
 import { leerPrograma } from '../src/motores/logica.js';
 import { ArchivoInvalido, cargarProyecto, imagenAdmisible } from '../src/modelo/cargar.js';
+import { abrirVentana, cerrarVentana, cerrarVentanaDeArriba } from './ventanas.js';
 import { numerarDispositivos } from '../src/motores/numeracion.js';
 import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
@@ -249,6 +250,13 @@ function autoguardar(): void {
  * «cancelado» a quien esté esperando la respuesta.
  */
 function cerrarVentanasDeArriba(): boolean {
+	/*
+	 * Primero, la que lleve el gestor: cerrarla por él devuelve el foco a donde estaba y quita el
+	 * `inert` del fondo. Poner `hidden = true` a pelo dejaría el fondo apagado para siempre y el
+	 * foco perdido, que es peor que no cerrarla. TS3-P2-02.
+	 */
+	if (cerrarVentanaDeArriba()) return true;
+	// Y si queda alguna que todavía no pase por el gestor, se cierra como antes.
 	const abiertas = [...document.querySelectorAll<HTMLElement>('[id^="modal-"]')]
 		.filter((el) => el.id !== 'modal-dialogo' && !el.hidden);
 	for (const el of abiertas) el.hidden = true;
@@ -4309,20 +4317,20 @@ function abrirDetalleDRC(): void {
 		if (destino) {
 			li.className = 'clicable';
 			li.onclick = () => {
-				($('modal-drc') as HTMLElement).hidden = true;
+				cerrarVentana('modal-drc');
 				if (destino.tipo === 'cable') { aplicarModo('trabajo'); enfocarCamaraEnCable(destino.id); }
 				aplicarSeleccion(destino);
 			};
 		}
 		cont.appendChild(li);
 	}
-	($('modal-drc') as HTMLElement).hidden = false;
+	abrirVentana('modal-drc');
 }
 
 ($('chip-drc') as HTMLButtonElement).onclick = () => abrirDetalleDRC();
-($('btn-cerrar-drc') as HTMLButtonElement).onclick = () => { ($('modal-drc') as HTMLElement).hidden = true; };
+($('btn-cerrar-drc') as HTMLButtonElement).onclick = () => cerrarVentana('modal-drc');
 $('modal-drc').addEventListener('click', (e) => {
-	if (e.target === $('modal-drc')) ($('modal-drc') as HTMLElement).hidden = true;
+	if (e.target === $('modal-drc')) cerrarVentana('modal-drc');
 });
 
 /* ------------------------- Datos del proyecto ------------------------- */
@@ -4354,7 +4362,7 @@ function abrirDatosProyecto(): void {
 	($('pr-neutro') as HTMLSelectElement).value = o.regimenNeutro;
 	($('pr-uso') as HTMLSelectElement).value = o.usoPrevisto;
 	($('pr-notas') as HTMLTextAreaElement).value = d.notas ?? '';
-	($('modal-proyecto') as HTMLElement).hidden = false;
+	abrirVentana('modal-proyecto');
 	setTimeout(() => ($('pr-cliente') as HTMLInputElement).focus(), 0);
 }
 
@@ -4445,7 +4453,7 @@ function guardarDatosProyecto(): void {
 		regimenNeutro: ($('pr-neutro') as HTMLSelectElement).value as OpcionesProyecto['regimenNeutro'],
 		usoPrevisto: ($('pr-uso') as HTMLSelectElement).value as OpcionesProyecto['usoPrevisto'],
 	};
-	($('modal-proyecto') as HTMLElement).hidden = true;
+	cerrarVentana('modal-proyecto');
 	recalcular();      // la Icc cambia el DRC al instante
 	pintarPaneles();
 	panelEsq.refrescar();
@@ -4453,11 +4461,11 @@ function guardarDatosProyecto(): void {
 }
 
 ($('btn-datos-proyecto') as HTMLButtonElement).onclick = () => abrirDatosProyecto();
-($('btn-cerrar-proyecto') as HTMLButtonElement).onclick = () => { ($('modal-proyecto') as HTMLElement).hidden = true; };
-($('btn-cancelar-proyecto') as HTMLButtonElement).onclick = () => { ($('modal-proyecto') as HTMLElement).hidden = true; };
+($('btn-cerrar-proyecto') as HTMLButtonElement).onclick = () => cerrarVentana('modal-proyecto');
+($('btn-cancelar-proyecto') as HTMLButtonElement).onclick = () => cerrarVentana('modal-proyecto');
 ($('btn-guardar-proyecto') as HTMLButtonElement).onclick = () => guardarDatosProyecto();
 $('modal-proyecto').addEventListener('click', (e) => {
-	if (e.target === $('modal-proyecto')) ($('modal-proyecto') as HTMLElement).hidden = true;
+	if (e.target === $('modal-proyecto')) cerrarVentana('modal-proyecto');
 });
 
 /* ------------------------- Controlador a medida ------------------------- */
@@ -4470,12 +4478,12 @@ $('modal-proyecto').addEventListener('click', (e) => {
  */
 function abrirControladorAMedida(): void {
 	($('ctrl-aviso') as HTMLElement).hidden = true;
-	($('modal-controlador') as HTMLElement).hidden = false;
+	abrirVentana('modal-controlador');
 	setTimeout(() => ($('ctrl-fabricante') as HTMLInputElement).focus(), 0);
 }
 
 function cerrarControladorAMedida(): void {
-	($('modal-controlador') as HTMLElement).hidden = true;
+	cerrarVentana('modal-controlador');
 }
 
 function crearControladorAMedida(): void {

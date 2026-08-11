@@ -11,15 +11,9 @@
  *   node qa/datos-proyecto.mjs
  */
 import { chromium } from 'playwright-core';
-import http from 'node:http'; import { readFileSync, existsSync } from 'node:fs';
-import { join, extname, dirname } from 'node:path'; import { fileURLToPath } from 'node:url';
-import { abrirNavegador } from './lib/entorno.mjs';
-const AQUI=dirname(fileURLToPath(import.meta.url)); const ROOT=join(AQUI,'..','app','dist');
-const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css'};
-const s=http.createServer((q,r)=>{let p=decodeURIComponent(q.url.split('?')[0]);if(p==='/')p='/index.html';
-const f=join(ROOT,p);if(!existsSync(f)){r.statusCode=404;r.end('');return;}
-r.setHeader('Content-Type',MIME[extname(f)]??'application/octet-stream');r.end(readFileSync(f));});
-await new Promise(r=>s.listen(0,r));
+import { dirname } from 'node:path';import { fileURLToPath } from 'node:url';
+import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+const AQUI=dirname(fileURLToPath(import.meta.url)); const { servidor: s } = await servidorDeQA();
 const b=await abrirNavegador(chromium);
 const p=await b.newPage({viewport:{width:1400,height:900}});
 let fallos=0; const must=(n,c,x='')=>{if(!c)fallos++;console.log(`${c?'OK  ':'FAIL'}  ${n}${x?' → '+x:''}`);};
@@ -91,9 +85,17 @@ for (const [campo, valor, rot] of [
   must(`${rot}: el campo queda señalado para el lector de pantalla`, v.invalido);
   must(`${rot}: no se guarda NADA`, v.opciones === antes,
     v.opciones === antes ? '' : 'el proyecto cambió');
-  // Se cierra sin guardar, para que la siguiente vuelta empiece limpia.
-  await p.evaluate(()=>document.getElementById('pr-cancelar')?.click()
-    ?? document.getElementById('modal-proyecto').setAttribute('hidden',''));
+  /*
+   * Se cierra sin guardar, para que la siguiente vuelta empiece limpia.
+   *
+   * El botón es `btn-cancelar-proyecto`. Antes ponía `pr-cancelar`, que no existe: el `?.` se lo
+   * tragaba y siempre acababa cerrando por el camino de atrás, con `setAttribute('hidden')`. O
+   * sea, la prueba nunca llegó a pulsar Cancelar ni una vez. Salió a la luz al meter esta ventana
+   * en el gestor de `app/ventanas.ts`, que se quedaba creyéndola abierta.
+   */
+  const cerrado = await p.evaluate(()=>{ const c=document.getElementById('btn-cancelar-proyecto');
+    if(!c) return false; c.click(); return true; });
+  must(`${rot}: existe el botón de Cancelar`, cerrado);
   await p.waitForTimeout(300);
 }
 

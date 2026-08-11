@@ -13,6 +13,12 @@ import { Proyecto } from '../src/modelo/tipos.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
 import { numerarDispositivos } from '../src/motores/numeracion.js';
 import { avisar, confirmar, escaparHtml, pedirTexto, responderDialogo } from './dialogos.js';
+import { abrirVentana, cerrarVentana } from './ventanas.js';
+
+/** Los pone el empaquetador (`app/vite.config.ts`) a partir de `package.json` y de git. */
+declare const __VERSION__: string;
+declare const __COMMIT__: string;
+declare const __FECHA_BUILD__: string;
 
 /** Lo que la ventana de inicio necesita del editor para hacer su trabajo. */
 export interface ContextoInicio {
@@ -66,10 +72,24 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 
 	($('btn-centrar') as HTMLButtonElement).onclick = () => ctx.encuadrar();
 
-	($('btn-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = false; };
-	($('btn-cerrar-ayuda') as HTMLButtonElement).onclick = () => { ($('modal-ayuda') as HTMLElement).hidden = true; };
+	/*
+	 * QUÉ COPIA ES ESTA. Tercera auditoría, TS3-P3-03.
+	 *
+	 * «La raíz declara versión 0.1.0 y el escritorio 1.0.0. Unificar una versión de producto y
+	 * mostrar versión, commit/build ID y fecha en Acerca de». Las dos versiones ya son la misma;
+	 * esto es la parte que se ve. Va en la guía porque es la ventana que todo el mundo encuentra,
+	 * y es exactamente lo que hay que pedirle a quien avisa de un fallo.
+	 *
+	 * Se pone con `textContent`, no con `innerHTML`: son tres cadenas que mete el empaquetador y no
+	 * llevan marcado ninguno.
+	 */
+	$('acerca-de').textContent
+		= `TableroStudio ${__VERSION__} · build ${__COMMIT__} · ${__FECHA_BUILD__}`;
+
+	($('btn-ayuda') as HTMLButtonElement).onclick = () => abrirVentana('modal-ayuda');
+	($('btn-cerrar-ayuda') as HTMLButtonElement).onclick = () => cerrarVentana('modal-ayuda');
 	$('modal-ayuda').addEventListener('click', (e) => {
-		if (e.target === $('modal-ayuda')) ($('modal-ayuda') as HTMLElement).hidden = true;
+		if (e.target === $('modal-ayuda')) cerrarVentana('modal-ayuda');
 	});
 
 	// Botones del diálogo in-app.
@@ -117,7 +137,7 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 		ctx.aplicarModo('trabajo'); // se abre listo para recorrer el cableado
 		ctx.trasCambiarProyecto();
 		ctx.encuadrar();
-		($('modal-ejemplos') as HTMLElement).hidden = true;
+		cerrarVentana('modal-ejemplos');
 		ejemploAbierto = ej;
 		($('btn-explicacion') as HTMLElement).hidden = false; // queda a mano para releerla
 		mostrarExplicacion(ej);
@@ -135,7 +155,7 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 		<h3>Para estudiarlo en el 3D</h3>
 		<ul>${ej.aprender.map((x) => `<li>${x}</li>`).join('')}</ul>
 	`;
-		($('modal-explicacion') as HTMLElement).hidden = false;
+		abrirVentana('modal-explicacion');
 	}
 
 	/** Pinta la biblioteca de ejemplos y la abre. */
@@ -181,7 +201,7 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 		for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-borrar-plantilla]')) {
 			b.onclick = () => { void borrarPlantilla(Number(b.dataset.borrarPlantilla)); };
 		}
-		($('modal-ejemplos') as HTMLElement).hidden = false;
+		abrirVentana('modal-ejemplos');
 	}
 
 	/* ---------------------------- Plantillas de tablero ---------------------------- */
@@ -306,7 +326,7 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 		nuevo.nombre = p.nombre;
 		ctx.ponerProyecto(nuevo);
 		olvidarEjemplo();
-		($('modal-ejemplos') as HTMLElement).hidden = true;
+		cerrarVentana('modal-ejemplos');
 		ctx.limpiarSeleccion();
 		ctx.trasCambiarProyecto();
 		// Y se reencuadra, como al abrir un ejemplo. Segunda auditoría, TS2-P2-13: sin esto, una
@@ -345,8 +365,8 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 	($('btn-empezar-ejemplo') as HTMLButtonElement).onclick = () => abrirBibliotecaEjemplos();
 	($('btn-ejemplos') as HTMLButtonElement).onclick = () => abrirBibliotecaEjemplos();
 	($('btn-explicacion') as HTMLButtonElement).onclick = () => { if (ejemploAbierto) mostrarExplicacion(ejemploAbierto); };
-	($('btn-cerrar-ejemplos') as HTMLButtonElement).onclick = () => { ($('modal-ejemplos') as HTMLElement).hidden = true; };
-	($('btn-cerrar-explicacion') as HTMLButtonElement).onclick = () => { ($('modal-explicacion') as HTMLElement).hidden = true; };
+	($('btn-cerrar-ejemplos') as HTMLButtonElement).onclick = () => cerrarVentana('modal-ejemplos');
+	($('btn-cerrar-explicacion') as HTMLButtonElement).onclick = () => cerrarVentana('modal-explicacion');
 	for (const id of ['modal-ejemplos', 'modal-explicacion']) {
 		$(id).addEventListener('click', (e) => { if (e.target === $(id)) ($(id) as HTMLElement).hidden = true; });
 	}
@@ -383,7 +403,7 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 	($('inicio-ejemplos') as HTMLButtonElement).onclick = () => { ocultarInicio(); abrirBibliotecaEjemplos(); };
 	($('inicio-guia') as HTMLButtonElement).onclick = () => {
 		ocultarInicio();
-		($('modal-ayuda') as HTMLElement).hidden = false;
+		abrirVentana('modal-ayuda');
 	};
 
 	/*
@@ -398,7 +418,7 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 	// ahí no se ve, y el usuario se encuentra un modal abierto al entrar al editor sin saber por qué.
 	try {
 		if (!localStorage.getItem('tablerostudio-visto')) {
-			if (saltarInicio) ($('modal-ayuda') as HTMLElement).hidden = false;
+			if (saltarInicio) abrirVentana('modal-ayuda');
 			localStorage.setItem('tablerostudio-visto', '1');
 		}
 	} catch { /* sin localStorage */ }

@@ -17,17 +17,9 @@
  *   node qa/se-guarda-solo.mjs
  */
 import { chromium } from 'playwright-core';
-import http from 'node:http'; import { readFileSync, existsSync } from 'node:fs';
-import { join, extname, dirname } from 'node:path'; import { fileURLToPath } from 'node:url';
-import { abrirNavegador } from './lib/entorno.mjs';
-const AQUI = dirname(fileURLToPath(import.meta.url)); const ROOT = join(AQUI, '..', 'app', 'dist');
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
-const s = http.createServer((q, r) => {
-	let u = decodeURIComponent(q.url.split('?')[0]); if (u === '/') u = '/index.html';
-	const f = join(ROOT, u); if (!existsSync(f)) { r.statusCode = 404; r.end(''); return; }
-	r.setHeader('Content-Type', MIME[extname(f)] ?? 'application/octet-stream'); r.end(readFileSync(f));
-});
-await new Promise((r) => s.listen(0, r));
+import { join, dirname } from 'node:path';import { fileURLToPath } from 'node:url';
+import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+const AQUI = dirname(fileURLToPath(import.meta.url)); const { servidor: s } = await servidorDeQA();
 const b = await abrirNavegador(chromium);
 const p = await b.newPage({ viewport: { width: 1500, height: 900 } });
 let fallos = 0;

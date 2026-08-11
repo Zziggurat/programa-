@@ -14,21 +14,38 @@
   },
   "devDependencies": {
     "electron": "^43.3.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^26.15.0"
   },
   "build": {
     "appId": "cl.tablerostudio.app",
     "productName": "TableroStudio",
-    "files": ["main.js", "app.html", "icono.png"],
-    "directories": { "output": "instaladores" },
-    "win": { "target": "nsis", "icon": "icono.png" },
+    "files": [
+      "main.js",
+      "app.html",
+      "icono.png"
+    ],
+    "directories": {
+      "output": "instaladores"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "icono.png"
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "TableroStudio"
     },
-    "mac": { "target": "dmg", "icon": "icono.png", "category": "public.app-category.developer-tools" },
-    "linux": { "target": "AppImage", "icon": "icono.png", "category": "Development" }
+    "mac": {
+      "target": "dmg",
+      "icon": "icono.png",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "icono.png",
+      "category": "Development"
+    }
   }
 }

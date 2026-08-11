@@ -30,6 +30,7 @@ import {
 } from './mundo.js';
 import { metrosDeInstalacion } from '../src/motores/ejes-planta.js';
 import { confirmar } from './dialogos.js';
+import { abrirVentana, cerrarVentana, hayVentanaAbierta } from './ventanas.js';
 import { idUnico } from '../src/modelo/ids.js';
 
 /*
@@ -178,107 +179,26 @@ function descargar(nombre: string, texto: string, tipo = 'text/csv;charset=utf-8
 }
 
 
-/* ------------------------- Ventanas de la Planta: un solo sitio ------------------------- */
+/* ------------------------- Ventanas de la Planta ------------------------- */
 
-/**
- * ABRIR UNA VENTANA TIENE QUE PARAR LO DE DETRÁS.
+/*
+ * El gestor de ventanas VIVE EN `app/ventanas.ts`, compartido con el editor.
  *
- * Segunda auditoría, TS2-P1-09. Aquí una ventana era un `hidden = false` y nada más. Con la guía
- * abierta, la H seguía plegando los paneles POR DETRÁS del modal, y en modo Pasear la W movía la
- * cámara —medido: 4,9 metros— mientras se leía la ayuda. Uno vuelve de leer y está en otro sitio
- * de la cubierta, sin saber por qué.
- *
- * Y no había nada de teclado: ni `role="dialog"`, ni `aria-modal`, ni foco inicial, ni trampa de
- * tabulador, ni devolver el foco al cerrar. Con el Tab se salía del diálogo a los botones de
- * detrás, que es peor que no tener diálogo.
- *
- * Todo eso vive aquí, una vez, y no en cada sitio que abre una ventana.
+ * Estuvo aquí dentro y solo lo usaba la Planta; la tercera auditoría (TS3-P2-02) señaló que los
+ * modales del editor no lo heredaban y que con «Ejemplos» abierto el Shift+Tab se escapaba al
+ * fondo. Lo único propio de esta herramienta es que hay que soltar el teclado del paseo: eso
+ * entra por `suspender`.
  */
-const ventanasAbiertas: string[] = [];
-/** A dónde vuelve el foco al cerrar. */
-const focoPrevio = new Map<string, HTMLElement | null>();
-
-/** ¿Hay alguna ventana de la Planta encima? Lo consultan los atajos y el paseo. */
-export function hayVentanaDePlanta(): boolean {
-	return ventanasAbiertas.length > 0;
-}
-
-/** Lo que se puede enfocar dentro de un elemento. */
-const enfocables = (raiz: HTMLElement): HTMLElement[] => [
-	...raiz.querySelectorAll<HTMLElement>(
-		'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), '
-		+ 'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-	),
-].filter((e) => e.offsetParent !== null);
-
-function alTabular(ev: KeyboardEvent): void {
-	const id = ventanasAbiertas[ventanasAbiertas.length - 1];
-	if (!id) return;
-	const caja = document.getElementById(id);
-	if (!caja) return;
-	if (ev.key === 'Escape') { ev.preventDefault(); cerrarVentanaDePlanta(id); return; }
-	if (ev.key !== 'Tab') return;
-	const lista = enfocables(caja);
-	if (lista.length === 0) return;
-	const primero = lista[0];
-	const ultimo = lista[lista.length - 1];
-	const activo = document.activeElement as HTMLElement | null;
-	// El foco da la vuelta dentro del diálogo en vez de escaparse a lo de detrás.
-	if (ev.shiftKey && (activo === primero || !caja.contains(activo))) {
-		ev.preventDefault(); ultimo.focus();
-	} else if (!ev.shiftKey && (activo === ultimo || !caja.contains(activo))) {
-		ev.preventDefault(); primero.focus();
-	}
-}
-
-/**
- * Apaga (o vuelve a encender) todo lo que NO es la ventana abierta.
- *
- * `inert` es lo que de verdad bloquea: quita del alcance del ratón, del tabulador y del lector de
- * pantalla de una vez. Se aplica a los hermanos de la ventana —dentro de la Planta y fuera—, para
- * que la propia ventana siga viva. La guía cuelga de `#mundo`; el puente, del `<body>`.
- */
-function fondoInerte(caja: HTMLElement, apagar: boolean): void {
-	const mundo = document.getElementById('mundo');
-	const raices = [mundo, document.body].filter((r): r is HTMLElement => !!r);
-	for (const raiz of raices) {
-		for (const hijo of [...raiz.children] as HTMLElement[]) {
-			if (hijo === caja || hijo.contains(caja)) continue;
-			if (apagar) hijo.setAttribute('inert', ''); else hijo.removeAttribute('inert');
-		}
-	}
-}
-
-export function abrirVentanaDePlanta(id: string): void {
-	const caja = document.getElementById(id);
-	if (!caja || ventanasAbiertas.includes(id)) return;
-	focoPrevio.set(id, document.activeElement as HTMLElement | null);
-	caja.hidden = false;
-	caja.setAttribute('role', 'dialog');
-	caja.setAttribute('aria-modal', 'true');
-	ventanasAbiertas.push(id);
-	// El fondo deja de existir para el ratón y para el teclado.
-	fondoInerte(caja, true);
-	// Y el paseo suelta el teclado: si no, la W sigue andando por debajo del modal.
-	if (vista === 'paseo') paseo?.desactivar();
-    if (ventanasAbiertas.length === 1) window.addEventListener('keydown', alTabular, true);
-	enfocables(caja)[0]?.focus();
-}
-
-export function cerrarVentanaDePlanta(id: string): void {
-	const caja = document.getElementById(id);
-	const i = ventanasAbiertas.indexOf(id);
-	if (!caja || i < 0) return;
-	caja.hidden = true;
-	ventanasAbiertas.splice(i, 1);
-	if (ventanasAbiertas.length === 0) {
-		window.removeEventListener('keydown', alTabular, true);
-		fondoInerte(caja, false);
-		if (vista === 'paseo') paseo?.activar();
-	}
-	focoPrevio.get(id)?.focus();
-	focoPrevio.delete(id);
-}
+const abrirVentanaDePlanta = (id: string): void => abrirVentana(id, {
+	suspender: () => {
+		if (vista !== 'paseo') return () => {};
+		paseo?.desactivar();
+		return () => { if (vista === 'paseo') paseo?.activar(); };
+	},
+});
+const cerrarVentanaDePlanta = (id: string): void => cerrarVentana(id);
+/** ¿Hay una ventana de la Planta encima? Lo consultan los atajos de esta herramienta. */
+const hayVentanaDePlanta = (): boolean => hayVentanaAbierta();
 
 /* ------------------------------- Cabecera y ficha ------------------------------- */
 
