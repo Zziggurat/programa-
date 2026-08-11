@@ -23,6 +23,25 @@ export const COLOR_CABLE: Record<string, number> = {
 	'verde/amarillo': 0x7cb342,
 };
 
+/**
+ * El color de un cable, MIRANDO SOLO LAS CLAVES PROPIAS de la tabla.
+ *
+ * `COLOR_CABLE[c.color]` a pelo tiene una trampa: el color del conductor es texto libre que viene
+ * del archivo, y una tabla escrita como objeto literal hereda de `Object.prototype`. Con
+ * `color: "constructor"` la búsqueda no devuelve `undefined` sino una FUNCIÓN, que se cuela por el
+ * `?? 0x...` y acaba en `hexColor(fn)` → `fn.toString(16)`, o sea el código fuente de la función
+ * metido en un `style="background:…"`.
+ *
+ * No llega a ser una inyección —lo que sale de ahí no lleva comillas y no se sale del atributo—
+ * pero es una búsqueda sobre un dato de entrada que devuelve algo que no es un color, y ese es
+ * justo el patrón que la auditoría persigue en TS3-P1-01 y TS3-P1-04. `Object.hasOwn` lo cierra en
+ * una línea y sin depender de qué haya hoy en `Object.prototype`.
+ */
+export function colorDeCable(nombre: string | undefined, porDefecto = 0x546e7a): number {
+	if (!nombre || !Object.hasOwn(COLOR_CABLE, nombre)) return porDefecto;
+	return COLOR_CABLE[nombre];
+}
+
 /** Colores por nivel de tensión (referencia visual; niveles habituales en Chile). */
 export const VOLTAJE_COLOR: Record<number, number> = {
 	12: 0x26c6da,
@@ -784,7 +803,7 @@ export function construirCables(
 ): THREE.Group {
 	const grupo = new THREE.Group();
 	const colorDe = (c: { id: string; color?: string }): number =>
-		voltajePorConductor ? colorVoltaje(voltajePorConductor.get(c.id)) : (COLOR_CABLE[c.color ?? ''] ?? 0x546e7a);
+		voltajePorConductor ? colorVoltaje(voltajePorConductor.get(c.id)) : colorDeCable(c.color);
 
 	// Los cables se dibujan en tramos horizontales/verticales (estilo Tinkercad), al FRENTE
 	// del tablero para no atravesar los aparatos.

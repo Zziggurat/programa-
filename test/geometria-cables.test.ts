@@ -9,6 +9,7 @@ import {
 	Banda, carrilesDe, corredoresLibres, crearRepartidor, dentroDelArea, distPuntoSegmento,
 	fueraDeLaHuella, longitudSolapada, orthogonalize, Punto, rutaAutomatica,
 } from '../app/geometria-cables.js';
+import { COLOR_CABLE, colorDeCable } from '../app/escena3d.js';
 
 /** ¿Todos los tramos consecutivos son horizontales o verticales (nunca diagonales)? */
 function esOrtogonal(pts: Punto[]): boolean {
@@ -255,4 +256,37 @@ test('fueraDeLaHuella: salir de un aparato no puede dejarte dentro del de al lad
 	const q = fueraDeLaHuella({ x: 148, y: 120 }, h, 4);
 	const dentroDe = (r: { x: number; y: number; ancho: number; alto: number }) => q.x > r.x - 4 && q.x < r.x + r.ancho + 4 && q.y > r.y - 4 && q.y < r.y + r.alto + 4;
 	assert.equal(h.some(dentroDe), false, `el punto ${JSON.stringify(q)} sigue encima de un aparato`);
+});
+
+/*
+ * EL COLOR DE UN CABLE SALE DE LA TABLA, NO DE `Object.prototype`.
+ *
+ * `COLOR_CABLE[c.color]` a pelo tiene una trampa fácil de pasar por alto: el color viene del
+ * archivo como texto libre y la tabla es un objeto literal, así que hereda de `Object.prototype`.
+ * Con `color: "constructor"` la búsqueda devuelve una FUNCIÓN, no `undefined`, así que se cuela por
+ * el `?? 0x…` y llega a `hexColor(fn)`, que hace `fn.toString(16)`: el código fuente de la función
+ * metido en un `style="background:…"`.
+ *
+ * No es una inyección —de ahí no sale una comilla— pero es una búsqueda sobre un dato de entrada
+ * que devuelve algo que no es un color, y es el patrón que persiguen TS3-P1-01 y TS3-P1-04.
+ */
+
+test('colorDeCable: los colores de la tabla salen tal cual', () => {
+	assert.equal(colorDeCable('azul'), COLOR_CABLE['azul']);
+	assert.equal(colorDeCable('verde/amarillo'), COLOR_CABLE['verde/amarillo']);
+});
+
+test('colorDeCable: un color desconocido cae al de por defecto', () => {
+	assert.equal(colorDeCable('fucsia'), 0x546e7a);
+	assert.equal(colorDeCable(undefined), 0x546e7a);
+	assert.equal(colorDeCable(''), 0x546e7a);
+	assert.equal(colorDeCable('fucsia', 0x888888), 0x888888);
+});
+
+test('colorDeCable: una clave de Object.prototype NO devuelve una función', () => {
+	for (const veneno of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+		const c = colorDeCable(veneno);
+		assert.equal(typeof c, 'number', `«${veneno}» devolvió ${typeof c}, no un número`);
+		assert.equal(c, 0x546e7a, `«${veneno}» tiene que caer al color por defecto`);
+	}
 });

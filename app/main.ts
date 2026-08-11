@@ -28,7 +28,7 @@ import { numerarDispositivos } from '../src/motores/numeracion.js';
 import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
-	anclajeBorne, cajaDe, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
+	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable, vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
@@ -1365,7 +1365,7 @@ function pintarListaCables(): void {
 		const li = document.createElement('li');
 		li.className = c.id === idSel ? 'seleccionado' : '';
 		const estado = c.trazado?.length ? `a mano (${c.trazado.length})` : 'directo';
-		const colorCss = c.color ? hexColor(COLOR_CABLE[c.color] ?? 0x888888) : '#888';
+		const colorCss = c.color ? hexColor(colorDeCable(c.color, 0x888888)) : '#888';
 		li.innerHTML = `<span class="via" style="background:${colorCss}"></span>
 			<span class="num">${escaparHtml(String(c.numero ?? '—'))}</span>
 			<span class="ruta">${escaparHtml(`${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}`)}</span>
