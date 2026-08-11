@@ -42,6 +42,9 @@ ab004c3  Abrir un tablero mueve proyecto, historial y guardado a la vez, o no mu
 8f0e58d  Pasear pide teclado y el editor pide ancho: las dos cosas se dicen en vez de fingirse
 6af182f  Un aspa del plano es UNA pieza, no dos diagonales: 129 cajas eran 48 accesorios
 f04bedc  Pegar también es todo o nada, y el coste de arrancar deja de ser una opinión
+d90257d  qa/abrir-atomico esperaba un reloj en vez de un hecho, y pegar fallaba en silencio
+3a3c918  El color de un cable sale de la tabla, no de Object.prototype
+3ab062e  Una herramienta a pantalla completa se abre usable, aunque haya una ventana abierta
 ```
 
 ---
@@ -288,14 +291,15 @@ software:
 
 | | |
 |---|---|
-| primer tablero interactivo | 6.297 ms |
-| memoria en reposo | 17 MB |
-| abrir un ejemplo | 25.226 ms |
-| dibujar un fotograma (mediana) | 8,3 ms |
-| dibujar un fotograma (el peor) | 26,9 ms |
-| dossier en PDF | muy variable (ver abajo) |
-| abrir la Planta | 8.550 ms |
-| lo que añade la Planta | 37 MB |
+| primer tablero interactivo | 2.375 ms |
+| memoria en reposo | 18 MB |
+| abrir un ejemplo | 7.117 ms |
+| dibujar un fotograma (mediana) | 4,5 ms |
+| dibujar un fotograma (el peor) | 15,3 ms |
+| dossier en PDF | 20.225 ms — muy variable, ver abajo |
+| abrir la Planta | 4.367 ms |
+| memoria con la Planta abierta | 47 MB |
+| lo que añade la Planta | 29 MB |
 
 Con dos avisos, que están en el archivo y no de adorno:
 
@@ -365,5 +369,63 @@ saberlo: el programa se pasa como un archivo HTML suelto por correo y por WhatsA
 
 ## 9. Salida de los controles
 
-La salida exacta de `npm ci`, `npm run check`, `npm test`, `npm run qa:auditoria`,
-`npm run empaquetar`, `node qa/entrega.mjs` y `node qa/empaquetado.mjs` acompaña a este documento.
+Ejecutados en este orden, sobre el commit que se entrega:
+
+```text
+===== npm ci                    SALIDA_CI=0
+===== npm run check             SALIDA_CHECK=0        (tsc --noEmit, sin una sola queja)
+===== npm test                  SALIDA_TEST=0         # tests 578 · # pass 578 · # fail 0
+===== npm run qa                SALIDA_QA=0           39 bien · 0 mal · 79:06
+===== npm run empaquetar        SALIDA_EMPAQUETAR=0   dist-final/TableroStudio.html (2.478 KB)
+===== node qa/entrega.mjs       SALIDA_ENTREGA=0      «EL ARCHIVO ENTREGADO ESTÁ LISTO ✔»
+===== node qa/empaquetado.mjs   SALIDA_EMPAQUETADO=0  «TODO OK ✔»
+```
+
+Las 39 suites de navegador, una a una:
+
+```text
+[ 1/39] abrir-atomico          ✅ 1:00     [21/39] estres                 ✅ 3:26
+[ 2/39] agarre                 ✅ 19:32    [22/39] estres-profesional     ✅ 8:46
+[ 3/39] atajos-a-ciegas        ✅ 0:47     [23/39] general                ✅ 0:36
+[ 4/39] cables                 ✅ 1:04     [24/39] inicio-vistas          ✅ 2:16
+[ 5/39] cables-fusion          ✅ 14:08    [25/39] mejoras                ✅ 1:02
+[ 6/39] capas                  ✅ 0:28     [26/39] modales-teclado        ✅ 0:44
+[ 7/39] controladores          ✅ 1:58     [27/39] planta                 ✅ 0:50
+[ 8/39] correcciones           ✅ 2:21     [28/39] planta-estrecha        ✅ 1:21
+[ 9/39] coste-arranque         ✅ 0:38     [29/39] planta-trabajo         ✅ 0:32
+[10/39] cubierta-obra          ✅ 0:28     [30/39] planta-zoom            ✅ 1:56
+[11/39] datos-proyecto         ✅ 0:22     [31/39] prender-desde-cero     ✅ 1:12
+[12/39] dossier                ✅ 0:37     [32/39] profesional            ✅ 1:58
+[13/39] dossier-editable       ✅ 1:30     [33/39] recuperacion           ✅ 0:47
+[14/39] dossier-personalizado  ✅ 0:40     [34/39] riel                   ✅ 0:38
+[15/39] empaquetado            ✅ 1:23     [35/39] riel-ejemplos-vista    ✅ 0:35
+[16/39] energizar              ✅ 0:28     [36/39] se-guarda-solo         ✅ 0:42
+[17/39] entradas-hostiles      ✅ 0:27     [37/39] sin-fantasmas          ✅ 0:23
+[18/39] entrega                ✅ 0:59     [38/39] tablero-desde-cero     ✅ 0:44
+[19/39] entregables            ✅ 0:18     [39/39] texto-hostil           ✅ 0:28
+[20/39] esquema-dossier        ✅ 1:02
+```
+
+### Lo que costó llegar a ese 39/39
+
+La primera corrida completa dio **38 bien · 1 mal**, y el que fallaba era `dossier-personalizado`
+con «lo que se escribe se guarda con el proyecto → undefined». **Era una regresión mía de esta misma
+ronda** —del commit de las ventanas— y la causa no estaba donde apuntaba el mensaje.
+
+Las herramientas a pantalla completa viven en `--capa-herramienta` (40) y las ventanas en
+`--capa-modal` (60). Al meter los modales del editor en el gestor, `fondoInerte` empezó a marcar
+`inert` a todos los hermanos de `<body>`, y ahí dentro está `#panel-dossier`. Con la guía del primer
+arranque todavía abierta —que es lo que hace esa suite, y lo que hace cualquiera que pulse «Ver
+dossier» nada más entrar— el panel se abría DEBAJO de la guía y además inerte: ni se veía ni se
+podía tocar.
+
+El síntoma engañaba: Playwright rellenaba el campo de la empresa sin protestar y sin escribir nada,
+el `change` guardaba una cadena vacía, y el fallo aparecía tres pasos más allá como si fuera del
+guardado. La prueba decía la verdad.
+
+Arreglado con `cerrarTodasLasVentanas()`, que llaman las tres herramientas al abrirse, y con una
+comprobación nueva en `qa/capas.mjs` que deja la guía abierta a propósito. Sin el arreglo da 6
+fallos; con él, 0.
+
+Se cuenta aquí porque es la mejor prueba de que la batería completa sirve para algo: este fallo no
+lo veía ninguna suite corriendo sola, y ninguna revisión del diff lo habría encontrado.
