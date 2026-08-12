@@ -19,7 +19,7 @@ import { chromium } from 'playwright-core';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { abrirNavegador } from './lib/entorno.mjs';
+import { abrirNavegador, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARCHIVO = join(AQUI, '..', 'dist-final', 'TableroStudio.html');
@@ -94,6 +94,9 @@ await page.click('#btn-empezar-ejemplo'); await page.waitForTimeout(400);
 await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(1200);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
 await cerrar('btn-cerrar-explicacion'); await page.waitForTimeout(300);
+// Más abajo se añade un aparato del catálogo, y un ejemplo es de solo lectura: se trabaja sobre
+// una copia, igual que hace el usuario con «Hacer una copia para trabajar».
+await trabajarSobreCopia(page);
 
 const aparatos = await page.evaluate(() => document.querySelectorAll('#lista-dispositivos li').length);
 must('se carga un tablero de ejemplo con sus aparatos', aparatos > 5, `${aparatos} aparatos`);

@@ -43,7 +43,17 @@ p.on('pageerror', (e) => errores.push(e.message));
  * visible delante; en cuanto no la hay, cualquier `inert` que quede es la pantalla muerta.
  */
 const estadoInerte = () => p.evaluate(() => {
-	const visible = (e) => !!e && !e.hidden && e.offsetParent !== null;
+	/*
+	 * «Visible» se mide por el RECTÁNGULO, no por `offsetParent`. En un elemento `position: fixed`
+	 * —que es lo que son todas las ventanas de aquí— `offsetParent` vale null SIEMPRE, así que la
+	 * lista de ventanas abiertas salía vacía y una ventana legítimamente abierta, con su fondo
+	 * inerte como debe estar, se leía como pantalla muerta.
+	 */
+	const visible = (e) => {
+		if (!e || e.hidden) return false;
+		const r = e.getBoundingClientRect();
+		return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden';
+	};
 	const ventanas = [...document.querySelectorAll('[role="dialog"]')].filter(visible).map((e) => e.id);
 	const inertes = [...document.querySelectorAll('[inert]')].map((e) => e.id || e.tagName.toLowerCase());
 	return { ventanas, inertes };

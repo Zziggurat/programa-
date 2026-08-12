@@ -13,7 +13,7 @@
 import { chromium } from 'playwright-core';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { abrirNavegador } from './lib/entorno.mjs';
+import { abrirNavegador, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARCHIVO = join(AQUI, '..', 'dist-final', 'TableroStudio.html');
@@ -51,6 +51,9 @@ if (await page.isVisible('#modal-dialogo')) {
 // Cerrar lo que se haya abierto encima, con Escape (que es uno de los arreglos).
 await page.keyboard.press('Escape');
 await page.waitForTimeout(400);
+// El dossier personalizado ESCRIBE en el proyecto, y un ejemplo es de solo lectura: sin la copia,
+// lo que se teclea se descarta en silencio y el archivo guardado sale sin la empresa dentro.
+await trabajarSobreCopia(page);
 must('se carga un tablero de ejemplo', await page.evaluate(() =>
 	document.querySelectorAll('#lista-aparatos li, #panel-der li').length > 0
 	|| !document.getElementById('escena')?.hidden));
