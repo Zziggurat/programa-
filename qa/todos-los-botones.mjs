@@ -80,10 +80,17 @@ async function volverAlEditor() {
 		break;
 	}
 	// Herramientas a pantalla completa, cada una por su botón de cerrar.
-	// La Planta se cierra con «✕ Salir» (`#mundo-salir`). Puse `#mundo-cerrar`, que no existe, y por
-	// eso la Planta se quedaba abierta tapando la barra: el editor «no respondía» al final.
+	/*
+	 * Cada herramienta se cierra por SU botón, y hay que saberse el nombre:
+	 *
+	 *   · la Planta sale por «✕ Salir» (`#mundo-salir`). Puse `#mundo-cerrar`, que no existe, y la
+	 *     Planta se quedaba abierta tapando la barra del editor;
+	 *   · «🏠 Inicio» de la Planta NO es la vista general del terreno: cierra la Planta y abre la
+	 *     PANTALLA DE INICIO. Desde ahí se vuelve al editor con «Tableros» (`#inicio-tableros`).
+	 *     Sin esto, la pantalla de inicio quedaba delante y el editor parecía no responder.
+	 */
 	for (const [panel, cerrar] of [['#panel-esquema', '#esq-cerrar'], ['#panel-dossier', '#dos-cerrar'],
-		['#mundo', '#mundo-salir'], ['#inicio', '#btn-inicio-cerrar']]) {
+		['#mundo', '#mundo-salir'], ['#inicio', '#inicio-tableros']]) {
 		if (!(await p.isVisible(panel))) continue;
 		if (await p.isVisible(cerrar)) {
 			await p.locator(cerrar).click({ timeout: 20_000 }).catch(() => {});
@@ -126,6 +133,26 @@ async function tableroDeTrabajo() {
 	}
 	await trabajarSobreCopia(p);
 }
+
+/**
+ * ¿Está el control DENTRO DE LA PANTALLA, no solo «visible»?
+ *
+ * No es lo mismo, y la diferencia costó dos vueltas. «🗔 Paneles» no esconde los paneles laterales
+ * con `hidden`: los DESPLAZA fuera con `transform: translateX(-100% - 20px)`. Un elemento así
+ * sigue teniendo rectángulo y sigue contando como «visible» —para `isVisible` y para
+ * `waitForSelector({state:'visible'})`—, pero está fuera de la ventana y no hay ratón que lo
+ * alcance. La prueba lo daba por presente y luego se comía un fallo al pulsarlo.
+ *
+ * Se mira si el rectángulo CORTA con la ventana, que es la pregunta de verdad.
+ */
+const enPantalla = (sel) => p.evaluate((s) => {
+	const e = document.querySelector(s);
+	if (!e || e.hidden) return false;
+	const r = e.getBoundingClientRect();
+	if (r.width === 0 || r.height === 0) return false;
+	if (getComputedStyle(e).visibility === 'hidden') return false;
+	return r.right > 0 && r.bottom > 0 && r.left < window.innerWidth && r.top < window.innerHeight;
+}, sel);
 
 /**
  * Deja un menú desplegable ABIERTO, sin dar por hecho en qué estado estaba.
@@ -313,16 +340,47 @@ for (const [abrir, panel, nombre] of [
 		// Salir/cerrar la herramienta se prueba al final: en medio dejaría al resto sin pantalla.
 		if (/cerrar|salir/i.test(e.id)) continue;
 		/*
-		 * SE DEVUELVE A LA VISTA LO QUE OTRO BOTÓN HAYA ESCONDIDO.
+		 * CADA BOTÓN SE PRUEBA DESDE UN ESTADO CONOCIDO.
 		 *
-		 * «🗔 Paneles» esconde los paneles laterales —es literalmente lo que promete su ayuda— y
-		 * dentro de esos paneles viven «Todas con señales», «Vaciar» y «Parte de obra (CSV)». Al
-		 * recorrer la botonería en orden, el primero apagaba a los otros tres y la prueba los daba
-		 * por rotos. No lo estaban: hacían su trabajo. Se vuelve a encender antes de seguir.
+		 * Una herramienta tiene modos, y sus botones se esconden unos a otros haciendo su trabajo:
+		 * «🗔 Paneles» esconde los paneles laterales —lo que promete su ayuda—, «Paseo» entra en el
+		 * recorrido a pie, «Medir» cambia el ratón. Dentro de esos paneles viven «Todas con
+		 * señales», «Vaciar» y «Parte de obra (CSV)», así que recorriendo en orden los primeros
+		 * apagaban a los últimos y la prueba los daba por rotos sin estarlo.
+		 *
+		 * Intenté rescatarlos volviendo a pulsar «Paneles» y no bastó: desde el modo paseo no
+		 * vuelven. Así que en vez de adivinar qué los escondió, se cierra la herramienta y se abre
+		 * otra vez. Cuesta unos segundos por botón y a cambio lo que mide es de fiar.
 		 */
-		if (!(await p.isVisible(`#${e.id}`)) && (await p.isVisible('#mundo-paneles'))) {
-			await p.locator('#mundo-paneles').click({ timeout: 20_000 }).catch(() => {});
-			await p.waitForTimeout(500);
+		if (!(await enPantalla(`#${e.id}`))) {
+			await volverAlEditor();
+			await p.locator(abrir).click({ timeout: 20_000 }).catch(() => {});
+			await p.waitForSelector(`${panel}:visible`, { timeout: 60_000 }).catch(() => {});
+			await p.waitForTimeout(2500);
+			for (const g of ['#btn-cerrar-guia-mundo', '#btn-cerrar-explicacion']) {
+				if (await p.isVisible(g)) {
+					await p.locator(g).click({ timeout: 20_000 }).catch(() => {});
+					await p.waitForTimeout(400);
+				}
+			}
+		}
+		/*
+		 * HAY BOTONES QUE SOLO EXISTEN EN SU MOMENTO, y exigirles que se puedan pulsar siempre es
+		 * probar lo que no es. «Vaciar» vive en el cajón de máquinas elegidas y no aparece hasta
+		 * que hay alguna elegida; «Todas con señales» cuelga del recuento, que se rellena cuando
+		 * termina de cargar la cubierta. Con la herramienta recién abierta no están, y eso es
+		 * correcto. Se anotan aparte —ni bien ni mal— para que se vea que no se han probado, en vez
+		 * de contarlos como rotos y ensuciar el recuento con dos fallos que no lo son.
+		 */
+		let aparece = false;
+		for (let i = 0; i < 16 && !aparece; i++) {
+			aparece = await enPantalla(`#${e.id}`);
+			if (!aparece) await p.waitForTimeout(500);
+		}
+		if (!aparece) {
+			console.log(`--    ${nombre} › ${e.txt || e.id}: no sale en este estado (depende de una `
+				+ 'selección o de un modo); no se prueba aquí');
+			continue;
 		}
 		const erroresAntes = errores.length;
 		let llego = true;
