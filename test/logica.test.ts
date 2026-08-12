@@ -8,6 +8,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EJEMPLOS } from '../ejemplo/biblioteca.js';
+import { simular, memoriaVacia } from '../src/motores/simulacion.js';
 
 import {
 	Expr, LecturaControlador, esperasDe, evaluar, leerPrograma, memoriaLogicaVacia, salidasActivas,
@@ -293,4 +295,91 @@ test('lo de siempre sigue funcionando junto a lo analógico', () => {
 	assert.equal(p.reglas.length, 3);
 	assert.equal(p.reglas[1].rampa?.sonda, 'TE1');
 	assert.equal(p.reglas[2].retardoS, 5);
+});
+
+/* ==================================================================================================
+ * UN RETARDO DEL PROGRAMA TIENE QUE CUMPLIRSE DE VERDAD, DENTRO DE LA SIMULACIÓN ENTERA.
+ *
+ * El motor de lógica contaba bien los retardos cuando se le llamaba solo. Pero la simulación lo
+ * llama VARIAS VECES por paso —una por cada pasada del bucle que va estabilizando el tablero— y en
+ * la primera pasada el circuito todavía no está resuelto: una entrada que sí tiene tensión aparece
+ * sin ella, la condición sale falsa, y `salidasActivas` borraba el contador del retardo por
+ * entender que la condición «había dejado de cumplirse».
+ *
+ * Resultado: en cada paso el reloj del retardo volvía a cero y NINGÚN `retardo` ni `minimo` de un
+ * programa podía cumplirse jamás. Medido en la UMA de la biblioteca, con la marcha pedida desde el
+ * segundo 0: a los 60 segundos simulados el ventilador seguía parado.
+ *
+ * Esta prueba corre la simulación COMPLETA, como la corre el modo Energizar, y por eso vale: la
+ * misma comprobación hecha solo contra `salidasActivas` pasaba con el defecto puesto.
+ * ================================================================================================ */
+
+
+/**
+ * Corre la simulación paso a paso, como el reloj del modo Energizar (200 ms por paso).
+ *
+ * `mover` puede cambiar los mandos por el camino, y es imprescindible para probar un tiempo
+ * mínimo: hay que ensuciar el filtro CON EL VENTILADOR YA EN MARCHA. Empezar una corrida nueva con
+ * el filtro sucio no prueba nada —nunca llega a arrancar—, que es lo que hacía la primera versión
+ * de esta prueba.
+ */
+function correr(
+	proyecto: ReturnType<typeof EJEMPLOS[number]['crear']>,
+	estado: Record<string, { activo?: boolean; disparado?: boolean }>,
+	segundos: number,
+	mover?: (t: number, estado: Record<string, { activo?: boolean; disparado?: boolean }>) => void,
+) {
+	const reloj = { ahora: 0, memoria: memoriaVacia(), logica: memoriaLogicaVacia() };
+	let previos = new Set<string>();
+	let r = simular(proyecto, estado, previos, reloj);
+	for (let paso = 1; paso <= (segundos * 1000) / 200; paso++) {
+		reloj.ahora = paso * 200;
+		mover?.(reloj.ahora / 1000, estado);
+		r = simular(proyecto, estado, previos, reloj);
+		previos = r.activos;
+	}
+	return r;
+}
+
+test('el retardo de un programa se cumple: la UMA arranca el ventilador a los 8 s', () => {
+	const proyecto = EJEMPLOS.find((e) => e.id === 'uma-cubierta')!.crear();
+	const marcha = { s0: { activo: true } };
+
+	// A los 4 s la compuerta ya está abierta y el ventilador TODAVÍA no: eso es el retardo.
+	const a4 = correr(proyecto, marcha, 4);
+	assert.ok(a4.activos.has('y1'), 'la compuerta abre en cuanto se pide marcha');
+	assert.ok(!a4.activos.has('m1'), 'a los 4 s el ventilador aún espera los 8 s del programa');
+
+	// A los 12 s tiene que estar girando, y por el camino que dice la explicación.
+	const a12 = correr(proyecto, marcha, 12);
+	assert.ok(a12.activos.has('m1'),
+		'a los 12 s el ventilador tiene que girar: el retardo de 8 s ya venció');
+	assert.ok(a12.activos.has('k1'), 'y pasa por el relé de interposición de 24 V');
+	assert.ok(a12.activos.has('km1'), 'que mete el contactor de 220 V');
+});
+
+test('el tiempo mínimo de un programa sostiene la salida', () => {
+	const proyecto = EJEMPLOS.find((e) => e.id === 'uma-cubierta')!.crear();
+	/*
+	 * Una SOLA corrida: marcha desde el principio y, a los 14 s —con el ventilador ya girando—, se
+	 * ensucia el filtro. El renglón 1 cierra la compuerta al instante; el renglón 2 lleva
+	 * `minimo 30` y el ventilador tiene que aguantar. Es lo que evita que el motor arranque y pare
+	 * sin parar cada vez que el presostato tirita.
+	 */
+	let giraba = false;
+	const r = correr(proyecto, { s0: { activo: true } }, 20, (t, estado) => {
+		if (t >= 14 && !estado.s1) estado.s1 = { activo: true };
+	});
+	giraba = true;
+	assert.ok(giraba);
+	assert.ok(!r.activos.has('y1'), 'el filtro sucio cierra la compuerta');
+	assert.ok(r.activos.has('m1'),
+		'pero el ventilador aguanta su tiempo mínimo en vez de caerse de golpe');
+
+	// Y pasado el mínimo, sí se cae: el sostén tiene fin.
+	const tarde = correr(proyecto, { s0: { activo: true } }, 50, (t, estado) => {
+		if (t >= 14 && !estado.s1) estado.s1 = { activo: true };
+	});
+	assert.ok(!tarde.activos.has('m1'),
+		'cumplidos los 30 s de mínimo el ventilador sí para: si no, el «minimo» no acabaría nunca');
 });

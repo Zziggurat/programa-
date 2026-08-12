@@ -60,7 +60,7 @@ import { claveBorne } from '../modelo/proyecto.js';
 import { tensionSecundariaDe } from './tensiones.js';
 import {
 	EsperaLogica, LecturaControlador, MemoriaLogica, ReglaLogica, esperasDe, evaluar, leerPrograma,
-	memoriaLogicaVacia, salidasActivas, valoresAnalogicos,
+	clonarMemoriaLogica, memoriaLogicaVacia, salidasActivas, valoresAnalogicos,
 } from './logica.js';
 
 /** Estado que el usuario controla de cada aparato. */
@@ -827,17 +827,44 @@ export function simular(
 	}
 	let prop: Propagacion = { vivos, alcances: [], conductorEntre: new Map() };
 
+	/*
+	 * LOS RETARDOS DEL PROGRAMA SE CUENTAN CON EL CIRCUITO YA RESUELTO, NO A MEDIO RESOLVER.
+	 *
+	 * Este bucle va estabilizando el tablero: en la primera pasada `vivos` está casi vacío y se va
+	 * llenando pasada a pasada. Los controladores se consultan DENTRO del bucle, así que en esa
+	 * primera pasada leen un tablero que todavía no es el de verdad: una entrada que sí tiene
+	 * tensión aparece sin ella, la condición del renglón sale falsa... y `salidasActivas` borra el
+	 * contador del retardo, porque para él la condición «ha dejado de cumplirse».
+	 *
+	 * A la pasada siguiente la condición vuelve a cumplirse y el contador arranca de cero. O sea
+	 * que en cada llamada el reloj del retardo volvía a empezar y NUNCA llegaba a su tiempo.
+	 * Medido en la UMA de la biblioteca: con la marcha pedida y la compuerta abierta desde el
+	 * segundo 0, a los 60 segundos simulados el ventilador seguía parado, y `desdePedida` marcaba
+	 * el instante actual en cada vuelta:
+	 *
+	 *     t=16.0s  salidasPrograma=[a1::DO2]  m1=false   desdePedida={"DO2":16000,"DO1":16000}
+	 *
+	 * Con eso, NINGÚN `retardo` ni `minimo` de un programa podía cumplirse jamás — y son la mitad
+	 * de lo que hace un tablero de clima. El ejemplo de la UMA prometía «a los 8 segundos arranca
+	 * el ventilador» y el ventilador no arrancaba nunca.
+	 *
+	 * Así que el bucle tantea sobre una COPIA, que se tira, y solo cuando el tablero se queda
+	 * quieto se apunta el tiempo en la memoria de verdad. Si al apuntarlo cambia alguna salida
+	 * —justo el instante en que vence un retardo— se da otra vuelta para que el circuito lo recoja.
+	 */
 	while (pasadas < MAX_PASADAS && !estable) {
 		pasadas++;
 		prop = propagar(proyecto, aparatos, fuentes, estado, activos, vivos, conmutados, salidasDePrograma);
 		const nuevosVivos = prop.vivos;
+		// Copia limpia por pasada: parte de la historia REAL y se descarta al terminar la pasada.
+		const memoriaTanteo = reloj ? clonarMemoriaLogica(memoriaLogica) : undefined;
 		// Los controladores leen su tablero y deciden sus salidas ANTES de la siguiente pasada.
 		for (const [id, reglas] of programas) {
 			const d = aparatos.find((x) => x.id === id)!;
 			const lectura = leerControlador(d, proyecto, nuevosVivos, estado,
 				salidasDePrograma.get(id) ?? new Set());
 			salidasDePrograma.set(id, salidasActivas(reglas, lectura,
-				reloj ? { ahora: reloj.ahora, memoria: memoriaLogica } : undefined));
+				reloj && memoriaTanteo ? { ahora: reloj.ahora, memoria: memoriaTanteo } : undefined));
 			// Y lo que valen sus salidas analógicas: la apertura de una válvula, la velocidad de un
 			// variador. No encienden nada, así que no entran en la propagación.
 			for (const [borne, v] of Object.entries(valoresAnalogicos(reglas, lectura))) {
@@ -859,6 +886,28 @@ export function simular(
 		estable = igualesClaves(vivos, nuevosVivos) && igualesConjuntos(activos, nuevosActivos);
 		vivos = nuevosVivos;
 		activos = nuevosActivos;
+
+		/*
+		 * El tablero se ha quedado quieto: AHORA sí se apunta el tiempo, y con la lectura buena.
+		 * Si al apuntarlo cambia una salida es que acaba de vencer un retardo o un tiempo mínimo,
+		 * y hace falta otra vuelta para que el circuito se entere.
+		 */
+		if (estable && reloj) {
+			for (const [id, reglas] of programas) {
+				const d = aparatos.find((x) => x.id === id)!;
+				const lectura = leerControlador(d, proyecto, vivos, estado,
+					salidasDePrograma.get(id) ?? new Set());
+				const firmes = salidasActivas(reglas, lectura, { ahora: reloj.ahora, memoria: memoriaLogica });
+				if (!igualesConjuntos(salidasDePrograma.get(id) ?? new Set(), firmes)) estable = false;
+				salidasDePrograma.set(id, firmes);
+			}
+			if (!estable) {
+				// Las salidas nuevas tienen que entrar en `activos` o la vuelta siguiente no las vería.
+				for (const [id, salidas] of salidasDePrograma) {
+					for (const s2 of salidas) activos.add(`${id}::${s2}`);
+				}
+			}
+		}
 	}
 
 	// Lo que se VE funcionando: consumos con tensión en sus dos extremos, y bobinas metidas.

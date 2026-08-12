@@ -311,6 +311,19 @@ export function memoriaLogicaVacia(): MemoriaLogica {
 }
 
 /**
+ * Una copia de trabajo de la memoria de tiempos.
+ *
+ * La usa la simulación para TANTEAR mientras resuelve el circuito. `salidasActivas` apunta en la
+ * memoria cada vez que se la llama, y la simulación la llama varias veces por paso —una por cada
+ * pasada del bucle que va estabilizando el tablero—. En las primeras pasadas el circuito todavía
+ * no está resuelto, así que una condición que SÍ se cumple sale falsa; si eso tocara la memoria de
+ * verdad, borraría la cuenta del retardo. La borraba: ver el comentario de `simulacion.ts`.
+ */
+export function clonarMemoriaLogica(m: MemoriaLogica): MemoriaLogica {
+	return { desdePedida: { ...m.desdePedida }, desdeEncendida: { ...m.desdeEncendida } };
+}
+
+/**
  * Qué salidas están encendidas AHORA, contando los retardos y los tiempos mínimos.
  *
  * Sin reloj el programa se resuelve como si los tiempos fueran cero: es lo razonable para

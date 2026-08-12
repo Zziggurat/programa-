@@ -5280,6 +5280,16 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Recalcula si los rótulos de la barra caben (lo hace la app al cambiar tamaño o estado). */
 		ajustarBarra: () => ajustarRotulosBarra(),
+		/**
+		 * Las tensiones que hay vivas ahora mismo, sin repetir.
+		 *
+		 * Es lo que hace falta para comprobar el tablero de control: su gracia es que conviven la
+		 * red de 220 V y el control de 24 V, separados, y eso no se ve en «qué está funcionando».
+		 */
+		tensionesVivas: () => {
+			const r = panelSim.resultado();
+			return [...new Set([...(r?.vivos.values() ?? [])].map((v) => v.tension))].sort((a, b) => b - a);
+		},
 		/** Estado de los mandos que el usuario ha accionado. */
 		estadoSim: () => Object.entries(panelSim.estadoDeLosMandos()).map(([id, st]) => ({ id, ...st })),
 		/** Acciona un aparato como si se hubiera pinchado en él con el tablero energizado. */

@@ -747,6 +747,41 @@ function climatizadorCubierta(): Proyecto {
 	return p;
 }
 
+/* --------------------------------- Los rótulos --------------------------------- */
+
+/**
+ * LOS RÓTULOS DEL TABLERO SON LOS QUE USA SU EXPLICACIÓN, NO OTROS.
+ *
+ * Es el punto entero de un ejemplo para aprender. La numeración automática reparte letras IEC por
+ * orden de aparición, y eso dejaba los cinco tableros contando una cosa y rotulando otra:
+ *
+ *     la explicación dice        el tablero rotulaba
+ *     «la bobina de KM1»         -K1
+ *     «el temporizador KT»       -K4
+ *     «PARO (S0)»                -S1        ← y -S1 era la MARCHA para quien leyera
+ *     «MARCHA (S1)»              -S2
+ *     «el térmico F2»            -F1
+ *
+ * Quien lo lee busca KM1, no lo encuentra, y lo peor: encuentra -S1 y aprieta el botón que no era.
+ * Un ejemplo que enseña mal hace más daño que no tener ejemplo.
+ *
+ * Se fijan a mano con `congelado`, que es exactamente para lo que está —«este rótulo lo elegí yo,
+ * no me lo renumeres»—, y con los nombres que se escriben en un tablero de verdad: KM para un
+ * contactor, KT para un temporizador, F para una protección, S para un mando.
+ */
+function rotular(p: Proyecto, rotulos: Record<string, string>): Proyecto {
+	for (const [id, designacion] of Object.entries(rotulos)) {
+		const d = p.dispositivos.find((x) => x.id === id);
+		if (!d) throw new Error(`rotular: el ejemplo no tiene ningún aparato «${id}»`);
+		d.designacion = designacion;
+		d.congelado = true;
+		// El número reservado evita que un aparato sin rotular se lleve el mismo de su clase.
+		const n = /(\d+)$/.exec(designacion);
+		if (n) d.numero = Number(n[1]);
+	}
+	return p;
+}
+
 /* --------------------------------- La biblioteca --------------------------------- */
 
 export const EJEMPLOS: EjemploTablero[] = [
@@ -771,7 +806,10 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'Fíjate en los dos cables de KM1 13-14: son los que mantienen la marcha (autorretención).',
 			'El circuito de mando va con cable de 1 mm² y la fuerza con 2,5 mm²: mira el grosor en el 3D.',
 		],
-		crear: arranqueDirecto,
+		crear: () => rotular(arranqueDirecto(), {
+			red: '-W1', q1: '-Q1', km1: '-KM1', f2: '-F2', x1: '-X1', m1: '-M1',
+			f1: '-F1', s0: '-S0', s1: '-S1', x2: '-X2',
+		}),
 	},
 	{
 		id: 'bomba-boya',
@@ -793,7 +831,9 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'La tierra (verde/amarillo) recorre red → bornero → bomba: nunca debe faltar.',
 			'Mira que la bobina A2 vuelve al neutro pasando por el automático: todo el mando queda protegido.',
 		],
-		crear: bombaConBoya,
+		crear: () => rotular(bombaConBoya(), {
+			red: '-W1', q1: '-Q1', q2: '-Q2', km1: '-KM1', x1: '-X1', b1: '-B1', m1: '-M1',
+		}),
 	},
 	{
 		id: 'estrella-triangulo',
@@ -822,7 +862,10 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'El puente azul entre las tres salidas de KM2 es el punto de estrella; en el tablero real '
 			+ 'suele ser una pletina o tres pontets, no cable.',
 		],
-		crear: estrellaTriangulo,
+		crear: () => rotular(estrellaTriangulo(), {
+			red: '-W1', q1: '-Q1', f2: '-F2', km1: '-KM1', km2: '-KM2', km3: '-KM3',
+			x1: '-X1', m1: '-M1', f1: '-F1', s0: '-S0', s1: '-S1', kt: '-KT', x2: '-X2',
+		}),
 	},
 	{
 		id: 'control-24v',
@@ -843,7 +886,10 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'Todo lo que va a campo (sensor, válvula, red) sale por los prensaestopas del borde inferior.',
 			'Activa «Colorear por voltaje» en el panel Vista para ver de un golpe qué corre a 220 y qué a 24.',
 		],
-		crear: tableroEjemplo,
+		crear: () => rotular(tableroEjemplo(), {
+			aco: '-W1', x1: '-X1', q1: '-Q1', t1: '-T1', f1: '-F1', a1: '-A1',
+			k1: '-K1', k1na: '-K1.1', x2: '-X2', s1: '-B1', y1: '-Y1',
+		}),
 	},
 	{
 		id: 'uma-cubierta',
@@ -883,6 +929,10 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'Compara con el estrella-triángulo: allí la secuencia estaba hecha con relés y un '
 			+ 'temporizador; aquí está escrita. El tablero tiene la mitad de aparatos y hace más.',
 		],
-		crear: climatizadorCubierta,
+		crear: () => rotular(climatizadorCubierta(), {
+			red: '-W1', q1: '-Q1', km1: '-KM1', f2: '-F2', x1: '-X1', m1: '-M1', x0: '-X0',
+			q2: '-Q2', g1: '-G1', f1: '-F1', k1: '-K1', k1na: '-K1.1', a1: '-A1', x2: '-X2',
+			s0: '-S0', s1: '-S1', b1: '-B1', y1: '-Y1', y2: '-Y2',
+		}),
 	},
 ];
