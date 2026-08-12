@@ -10,6 +10,7 @@
  */
 
 import { nombreSeguroDeArchivo } from '../src/modelo/archivos.js';
+import { abrirVentana, cerrarVentana } from './ventanas.js';
 
 export { nombreSeguroDeArchivo };
 
@@ -100,26 +101,55 @@ export function abrirDialogo(mensaje: string, opciones: {
 	input.value = opciones.valorInicial ?? '';
 	($('dialogo-ok') as HTMLButtonElement).textContent = opciones.ok ?? 'Aceptar';
 	modal.classList.toggle('peligro', !!opciones.peligro);
-	modal.hidden = false;
 	/*
-	 * Al abrirse, el foco entra en el diálogo. Siempre, no solo cuando hay algo que escribir.
+	 * SE ABRE POR EL GESTOR DE VENTANAS, no poniendo `hidden = false` a mano.
 	 *
-	 * Sus teclas —Enter acepta, Escape cancela— cuelgan del propio `#modal-dialogo`, así que solo
-	 * llegan si el foco está DENTRO. Una confirmación sin campo no enfocaba nada, y el foco se
-	 * quedaba donde estuviese: resultado, un «¿Eliminar -Q1 y sus cables?» que no se cerraba con
-	 * Escape por mucho que se pulsara, y había que ir a buscar el ratón. Con el botón enfocado las
-	 * dos teclas funcionan y además se ve de un vistazo cuál es la respuesta por omisión.
+	 * Esto es lo que causaba la pantalla congelada. El gestor apaga con `inert` todo lo que no es
+	 * la ventana de arriba, y `#modal-dialogo` es hermano de las demás en `<body>`: con la
+	 * biblioteca de ejemplos abierta, el aviso ya estaba inerte ANTES de mostrarse. Se mostraba
+	 * delante —capa 70, encima de todo— y no se podía pulsar ni «Cancelar» ni «Abrir de todas
+	 * formas»; los clics se los quedaban las tarjetas de debajo. El programa se quedaba muerto con
+	 * el aviso puesto, y era justo el aviso que sale al cambiar de un ejemplo a otro.
+	 *
+	 * Pasando por el gestor, el aviso entra en la pila y la inercia se recompone con él arriba.
 	 */
-	setTimeout(() => {
-		if (opciones.input) { input.focus(); input.select(); } else ($('dialogo-ok') as HTMLButtonElement).focus();
-	}, 0);
+	/*
+	 * Si ya había un aviso esperando respuesta, se le contesta «cancelar» antes de pisarlo. Dejarlo
+	 * colgado dejaría colgado también al `await` que estuviera esperándolo.
+	 */
+	cerrarDialogo?.(null);
 
 	return new Promise((resolve) => {
-		cerrarDialogo = (valor) => {
-			modal.hidden = true;
+		/*
+		 * Se contesta UNA sola vez, venga la respuesta de donde venga: del botón, de Enter, de
+		 * Escape, o del gestor porque la ventana se cerró por otro camino. Sin este cerrojo, el
+		 * cierre que dispara `cerrarVentana` volvería a entrar aquí.
+		 */
+		let resuelto = false;
+		const terminar = (valor: string | null): void => {
+			if (resuelto) return;
+			resuelto = true;
 			cerrarDialogo = undefined;
+			cerrarVentana('modal-dialogo');
 			resolve(valor);
 		};
+		cerrarDialogo = terminar;
+		abrirVentana('modal-dialogo', {
+			titulo: opciones.input ? 'Escribe un valor' : 'Confirmación',
+			// Cerrar es la respuesta «cancelar». Va por aquí para no depender de QUÉ lo cerró.
+			alCerrar: () => terminar(null),
+		});
+		/*
+		 * Al abrirse, el foco entra en el diálogo. Siempre, no solo cuando hay algo que escribir.
+		 *
+		 * Sus teclas —Enter acepta, Escape cancela— cuelgan del propio `#modal-dialogo`, así que
+		 * solo llegan si el foco está DENTRO. Una confirmación sin campo no enfocaba nada, y el
+		 * foco se quedaba donde estuviese: resultado, un «¿Eliminar -Q1 y sus cables?» que no se
+		 * cerraba con Escape por mucho que se pulsara, y había que ir a buscar el ratón.
+		 */
+		setTimeout(() => {
+			if (opciones.input) { input.focus(); input.select(); } else ($('dialogo-ok') as HTMLButtonElement).focus();
+		}, 0);
 	});
 }
 

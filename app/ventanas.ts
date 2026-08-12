@@ -15,7 +15,7 @@
  */
 
 /** Las ventanas abiertas ahora mismo, de la primera a la de más arriba. */
-const abiertas: { id: string; suspendido?: () => void }[] = [];
+const abiertas: { id: string; suspendido?: () => void; alCerrar?: () => void }[] = [];
 /** A dónde vuelve el foco al cerrar cada una. */
 const focoPrevio = new Map<string, HTMLElement | null>();
 
@@ -50,19 +50,38 @@ function enfocables(raiz: HTMLElement): HTMLElement[] {
 }
 
 /**
- * Apaga (o vuelve a encender) todo lo que NO es la ventana abierta.
+ * RECOMPONE LA INERCIA DEL FONDO A PARTIR DE LA PILA. No la va encendiendo y apagando.
  *
  * `inert` es lo que de verdad bloquea: quita del alcance del ratón, del tabulador y del lector de
- * pantalla de una vez. Se aplica a los HERMANOS de la ventana, en `<body>` y dentro de `#mundo`,
- * porque unas ventanas cuelgan de uno y otras del otro.
+ * pantalla de una vez. Se aplica a los HERMANOS de la ventana de arriba, en `<body>` y dentro de
+ * `#mundo`, porque unas ventanas cuelgan de uno y otras del otro.
+ *
+ * ESTO ANTES SE HACÍA A INCREMENTOS —al abrir se apagaba el fondo, al cerrar se encendía— y de ahí
+ * salió el peor fallo que ha tenido el programa: la pantalla congelada. Un atributo que se pone en
+ * un sitio y se quita en otro acaba descuadrado, y descuadrado aquí significa que TODO se ve y nada
+ * se puede pulsar. Pasó por partida doble:
+ *
+ *   · `#modal-dialogo` se mostraba a mano, sin pasar por este gestor, así que nadie le quitaba el
+ *     `inert` que le había puesto la ventana de debajo. El aviso de «se reemplaza lo que hay»
+ *     salía delante, inerte, y no se podía pulsar ni «Cancelar» ni «Abrir de todas formas». El
+ *     programa quedaba muerto con el aviso puesto, que es exactamente lo que se veía.
+ *   · si una ventana desaparecía del documento, el saneo la descontaba de la lista y el `inert` del
+ *     fondo se quedaba puesto para siempre.
+ *
+ * Derivarlo de la pila cada vez lo hace imposible por construcción: la inercia es una FUNCIÓN del
+ * estado, no una acumulación de cambios. Si la pila está vacía no queda nada inerte, y si la
+ * ventana de arriba se ha esfumado tampoco: entre una pantalla viva de más y una muerta, viva.
  */
-function fondoInerte(caja: HTMLElement, apagar: boolean): void {
+function aplicarInercia(): void {
+	const idArriba = abiertas[abiertas.length - 1]?.id;
+	const arriba = idArriba ? document.getElementById(idArriba) : null;
 	const raices = [document.getElementById('mundo'), document.body]
 		.filter((r): r is HTMLElement => !!r);
 	for (const raiz of raices) {
 		for (const hijo of [...raiz.children] as HTMLElement[]) {
-			if (hijo === caja || hijo.contains(caja)) continue;
-			if (apagar) hijo.setAttribute('inert', ''); else hijo.removeAttribute('inert');
+			const esLaDeArriba = !!arriba && (hijo === arriba || hijo.contains(arriba));
+			if (arriba && !esLaDeArriba) hijo.setAttribute('inert', '');
+			else hijo.removeAttribute('inert');
 		}
 	}
 }
@@ -118,6 +137,15 @@ export interface OpcionesVentana {
 	suspender?: () => () => void;
 	/** Nombre accesible, si la ventana no trae un `<h2>` o `<h3>` que sirva. */
 	titulo?: string;
+	/**
+	 * Se llama cuando la ventana se cierra, VENGA DE DONDE VENGA: del botón, de Escape, o del
+	 * saneo porque alguien la escondió por su cuenta.
+	 *
+	 * Lo necesita el diálogo bloqueante: detrás de él hay un `await` esperando una respuesta, y una
+	 * ventana que se cierra sin contestar deja ese `await` colgado para siempre. Cerrar es la
+	 * respuesta «cancelar», y hay que darla desde aquí para no depender de qué la cerró.
+	 */
+	alCerrar?: () => void;
 }
 
 /**
@@ -148,10 +176,17 @@ function saneo(): void {
 		if (caja) { cerrarVentana(v.id); continue; }
 		// Ni siquiera sigue en la página: se descuenta a mano, que `cerrarVentana` no sabría.
 		const i = abiertas.findIndex((x) => x.id === v.id);
-		if (i >= 0) abiertas.splice(i, 1)[0].suspendido?.();
+		if (i >= 0) {
+			const [ida] = abiertas.splice(i, 1);
+			ida.suspendido?.();
+			ida.alCerrar?.();
+		}
 		focoPrevio.delete(v.id);
 	}
 	if (abiertas.length === 0) window.removeEventListener('keydown', alTabular, true);
+	// La inercia se recompone SIEMPRE al final: si aquí se descontó algo, el fondo se quedaba
+	// apagado para siempre y la pantalla, muerta.
+	aplicarInercia();
 }
 
 export function abrirVentana(id: string, opciones: OpcionesVentana = {}): void {
@@ -171,38 +206,35 @@ export function abrirVentana(id: string, opciones: OpcionesVentana = {}): void {
 		const titulo = opciones.titulo ?? caja.querySelector('h1, h2, h3')?.textContent?.trim();
 		if (titulo) caja.setAttribute('aria-label', titulo);
 	}
-	abiertas.push({ id, suspendido: opciones.suspender?.() });
+	abiertas.push({ id, suspendido: opciones.suspender?.(), alCerrar: opciones.alCerrar });
 	/*
-	 * La que se abre deja de estar inerte, ANTES de apagar el resto.
-	 *
-	 * Si ya había otra ventana abierta, esta era uno de sus «hermanos del fondo» y por tanto
-	 * estaba inerte: sin esta línea se abría apagada —visible y sin poder pulsar nada—. Lo cazó
-	 * `qa/capas.mjs` a la primera: abre la ayuda, abre los ejemplos encima y comprueba que se
-	 * puede elegir uno, que es exactamente lo que hace cualquiera.
+	 * La que se abre queda encendida y el resto apagado, de una sola pasada y a partir de la pila.
+	 * Si ya había otra ventana, esta era uno de sus «hermanos del fondo» y estaba inerte: se abría
+	 * visible y sin poder pulsar nada. Lo cazó `qa/capas.mjs` a la primera.
 	 */
-	caja.removeAttribute('inert');
-	fondoInerte(caja, true);
+	aplicarInercia();
 	if (abiertas.length === 1) window.addEventListener('keydown', alTabular, true);
 	enfocables(caja)[0]?.focus();
 }
 
 export function cerrarVentana(id: string): void {
-	const caja = document.getElementById(id);
 	const i = abiertas.findIndex((v) => v.id === id);
-	if (!caja || i < 0) return;
-	caja.hidden = true;
+	if (i < 0) return;
+	const caja = document.getElementById(id);
+	/*
+	 * La caja puede haberse ido de la página. Antes eso hacía `return` con la ventana todavía en la
+	 * lista y el fondo inerte: pantalla muerta y sin forma de recuperarla. Ahora se descuenta igual
+	 * y se recompone la inercia, que es lo que importa.
+	 */
+	if (caja) caja.hidden = true;
 	const [quitada] = abiertas.splice(i, 1);
 	quitada.suspendido?.();
-	if (abiertas.length === 0) {
-		window.removeEventListener('keydown', alTabular, true);
-		fondoInerte(caja, false);
-	} else {
-		// Queda otra debajo: el fondo se recalcula respecto a ELLA, no se enciende del todo.
-		const debajo = document.getElementById(ventanaDeArriba()!);
-		if (debajo) { debajo.removeAttribute('inert'); fondoInerte(debajo, true); }
-	}
+	if (abiertas.length === 0) window.removeEventListener('keydown', alTabular, true);
+	aplicarInercia();
 	devolverFoco(focoPrevio.get(id));
 	focoPrevio.delete(id);
+	// Lo último: quien la abrió puede querer enterarse (el diálogo resuelve aquí su promesa).
+	quitada.alCerrar?.();
 }
 
 /**
