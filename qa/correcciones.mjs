@@ -12,7 +12,7 @@
 import { chromium } from 'playwright-core';
 
 import { join } from 'node:path';
-import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const { servidor: server } = await servidorDeQA();
 const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
@@ -37,7 +37,7 @@ await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.evaluate(() => document.querySelectorAll('.tarjeta-ejemplo button')[2].click());
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-	await page.waitForTimeout(750); await jsClick('btn-cerrar-explicacion'); await jsClick('btn-copiar-ejemplo'); await page.waitForTimeout(200);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
+	await page.waitForTimeout(750); await jsClick('btn-cerrar-explicacion'); await trabajarSobreCopia(page);
 }
 
 /* ================= 3. La barra no hace scroll y los menús se despliegan ================= */
@@ -137,7 +137,9 @@ await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.evaluate(() => document.querySelectorAll('.tarjeta-ejemplo button')[2].click());
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-	await page.waitForTimeout(750); await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+	await page.waitForTimeout(750); await jsClick('btn-cerrar-explicacion');
+	// De aquí abajo se crean uniones en un cable y se añade una imagen de referencia: se edita.
+	await trabajarSobreCopia(page);
 }
 await jsClick('modo-trabajo'); await page.waitForTimeout(350);
 await jsClick('btn-centrar'); await page.waitForTimeout(500);

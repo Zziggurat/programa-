@@ -11,7 +11,7 @@ import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { abrirNavegador, ejecutablePython, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, ejecutablePython, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
 /**
  * El dossier ya no se descarga de golpe: el botón 📄 abre la VISTA PREVIA, y se descarga desde
@@ -53,7 +53,7 @@ await click('btn-cerrar-ayuda'); await page.waitForTimeout(150);
 await click('btn-empezar-ejemplo'); await page.waitForTimeout(300);
 await page.locator('.tarjeta-ejemplo button').nth(0).click(); await page.waitForTimeout(700);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-await click('btn-cerrar-explicacion'); await click('btn-copiar-ejemplo'); await page.waitForTimeout(200);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
+await click('btn-cerrar-explicacion'); await trabajarSobreCopia(page);
 
 console.log('--- 1. El esquema se abre y se puede ordenar a mano ---');
 await click('btn-esquema'); await page.waitForTimeout(700);

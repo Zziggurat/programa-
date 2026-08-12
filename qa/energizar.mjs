@@ -12,7 +12,7 @@ import { chromium } from 'playwright-core';
 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const { servidor: server } = await servidorDeQA();
@@ -39,7 +39,7 @@ await click('btn-cerrar-ayuda'); await page.waitForTimeout(200);
 await click('btn-empezar-ejemplo'); await page.waitForTimeout(400);
 await page.locator('.tarjeta-ejemplo button').nth(0).click(); await page.waitForTimeout(1000);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-await click('btn-cerrar-explicacion'); await click('btn-copiar-ejemplo'); await page.waitForTimeout(300);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
+await click('btn-cerrar-explicacion'); await trabajarSobreCopia(page);
 
 console.log('--- 1. Se puede energizar ---');
 must('el botón de energizar está en la barra', await page.isVisible('#btn-energizar'));

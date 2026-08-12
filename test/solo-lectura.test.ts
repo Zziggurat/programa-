@@ -21,6 +21,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { cargarProyecto } from '../src/modelo/cargar.js';
+import { EJEMPLOS } from '../ejemplo/biblioteca.js';
+
 /*
  * La raíz del repositorio, subiendo hasta encontrar el `package.json`. Hace falta así porque la
  * prueba se ejecuta COMPILADA, desde `dist/test/`, y desde ahí `..` no es la raíz sino `dist/`.
@@ -113,4 +116,20 @@ test('el autoguardado no escribe un ejemplo encima del tablero del usuario', () 
 	assert.ok(cuerpo, 'no se encontró `autoguardar`');
 	assert.match(cuerpo, /if \(proyecto\.esEjemplo\) return;/,
 		'sin esto, abrir un ejemplo borra del navegador el tablero en el que estabas trabajando');
+});
+
+/*
+ * La marca de «esto es un ejemplo» vive en la sesión, no en el archivo.
+ *
+ * Si alguien descarga un ejemplo para estudiarlo con calma y luego lo abre, lo que abre es SUYO y
+ * se edita. Hoy sale gratis porque `cargarProyecto` reconstruye el proyecto campo por campo y no
+ * copia claves que no conozca; el día que alguien meta un `...bruto` para ahorrarse escribir, el
+ * archivo empezaría a traer el candado puesto y no habría manera de quitarlo desde el programa.
+ */
+test('un ejemplo descargado y vuelto a abrir es un tablero editable', () => {
+	const ejemplo = EJEMPLOS[0].crear();
+	(ejemplo as { esEjemplo?: boolean }).esEjemplo = true;
+	const devuelta = cargarProyecto(JSON.stringify(ejemplo));
+	assert.equal((devuelta.proyecto as { esEjemplo?: boolean }).esEjemplo, undefined,
+		'el archivo trae la marca de ejemplo: al abrirlo saldría bloqueado y sin forma de desbloquearlo');
 });

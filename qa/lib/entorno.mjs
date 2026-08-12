@@ -53,6 +53,37 @@ export async function abrirNavegador(chromium) {
 }
 
 /**
+ * PASA DE «ESTOY MIRANDO UN EJEMPLO» A «ESTOY TRABAJANDO EN MI COPIA».
+ *
+ * Los tableros de la biblioteca son de solo lectura, así que una suite que abre uno y luego lo
+ * edita tiene que hacer antes lo que haría el usuario: pulsar «Hacer una copia para trabajar».
+ *
+ * Y tiene que esperar A UN HECHO, no a un reloj. La primera versión de esto ponía la pulsación
+ * detrás de un `waitForTimeout(200)` y cuatro suites se cayeron en la batería —`correcciones`,
+ * `inicio-vistas`, `profesional` y `dossier-personalizado`—: abrir un ejemplo es asíncrono, el
+ * estrella-triángulo tarda cerca de segundo y medio en montarse, y el botón se pulsaba antes de
+ * que existiera. Y no fallaba con un error, que sería lo cómodo: la copia sencillamente no se
+ * hacía, el tablero seguía bloqueado, y lo que se veía después eran ediciones que no pasaban
+ * nada. Hora y media de batería para descubrir que la prueba iba tarde.
+ *
+ * El chip «📚 Ejemplo — solo lectura» aparece justo cuando el ejemplo termina de cargar y
+ * desaparece justo cuando la copia está hecha, así que sirve de bandera por los dos lados.
+ *
+ * Devuelve `false` si no había ningún ejemplo que copiar, para que valga igual en las suites que
+ * unas veces abren un ejemplo y otras no.
+ */
+export async function trabajarSobreCopia(page, { timeout = 20_000 } = {}) {
+	const esperar = (fn) => page.waitForFunction(fn, null, { timeout }).then(() => true, () => false);
+	const hayEjemplo = await esperar(() => document.getElementById('chip-ejemplo')?.hidden === false);
+	if (!hayEjemplo) return false;
+	await page.evaluate(() => document.getElementById('btn-copiar-ejemplo')?.click());
+	if (!(await esperar(() => document.getElementById('chip-ejemplo')?.hidden !== false))) {
+		throw new Error('se pulsó «Hacer una copia para trabajar» y el tablero siguió siendo un ejemplo');
+	}
+	return true;
+}
+
+/**
  * Cómo se llama Python aquí. En Windows el binario es `python`; en Linux y macOS, `python3`.
  * `PYTHON` lo deja elegir a mano si hay varios.
  */

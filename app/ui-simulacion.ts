@@ -45,6 +45,13 @@ export interface PanelSimulacion {
 	resultado: () => ResultadoSimulacion | undefined;
 	/** La posición de cada mando, para las pruebas. */
 	estadoDeLosMandos: () => EstadoTablero;
+	/**
+	 * Olvida TODO lo que la simulación recordaba: mandos, memoria del circuito y reloj.
+	 *
+	 * Lo llama el editor cuando el tablero se cambia entero —abrir un ejemplo, abrir un archivo,
+	 * empezar de cero—, porque a partir de ahí lo que hubiera guardado no es de este tablero.
+	 */
+	reiniciar: () => void;
 }
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -448,14 +455,26 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		}
 	}
 
-	($('btn-energizar') as HTMLButtonElement).onclick = () => aplicarEnergizado(!energizado);
-	($('btn-sim-reposo') as HTMLButtonElement).onclick = () => {
+	/**
+	 * Deja la maniobra como recién montada: pulsadores sueltos, protecciones rearmadas, reloj a
+	 * cero y sin memoria de qué bobinas estaban metidas.
+	 *
+	 * Es lo que hace el botón «Todo en reposo», y es también —exactamente lo mismo— lo que hay que
+	 * hacer cuando el tablero se cambia entero.
+	 */
+	function volverAReposo(): void {
 		estadoSim = {};
 		activosPrevios = new Set();
+		ultimaSim = undefined;
 		// El reloj también vuelve a cero: si no, los temporizadores seguirían con la cuenta de antes
 		// y un relé a la desconexión se quedaría enganchado sin motivo.
 		ajustarRelojSim();
 		recalcularSimulacion();
+	}
+
+	($('btn-energizar') as HTMLButtonElement).onclick = () => aplicarEnergizado(!energizado);
+	($('btn-sim-reposo') as HTMLButtonElement).onclick = () => {
+		volverAReposo();
 		avisar('Todo en reposo: pulsadores soltados, protecciones rearmadas y reloj a cero.', 'ok');
 	};
 
@@ -470,5 +489,6 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		accionar: accionarEnSimulacion,
 		resultado: () => ultimaSim,
 		estadoDeLosMandos: () => estadoSim,
+		reiniciar: () => { volverAReposo(); pintarSimulacion(); },
 	};
 }

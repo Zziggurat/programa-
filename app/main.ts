@@ -522,6 +522,17 @@ function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void): void {
 	/** Deja la pantalla contando lo que hay en `proyecto`, sea el nuevo o el que se recupera. */
 	const pintarloTodo = (): void => {
 		seleccionar(undefined);
+		/*
+		 * LA SIMULACIÓN OLVIDA EL TABLERO ANTERIOR.
+		 *
+		 * La memoria de la maniobra —qué mandos están pulsados, qué bobinas estaban metidas, por
+		 * dónde va el reloj— está indexada por el id del aparato, y los ejemplos reparten los mismos
+		 * ids: los cinco tienen un `km1`, cuatro tienen un `s1`. Sin esto, quien energiza el arranque
+		 * directo, aprieta MARCHA y se va a mirar el estrella-triángulo se lo encuentra ya arrancado
+		 * y con el temporizador vencido, o sea enseñando el triángulo sin pasar por la estrella, que
+		 * es justo lo único que ese ejemplo tiene que enseñar.
+		 */
+		panelSim.reiniciar();
 		ajustes?.();          // el modo de trabajo, por ejemplo: va DENTRO, para pintar ya con él
 		actualizarTodo();
 		construirHandles();   // los tiradores son de los aparatos de antes: hay que rehacerlos

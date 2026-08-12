@@ -22,7 +22,7 @@
  *   node qa/coste-arranque.mjs
  */
 import { chromium } from 'playwright-core';
-import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const { servidor } = await servidorDeQA();
 const b = await abrirNavegador(chromium);
@@ -72,11 +72,8 @@ if (await p.isVisible('#modal-ejemplos')) {
 	await p.waitForFunction(() => (window.qa?.proyecto()?.dispositivos.length ?? 0) > 3, { timeout: 60_000 });
 	if (await p.isVisible('#modal-dialogo')) await p.evaluate(() => document.getElementById('dialogo-ok')?.click());
 	await p.waitForTimeout(300);
-	await p.evaluate(() => {
-		document.getElementById('btn-cerrar-explicacion')?.click();
-		// un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
-		document.getElementById('btn-copiar-ejemplo')?.click();
-	});
+	await p.evaluate(() => document.getElementById('btn-cerrar-explicacion')?.click());
+	await trabajarSobreCopia(p);
 	await p.waitForTimeout(200);
 }
 apuntar('abrir un ejemplo', Date.now() - tCarga, 'ms');

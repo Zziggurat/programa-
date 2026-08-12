@@ -14,7 +14,7 @@ import { chromium } from 'playwright-core';
 import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const SAL = join(AQUI, '_salida'); mkdirSync(SAL, { recursive: true });
@@ -60,7 +60,7 @@ must('y la ventana de inicio se aparta', !(await page.isVisible('#inicio')));
 // Cargar un tablero con aparatos de fondos MUY distintos, que es donde se nota el alzado.
 await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(900);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-await click('btn-cerrar-explicacion'); await click('btn-copiar-ejemplo'); await page.waitForTimeout(200);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
+await click('btn-cerrar-explicacion'); await trabajarSobreCopia(page);
 const aparatos = await page.evaluate(() => window.qa.proyecto().dispositivos.map((d) => d.id));
 must('el ejemplo trae aparatos para medir', aparatos.length > 4, `${aparatos.length}`);
 // Fondos de trabajo: la placa (0) y la cara de un variador, el aparato que más sobresale.
@@ -240,7 +240,9 @@ if (await page.isVisible('#modal-dialogo')) { await click('dialogo-ok'); await p
 await click('btn-empezar-ejemplo'); await page.waitForTimeout(400);
 await page.locator('.tarjeta-ejemplo button').nth(0).click(); await page.waitForTimeout(1000);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-await click('btn-cerrar-explicacion'); await page.waitForTimeout(300);
+await click('btn-cerrar-explicacion');
+// De aquí abajo se tiende un cable entre dos bornes y se arrastra un punto: se edita.
+await trabajarSobreCopia(page);
 await click('modo-trabajo'); await page.waitForTimeout(400);
 await click('btn-centrar'); await page.waitForTimeout(700);
 

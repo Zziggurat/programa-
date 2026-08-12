@@ -11,7 +11,7 @@
  */
 import { chromium } from 'playwright-core';
 import { dirname } from 'node:path';import { fileURLToPath } from 'node:url';
-import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 const AQUI=dirname(fileURLToPath(import.meta.url)); const { servidor: s } = await servidorDeQA();
 const b=await abrirNavegador(chromium);
 const p=await b.newPage({viewport:{width:1500,height:900}});
@@ -33,11 +33,8 @@ await p.evaluate(()=>document.getElementById('btn-ejemplos')?.click());
 await p.waitForTimeout(500);
 await p.evaluate(()=>document.querySelectorAll('.tarjeta-ejemplo button')[0]?.click());
 await p.waitForTimeout(1800);
-await p.evaluate(() => {
-	document.getElementById('btn-cerrar-explicacion')?.click();
-	// un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
-	document.getElementById('btn-copiar-ejemplo')?.click();
-});
+await p.evaluate(() => document.getElementById('btn-cerrar-explicacion')?.click());
+await trabajarSobreCopia(p);
 await p.waitForTimeout(400);
 
 console.log('--- la NOTA del parte de obra (iba cruda al title) ---');

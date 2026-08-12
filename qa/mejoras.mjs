@@ -8,7 +8,7 @@
 import { chromium } from 'playwright-core';
 
 import { join } from 'node:path';
-import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const { servidor: server } = await servidorDeQA();
 const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
@@ -33,7 +33,7 @@ await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(700);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-	await jsClick('btn-cerrar-explicacion'); await jsClick('btn-copiar-ejemplo'); await page.waitForTimeout(200);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
+	await jsClick('btn-cerrar-explicacion'); await trabajarSobreCopia(page);
 }
 await jsClick('modo-editor'); await page.waitForTimeout(300);
 
