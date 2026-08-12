@@ -37,7 +37,7 @@ await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
 	await page.evaluate(() => document.querySelectorAll('.tarjeta-ejemplo button')[2].click());
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-	await page.waitForTimeout(750); await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+	await page.waitForTimeout(750); await jsClick('btn-cerrar-explicacion'); await jsClick('btn-copiar-ejemplo'); await page.waitForTimeout(200);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
 }
 
 /* ================= 3. La barra no hace scroll y los menús se despliegan ================= */

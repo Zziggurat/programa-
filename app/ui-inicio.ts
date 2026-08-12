@@ -132,10 +132,22 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 
 	/* ------------------- Biblioteca de tableros de ejemplo (para estudiar) ------------------- */
 
-	/** Abre un tablero de ejemplo y ofrece su explicación. */
-	function abrirEjemplo(ej: EjemploTablero): void {
+	/**
+	 * Abre un tablero de ejemplo y ofrece su explicación.
+	 *
+	 * PREGUNTA ANTES SI HAY TRABAJO SIN GUARDAR. No lo hacía: abrir un ejemplo para consultar una
+	 * duda —que es justo para lo que están— se llevaba por delante el tablero que uno tenía a
+	 * medias, sin avisar y sin poder recuperarlo salvo por Ctrl+Z. Abrir un ARCHIVO sí preguntaba
+	 * desde siempre; esto se quedó fuera, y es el camino que más se usa.
+	 *
+	 * Y el ejemplo se marca como tal: se mira y se energiza, pero no se edita. Un ejemplo que se
+	 * puede editar deja de enseñar en cuanto alguien borra un cable sin querer.
+	 */
+	async function abrirEjemplo(ej: EjemploTablero): Promise<void> {
+		if (!(await puedoReemplazarElTablero(`el ejemplo «${ej.titulo}»`))) return;
 		const nuevo = ej.crear();
 		numerarDispositivos(nuevo);
+		nuevo.esEjemplo = true;
 		try {
 			// El modo Trabajo entra dentro: el ejemplo se abre listo para recorrer el cableado.
 			ctx.reemplazarProyecto(nuevo, () => ctx.aplicarModo('trabajo'));
@@ -176,9 +188,9 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 			const b = document.createElement('button');
 			b.className = 'boton primario';
 			b.textContent = 'Abrir y estudiar';
-			b.onclick = () => { void (async () => {
-				if (await puedoReemplazarElTablero('este ejemplo')) abrirEjemplo(ej);
-			})(); };
+			// La pregunta de «tienes trabajo sin guardar» la hace `abrirEjemplo`, que es el embudo:
+			// así la hereda cualquier otro camino que se añada mañana, y no se pregunta dos veces.
+			b.onclick = () => { void abrirEjemplo(ej); };
 			div.appendChild(b);
 			cont.appendChild(div);
 		}

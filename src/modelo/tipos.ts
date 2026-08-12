@@ -435,6 +435,15 @@ export interface OpcionesProyecto {
 }
 
 export interface Proyecto {
+	/**
+	 * Este tablero es uno de los EJEMPLOS de la biblioteca: se mira, se energiza y se estudia,
+	 * pero no se modifica.
+	 *
+	 * Un ejemplo que se puede editar deja de ser un ejemplo en cuanto alguien borra un cable sin
+	 * querer, y no hay forma de recuperarlo. Con la marca puesta, `capturar()` veta toda mutación
+	 * —ver `app/main.ts`— y el editor ofrece «Hacer una copia para trabajar», que la quita.
+	 */
+	esEjemplo?: boolean;
 	formato: 'tablero-studio';
 	version: 1;
 	nombre: string;

@@ -46,7 +46,7 @@ must('el tablero se carga con sus aparatos', (await proyecto()).dispositivos.len
 	`${(await proyecto()).dispositivos.length}`);
 must('y con su cableado', (await proyecto()).conductores.length >= 10, `${(await proyecto()).conductores.length}`);
 must('sin cables fantasma', (await qa('cablesDibujados')) === (await proyecto()).conductores.length);
-await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+await jsClick('btn-cerrar-explicacion'); await jsClick('btn-copiar-ejemplo'); await page.waitForTimeout(200);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
 must('la explicación se puede volver a abrir', await (async () => {
 	await jsClick('btn-explicacion'); await page.waitForTimeout(250);
 	const v = await visible('#modal-explicacion');

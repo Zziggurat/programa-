@@ -601,6 +601,14 @@
 
 	/* Modo Energizar */
 	#btn-energizar.activo { background: #7a5c00; border-color: #d9a400; color: #fff2cc; }
+	/* El aviso de «esto es un ejemplo»: se ve, pero no grita ni se come la barra. */
+	#chip-ejemplo { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+		background: #1e3a5f; border: 1px solid #3d6fa5; color: #cfe3ff; border-radius: 999px;
+		padding: 3px 6px 3px 12px; font-size: 12px; }
+	#chip-ejemplo[hidden] { display: none; }
+	#btn-copiar-ejemplo { background: #3d6fa5; border: none; color: #fff; border-radius: 999px;
+		padding: 4px 11px; font-size: 11.5px; font-family: inherit; cursor: pointer; }
+	#btn-copiar-ejemplo:hover { background: #4d86c4; }
 	body.modo-simulacion #escena { box-shadow: inset 0 0 0 2px #d9a40055; }
 	.fila-sim { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px;
 		background: var(--panel-2); margin-bottom: 4px; font-size: 12.5px; cursor: pointer; }
@@ -962,6 +970,13 @@
 	<button class="marca" id="btn-inicio" title="Volver a la ventana de inicio">⚡ Tablero<span>Studio</span></button>
 	<input id="nombre-proyecto" title="Nombre del proyecto">
 	<span id="estado-guardado" title="Estado del guardado automático">Guardado</span>
+	<!--
+		AVISO DE TABLERO DE EJEMPLO. Sale solo cuando lo que hay abierto es uno de la biblioteca:
+		se mira y se energiza, pero no se edita. El botón es la salida para quien quiera cambiarlo.
+	-->
+	<span id="chip-ejemplo" hidden>📚 Ejemplo — solo lectura
+		<button id="btn-copiar-ejemplo" title="Crea un tablero tuyo, igual a este, que sí puedes modificar y se guarda con tu trabajo">Hacer una copia para trabajar</button>
+	</span>
 	<div id="modos" title="Editor: armar y modificar la caja. Trabajo: solo cablear y verificar (nada se mueve).">
 		<button id="modo-editor" class="activo">🔧 Editor</button>
 		<button id="modo-trabajo">🔌 Trabajo</button>

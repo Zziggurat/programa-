@@ -74,7 +74,7 @@ console.log('\n--- 1. El dossier de un tablero real ---');
 await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(400);
 await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(800);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+await jsClick('btn-cerrar-explicacion'); await jsClick('btn-copiar-ejemplo'); await page.waitForTimeout(200);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
 
 const p = await qa('proyecto');
 const uno = await exportar('ejemplo');

@@ -200,6 +200,40 @@ let estadoGuardado: EstadoGuardado = 'guardado';
 /** True desde el primer cambio hasta que se descarga el proyecto como archivo. */
 let hayCambiosSinExportar = false;
 
+/**
+ * Enseña u oculta el aviso de «esto es un ejemplo», según lo que haya abierto.
+ *
+ * Va junto al estado del guardado porque es lo mismo que está diciendo: en un ejemplo no hay nada
+ * que guardar, y conviene que las dos cosas se lean de un vistazo y en el mismo sitio.
+ */
+function pintarChipEjemplo(): void {
+	const chip = $('chip-ejemplo');
+	chip.hidden = !proyecto.esEjemplo;
+	// En un ejemplo el estado del guardado no significa nada: no se guarda, y decir «Guardado»
+	// haría creer que el tablero de uno está a salvo cuando lo que está en pantalla es otro.
+	($('estado-guardado') as HTMLElement).hidden = !!proyecto.esEjemplo;
+}
+
+/**
+ * Convierte el ejemplo abierto en un tablero DEL USUARIO: quita la marca, le cambia el nombre y a
+ * partir de ahí se puede editar y se guarda como cualquier otro.
+ *
+ * Es la salida para quien quiera trastear —los propios ejemplos lo piden: «cámbiale el retardo o
+ * los 21 °C y vuelve a simular»—, sin que el ejemplo original se pueda estropear.
+ */
+function copiarEjemploParaTrabajar(): void {
+	if (!proyecto.esEjemplo) return;
+	delete proyecto.esEjemplo;
+	proyecto.nombre = `Copia de ${proyecto.nombre}`;
+	($('nombre-proyecto') as HTMLInputElement).value = proyecto.nombre;
+	pintarChipEjemplo();
+	// Ahora sí es trabajo suyo: se marca y se guarda, como cualquier cambio.
+	marcarSucio();
+	actualizarBotonesHistorial();
+	avisar('Ya es tuyo: puedes modificarlo y se guarda con tu trabajo. '
+		+ 'El ejemplo original sigue intacto en la biblioteca.', 'ok');
+}
+
 function pintarEstadoGuardado(motivo?: string): void {
 	const e = $('estado-guardado');
 	e.classList.toggle('sucio', estadoGuardado === 'sucio');
@@ -223,6 +257,20 @@ function autoguardar(): void {
 	// Hay un proyecto guardado que no se ha podido leer. Hasta que el usuario diga qué hacer con
 	// él, no se escribe: sobrescribirlo sería destruir justo lo que está intentando recuperar.
 	if (guardadoCongelado) return;
+	/*
+	 * UN EJEMPLO NO ES TRABAJO TUYO Y NO SE GUARDA ENCIMA DEL TUYO.
+	 *
+	 * Esto es lo que de verdad se perdía. El aviso de «se reemplaza lo que hay» hablaba de la
+	 * pantalla, pero al abrir un ejemplo se escribía TAMBIÉN en `localStorage`, que es donde vive
+	 * el tablero de quien nunca descarga el archivo —o sea, casi todo el mundo—. Medido: con «MI
+	 * TABLERO DEL AEROPUERTO» a medias, abrir el estrella-triángulo dejaba el autoguardado con el
+	 * estrella-triángulo. Cerrabas la pestaña y tu tablero no existía en ninguna parte.
+	 *
+	 * Ahora abrir un ejemplo no toca el guardado: se mira, se energiza, se cierra, y al volver
+	 * sigue estando lo tuyo. Y si el ejemplo gusta, «Hacer una copia para trabajar» lo convierte en
+	 * tuyo —quita la marca— y desde ese momento sí se guarda.
+	 */
+	if (proyecto.esEjemplo) return;
 	try {
 		localStorage.setItem(CLAVE_AUTOSAVE, JSON.stringify(proyecto));
 		if (estadoGuardado === 'fallo') avisar('El guardado automático volvió a funcionar.', 'ok');
@@ -390,8 +438,24 @@ void resolverAutoguardadoIlegible();
 const pila: string[] = [];      // estados anteriores (JSON)
 const rehacerPila: string[] = [];
 
-/** Guarda el estado ACTUAL antes de una mutación, para poder deshacerla. */
-function capturar(): void {
+/**
+ * Guarda el estado ACTUAL antes de una mutación, para poder deshacerla.
+ *
+ * DEVUELVE SI SE PUEDE CAMBIAR EL TABLERO, y quien la llama tiene que mirarlo: en un tablero de
+ * ejemplo dice que no y no hay que tocar nada.
+ *
+ * Que el veto viva aquí no es casualidad. Los ejemplos son para estudiar, y si se pudieran editar
+ * bastaría un Supr sin querer para que el que enseña el estrella-triángulo dejara de enseñarlo, sin
+ * forma de recuperarlo. Poner la comprobación en cada botón sería olvidarse de uno; ponerla aquí la
+ * hereda TODA mutación, porque toda mutación que se pueda deshacer pasa por este punto —es lo que
+ * significa poder deshacerla—. Y `test/solo-lectura.test.ts` comprueba que ninguna llamada se salte
+ * el resultado.
+ *
+ * Lo que NO bloquea, a propósito: energizar, accionar los mandos, mirar el esquema, el dossier y la
+ * Planta. Eso es USAR el tablero, que es justo para lo que está el ejemplo.
+ */
+function capturar(): boolean {
+	if (!sePuedeEditar()) return false;
 	// Solo la señal: aquí todavía no ha cambiado nada, así que guardar ahora escribiría el estado
 	// de ANTES. Lo guarda quien haga el cambio, justo después.
 	senalarTrabajoSinExportar();
@@ -399,6 +463,30 @@ function capturar(): void {
 	if (pila.length > 60) pila.shift();
 	rehacerPila.length = 0;
 	actualizarBotonesHistorial();
+	return true;
+}
+
+/**
+ * ¿Se puede cambiar este tablero? En un ejemplo, no, y lo dice.
+ *
+ * Se puede preguntar SUELTA, y hay que hacerlo antes de cualquier diálogo de confirmación. Si no,
+ * pasa lo que pasaba: pulsabas Supr sobre un ejemplo, el programa preguntaba «¿Eliminar -KM1 y sus
+ * cables?» —con su botón rojo y todo— y solo después de decir que sí te enterabas de que no se
+ * puede. Preguntar por algo que no vas a hacer es una forma rara de decir que no.
+ */
+function sePuedeEditar(): boolean {
+	if (!proyecto.esEjemplo) return true;
+	avisarQueEsEjemplo();
+	return false;
+}
+
+/** Lo dice UNA vez cada pocos segundos: repetirlo en cada clic sería insoportable. */
+let ultimoAvisoEjemplo = 0;
+function avisarQueEsEjemplo(): void {
+	if (Date.now() - ultimoAvisoEjemplo < 4000) return;
+	ultimoAvisoEjemplo = Date.now();
+	avisar('Este es un tablero de EJEMPLO: se mira y se energiza, pero no se modifica. '
+		+ 'Pulsa «Hacer una copia para trabajar» y tendrás el mismo tablero para ti.', 'info');
 }
 
 /**
@@ -454,8 +542,13 @@ function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void): void {
 	} finally {
 		guardadoCongelado = congeladoAntes;
 	}
-	// Salió bien: ahora sí entra en el historial y se escribe, las dos cosas juntas.
-	senalarTrabajoSinExportar();
+	/*
+	 * Salió bien: ahora sí entra en el historial y se escribe, las dos cosas juntas.
+	 *
+	 * Un ejemplo no marca «trabajo sin descargar»: no es trabajo tuyo. Si lo marcara, al cerrar la
+	 * pestaña el navegador preguntaría por un tablero que no es del usuario.
+	 */
+	if (!proyecto.esEjemplo) senalarTrabajoSinExportar();
 	pila.push(instantanea);
 	if (pila.length > 60) pila.shift();
 	rehacerPila.length = 0;
@@ -480,6 +573,13 @@ function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void): void {
  * sería reescribir media placa—; lo que se guarda es la foto de antes, para poder volver.
  */
 function mutarProyecto(cambiar: () => void): void {
+	/*
+	 * El veto del ejemplo también aquí, y no por precaución: `mutarProyecto` lleva su propio
+	 * historial y NO pasa por `capturar()`, así que se quedaba fuera del bloqueo. Lo cazó la
+	 * prueba: en un ejemplo, Ctrl+V pegaba. `reemplazarProyecto` sí puede seguir —cambiar el
+	 * tablero entero es justo lo que hace abrir un ejemplo—.
+	 */
+	if (!sePuedeEditar()) return;
 	const instantanea = JSON.stringify(proyecto);
 	const pilaAntes = [...pila];
 	const rehacerAntes = [...rehacerPila];
@@ -811,6 +911,7 @@ function montarEscenario(): void {
 
 /** Recalcula, reconstruye y repinta todo (tras un cambio estructural). */
 function actualizarTodo(): void {
+	pintarChipEjemplo();   // el aviso de «esto es un ejemplo» sigue al tablero que haya abierto
 	recalcular();
 	montarEscenario();
 	pintarPaneles();
@@ -860,6 +961,7 @@ function trasCambiarProyecto(): void {
 	pintarEstructura();
 	pintarSeleccion();
 	actualizarBotonesHistorial();
+	pintarChipEjemplo();
 }
 
 /* --------------------------- Utilidades UI --------------------------- */
@@ -1037,7 +1139,7 @@ function colocarPlantilla(plantilla: PlantillaAparato): void {
 	 * no buscan hueco ni riel — solo entran al proyecto, y el dibujo los saca por el borde.
 	 */
 	if (plantilla.campo) {
-		capturar();
+		if (!capturar()) return;
 		const dc = crearDesdePlantilla(plantilla, proyecto);
 		dc.hojaId = proyecto.hojas[0]?.id;
 		dc.posicion = { x: proyecto.dispositivos.length % 10, y: Math.floor(proyecto.dispositivos.length / 10) };
@@ -1056,7 +1158,7 @@ function colocarPlantilla(plantilla: PlantillaAparato): void {
 	}
 	// Si ya había uno pegado al ratón, se suelta donde esté antes de sacar el siguiente.
 	if (colocando) soltarColocacion();
-	capturar();
+	if (!capturar()) return;
 	const d = crearDesdePlantilla(plantilla, proyecto);
 	d.hojaId = proyecto.hojas[0]?.id;
 	d.posicion = { x: proyecto.dispositivos.length % 10, y: Math.floor(proyecto.dispositivos.length / 10) };
@@ -1204,7 +1306,7 @@ function duplicarDispositivo(id: string): void {
 			x = hueco.x; y = hueco.y; rielId = hueco.rielId;
 		}
 	}
-	capturar();
+	if (!capturar()) return;
 	proyecto.dispositivos.push(copia);
 	const nueva = { dispositivoId: copia.id, x, y, ancho: col.ancho, alto: col.alto, rielId, z: col.z };
 	g.colocaciones.push(nueva);
@@ -1238,9 +1340,10 @@ function extenderRielPara(col: { x: number; y: number; ancho: number; alto: numb
 }
 
 async function eliminarDispositivo(id: string): Promise<void> {
+	if (!sePuedeEditar()) return;   // antes de preguntar: ver `sePuedeEditar`
 	const nombre = etiquetaDe(id);
 	if (!(await confirmar(`¿Eliminar ${nombre} y sus cables?`, { ok: 'Eliminar', peligro: true }))) return;
-	capturar();
+	if (!capturar()) return;
 	proyecto.dispositivos = proyecto.dispositivos.filter((d) => d.id !== id);
 	proyecto.conductores = proyecto.conductores.filter(
 		(c) => c.de.dispositivoId !== id && c.a.dispositivoId !== id,
@@ -1610,7 +1713,7 @@ function pintarSeleccion(): void {
 				+ `:${escaparHtml(otro.borneId)}${c.seccion ? ` · ${escaparHtml(String(c.seccion))} mm²` : ''}</span>
 				<button class="quitar" title="Quitar cable">✕</button>`;
 			(fila.querySelector('.quitar') as HTMLButtonElement).onclick = () => {
-				capturar();
+				if (!capturar()) return;
 				proyecto.conductores = proyecto.conductores.filter((x) => x.id !== c.id);
 				recalcular();
 				reconstruirCables();
@@ -1637,7 +1740,7 @@ function pintarSeleccion(): void {
 		btnConectar.onclick = () => {
 			const destino = selDestino.value;
 			if (!destino) return;
-			capturar();
+			if (!capturar()) return;
 			proyecto.conductores.push({
 				id: idUnico('c'),
 				de: { dispositivoId: d.id, borneId: (panel.querySelector('#cable-borne-origen') as HTMLSelectElement).value },
@@ -1674,7 +1777,7 @@ function pintarSeleccion(): void {
 		 */
 		const aplicar = (cambio: () => void, rehacerModelo = false) => {
 			const enfocado = (document.activeElement as HTMLElement | null)?.id;
-			capturar();
+			if (!capturar()) return;
 			cambio();
 			recalcular();
 			if (rehacerModelo) reconstruirDispositivoUno(d.id);
@@ -1814,7 +1917,7 @@ function pintarSeleccion(): void {
 				const v = numeroDe(campo.value);
 				if (v === undefined || v < 5) { pintarSeleccion(); return; }
 				const antes = col[dim];
-				capturar();
+				if (!capturar()) return;
 				col[dim] = Math.round(v);
 				if (solapaCon(col.x, col.y, col.ancho, col.alto, d.id)) {
 					col[dim] = antes;
@@ -1858,7 +1961,7 @@ function pintarSeleccion(): void {
 		 */
 		const moverEnZ = (paso: number) => {
 			if (!col) return;
-			capturar();
+			if (!capturar()) return;
 			const z = col.z ?? 0;
 			const destino = paso > 0
 				? (z < Z_IMAGEN_FRENTE ? Z_IMAGEN_FRENTE : z + 20)
@@ -1881,7 +1984,7 @@ function pintarSeleccion(): void {
 			fila.innerHTML = `<span class="num">◉</span><span>${escaparHtml(b.id)}</span>
 				<button class="quitar" title="Quitar punto">✕</button>`;
 			(fila.querySelector('.quitar') as HTMLButtonElement).onclick = () => {
-				capturar();
+				if (!capturar()) return;
 				d.bornes = d.bornes.filter((x) => x.id !== b.id);
 				proyecto.conductores = proyecto.conductores.filter(
 					(c) => !(c.de.dispositivoId === d.id && c.de.borneId === b.id) &&
@@ -1927,7 +2030,7 @@ function pintarPanelEstructura(s: Seleccion): void {
 	`;
 	// Girar (H↔V) al instante.
 	(panel.querySelector('#e-girar') as HTMLButtonElement).onclick = () => {
-		capturar();
+		if (!capturar()) return;
 		const nueva: 'h' | 'v' = esV ? 'h' : 'v';
 		if (can) can.orientacion = nueva;
 		else (obj as typeof g.rieles[number]).orientacion = nueva;
@@ -1936,7 +2039,7 @@ function pintarPanelEstructura(s: Seleccion): void {
 		pintarPanelEstructura(s); // refrescar el propio panel (texto del botón)
 	};
 	(panel.querySelector('#e-aplicar') as HTMLButtonElement).onclick = () => {
-		capturar();
+		if (!capturar()) return;
 		obj.x = Math.round(Number((panel.querySelector('#e-x') as HTMLInputElement).value) * 10);
 		obj.y = Math.round(Number((panel.querySelector('#e-y') as HTMLInputElement).value) * 10);
 		obj.largo = Math.max(60, Math.round(Number((panel.querySelector('#e-largo') as HTMLInputElement).value) * 10));
@@ -1975,18 +2078,18 @@ function pintarPanelCable(id: string): void {
 		</div>
 	`;
 	(panel.querySelector('#cbl-seccion') as HTMLSelectElement).onchange = (e) => {
-		capturar();
+		if (!capturar()) return;
 		c.seccion = Number((e.target as HTMLSelectElement).value);
 		recalcular(); reconstruirCables(); pintarPaneles();
 	};
 	(panel.querySelector('#cbl-color') as HTMLSelectElement).onchange = (e) => {
-		capturar();
+		if (!capturar()) return;
 		c.color = (e.target as HTMLSelectElement).value;
 		reconstruirCables();
 		marcarSucio();   // cambiar el color no recalcula nada, pero SÍ hay que guardarlo
 	};
 	(panel.querySelector('#cbl-auto') as HTMLButtonElement | null)?.addEventListener('click', () => {
-		capturar();
+		if (!capturar()) return;
 		delete c.trazado;
 		recalcular(); reconstruirCables(); construirHandles(); pintarSeleccion();
 	});
@@ -2021,7 +2124,7 @@ function pintarEstructura(): void {
 
 	for (const btn of document.querySelectorAll('[data-quitar]')) {
 		(btn as HTMLButtonElement).onclick = (ev) => {
-			capturar();
+			if (!capturar()) return;
 			const fila = (ev.target as HTMLElement).closest('.fila-estructura') as HTMLElement;
 			const id = fila.dataset.id!;
 			if (fila.dataset.tipo === 'riel') g.rieles = g.rieles.filter((r) => r.id !== id);
@@ -2039,7 +2142,7 @@ function siguienteId(prefijo: string, existentes: { id: string }[]): string {
 }
 
 function aplicarEstructura(): void {
-	capturar();
+	if (!capturar()) return;
 	const g = proyecto.gabinete!;
 	// 0. Caja envolvente (dimensiones propias, independientes de la placa).
 	g.caja = {
@@ -2093,14 +2196,14 @@ function aplicarEstructura(): void {
 
 ($('aplicar-dim') as HTMLButtonElement).onclick = aplicarEstructura;
 ($('btn-add-riel') as HTMLButtonElement).onclick = () => {
-	capturar();
+	if (!capturar()) return;
 	const g = proyecto.gabinete!;
 	g.rieles.push({ id: siguienteId('riel', g.rieles), x: 30, y: Math.round(g.alto / 2), largo: g.ancho - 60 });
 	actualizarTodo();
 	pintarEstructura();
 };
 ($('btn-add-can-h') as HTMLButtonElement).onclick = () => {
-	capturar();
+	if (!capturar()) return;
 	const g = proyecto.gabinete!;
 	g.canaletas.push({
 		id: siguienteId('ch', g.canaletas), x: 20, y: Math.round(g.alto / 2) + 80,
@@ -2110,7 +2213,7 @@ function aplicarEstructura(): void {
 	pintarEstructura();
 };
 ($('btn-add-can-v') as HTMLButtonElement).onclick = () => {
-	capturar();
+	if (!capturar()) return;
 	const g = proyecto.gabinete!;
 	g.canaletas.push({
 		id: siguienteId('cv', g.canaletas), x: g.ancho - 60, y: 140,
@@ -2226,6 +2329,7 @@ function moverAcompanantes(dx: number, dy: number): void {
 
 /** Borra de una vez todos los aparatos seleccionados, con una sola confirmación. */
 async function eliminarSeleccionados(): Promise<void> {
+	if (!sePuedeEditar()) return;
 	const ids = aparatosSeleccionados();
 	if (ids.length <= 1) { if (ids[0]) await eliminarDispositivo(ids[0]); return; }
 	const cables = proyecto.conductores.filter(
@@ -2233,7 +2337,7 @@ async function eliminarSeleccionados(): Promise<void> {
 	).length;
 	const detalle = cables ? ` y sus ${cables} cables` : '';
 	if (!(await confirmar(`¿Eliminar ${ids.length} aparatos${detalle}?`, { ok: 'Eliminar', peligro: true }))) return;
-	capturar();
+	if (!capturar()) return;
 	const fuera = new Set(ids);
 	proyecto.dispositivos = proyecto.dispositivos.filter((d) => !fuera.has(d.id));
 	proyecto.conductores = proyecto.conductores.filter(
@@ -2260,7 +2364,7 @@ function alinearSeleccionados(como: Alineacion): void {
 	if (!g || ids.length < 2) { avisar('Selecciona dos o más aparatos con Shift para alinearlos.', 'info'); return; }
 	const cols = ids.map((id) => g.colocaciones.find((c) => c.dispositivoId === id)).filter((c): c is NonNullable<typeof c> => !!c);
 	if (cols.length < 2) return;
-	capturar();
+	if (!capturar()) return;
 
 	const izq = Math.min(...cols.map((c) => c.x));
 	const der = Math.max(...cols.map((c) => c.x + c.ancho));
@@ -2600,7 +2704,7 @@ function actualizarGomaCable(x: number, y: number): void {
 /** Quita un cable del proyecto (botón del panel o tecla Supr). Se deshace con Ctrl+Z. */
 function quitarCable(id: string): void {
 	if (!proyecto.conductores.some((x) => x.id === id)) return;
-	capturar();
+	if (!capturar()) return;
 	proyecto.conductores = proyecto.conductores.filter((x) => x.id !== id);
 	aplicarSeleccion(undefined);
 	recalcular();
@@ -2621,7 +2725,7 @@ function completarCableado(destino: RefBorne): void {
 		|| (c.a.dispositivoId === origen.dispositivoId && c.a.borneId === origen.borneId
 			&& c.de.dispositivoId === destino.dispositivoId && c.de.borneId === destino.borneId));
 	if (yaExiste) { avisar('Esos dos bornes ya están conectados.', 'info'); cancelarCableado(); return; }
-	capturar();
+	if (!capturar()) return;
 	const codos = codosCableado.slice(); // los codos marcados al tender el cable quedan fijados
 	proyecto.conductores.push({
 		id: idUnico('c'),
@@ -3052,7 +3156,7 @@ function anadirPin(ev: PointerEvent): boolean {
 	void (async () => {
 		const etiqueta = await pedirTexto('Nombre del punto de conexión (p. ej. L1, GND, +24):', `P${d.bornes.length + 1}`);
 		if (etiqueta === null) return;
-		capturar();
+		if (!capturar()) return;
 		d.bornes.push({ id: etiqueta.trim() || `P${d.bornes.length + 1}`, u, v });
 		actualizarTodo();
 	})();
@@ -3067,7 +3171,7 @@ async function editarCota(datos: DatosCota): Promise<void> {
 	if (entrada === null) return;
 	const cm = Number(entrada.replace(',', '.'));
 	if (!isFinite(cm) || cm <= 0) { avisar('Introduce un número válido en cm', 'error'); return; }
-	capturar();
+	if (!capturar()) return;
 	const mm = Math.round(cm * 10);
 	const o = datos.objetivo;
 	if (o.tipo === 'caja') {
@@ -3286,7 +3390,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		if (!pc) return;
 		if (Math.hypot(pc.x - pendienteCable.x, pc.y - pendienteCable.y) < 6) return; // aún es un clic
 		if (pendienteCable.indice >= 0) {
-			capturar();
+			if (!capturar()) return;
 			arrastrandoCable = { id: pendienteCable.id, indice: pendienteCable.indice };
 			capturadoEsteArrastre = true;
 		} else {
@@ -3314,7 +3418,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (!sel) return;
 	const p = puntoModelo(ev);
 	if (!p) return;
-	if (!capturadoEsteArrastre) { capturar(); capturadoEsteArrastre = true; }
+	if (!capturadoEsteArrastre) { if (!capturar()) return; capturadoEsteArrastre = true; }
 	// Antes de tocar nada: foto del riel y de sus aparatos, por si hay que devolverlos.
 	if (!estadoRielArrastre && sel.tipo === 'riel') estadoRielArrastre = capturarEstadoRiel(sel.id);
 	const g = proyecto.gabinete!;
@@ -3523,7 +3627,7 @@ function crearUnionBajoElPuntero(ev: MouseEvent): boolean {
 	const c = cid ? proyecto.conductores.find((x) => x.id === cid) : undefined;
 	if (!c || !p) return false;
 	if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: c.id });
-	capturar();
+	if (!capturar()) return false;
 	insertarWaypoint(c, p.x, p.y);
 	reconstruirCables();
 	construirHandles();
@@ -3541,7 +3645,7 @@ renderer.domElement.addEventListener('dblclick', (ev) => {
 	if (handle?.sel.tipo === 'cable' && handle.indice !== undefined && handle.indice >= 0) {
 		const c = proyecto.conductores.find((x) => x.id === handle.sel.id);
 		if (c?.trazado && handle.indice < c.trazado.length) {
-			capturar();
+			if (!capturar()) return;
 			c.trazado.splice(handle.indice, 1);
 			if (c.trazado.length === 0) delete c.trazado;
 			reconstruirCables();
@@ -3729,10 +3833,11 @@ function reconstruirDispositivoUno(id: string): void {
 }
 
 async function eliminarEstructura(s: Seleccion): Promise<void> {
+	if (!sePuedeEditar()) return;
 	const g = proyecto.gabinete!;
 	const nombre = s.tipo === 'canaleta' ? 'la canaleta' : 'el riel';
 	if (!(await confirmar(`¿Eliminar ${nombre} «${s.id}»?`, { ok: 'Eliminar', peligro: true }))) return;
-	capturar();
+	if (!capturar()) return;
 	if (s.tipo === 'canaleta') g.canaletas = g.canaletas.filter((c) => c.id !== s.id);
 	else g.rieles = g.rieles.filter((r) => r.id !== s.id);
 	aplicarSeleccion(undefined);
@@ -3750,13 +3855,18 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 
 ($('btn-nuevo') as HTMLButtonElement).onclick = async () => {
 	if (!(await confirmar('¿Empezar un tablero nuevo? Se vacía la placa (Ctrl+Z lo deshace).', { ok: 'Empezar de cero' }))) return;
-	capturar();
-	proyecto = proyectoNuevo();
-	seleccionar(undefined);
-	aplicarModo('editor'); // que se vea el catálogo para poder empezar a añadir aparatos
-	actualizarTodo();
-	pintarEstructura();
-	encuadrar();
+	/*
+	 * Va por `reemplazarProyecto` y NO por `capturar()`, y eso importa por dos razones.
+	 *
+	 * La primera: empezar de cero estando en un ejemplo tiene que funcionar. Salir de un ejemplo no
+	 * es editarlo, y con el veto en `capturar()` el botón «Nuevo tablero» se quedaba muerto —lo
+	 * cazó `qa/general.mjs`, que carga un ejemplo y pulsa Nuevo—.
+	 *
+	 * La segunda: así es todo o nada, como abrir un archivo, un ejemplo o una plantilla. Las cuatro
+	 * puertas que cambian el tablero entero pasan ya por el mismo sitio.
+	 */
+	// El catálogo se ve desde el primer momento, para poder empezar a añadir aparatos.
+	reemplazarProyecto(proyectoNuevo(), () => aplicarModo('editor'));
 };
 
 ($('btn-guardar') as HTMLButtonElement).onclick = () => {
@@ -3823,7 +3933,7 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 		const img = new Image();
 		img.onload = () => {
 			if (modo !== 'editor') aplicarModo('editor');
-			capturar();
+			if (!capturar()) return;
 			const g = proyecto.gabinete!;
 			// Tamaño inicial ~1/3 del ancho de placa, conservando proporción de la imagen.
 			const ancho = Math.round(g.ancho * 0.35);
@@ -4027,7 +4137,7 @@ function abrirTableroDesdeLaPlanta(nuevo: Proyecto, resumen: string): void {
 }
 
 function abrirTableroDesdeLaPlantaSinPreguntar(nuevo: Proyecto, resumen: string): void {
-	capturar();
+	if (!capturar()) return;
 	proyecto = nuevo;
 	numerarDispositivos(proyecto);
 	panelInicio.olvidarEjemplo();
@@ -4107,6 +4217,7 @@ function aplicarModo(nuevo: Modo): void {
 $('modo-editor').onclick = () => { if (!visualizacion) aplicarModo('editor'); };
 $('modo-trabajo').onclick = () => { if (!visualizacion) aplicarModo('trabajo'); };
 ($('btn-ver') as HTMLButtonElement).onclick = () => aplicarVisualizacion(!visualizacion);
+($('btn-copiar-ejemplo') as HTMLButtonElement).onclick = () => copiarEjemploParaTrabajar();
 
 ($('btn-deshacer') as HTMLButtonElement).onclick = deshacer;
 ($('btn-rehacer') as HTMLButtonElement).onclick = rehacer;
@@ -4544,7 +4655,7 @@ function guardarDatosProyecto(): void {
 			+ 'Corrígelo o déjalo en blanco para dejarlo sin declarar.', 'error');
 		return;   // la ventana se queda abierta y el proyecto, intacto
 	}
-	capturar();
+	if (!capturar()) return;
 	proyecto.datos = {
 		cliente: texto('pr-cliente'),
 		obra: texto('pr-obra'),

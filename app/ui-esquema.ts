@@ -27,7 +27,12 @@ export interface ContextoEsquema {
 	dispositivoSeleccionado: () => string | undefined;
 	/** Selecciona un aparato en todo el programa (el esquema y el 3D son dos vistas del mismo). */
 	seleccionar: (id: string) => void;
-	capturar: () => void;
+	/**
+	 * Guarda un punto de deshacer antes de cambiar nada, y DICE SI SE PUEDE CAMBIAR: en un tablero
+	 * de ejemplo dice que no. Quien la llama tiene que mirar el resultado y no tocar nada si es
+	 * `false`; `test/solo-lectura.test.ts` comprueba que nadie se lo salte.
+	 */
+	capturar: () => boolean;
 	marcarSucio: () => void;
 	actualizarTodo: () => void;
 	/** Nombre base de archivo del proyecto, ya saneado. */
@@ -173,7 +178,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				// sigue siendo un clic y no mueve nada sin querer.
 				if (r.columna === (antes?.columna ?? -1) && r.fila === (antes?.fila ?? -1)) return;
 				movido = true;
-				capturar();
+				if (!capturar()) return;
 				$('esquema-hoja').classList.add('arrastrando');
 			}
 			if (r.columna === destino?.columna && r.fila === destino?.fila) return;
@@ -243,7 +248,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const n = Math.max(4, Math.min(20, Number((ev.target as HTMLInputElement).value) || 10));
 		(ev.target as HTMLInputElement).value = String(n);
 		if (n === (proyecto().esquema?.columnasPorHoja ?? 10)) return;
-		capturar();
+		if (!capturar()) return;
 		proyecto().esquema = { ...proyecto().esquema, columnasPorHoja: n };
 		marcarSucio();
 		actualizarTodo();
@@ -255,7 +260,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		if (!hoja) { avisar('Todavía no hay ninguna hoja.', 'info'); return; }
 		const nuevo = await pedirTexto(`Título de la hoja ${hoja.numero}:`, hoja.titulo);
 		if (nuevo === null) return;
-		capturar();
+		if (!capturar()) return;
 		const titulos = { ...(proyecto().esquema?.titulos ?? {}) };
 		// Vaciarlo devuelve el título automático, que es lo que espera quien borra el texto.
 		if (nuevo.trim()) titulos[String(hoja.numero)] = nuevo.trim();
@@ -274,7 +279,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			+ 'ordenarse solo. Ctrl+Z lo deshace.',
 			{ ok: 'Ordenar solo' },
 		))) return;
-		capturar();
+		if (!capturar()) return;
 		for (const d of aMano) delete d.esquema;
 		marcarSucio();
 		actualizarTodo();

@@ -50,7 +50,7 @@ async function cargarEjemplo() {
 	if (await page.isVisible('#modal-ejemplos')) {
 		await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(650);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-		await jsClick('btn-cerrar-explicacion'); await page.waitForTimeout(150);
+		await jsClick('btn-cerrar-explicacion'); await jsClick('btn-copiar-ejemplo'); await page.waitForTimeout(150);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
 	}
 }
 

@@ -31,7 +31,12 @@ export interface ContextoDossier {
 	proyecto: () => Proyecto;
 	avisar: (mensaje: string, tono?: 'ok' | 'info' | 'error') => void;
 	marcarSucio: () => void;
-	capturar: () => void;
+	/**
+	 * Guarda un punto de deshacer antes de cambiar nada, y DICE SI SE PUEDE CAMBIAR: en un tablero
+	 * de ejemplo dice que no. Quien la llama tiene que mirar el resultado y no tocar nada si es
+	 * `false`; `test/solo-lectura.test.ts` comprueba que nadie se lo salte.
+	 */
+	capturar: () => boolean;
 	/** Una foto del tablero como se ve ahora: en 3D o en alzado 2D. La saca la escena. */
 	fotoDelTablero: (en2D: boolean) => string;
 }
@@ -110,7 +115,7 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 		// siempre qué documento quiere el usuario, y no depende de en qué orden venían.
 		const mover = (desde: number, hasta: number): void => {
 			if (hasta < 0 || hasta >= orden.length) return;
-			capturar();
+			if (!capturar()) return;
 			const ids = orden.map((sec) => sec.id);
 			const [id] = ids.splice(desde, 1);
 			ids.splice(hasta, 0, id);
@@ -153,7 +158,7 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 
 	/** Cambia algo de la identidad y regenera. `capturar` deja el cambio en el deshacer. */
 	function tocarIdentidad(cambio: (a: AjustesDossier) => void): void {
-		capturar();
+		if (!capturar()) return;
 		cambio(ajustesDossier());
 		actualizarDossier();
 	}
@@ -373,7 +378,7 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 
 	/** Añade un bloque nuevo al final y repinta. */
 	function anadirBloque(b: Omit<BloqueDossier, 'id'>): void {
-		capturar();
+		if (!capturar()) return;
 		const a = ajustesDossier();
 		a.bloques = [...(a.bloques ?? []), { ...b, id: idUnico('b') }];
 		actualizarDossier();

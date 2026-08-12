@@ -53,7 +53,7 @@ await click('btn-cerrar-ayuda'); await page.waitForTimeout(150);
 await click('btn-empezar-ejemplo'); await page.waitForTimeout(300);
 await page.locator('.tarjeta-ejemplo button').nth(0).click(); await page.waitForTimeout(700);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-await click('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+await click('btn-cerrar-explicacion'); await click('btn-copiar-ejemplo'); await page.waitForTimeout(200);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
 
 console.log('--- 1. El esquema se abre y se puede ordenar a mano ---');
 await click('btn-esquema'); await page.waitForTimeout(700);

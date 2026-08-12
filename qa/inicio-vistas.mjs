@@ -60,7 +60,7 @@ must('y la ventana de inicio se aparta', !(await page.isVisible('#inicio')));
 // Cargar un tablero con aparatos de fondos MUY distintos, que es donde se nota el alzado.
 await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(900);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-await click('btn-cerrar-explicacion'); await page.waitForTimeout(200);
+await click('btn-cerrar-explicacion'); await click('btn-copiar-ejemplo'); await page.waitForTimeout(200);   // un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
 const aparatos = await page.evaluate(() => window.qa.proyecto().dispositivos.map((d) => d.id));
 must('el ejemplo trae aparatos para medir', aparatos.length > 4, `${aparatos.length}`);
 // Fondos de trabajo: la placa (0) y la cara de un variador, el aparato que más sobresale.

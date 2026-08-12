@@ -33,7 +33,11 @@ await p.evaluate(()=>document.getElementById('btn-ejemplos')?.click());
 await p.waitForTimeout(500);
 await p.evaluate(()=>document.querySelectorAll('.tarjeta-ejemplo button')[0]?.click());
 await p.waitForTimeout(1800);
-await p.evaluate(()=>document.getElementById('btn-cerrar-explicacion')?.click());
+await p.evaluate(() => {
+	document.getElementById('btn-cerrar-explicacion')?.click();
+	// un ejemplo es de solo lectura: se trabaja sobre una copia, como haría el usuario
+	document.getElementById('btn-copiar-ejemplo')?.click();
+});
 await p.waitForTimeout(400);
 
 console.log('--- la NOTA del parte de obra (iba cruda al title) ---');
