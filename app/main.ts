@@ -46,6 +46,7 @@ import { instalarDossier } from './ui-dossier.js';
 import { instalarInicio } from './ui-inicio.js';
 import { instalarEsquema } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
+import { animarSimulacion } from './animacion-sim.js';
 import { dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
 import { idUnico } from '../src/modelo/ids.js';
 import {
@@ -4933,6 +4934,8 @@ actualizarBotonesHistorial();
  * abierta, este bucle está de verdad parado y no solo «debería».
  */
 let fotogramasEditor = 0;
+/** Cuándo se dibujó el fotograma anterior, para animar la simulación con el tiempo REAL. */
+let ultimoFotograma = performance.now();
 
 renderer.setAnimationLoop(() => {
 	/*
@@ -4943,9 +4946,30 @@ renderer.setAnimationLoop(() => {
 	 * No causa el zoom exponencial de antes —eso ya se arregló— pero es el doble de trabajo de
 	 * GPU y de batería en un portátil que se lleva a la obra, y en una máquina justa se nota en
 	 * el retardo del ratón. El de la Planta ya se paraba solo al esconderse; este no.
+	 *
+	 * Se pone el reloj en hora al salir: si no, al cerrar la Planta el primer fotograma traería
+	 * de golpe todo el rato que ha estado parado y el motor daría un latigazo.
 	 */
-	if (!($('mundo') as HTMLElement).hidden) return;
+	if (!($('mundo') as HTMLElement).hidden) { ultimoFotograma = performance.now(); return; }
 	fotogramasEditor++;
+
+	/*
+	 * Y LLEVA LA ESCENA AL ESTADO QUE DICE LA SIMULACIÓN: la armadura del contactor entra, la
+	 * palanca de la protección baja, el piloto alumbra con su color y el eje del motor gira. Sin
+	 * esto, energizar solo cambiaba un texto en el panel.
+	 */
+	const ahora = performance.now();
+	// Tope de 100 ms, por lo mismo: un salto grande no puede convertirse en un tirón.
+	const dt = Math.min((ahora - ultimoFotograma) / 1000, 0.1);
+	ultimoFotograma = ahora;
+	animarSimulacion({
+		grupos: escenario.dispositivos.children,
+		proyecto,
+		resultado: panelSim.resultado(),
+		estado: panelSim.estadoDeLosMandos(),
+		energizado: panelSim.energizado(),
+		dt,
+	});
 	(vista2D ? controlesOrto : controles).update();
 	renderer.render(escena, camaraViva());
 });
@@ -5419,6 +5443,32 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		/** Acciona un aparato como si se hubiera pinchado en él con el tablero energizado. */
 		accionar: (id: string) => panelSim.accionar(id),
 		/** Cuántos tubos de cable están de verdad ILUMINADOS en la escena (lo que se ve). */
+		/**
+		 * Las PIEZAS animadas de un aparato: dónde están y cómo alumbran.
+		 *
+		 * Es lo que permite comprobar que energizar SE VE y no solo se cuenta: si la armadura del
+		 * contactor no baja o el eje del motor no gira, aquí se nota. Mirar la lista de
+		 * «funcionando» no valdría: eso ya iba bien cuando en pantalla no se movía nada.
+		 */
+		piezas: (id: string) => {
+			const g = escenario.dispositivos.children.find((x) => x.userData.dispositivoId === id);
+			if (!g) return null;
+			const piezas: Record<string, unknown[]> = {};
+			g.traverse((o) => {
+				const nombre = o.userData.pieza as string | undefined;
+				if (!nombre || !(o instanceof THREE.Mesh)) return;
+				const mat = o.material as THREE.MeshStandardMaterial | undefined;
+				(piezas[nombre] ??= []).push({
+					x: Math.round(o.position.x * 100) / 100,
+					y: Math.round(o.position.y * 100) / 100,
+					z: Math.round(o.position.z * 100) / 100,
+					giro: Math.round(o.rotation.x * 1000) / 1000,
+					brillo: Math.round((mat?.emissiveIntensity ?? 0) * 100) / 100,
+					color: mat?.color?.getHex?.() ?? 0,
+				});
+			});
+			return piezas;
+		},
 		cablesEncendidos: () => {
 			let n = 0;
 			escenario.cables.traverse((o) => {

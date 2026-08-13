@@ -1,0 +1,151 @@
+/**
+ * QUE SE VEA FUNCIONAR, no que lo cuente un panel.
+ *
+ * Con el tablero energizado, el simulador ya sabía qué estaba metido y qué no: lo decía en la
+ * lista de «funcionando» y encendía los cables con tensión. Pero los APARATOS no hacían nada. Un
+ * contactor metido, una lámpara encendida y un motor girando se veían exactamente igual: los tres
+ * con el mismo brillo ámbar por encima, todos a la vez, sin distinguir uno de otro y sin que se
+ * moviera nada. Para comprobar que el cableado está bien —que es para lo que sirve energizar—
+ * había que leerse el panel, no mirar el tablero.
+ *
+ * Aquí cada componente hace lo que hace el de verdad:
+ *
+ *   contactor y relé    la armadura BAJA cuando la bobina tira (es lo que se mira en la obra)
+ *   protección          la palanca sube o baja, y la mirilla pasa de verde a rojo al abrir
+ *   térmico disparado   se marca en rojo, que es lo que se ve al saltar
+ *   piloto y lámpara    se encienden con SU color: rojo el de defecto, verde el de marcha
+ *   pulsador            la cabeza se hunde mientras está apretado
+ *   motor               el eje GIRA, y más deprisa cuanta más tensión le llega
+ *   válvula             el vástago sale al abrir
+ *   sonda o boya        su testigo se enciende al accionarla
+ *
+ * Las piezas vienen marcadas desde donde se construye el aparato (`userData.pieza`), así que este
+ * módulo no sabe de geometría: busca piezas por nombre y las mueve. Un aparato al que nadie le
+ * marcó piezas simplemente no se anima, sin romperse.
+ *
+ * EL ÍNDICE SE CALCULA UNA VEZ POR APARATO, no en cada fotograma: recorrer el árbol entero de la
+ * escena sesenta veces por segundo era lo que había que evitar, y con treinta aparatos se nota.
+ */
+import * as THREE from 'three';
+
+import { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
+import { EstadoTablero, ResultadoSimulacion } from '../src/motores/simulacion.js';
+
+/** Las piezas móviles de un aparato, localizadas una sola vez. */
+interface Piezas {
+	armadura: THREE.Mesh[];
+	palanca: THREE.Mesh[];
+	mirilla: THREE.Mesh[];
+	lente: THREE.Mesh[];
+	boton: THREE.Mesh[];
+	eje: THREE.Mesh[];
+	vastago: THREE.Mesh[];
+	/** Posición de reposo de cada pieza, para poder devolverla al desenergizar. */
+	reposo: Map<THREE.Object3D, THREE.Vector3>;
+}
+
+const VACIO = (): Piezas => ({
+	armadura: [], palanca: [], mirilla: [], lente: [], boton: [], eje: [], vastago: [],
+	reposo: new Map(),
+});
+
+/** Localiza (y recuerda) las piezas móviles que cuelgan de un grupo. */
+function piezasDe(grupo: THREE.Object3D): Piezas {
+	const guardado = grupo.userData.piezasSim as Piezas | undefined;
+	if (guardado) return guardado;
+	const p = VACIO();
+	grupo.traverse((o) => {
+		const nombre = o.userData.pieza as keyof Piezas | undefined;
+		if (!nombre || !(o instanceof THREE.Mesh)) return;
+		const lista = p[nombre];
+		if (!Array.isArray(lista)) return;
+		lista.push(o);
+		p.reposo.set(o, o.position.clone());
+	});
+	grupo.userData.piezasSim = p;
+	return p;
+}
+
+export interface EntradaAnimacion {
+	/** Los grupos 3D por aparato: los del riel y los de campo. */
+	grupos: THREE.Object3D[];
+	proyecto: Proyecto;
+	resultado: ResultadoSimulacion | undefined;
+	estado: EstadoTablero;
+	energizado: boolean;
+	/** Segundos transcurridos desde el fotograma anterior. */
+	dt: number;
+}
+
+/**
+ * Lleva la escena al estado que dice la simulación. Se llama en cada fotograma.
+ *
+ * Sin tensión devuelve todo a su reposo: las palancas arriba, la armadura fuera, las lentes
+ * apagadas. Es importante que sea el MISMO camino —y no un «deshacer» aparte— porque así no hay
+ * dos sitios donde se pueda quedar algo a medias.
+ */
+export function animarSimulacion(e: EntradaAnimacion): void {
+	const porId = new Map<string, Dispositivo>();
+	for (const d of e.proyecto.dispositivos) porId.set(d.id, d);
+	const activos = e.energizado ? e.resultado?.activos : undefined;
+
+	for (const grupo of e.grupos) {
+		const id = grupo.userData.dispositivoId as string | undefined;
+		if (!id) continue;
+		const d = porId.get(id);
+		if (!d) continue;
+		const p = piezasDe(grupo);
+		const st = e.estado[id] ?? {};
+		const enMarcha = !!activos?.has(id);
+
+		/* --- Contactor y relé: la armadura entra cuando la bobina tira --- */
+		for (const m of p.armadura) {
+			const base = p.reposo.get(m);
+			if (base) m.position.z = base.z - (enMarcha ? 2.2 : 0);
+		}
+
+		/* --- Protecciones: palanca y mirilla --- */
+		const abierto = st.cerrado === false;
+		const disparado = !!st.disparado;
+		for (const m of p.palanca) {
+			const base = p.reposo.get(m);
+			// Abierta baja del todo; disparada se queda a medias, que es como avisa de que ha saltado.
+			if (base) m.position.y = base.y - (disparado ? 7 : abierto ? 11 : 0);
+		}
+		for (const m of p.mirilla) {
+			const mat = m.material as THREE.MeshStandardMaterial;
+			mat.color.setHex(disparado ? 0xd32f2f : abierto ? 0xb0342c : 0x2e7d32);
+			mat.emissive.setHex(disparado ? 0x8e1b16 : 0x000000);
+			mat.emissiveIntensity = disparado ? 0.7 : 0;
+		}
+
+		/* --- Pilotos, lámparas y testigos: se encienden con su propio color --- */
+		for (const m of p.lente) {
+			const propio = (m.userData.colorPropio as number | undefined) ?? 0xffd54f;
+			const mat = m.material as THREE.MeshStandardMaterial;
+			// Una sonda o boya se enciende cuando está ACCIONADA, aunque no consuma nada.
+			const encendida = enMarcha || (d.tipo === 'sensor' && !!st.activo);
+			mat.emissive.setHex(encendida ? propio : 0x000000);
+			mat.emissiveIntensity = encendida ? 1.15 : 0;
+			mat.color.setHex(propio);
+		}
+
+		/* --- Pulsadores: la cabeza se hunde mientras está apretada --- */
+		for (const m of p.boton) {
+			const base = p.reposo.get(m);
+			if (base) m.position.z = base.z - (st.activo ? 3.2 : 0);
+		}
+
+		/* --- Motores: el eje gira, y más deprisa cuanto más se le exige --- */
+		if (p.eje.length) {
+			const vueltas = enMarcha ? 9 : 0;   // rad/s: rápido pero sin marear
+			if (vueltas > 0) for (const m of p.eje) m.rotation.x += vueltas * e.dt;
+		}
+
+		/* --- Válvulas: el vástago sale al abrir --- */
+		for (const m of p.vastago) {
+			const base = p.reposo.get(m);
+			if (base) m.position.y = base.y + (enMarcha ? 6 : 0);
+		}
+	}
+}

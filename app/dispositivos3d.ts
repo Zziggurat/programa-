@@ -92,15 +92,24 @@ function modular(g: THREE.Group, w: number, h: number, color: number, ref: strin
 	const cuerpo = M.plastico(color);
 	g.add(caja(w, h, prof - 6, cuerpo, 0, 0, (prof - 6) / 2));
 	g.add(caja(w * 0.96, h * 0.55, 8, M.plastico(0xf4f4f0), 0, 0, prof - 2));
-	// Palanca por polo (unidas), en gris oscuro.
+	/*
+	 * Palanca por polo (unidas), en gris oscuro. Se marcan como PIEZA porque con el tablero
+	 * energizado se mueven: una protección abierta baja la palanca y una disparada la deja a
+	 * medias, que es como se lee un cuadro de un vistazo sin tocar nada.
+	 */
 	const palanca = M.plastico(0x33383c, 0.45);
 	for (let i = 0; i < polos; i++) {
 		const x = (i + 0.5) * (w / polos) - w / 2;
-		g.add(caja(w / polos - 4, 7, 6, palanca, x, 6, prof + 2));
-		g.add(caja(w / polos - 4, 16, 4, palanca, x, 12, prof - 1));
+		const p1 = caja(w / polos - 4, 7, 6, palanca, x, 6, prof + 2);
+		const p2 = caja(w / polos - 4, 16, 4, palanca, x, 12, prof - 1);
+		p1.userData.pieza = 'palanca';
+		p2.userData.pieza = 'palanca';
+		g.add(p1, p2);
 	}
-	// Mirilla de estado (verde) y referencia impresa.
-	g.add(caja(Math.min(10, w * 0.4), 3.5, 1, M.plastico(0x2e7d32, 0.35), 0, -6, prof + 2.2));
+	// Mirilla de estado: verde con el aparato cerrado, roja al abrirlo o dispararlo.
+	const mirilla = caja(Math.min(10, w * 0.4), 3.5, 1, M.plastico(0x2e7d32, 0.35), 0, -6, prof + 2.2);
+	mirilla.userData.pieza = 'mirilla';
+	g.add(mirilla);
 	const et = etiquetaImpresa(ref, Math.min(w * 0.9, 30), 6, '#f4f4f0', '#333');
 	et.position.set(0, -h * 0.32, prof + 3);   // 1 mm sobre la cara blanca, no rozándola
 	g.add(et);
@@ -112,7 +121,16 @@ function modular(g: THREE.Group, w: number, h: number, color: number, ref: strin
 function contactor(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
 	const prof = 84;
 	g.add(caja(w, h, prof - 10, M.plastico(color), 0, 0, (prof - 10) / 2));
-	g.add(caja(w * 0.9, h * 0.42, 12, M.plastico(0x22262a), 0, 2, prof - 4));
+	/*
+	 * La ARMADURA: el bloque frontal que lleva los contactos móviles.
+	 *
+	 * En un contactor de verdad, cuando la bobina tira, este bloque baja un par de milímetros con
+	 * su golpe seco. Es LO que se mira para saber si el contactor ha metido, y por eso se marca
+	 * como pieza: con el tablero energizado se mueve de verdad.
+	 */
+	const armadura = caja(w * 0.9, h * 0.42, 12, M.plastico(0x22262a), 0, 2, prof - 4);
+	armadura.userData.pieza = 'armadura';
+	g.add(armadura);
 	// Ventana portaetiquetas y referencia.
 	const et = etiquetaImpresa(ref, w * 0.72, 7, '#e8e8e4', '#222');
 	et.position.set(0, 2, prof + 3);   // la ventana portaetiquetas acaba en prof+2
@@ -248,9 +266,18 @@ function variador(g: THREE.Group, w: number, h: number, color: number, ref: stri
 function guardamotorModelo(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
 	const prof = 90;
 	g.add(caja(w, h, prof - 8, M.plastico(color), 0, 0, (prof - 8) / 2));
-	// Mando giratorio al frente.
+	/*
+	 * Mando giratorio al frente. La maneta roja es la PALANCA: gira con el aparato, igual que en
+	 * el guardamotor de verdad, y así se ve abierto o disparado sin abrir el panel. Y se le pone
+	 * una mirilla, que este modelo no tenía y es donde se lee el estado de un vistazo.
+	 */
 	g.add(cilindro(w * 0.26, 6, M.plastico(0x16181b, 0.45), 0, h * 0.12, prof));
-	g.add(caja(4, w * 0.36, 7, M.plastico(0xd23b3b, 0.45), 0, h * 0.12, prof + 1));
+	const maneta = caja(4, w * 0.36, 7, M.plastico(0xd23b3b, 0.45), 0, h * 0.12, prof + 1);
+	maneta.userData.pieza = 'palanca';
+	g.add(maneta);
+	const mirilla = caja(Math.min(9, w * 0.35), 3.5, 1, M.plastico(0x2e7d32, 0.35), 0, -h * 0.05, prof + 0.6);
+	mirilla.userData.pieza = 'mirilla';
+	g.add(mirilla);
 	const et = etiquetaImpresa(ref, w * 0.7, 7, '#3d4348', '#d5dade');
 	et.position.set(0, -h * 0.2, prof - 3.8);
 	g.add(et);
@@ -459,15 +486,26 @@ function mando(g: THREE.Group, w: number, h: number, color: number, forma: 'seta
 
 	const r = cuerpo * (forma === 'seta' ? 0.58 : 0.36);
 	const alto = forma === 'seta' ? 12 : forma === 'selector' ? 5 : 8;
-	const cabeza = new THREE.Mesh(new THREE.CylinderGeometry(r, r * (forma === 'seta' ? 0.8 : 1), alto, 24), M.plastico(color));
+	/*
+	 * La cabeza del mando se marca como pieza para que HAGA lo que hace la de verdad: el pulsador
+	 * se hunde mientras está apretado y el piloto se enciende con SU color —rojo el de defecto,
+	 * verde el de marcha—, no con un amarillo igual para todo.
+	 */
+	const cabeza = new THREE.Mesh(new THREE.CylinderGeometry(r, r * (forma === 'seta' ? 0.8 : 1), alto, 24),
+		forma === 'piloto'
+			? new THREE.MeshStandardMaterial({ color, roughness: 0.25, transparent: true, opacity: 0.92 })
+			: M.plastico(color));
 	cabeza.rotation.x = Math.PI / 2;
 	cabeza.position.set(0, 0, prof - 8 + alto / 2);
+	cabeza.userData.pieza = forma === 'piloto' ? 'lente' : 'boton';
+	cabeza.userData.colorPropio = color;
 	g.add(cabeza);
 
 	if (forma === 'selector') { // maneta de la maneta giratoria
 		const maneta = new THREE.Mesh(new THREE.BoxGeometry(r * 1.9, r * 0.5, 4), M.plastico(0x1b1f22));
 		maneta.position.set(0, 0, prof - 8 + alto + 1.5);
 		maneta.rotation.z = -Math.PI / 6;
+		maneta.userData.pieza = 'maneta';
 		g.add(maneta);
 	}
 	filaBornes(g, 4, cuerpo * 0.8, -h / 2 + 5, 6);

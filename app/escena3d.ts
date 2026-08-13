@@ -133,9 +133,6 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	const tapas: THREE.Object3D[] = [];
 	for (const can of g.canaletas) raiz.add(construirCanaleta(can, aEscena, tapas, realista));
 
-	// Prensaestopas de entrada: por ahí salen los cables hacia la red y hacia el campo.
-	raiz.add(construirEntradasCampo(proyecto, aEscena));
-
 	const dispositivos = new THREE.Group();
 	const etiquetas: THREE.Object3D[] = [];
 	for (const col of g.colocaciones) {
@@ -143,6 +140,14 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 		if (!d) continue;
 		dispositivos.add(construirDispositivo(d, col, aEscena, etiquetas));
 	}
+	/*
+	 * Prensaestopas de entrada y el aparato de campo que cuelga de cada uno.
+	 *
+	 * Los CUERPOS van dentro de `dispositivos` y no sueltos en la raíz, y no es un detalle de
+	 * orden: ahí es donde miran el ratón —para poder pinchar un pulsador de la puerta— y la
+	 * animación de la simulación —para hacer girar el motor—. Fuera de ese grupo serían adorno.
+	 */
+	raiz.add(construirEntradasCampo(proyecto, aEscena, dispositivos));
 	raiz.add(dispositivos);
 
 	const cables = new THREE.Group();
@@ -869,10 +874,127 @@ function anclajeCampo(
 }
 
 /**
+ * EL CUERPO DE UN APARATO DE CAMPO, colgado por debajo de su prensaestopas.
+ *
+ * Un aparato que no va en el riel —el motor, una lámpara, la boya, la válvula, los pulsadores de
+ * la puerta— no se dibujaba: solo salía su prensaestopas y un rótulo. Y son justamente los que hay
+ * que VER funcionar. Se energizaba el tablero, el motor arrancaba según el simulador, y en
+ * pantalla no había ningún motor: lo único que cambiaba era una línea de texto en el panel.
+ *
+ * No pretende ser un modelo fiel del aparato: es un símbolo reconocible, del tamaño justo para
+ * verse desde donde se mira el tablero, con la pieza que se mueve o se enciende marcada para que
+ * la simulación la anime —el eje del motor gira, el globo de la lámpara alumbra, el vástago de la
+ * válvula sale—. Lo que importa es que al apretar MARCHA se vea girar algo.
+ */
+function cuerpoDeCampo(d: Dispositivo): THREE.Group {
+	const g = new THREE.Group();
+	const pintura = (c: number, rug = 0.55) => new THREE.MeshStandardMaterial({ color: c, roughness: rug });
+	const marca = (m: THREE.Mesh, pieza: string, color?: number): THREE.Mesh => {
+		m.userData.pieza = pieza;
+		if (color !== undefined) m.userData.colorPropio = color;
+		return m;
+	};
+
+	switch (d.tipo) {
+		case 'motor': {
+			// Carcasa con aletas, caja de bornes y el ventilador de la cola, que es lo que gira.
+			const carcasa = new THREE.Mesh(new THREE.CylinderGeometry(17, 17, 46, 20), pintura(0x2f6f9e, 0.45));
+			carcasa.rotation.z = Math.PI / 2;
+			g.add(carcasa);
+			for (let i = 0; i < 7; i++) {
+				const aleta = new THREE.Mesh(new THREE.TorusGeometry(17.6, 1.1, 6, 18), pintura(0x2a6390, 0.5));
+				aleta.rotation.y = Math.PI / 2;
+				aleta.position.x = -19 + i * 6.5;
+				g.add(aleta);
+			}
+			const bornera = new THREE.Mesh(new THREE.BoxGeometry(16, 11, 13), pintura(0x24506f, 0.6));
+			bornera.position.set(-2, 19, 0);
+			g.add(bornera);
+			// EL EJE Y SUS ASPAS: giran mientras el motor esté funcionando.
+			const eje = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 20, 12), pintura(0xc9ced3, 0.3));
+			eje.rotation.z = Math.PI / 2;
+			eje.position.x = 32;
+			g.add(marca(eje, 'eje'));
+			for (const [ah, az] of [[26, 5], [5, 26]] as const) {
+				const aspa = new THREE.Mesh(new THREE.BoxGeometry(1.5, ah, az), pintura(0xdfe4e8, 0.4));
+				aspa.position.x = 26;
+				g.add(marca(aspa, 'eje'));
+			}
+			break;
+		}
+		case 'piloto':
+		case 'resistencia': {
+			// Una lámpara: casquillo y globo. El globo alumbra con SU color, no con un amarillo igual
+			// para todo: el piloto de defecto tiene que verse rojo y el de marcha, verde.
+			const color = d.tipo === 'resistencia' ? 0xff7043 : 0xffd54f;
+			const casquillo = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 9, 14), pintura(0x9aa1a8, 0.5));
+			casquillo.position.y = 14;
+			g.add(casquillo);
+			const globo = new THREE.Mesh(new THREE.SphereGeometry(12, 20, 16),
+				new THREE.MeshStandardMaterial({ color, roughness: 0.2, transparent: true, opacity: 0.9 }));
+			g.add(marca(globo, 'lente', color));
+			break;
+		}
+		case 'valvula': {
+			// Cuerpo de válvula con su actuador arriba; el vástago sale al abrir.
+			const cuerpo = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 16, 16), pintura(0x8d949b, 0.45));
+			cuerpo.rotation.z = Math.PI / 2;
+			g.add(cuerpo);
+			const actuador = new THREE.Mesh(new THREE.BoxGeometry(20, 16, 20), pintura(0x37474f, 0.55));
+			actuador.position.y = 20;
+			g.add(actuador);
+			const vastago = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 14, 10), pintura(0xd7dce0, 0.3));
+			vastago.position.y = 9;
+			g.add(marca(vastago, 'vastago'));
+			break;
+		}
+		case 'pulsador':
+		case 'selector': {
+			/*
+			 * EL MANDO DE LA PUERTA, que además arregla algo que no era solo estético: estos
+			 * pulsadores no tenían cuerpo, así que no se podían pinchar en el tablero. Ahora sí.
+			 */
+			const paro = (d.designacion ?? '').toUpperCase().includes('S0') || d.tipo === 'selector';
+			const color = paro ? 0xd32f2f : 0x2e7d32;
+			const aro = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 5, 20), pintura(0xb6bcc2, 0.35));
+			aro.rotation.x = Math.PI / 2;
+			g.add(aro);
+			const cabeza = new THREE.Mesh(new THREE.CylinderGeometry(8.5, 8.5, 8, 20), pintura(color, 0.4));
+			cabeza.rotation.x = Math.PI / 2;
+			cabeza.position.z = 6;
+			g.add(marca(cabeza, 'boton', color));
+			break;
+		}
+		case 'sensor': {
+			// Sonda o contacto de campo (una boya, un presostato), con su testigo.
+			g.add(new THREE.Mesh(new THREE.BoxGeometry(20, 26, 14), pintura(0x455a64, 0.55)));
+			const testigo = new THREE.Mesh(new THREE.SphereGeometry(4, 12, 10),
+				new THREE.MeshStandardMaterial({ color: 0x66bb6a, roughness: 0.25 }));
+			testigo.position.set(0, 9, 9);
+			g.add(marca(testigo, 'lente', 0x66bb6a));
+			break;
+		}
+		default:
+			// Acometida y demás: un bloque sobrio, sin nada que animar.
+			g.add(new THREE.Mesh(new THREE.BoxGeometry(24, 16, 14), pintura(0x6b737b, 0.6)));
+	}
+	g.traverse((o) => {
+		o.userData.dispositivoId = d.id;
+		if (o instanceof THREE.Mesh) { o.castShadow = true; o.receiveShadow = true; }
+	});
+	return g;
+}
+
+/**
  * Prensaestopas + rótulo de cada aparato de campo, en el borde inferior del gabinete: es el
  * punto físico por donde el cable sale del tablero hacia la red o hacia el campo.
  */
-export function construirEntradasCampo(proyecto: Proyecto, aEscena: Escenario['aEscena']): THREE.Group {
+export function construirEntradasCampo(
+	proyecto: Proyecto,
+	aEscena: Escenario['aEscena'],
+	/** Dónde dejar los cuerpos de los aparatos, para que el ratón y la simulación los alcancen. */
+	dispositivos?: THREE.Group,
+): THREE.Group {
 	const grupo = new THREE.Group();
 	const campo = aparatosDeCampo(proyecto);
 	if (campo.length === 0) return grupo;
@@ -894,6 +1016,11 @@ export function construirEntradasCampo(proyecto: Proyecto, aEscena: Escenario['a
 		etq.position.copy(aEscena(cx, y + 24, 26));
 		etq.scale.set(44, 14.6, 1);
 		grupo.add(etq);
+		// Y el aparato en sí, por debajo del prensaestopas: el motor, la lámpara, la boya…
+		const cuerpoCampo = cuerpoDeCampo(d);
+		cuerpoCampo.position.copy(aEscena(cx, y + 46, 14));
+		cuerpoCampo.userData.dispositivoId = d.id;
+		(dispositivos ?? grupo).add(cuerpoCampo);
 	}
 	return grupo;
 }
