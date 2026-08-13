@@ -151,11 +151,18 @@ async function circuitoSano(rot) {
 	const s = await qa('simulacion');
 	must(`${rot}: el circuito se resuelve sin oscilar`, !s.oscila);
 	/*
-	 * «Hay tensión pero nada está funcionando todavía» NO es un fallo: es la ayuda que le dice a
-	 * quien acaba de energizar que ahora tiene que apretar algo. Contarla como avería hacía fallar
-	 * la prueba en los cinco ejemplos con el tablero perfectamente sano.
+	 * «Hay tensión pero todavía no funciona nada» NO es un fallo: es la ayuda que le dice a quien
+	 * acaba de energizar que ahora tiene que accionar algo. Contarla como avería hacía fallar la
+	 * prueba en los cinco ejemplos con el tablero perfectamente sano.
+	 *
+	 * SE FILTRA POR LA BANDERA `sinAccionar`, NO POR LAS PALABRAS. Antes buscaba la frase literal,
+	 * y en cuanto se reescribió el aviso —para que dejara de mandar a pinchar un pulsador que no
+	 * está montado en el armario— esta prueba cantó siete averías donde no había ninguna. Una
+	 * prueba atada a la redacción de un texto se rompe cada vez que se mejora el texto.
 	 */
-	const problemas = s.avisos.filter((a) => !/nada está funcionando todavía/i.test(a));
+	const problemas = s.sinAccionar
+		? s.avisos.filter((a) => !/todav[ií]a no funciona nada/i.test(a))
+		: s.avisos;
 	must(`${rot}: sin avisos de avería`, problemas.length === 0, problemas.join(' | '));
 }
 
@@ -244,11 +251,18 @@ await rotulosCuadran({ KM1: 'km1', KM2: 'km2', KM3: 'km3', KT: 'kt', S0: 's0', S
 	'estrella-triángulo');
 await energizar();
 await circuitoSano('estrella-triángulo en reposo');
-// El reloj se acelera para no esperar 6 s reales en cada vuelta.
-await p.evaluate(() => {
-	const v = document.getElementById('sim-velocidad');
-	if (v) { v.value = [...v.options].map((o) => o.value).at(-1); v.dispatchEvent(new Event('change', { bubbles: true })); }
-});
+/*
+ * LA ESTRELLA SE MIRA A TIEMPO REAL. Dura 6 s, y a ×20 eso son 300 ms de pared: entre apretar
+ * MARCHA y leer la foto ya habría conmutado a triángulo. Antes colaba porque el reloj se retrasaba
+ * cuando la página tenía trabajo; al hacer que siga al reloj de la pared, la prueba dejó de colar.
+ * Para ver un estado que dura poco hay que mirarlo a su velocidad; se acelera después, para
+ * esperar la conmutación sin quedarse seis segundos parado.
+ */
+const velocidad = (v) => p.evaluate((valor) => {
+	const s = document.getElementById('sim-velocidad');
+	if (s) { s.value = valor; s.dispatchEvent(new Event('change', { bubbles: true })); }
+}, v);
+await velocidad('1');
 
 console.log('\n  — «Al apretar MARCHA entra el de línea y, por 11-12 del temporizador, el de ESTRELLA» —');
 await accionar('s1'); await accionar('s1');
@@ -262,6 +276,7 @@ must('el de TRIÁNGULO está fuera', !estrella.hay('km3'),
 must('el motor está girando', estrella.hay('m1'), estrella.funcionando.join(' · '));
 
 console.log('\n  — «A los 6 s el temporizador conmuta: cae la estrella y entra el triángulo» —');
+await velocidad('20');   // ya se vio la estrella: ahora se acelera para no esperar los 6 s de verdad
 const conmuto = await esperarA(async () => (await activo('km3')) === true, 30_000);
 must('pasado el tiempo, el TRIÁNGULO entra SOLO', conmuto,
 	'nadie tocó nada: lo tiene que hacer el temporizador');
@@ -342,6 +357,20 @@ await p.evaluate(() => {
 must('en reposo el ventilador NO gira', !(await activo('m1')), (await funcionando()).join(' · '));
 
 console.log('\n  — «El selector pide marcha: DO2 abre la compuerta; el ventilador espera 8 s» —');
+/*
+ * ESTE TRAMO SE MIRA A TIEMPO REAL, no acelerado.
+ *
+ * Comprobar que a los ~1,5 s el ventilador TODAVÍA no ha arrancado con el reloj a ×20 es pedir un
+ * imposible: ×20 convierte segundo y medio de pared en treinta segundos de maniobra, y el retardo
+ * es de ocho. Antes pasaba de casualidad, porque el reloj se retrasaba cuando la página tenía
+ * trabajo; al arreglar el reloj para que siga al de la pared, la prueba enseñó lo que siempre
+ * estuvo mal escrito. Se baja a ×1 para este tramo y se vuelve a acelerar para esperar el retardo.
+ */
+const ponerVelocidad = (v) => p.evaluate((valor) => {
+	const s = document.getElementById('sim-velocidad');
+	if (s) { s.value = valor; s.dispatchEvent(new Event('change', { bubbles: true })); }
+}, v);
+await ponerVelocidad('1');
 await accionar('s0');
 await p.waitForTimeout(1000);
 const antesDelRetardo = await foto();
@@ -351,6 +380,7 @@ must('el ventilador todavía NO arranca (espera a la compuerta)', !antesDelRetar
 	'el renglón 2 dice «DO1 = DO2 retardo 8»');
 
 console.log('\n  — «Pasados los 8 s entra DO1 → K1 → KM1 y el ventilador arranca» —');
+await ponerVelocidad('20');   // ahora sí: acelerar para no esperar los ocho segundos de verdad
 const arranco = await esperarA(async () => (await activo('m1')) === true, 40_000);
 must('el ventilador arranca SOLO al cumplirse el retardo', arranco,
 	'nadie tocó nada: lo hace el programa del controlador');
@@ -370,7 +400,33 @@ await accionar('f2');
 must('al rearmar, el ventilador vuelve', await esperarA(async () => (await activo('m1')) === true, 40_000));
 
 console.log('\n  — «El filtro sucio cierra la compuerta; el ventilador aguanta su mínimo» —');
-await accionar('s1');
+/*
+ * PARA VER EL MÍNIMO HAY QUE ARRANCAR DE NUEVO, y el motivo es de fondo, no de velocidad.
+ *
+ * El «mínimo 30» del renglón 2 se cuenta DESDE QUE LA SALIDA SE ENCIENDE: sostiene el ventilador
+ * treinta segundos y después lo suelta, que es justo lo que evita que un motor arranque y pare sin
+ * parar. Y el térmico no apaga DO1 —esa es la gracia del ejemplo: la parada es del CABLEADO y el
+ * programa sigue pidiendo marcha—, así que rearmar no reinicia nada: DO1 llevaba encendida desde
+ * el principio y su mínimo estaba cumplido hacía rato. El ventilador se caía con toda la razón y
+ * la prueba lo llamaba fallo.
+ *
+ * Antes colaba porque el reloj se retrasaba cuando la página tenía trabajo, y en la maniobra
+ * apenas habían pasado unos segundos. No era que la prueba estuviera bien: es que el reloj andaba
+ * mal, y al arreglarlo salió a la luz lo que esto comprobaba de verdad, que era nada.
+ *
+ * Así que se para, se deja caer el mínimo y se vuelve a arrancar a tiempo real. Con el ventilador
+ * recién arrancado, ensuciar el filtro sí tiene que encontrarse el mínimo corriendo.
+ */
+await ponerVelocidad('20');
+await accionar('s0');   // paro: la compuerta cierra y, cumplido el mínimo, el ventilador cae
+must('parado del todo antes de volver a arrancar',
+	await esperarA(async () => (await activo('m1')) === false, 40_000));
+
+await ponerVelocidad('1');
+await accionar('s0');   // marcha otra vez, ahora a tiempo real
+must('vuelve a arrancar tras el retardo', await esperarA(async () => (await activo('m1')) === true, 30_000));
+
+await accionar('s1');   // el filtro se ensucia con el ventilador RECIÉN arrancado
 await p.waitForTimeout(1200);
 const filtroSucio = await foto();
 must('con el filtro sucio la compuerta cierra', !filtroSucio.hay('y1'),

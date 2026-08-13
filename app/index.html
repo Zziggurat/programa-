@@ -629,6 +629,19 @@
 		padding: 2px 5px; }
 	#sim-reloj-caja b { margin-left: auto; color: #ffd54f; font-variant-numeric: tabular-nums; }
 
+	/* Los MANDOS: la botonera de la maniobra. Es lo que permite arrancar un tablero cuyos
+	   pulsadores van en la puerta y por tanto no se pueden pinchar en el 3D. */
+	.fila-mando { display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+		border-radius: 8px; background: var(--panel-2); margin-bottom: 4px; font-size: 12.5px; }
+	.fila-mando .des-sim { font-weight: 600; color: var(--texto); min-width: 46px; }
+	.fila-mando .estado-mando { color: var(--texto-suave); flex: 1; }
+	.fila-mando.activo { background: #2a2a18; }
+	.fila-mando.activo .estado-mando { color: #ffd54f; }
+	.fila-mando button { background: var(--panel); border: 1px solid var(--borde); color: var(--texto);
+		border-radius: 7px; padding: 3px 10px; font-size: 11.5px; font-family: inherit; cursor: pointer; }
+	.fila-mando button:hover { background: #2b323a; }
+	.fila-mando .fuera { font-size: 11px; color: var(--texto-suave); }
+
 	/* Lo que consume el tablero: total e intensidad por protección, con su barra de carga.
 	   La barra es lo que se lee de un vistazo — verde va sobrado, ámbar va justo, rojo se pasa. */
 	.total-sim { font-size: 13px; background: #1d2a1f; border: 1px solid #2f5a37; color: #b8e6c4;
@@ -1140,9 +1153,9 @@
 	<details id="seccion-simulacion" open hidden>
 		<summary>⚡ Tablero energizado</summary>
 		<div class="contenido">
-			<div class="sub" style="color:var(--texto-suave);margin-bottom:8px">Haz clic en un
-			<b>pulsador</b> para pulsarlo, en un <b>sensor</b> o una <b>boya</b> para activarlo, y en una
-			<b>protección</b> para abrirla o cerrarla. Los cables con tensión se iluminan.</div>
+			<div class="sub" style="color:var(--texto-suave);margin-bottom:8px">Acciona los mandos
+			desde la lista de <b>Mandos</b> de aquí abajo, o haz clic sobre el aparato en el tablero
+			si está montado dentro. Los cables con tensión se iluminan.</div>
 			<!-- El reloj de la maniobra. Un retardo de 8 s se espera 8 s de verdad, y eso está
 			     bien para creérselo pero es un castigo para probar una secuencia diez veces. -->
 			<label id="sim-reloj-caja" title="Acelera el reloj de la simulación: los retardos y los tiempos mínimos corren más rápido">
@@ -1155,6 +1168,10 @@
 				<b id="sim-transcurrido">0,0 s</b>
 			</label>
 			<div id="sim-consumo"></div>
+			<!-- Los MANDOS. Un pulsador de marcha o una boya van en la puerta o en el campo, no en
+			     el riel, así que no tienen cuerpo que pinchar en el 3D: sin esta lista el tablero se
+			     energizaba y no había forma humana de arrancarlo. -->
+			<div id="sim-mandos"></div>
 			<div id="sim-sondas"></div>
 			<div id="sim-controladores"></div>
 			<div id="sim-funcionando"></div>

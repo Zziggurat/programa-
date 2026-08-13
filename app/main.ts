@@ -5398,6 +5398,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				funcionando: r?.funcionando ?? [],
 				avisos: r?.avisos ?? [],
 				oscila: r?.oscila ?? false,
+				// Hay tensión y todavía nadie ha accionado nada: es normal, no es avería.
+				sinAccionar: r?.sinAccionar ?? false,
 			};
 		},
 		/** Recalcula si los rótulos de la barra caben (lo hace la app al cambiar tamaño o estado). */

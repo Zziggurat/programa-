@@ -203,6 +203,16 @@ export interface ResultadoSimulacion {
 	pasadas: number;
 	/** True si el circuito no llegó a un estado estable (p. ej. un relé que se autoexcita y corta). */
 	oscila: boolean;
+	/**
+	 * Hay tensión y el tablero está sano, pero todavía nadie ha accionado nada.
+	 *
+	 * NO es una avería: es el estado normal justo después de energizar, igual que un tablero de
+	 * verdad con el automático subido y el motor parado. Va como bandera y no solo como texto
+	 * porque hay que poder distinguirlo de una avería SIN leer la frase: la prueba de los ejemplos
+	 * filtraba por las palabras del aviso y, al reescribirlo, cantó siete averías donde no había
+	 * ninguna. Un dato que se mira no se puede quedar desfasado; una frase, sí.
+	 */
+	sinAccionar: boolean;
 
 	/* --------- Lo que consume el tablero de verdad --------- */
 	/** Cargas en marcha con su intensidad. */
@@ -1013,8 +1023,19 @@ export function simular(
 		avisos.push('La acometida está, pero no llega tensión a ningún sitio: revisa que los cables salgan '
 			+ 'de sus bornes de fase y neutro.');
 	} else if (funcionando.length === 0) {
-		avisos.push('Hay tensión en el tablero pero nada está funcionando todavía. Pulsa un pulsador de '
-			+ 'marcha, o cierra el contacto que alimenta la bobina.');
+		/*
+		 * Que no funcione nada al energizar NO es un fallo: dar tensión no arranca la maniobra,
+		 * igual que subir el automático de un tablero de verdad no pone el motor en marcha.
+		 *
+		 * El texto sí lo era. Decía «pulsa un pulsador de marcha», y en tres de los cinco ejemplos
+		 * ese pulsador va en la PUERTA, no en el riel: no tiene cuerpo que pinchar en el 3D. Quien
+		 * lo leía se quedaba buscando dentro del armario un botón que no estaba, y el tablero se
+		 * quedaba energizado y muerto. Ahora manda al sitio donde el mando existe siempre.
+		 */
+		avisos.push('Hay tensión en el tablero pero todavía no funciona nada: falta accionar algo. '
+			+ 'Tienes los mandos en la lista «Mandos» de este panel —los pulsadores de marcha y paro, '
+			+ 'las boyas y las protecciones—, incluidos los que van en la puerta y no se ven dentro '
+			+ 'del armario.');
 	}
 
 	/*
@@ -1149,6 +1170,7 @@ export function simular(
 	return {
 		vivos, conductoresVivos, activos, funcionando, avisos, analogicas, salidasAnalogicas,
 		pasadas, oscila: !estable,
+		sinAccionar: fuentes.length > 0 && vivos.size > 0 && funcionando.length === 0,
 		consumos,
 		corrientePorConductor: porConductor,
 		cargaPorAparato,

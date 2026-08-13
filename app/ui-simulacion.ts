@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { MemoriaLogica, memoriaLogicaVacia } from '../src/motores/logica.js';
 import {
-	EstadoTablero, MemoriaTiempos, ResultadoSimulacion, formatearA, memoriaVacia, simular,
+	EstadoAparato, EstadoTablero, MemoriaTiempos, ResultadoSimulacion, formatearA, memoriaVacia, simular,
 } from '../src/motores/simulacion.js';
 import { Escenario } from './escena3d.js';
 import { avisar, escaparHtml } from './dialogos.js';
@@ -56,6 +56,44 @@ export interface PanelSimulacion {
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
+/** Las protecciones que se abren y se cierran a mano. */
+const PROTECCIONES = new Set(['disyuntor', 'diferencial', 'guardamotor', 'seccionador', 'fusible']);
+
+/** Un térmico se reconoce por su contacto 95-96: es lo que se dispara a mano para probar. */
+const esTermico = (d: Dispositivo): boolean => d.tipo === 'rele' && d.bornes.some((b) => b.id === '95');
+
+/**
+ * ¿ESTE APARATO SE PUEDE ACCIONAR?
+ *
+ * Tiene que decir exactamente lo mismo que `accionarEnSimulacion`, porque de aquí sale la lista de
+ * mandos que se le enseña al usuario: si dijera de más, saldría un botón que no hace nada; si
+ * dijera de menos, faltaría el botón que hace falta para arrancar el tablero. Las dos leen la
+ * misma tabla `PROTECCIONES` y el mismo `esTermico` para no poder separarse.
+ *
+ * Una sonda CON RANGO no entra: su mando no es un botón sino el deslizador de «Sondas».
+ */
+function esMando(d: Dispositivo): boolean {
+	if (d.tipo === 'pulsador' || d.tipo === 'selector') return true;
+	if (d.tipo === 'sensor') return !d.rangoSonda;
+	if (PROTECCIONES.has(d.tipo)) return true;
+	return esTermico(d);
+}
+
+/** Cómo se lee y cómo se rotula el botón de un mando, según cómo esté ahora. */
+function estadoDelMando(d: Dispositivo, st: EstadoAparato): { texto: string; boton: string; encendido: boolean } {
+	if (esTermico(d)) {
+		const disparado = !!st.disparado;
+		return { texto: disparado ? 'DISPARADO' : 'rearmado', boton: disparado ? 'Rearmar' : 'Disparar', encendido: disparado };
+	}
+	if (PROTECCIONES.has(d.tipo)) {
+		if (st.disparado) return { texto: 'DISPARADO', boton: 'Rearmar', encendido: true };
+		const abierto = st.cerrado === false;
+		return { texto: abierto ? 'abierto' : 'cerrado', boton: abierto ? 'Cerrar' : 'Abrir', encendido: abierto };
+	}
+	const activo = !!st.activo;
+	return { texto: activo ? 'accionado' : 'en reposo', boton: activo ? 'Soltar' : 'Accionar', encendido: activo };
+}
+
 export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	const proyecto = ctx.proyecto;
 	const seleccionar = ctx.seleccionar;
@@ -84,6 +122,8 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	 */
 	let relojSim: { ahora: number; memoria: MemoriaTiempos; logica: MemoriaLogica } | undefined;
 	let tickSim: number | undefined;
+	/** Cuándo se atendió el reloj por última vez, para saber cuánto ha pasado DE VERDAD. */
+	let ultimoTic = 0;
 	/** Cuántas veces más rápido corre el reloj de la maniobra que el de la pared. */
 	let velocidadSim = 1;
 	/** Instantes en que cada protección empezó a ver corriente de más, para cronometrar su disparo. */
@@ -132,6 +172,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		$('sim-transcurrido').textContent = '0,0 s';
 		if (!energizado) { relojSim = undefined; sobrecargaDesde = {}; return; }
 		relojSim = { ahora: 0, memoria: memoriaVacia(), logica: memoriaLogicaVacia() };
+		ultimoTic = performance.now();
 		tickSim = window.setInterval(() => {
 			if (!energizado || !relojSim) return;
 			/*
@@ -142,7 +183,24 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			 * misma secuencia diez veces cambiando un renglón del programa. Con ×20 la UMA entera
 			 * arranca en menos de un segundo, y lo que se ve es exactamente lo mismo.
 			 */
-			relojSim.ahora += 200 * velocidadSim;
+			/*
+			 * EL RELOJ AVANZA LO QUE HA PASADO DE VERDAD, no un tramo fijo por vuelta.
+			 *
+			 * Antes sumaba 200 ms en cada llamada, dando por hecho que las llamadas caen cada 200 ms
+			 * clavadas. No es cierto: `setInterval` se retrasa cuando la página está ocupada y luego
+			 * suelta las llamadas atrasadas de golpe, así que el reloj de la maniobra iba unas veces
+			 * lento y otras a saltos, según lo que estuviera costando dibujar el panel en ese momento.
+			 * Un retardo de 8 s a ×20 podía tardar medio segundo o tres.
+			 *
+			 * Se vio al añadir la lista de mandos: pintar unas filas más por vuelta bastó para mover
+			 * el reloj lo suficiente como para que una prueba de la UMA cambiara de resultado. La
+			 * prueba estaba mal, pero el reloj también: midiendo el tiempo REAL, lo que se ve deja de
+			 * depender de cuánto trabajo tenga el navegador encima.
+			 */
+			const ahoraReal = performance.now();
+			const transcurrido = Math.min(ahoraReal - ultimoTic, 2000);   // tope: volver de otra pestaña
+			ultimoTic = ahoraReal;
+			relojSim.ahora += transcurrido * velocidadSim;
 			const seg = relojSim.ahora / 1000;
 			$('sim-transcurrido').textContent = `${seg.toFixed(1).replace('.', ',')} s`;
 			// Solo se rehace si hay algo que dependa del tiempo; si no, es gastar por gastar.
@@ -193,6 +251,48 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		$('sim-sondas').innerHTML = '';
 		$('sim-controladores').innerHTML = '';
 		if (!r) return;
+
+		/*
+		 * LOS MANDOS: la botonera de la maniobra.
+		 *
+		 * Esto lo destapó una pregunta de Diego: «¿por qué al energizar no pasa nada y sale "nada
+		 * está funcionando todavía", incluso en los tableros de ejemplo?».
+		 *
+		 * La primera mitad de la respuesta es que ESO ES LO CORRECTO: energizar da tensión, no
+		 * arranca nada, igual que subir el automático de un tablero de verdad no pone el motor en
+		 * marcha. Hace falta apretar MARCHA.
+		 *
+		 * La segunda mitad era un fallo de verdad. En el arranque directo y en el estrella-triángulo
+		 * los únicos aparatos que arrancan el circuito son `-S0` y `-S1`, y en la bomba es la boya
+		 * `-B1`. Los tres son aparatos DE CAMPO: van en la puerta o fuera del armario, así que están
+		 * bien modelados eléctricamente pero NO TIENEN CUERPO en el 3D. El aviso decía «pulsa un
+		 * pulsador de marcha» y no había ningún pulsador que pinchar: el tablero se quedaba
+		 * energizado y muerto, sin manera de hacer nada. Tres de los cinco ejemplos no se podían
+		 * probar, que es justo para lo que están.
+		 *
+		 * Así que todo lo que se puede accionar sale aquí con su botón, esté montado en el riel o
+		 * no. Los que no están dentro del armario se marcan, porque saber que un pulsador va en la
+		 * puerta es parte de lo que enseña el ejemplo.
+		 */
+		const dentroDelArmario = new Set(
+			(proyecto().gabinete?.colocaciones ?? []).map((c) => c.dispositivoId));
+		const mandos = proyecto().dispositivos.filter((d) => esMando(d));
+		if (mandos.length) {
+			$('sim-mandos').innerHTML = '<h3 class="titulo-sim">Mandos</h3>' + mandos.map((d) => {
+				const st = estadoSim[d.id] ?? {};
+				const { texto, boton, encendido } = estadoDelMando(d, st);
+				const fuera = dentroDelArmario.has(d.id) ? ''
+					: '<span class="fuera" title="No está montado en el armario: va en la puerta o en '
+						+ 'campo, así que solo se acciona desde aquí">· en la puerta</span>';
+				return `<div class="fila-mando ${encendido ? 'activo' : ''}">`
+					+ `<span class="des-sim">${escaparHtml(d.designacion ?? d.id)}</span>`
+					+ `<span class="estado-mando">${escaparHtml(texto)}</span>${fuera}`
+					+ `<button data-mando="${escaparHtml(d.id)}">${escaparHtml(boton)}</button></div>`;
+			}).join('');
+			for (const el of $('sim-mandos').querySelectorAll<HTMLElement>('[data-mando]')) {
+				el.onclick = () => { accionarEnSimulacion(el.dataset.mando!); };
+			}
+		}
 
 		/*
 		 * LAS SONDAS. Un controlador que decide por temperatura necesita una temperatura, y esa la
@@ -406,26 +506,27 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 				st.activo = !st.activo;
 				avisar(`${d.designacion ?? d.id}: ${st.activo ? 'accionado' : 'en reposo'}`, 'info');
 				break;
-			case 'disyuntor':
-			case 'diferencial':
-			case 'guardamotor':
-			case 'seccionador':
-			case 'fusible':
-				// Si había disparado, el clic lo rearma; si estaba cerrado, lo abre.
-				if (st.disparado) { st.disparado = false; st.cerrado = true; }
-				else st.cerrado = st.cerrado === false;
-				avisar(`${d.designacion ?? d.id}: ${st.cerrado === false ? 'abierto' : 'cerrado'}`, 'info');
-				break;
-			case 'rele':
+			default:
+				/*
+				 * Protecciones y térmicos, leyendo LAS MISMAS tablas que `esMando`. Antes esto era
+				 * una lista de `case` escrita aparte, y de ahí sale el fallo clásico: se añade un
+				 * tipo de aparato en un sitio y no en el otro, y queda un botón que no hace nada (o
+				 * un aparato que no se puede accionar y nadie sabe por qué).
+				 */
+				if (PROTECCIONES.has(d.tipo)) {
+					// Si había disparado, el clic lo rearma; si estaba cerrado, lo abre.
+					if (st.disparado) { st.disparado = false; st.cerrado = true; }
+					else st.cerrado = st.cerrado === false;
+					avisar(`${d.designacion ?? d.id}: ${st.cerrado === false ? 'abierto' : 'cerrado'}`, 'info');
+					break;
+				}
 				// Un térmico se dispara a mano para comprobar que el mando cae como debe.
-				if (d.bornes.some((b) => b.id === '95')) {
+				if (esTermico(d)) {
 					st.disparado = !st.disparado;
 					avisar(`${d.designacion ?? d.id}: ${st.disparado ? 'DISPARADO' : 'rearmado'}`,
 						st.disparado ? 'error' : 'ok');
 					break;
 				}
-				return false;
-			default:
 				return false;
 		}
 		estadoSim[d.id] = st;
