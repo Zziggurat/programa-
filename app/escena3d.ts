@@ -9,7 +9,13 @@ import * as THREE from 'three';
 import { Colocacion, Conductor, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
 import { posicionesDeTerminales } from '../src/motores/terminales.js';
-import { Banda, corredoresLibres, crearRepartidor, orthogonalize, redondearEsquinas } from './geometria-cables.js';
+import {
+	Banda, carrilesDe, corredoresLibres, mejorCorredor, orthogonalize, prepararRecorrido, Punto,
+	Punto3, Recorrido2D, recorrido3D,
+} from './geometria-cables.js';
+import {
+	Conflicto, conflictosDe, invasionesDe, RejillaCables, Solido, Trazo,
+} from './colisiones-cables.js';
 import { ALTURA_CARRIL, bornesGenericos, construirAparato3D, Z_BORNE } from './dispositivos3d.js';
 
 export const COLOR_CABLE: Record<string, number> = {
@@ -734,6 +740,18 @@ export interface RutaCable {
 	nodos: { x: number; y: number }[];
 	/** Profundidad a la que corre este cable. Ver `CAPAS_CABLE`. */
 	z: number;
+	/**
+	 * EL RECORRIDO 3D FINAL, tal cual se va a dibujar.
+	 *
+	 * Va DENTRO de la ruta y no se recalcula fuera, y esa es toda la gracia. Dejar que cada quien
+	 * lo reconstruya a partir de los nodos es exactamente como se coló el fallo que esta iteración
+	 * viene a quitar: el repartidor pasaba a `recorrido3D` el suelo que imponen las canaletas y el
+	 * dibujo, que llamaba a la misma función sin ese argumento, pintaba otra cosa. Se validaba una
+	 * geometría y se veía otra. Yendo dentro de la ruta, no hay dos.
+	 */
+	puntos: Punto3[];
+	/** El radio del tubo: hace falta para medir choques y para dibujarlo. */
+	radio: number;
 }
 
 /**
@@ -777,8 +795,6 @@ const RAMPA_MM = 26;
  * (franja sin aparatos) tomando un carril propio.
  */
 /** Separación (mm) entre las puntas de dos cables que comparten el mismo borne. */
-const ABANICO_MM = 6;
-
 /**
  * Abanico de salida en los bornes compartidos.
  *
@@ -792,36 +808,76 @@ const ABANICO_MM = 6;
  */
 export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, borneId: string, conductorId: string) => number {
 	/*
-	 * El abanico se reparte por COLUMNA, no por borne.
+	 * EL ABANICO SE RESUELVE PARA TODA UNA FILA DE BORNES A LA VEZ, NO CUBO A CUBO.
 	 *
-	 * Al principio solo se separaban los cables que salían del MISMO borne. Pero medido sobre los
-	 * tableros de ejemplo, todo el amontonamiento que quedaba estaba en las bajadas verticales de
-	 * bornes DISTINTOS que caen en la misma vertical —el borne de arriba de un aparato y el de
-	 * abajo del que tiene encima, por ejemplo—: sus dos bajadas se montaban una sobre otra en
-	 * toda su longitud. Agrupando por la columna en la que baja el cable se separan también esos,
-	 * que es lo que hace un electricista al peinar: los hilos de una misma vertical se abren un
-	 * poco para que se puedan seguir con la vista y contar.
+	 * La versión anterior metía cada punta de cable en un cubo de 5 mm (`round(x / 5)`) y dentro de
+	 * cada cubo abría los cables ±6 mm desde su centro. Suena razonable y tiene un fallo que produce
+	 * exactamente las «fusiones» que se ven: los cubos son de 5 mm y el abanico abre 6, así que DOS
+	 * CUBOS VECINOS SE PISAN. Medido sobre el estrella-triángulo, el borne `q1:6` (x = 125) y el
+	 * `q1:2` (x = 107) acababan los dos en x = 122,0 exacto; los de `km3:6/T3` y `km3:2/T1`, los dos
+	 * en 289,5. Sus bajadas no es que quedaran cerca: eran la MISMA recta, con los dos tubos en el
+	 * mismo volumen en toda su longitud. De ahí salían las holguras de −6,00 mm, que es justo el
+	 * diámetro sumado de los dos cables.
+	 *
+	 * Ahora el reparto es global dentro de cada fila y con una regla física: ordenadas las puntas
+	 * por su x, dos consecutivas quedan separadas al menos lo que suman sus radios más aire. Se
+	 * resuelve exacto —con el desplazamiento total mínimo— por regresión isotónica: se resta a cada
+	 * punta la separación acumulada que le toca, se fuerza que la serie no decrezca fundiendo
+	 * bloques vecinos por su media, y se vuelve a sumar. El que no tiene vecinos cerca no se mueve;
+	 * los que se pisan se abren lo justo y repartido. Y como el resultado es monótono en el orden de
+	 * partida, dos salidas nunca se CRUZAN al abrirse, que era el otro riesgo.
 	 */
-	const enColumna = new Map<string, string[]>();
-	const anota = (clave: string, id: string) => {
-		const l = enColumna.get(clave);
-		if (l) l.push(id); else enColumna.set(clave, [id]);
-	};
-	const columnaDe = (dispositivoId: string, borneId: string): string => {
-		const a = anclajeBorne(proyecto, dispositivoId, borneId);
-		return a ? String(Math.round(a.x / 5)) : `${dispositivoId}:${borneId}`;
-	};
+	const puntas: { clave: string; x: number; y: number; radio: number }[] = [];
 	for (const c of proyecto.conductores) {
-		anota(columnaDe(c.de.dispositivoId, c.de.borneId), c.id);
-		anota(columnaDe(c.a.dispositivoId, c.a.borneId), c.id);
+		const radio = radioDeCable(c.seccion);
+		for (const extremo of [c.de, c.a]) {
+			const a = anclajeBorne(proyecto, extremo.dispositivoId, extremo.borneId);
+			if (!a) continue;
+			puntas.push({ clave: `${extremo.dispositivoId}|${extremo.borneId}|${c.id}`, x: a.x, y: a.y, radio });
+		}
 	}
-	return (dispositivoId, borneId, conductorId) => {
-		const l = enColumna.get(columnaDe(dispositivoId, borneId)) ?? [];
-		if (l.length < 2) return 0;
-		// Un cable puede tener sus dos puntas en la misma columna: cuenta la primera aparición
-		// para una punta y la última para la otra, que es lo que las separa entre sí.
-		return (l.indexOf(conductorId) - (l.length - 1) / 2) * ABANICO_MM;
-	};
+	/*
+	 * Fila a fila, no de una vez para todo el tablero. Es un matiz que cuesta caro equivocar: el
+	 * problema que resuelve el abanico es el de la HILERA de tornillos —dos bornes vecinos del
+	 * mismo aparato, o de dos aparatos pegados en el mismo riel— cuyas salidas se pisan al abrirse.
+	 * Dos bornes a la misma x pero separados medio tablero no se estorban ahí, y forzarlos a
+	 * apartarse tira de los dos hilos lejos de su tornillo sin ganar nada (probado: empeoraba). Lo
+	 * que sí puede pasar entre filas distintas —que sus bajadas se crucen— lo arregla el repartidor
+	 * corriendo una de las dos bajadas, que para eso tiene ese grado de libertad.
+	 */
+	const desvio = new Map<string, number>();
+	const filas = new Map<number, typeof puntas>();
+	for (const q of puntas) {
+		const fila = Math.round(q.y / 12);
+		const l = filas.get(fila);
+		if (l) l.push(q); else filas.set(fila, [q]);
+	}
+	for (const fila of filas.values()) {
+		// Orden estable: por x y, a igualdad, por clave. Es lo que hace el reparto DETERMINISTA.
+		fila.sort((a, b) => a.x - b.x || (a.clave < b.clave ? -1 : a.clave > b.clave ? 1 : 0));
+		const acumulado: number[] = [];
+		let suma = 0;
+		for (let i = 0; i < fila.length; i++) {
+			if (i > 0) suma += fila[i - 1].radio + fila[i].radio + HOLGURA_CABLE;
+			acumulado.push(suma);
+		}
+		const bloques: { media: number; n: number }[] = [];
+		for (let i = 0; i < fila.length; i++) {
+			let media = fila[i].x - acumulado[i];
+			let n = 1;
+			while (bloques.length && bloques[bloques.length - 1].media > media) {
+				const previo = bloques.pop()!;
+				media = (media * n + previo.media * previo.n) / (n + previo.n);
+				n += previo.n;
+			}
+			bloques.push({ media, n });
+		}
+		let i = 0;
+		for (const b of bloques) {
+			for (let k = 0; k < b.n; k++, i++) desvio.set(fila[i].clave, b.media + acumulado[i] - fila[i].x);
+		}
+	}
+	return (dispositivoId, borneId, conductorId) => desvio.get(`${dispositivoId}|${borneId}|${conductorId}`) ?? 0;
 }
 
 /** Puntas de un cable: el borne real y el punto al que se abre para no fundirse con sus vecinos. */
@@ -875,32 +931,356 @@ export function longitudesDibujadasMm(proyecto: Proyecto): Map<string, number> {
 	return new Map(proyecto.conductores.map((c) => [c.id, largoDibujadoMm(proyecto, c, abanico)]));
 }
 
+/** Radio del tubo de un conductor. Lo comparten el dibujo, el reparto y las pruebas. */
+export function radioDeCable(seccion?: number): number {
+	return 0.9 + (seccion ?? 1.5) * 0.35;
+}
+
+/** Radio mínimo de curvatura del codo: cuanto más grueso el cable, más abierto dobla. */
+export function radioCodo(radio: number): number {
+	return 10 + radio * 4;
+}
+
+/**
+ * Aire que se quiere dejar ENTRE SUPERFICIES de dos cables que no tienen por qué tocarse.
+ *
+ * No es `distancia > 0`: dos tubos que se rozan exactamente se ven fundidos, porque a la distancia
+ * a la que se mira un tablero medio milímetro de separación no se distingue de cero.
+ */
+export const HOLGURA_CABLE = 1.2;
+
+/** Cuánto se puede correr una bajada a un lado para buscarle sitio, y en cuántos pasos. */
+const PASO_LATERAL = 5;
+const PASOS_LATERALES = [0, 1, -1, 2, -2];
+
+/**
+ * EL ÚLTIMO REPARTO, GUARDADO.
+ *
+ * `rutasDeCables` la llaman el dibujo, el diagnóstico y —esto es lo que obliga— la interacción del
+ * ratón, que la consulta cada vez que se señala un cable. Resolver el reparto de un tablero de
+ * cincuenta conductores cuesta unas décimas de segundo; hacerlo en cada movimiento del ratón se
+ * nota en la mano. Se guarda el resultado con una firma de lo único que puede cambiarlo.
+ */
+let ultimoReparto: { firma: string; rutas: RutaCable[] } | undefined;
+
+function firmaDelRuteo(proyecto: Proyecto): string {
+	const g = proyecto.gabinete;
+	return JSON.stringify([
+		proyecto.conductores.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado]),
+		g?.colocaciones.map((c) => [c.dispositivoId, c.x, c.y, c.ancho, c.alto, c.z]),
+		g?.canaletas.map((c) => [c.x, c.y, c.largo, c.orientacion, c.ancho, c.alto]),
+		g?.rieles.map((r) => [r.x, r.y, r.largo, r.orientacion]),
+		[g?.ancho, g?.alto],
+	]);
+}
+
 export function rutasDeCables(proyecto: Proyecto): RutaCable[] {
+	const firma = firmaDelRuteo(proyecto);
+	if (ultimoReparto?.firma === firma) return ultimoReparto.rutas;
+	const rutas = repartirCables(proyecto);
+	ultimoReparto = { firma, rutas };
+	return rutas;
+}
+
+/**
+ * EL REPARTO DE CABLES, DECIDIDO SOBRE EL VOLUMEN QUE OCUPAN DE VERDAD.
+ *
+ * El repartidor anterior resolvía esto mirando solapes de ejes en 2D, y su función de conflicto
+ * empezaba así:
+ *
+ *     if (a.horizontal !== b.horizontal) return 0;   // «se cruzan, no se montan»
+ *
+ * Un cruce valía CERO. Como el repartidor busca el sitio con menos choque, le salía gratis meter
+ * veinte cables en la capa de atrás mientras ninguno fuera paralelo a otro: todos los cruces
+ * perpendiculares eran gratis. Y dos cables de la misma capa comparten z exacta, así que cada uno
+ * de esos cruces gratis era una intersección física. Tampoco miraba el grosor, ni los codos
+ * redondeados (que se aplicaban DESPUÉS de reservar), ni la rampa de profundidad.
+ *
+ * Ahora, para cada cable se prueban sitios —carril del pasillo × capa de profundidad × cuánto se
+ * corre la bajada—, se construye el recorrido 3D COMPLETO que se va a dibujar y se mide su
+ * distancia real contra todo lo ya tendido, radio incluido. Se queda con el primero que deje
+ * holgura de verdad; si el tablero está tan cargado que ninguno la deja, con el que menos se meta,
+ * y la prueba lo dirá.
+ *
+ * Es determinista: mismo proyecto, mismo reparto, porque se recorren los conductores en el orden
+ * del proyecto y los candidatos en un orden fijo.
+ */
+function repartirCables(proyecto: Proyecto): RutaCable[] {
 	const corredores = corredoresLibresDe(proyecto);
 	const abanico = abanicoDeSalida(proyecto);
-	// Reparte los cables por carriles llevando la cuenta de lo ya ocupado: dos cables solo
-	// comparten altura si van por tramos del tablero que no se pisan.
-	const repartir = crearRepartidor(corredores, 8, CAPAS_CABLE);
-	const rutas: RutaCable[] = [];
+	const canaletas = (proyecto.gabinete?.canaletas ?? []).map((c) => {
+		const esH = c.orientacion === 'h';
+		return {
+			x0: c.x, x1: c.x + (esH ? c.largo : c.ancho),
+			y0: c.y, y1: c.y + (esH ? c.ancho : c.largo),
+			alto: c.alto,
+		};
+	});
+	/*
+	 * LA PROFUNDIDAD DE VIAJE ARRANCA POR DELANTE DE LAS CANALETAS.
+	 *
+	 * Las canaletas de los tableros de ejemplo miden 60 mm de alto y los cables viajaban de 52 a
+	 * 81: las dos primeras capas iban POR DENTRO del ducto. Y no era mala suerte —los corredores
+	 * libres son las bandas donde no hay aparatos, que es justo donde se ponen las canaletas—, así
+	 * que casi todo cable que cruzaba el tablero atravesaba una de lado a lado, pared y dedos
+	 * incluidos. Se saca de los datos, no de un número escrito a mano: manda la canaleta más alta.
+	 */
+	const altoCanaleta = canaletas.reduce((m, c) => Math.max(m, c.alto), 0);
+	const zBase = Math.max(Z_FRENTE, altoCanaleta + 6);
+	const capasZ = Array.from({ length: CAPAS_CABLE }, (_, i) => zBase + i * SEPARACION_CAPAS);
 
-	let manuales = 0;
+	/** Un cable ya colocado, con todo lo que hace falta para volver a colocarlo. */
+	interface Puesto {
+		conductorId: string;
+		trazo: Trazo;
+		nodos: Punto[];
+		z: number;
+		/** Con qué clave está apuntado en la rejilla, para poder levantarlo. */
+		clave: string;
+		colocar: (paso: number, zViaje: number, camino: Punto[]) => { nodos: Punto[]; trazo: Trazo };
+		caminos: Punto[][];
+		de: Anclaje;
+		a: Anclaje;
+	}
+
+	const puestos: Puesto[] = [];
+	const rejilla = new RejillaCables();
+
 	for (const conductor of proyecto.conductores) {
 		const p = salidasDeCable(proyecto, conductor, abanico);
 		if (!p) continue;
-		// Un cable peinado a mano manda: se respeta su trazado y solo se le busca profundidad.
-		const auto = conductor.trazado?.length ? undefined : repartir(p.salidaA, p.salidaB);
-		const intermedios = auto ? auto.puntos : conductor.trazado!;
-		const carril = auto ? auto.carril : manuales++;
-		rutas.push({
-			conductorId: conductor.id,
-			de: p.de,
-			a: p.a,
-			// El recorrido arranca en el borne y enseguida se abre a su carril propio.
-			nodos: orthogonalize([p.salidaA, ...intermedios, p.salidaB]),
-			z: Z_FRENTE + (carril % CAPAS_CABLE) * SEPARACION_CAPAS,
+		const radio = radioDeCable(conductor.seccion);
+		const codo = radioCodo(radio);
+		/*
+		 * El obstáculo se mira CRECIDO: por el radio del cable —que es un tubo, no una línea— y por
+		 * el paso con el que se muestrea el recorrido. Sin lo segundo, el último punto muestreado
+		 * dentro de la canaleta cae unos milímetros antes de su borde y el perfil empieza a bajar
+		 * ahí, todavía por encima del ducto: el cable rozaba la pared justo al salir.
+		 */
+		const MARGEN_SOLIDO = radio + HOLGURA_CABLE + 8;
+		const sueloMin = (x: number, y: number): number => {
+			let z = 0;
+			for (const c of canaletas) {
+				if (x >= c.x0 - MARGEN_SOLIDO && x <= c.x1 + MARGEN_SOLIDO
+					&& y >= c.y0 - MARGEN_SOLIDO && y <= c.y1 + MARGEN_SOLIDO) {
+					z = Math.max(z, c.alto + radio + HOLGURA_CABLE);
+				}
+			}
+			return z;
+		};
+		const bornes: [string, string] = [
+			`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
+			`${conductor.a.dispositivoId}:${conductor.a.borneId}`,
+		];
+
+		/*
+		 * Los recorridos posibles a lo ancho del tablero. Un cable peinado a mano manda: su trazado
+		 * es el que quiso quien dibuja y no se le toca, solo se le busca profundidad. Uno automático
+		 * puede ir por cualquier carril del corredor que le corresponde.
+		 */
+		let caminos: Punto[][];
+		if (conductor.trazado?.length) {
+			caminos = [conductor.trazado];
+		} else if (Math.abs(p.salidaA.x - p.salidaB.x) < 2) {
+			caminos = [[]];   // misma vertical: tramo recto, solo cambia la profundidad
+		} else {
+			const corredor = mejorCorredor(p.salidaA, p.salidaB, corredores);
+			const alturas = corredor ? carrilesDe(corredor) : [Math.round((p.salidaA.y + p.salidaB.y) / 2)];
+			caminos = alturas.map((y) => [{ x: p.salidaA.x, y }, { x: p.salidaB.x, y }]);
+		}
+
+		/*
+		 * El recorrido empieza y acaba EN EL BORNE, no en el punto al que se abre. Sin los dos
+		 * anclajes, el reparto no veía la aproximación al tornillo —que es justo donde se juntan
+		 * los cables— y el dibujo arrancaba el tubo a un lado del borne en vez de en él.
+		 *
+		 * `paso` corre la bajada a un lado: es el grado de libertad que le faltaba al reparto. Dos
+		 * bornes que caen en la MISMA vertical y en filas distintas —el de arriba de un aparato y
+		 * el de abajo del que tiene encima— bajan por la misma recta, y ahí no hay capa que valga:
+		 * sus dos rampas de profundidad se cruzan por el camino pase lo que pase. Lo único que los
+		 * separa es mover una de las dos bajadas.
+		 *
+		 * La parte cara del recorrido —redondear codos y partir en trozos de 8 mm— no depende de la
+		 * profundidad, así que se calcula una vez por camino y se reaprovecha en las nueve capas.
+		 */
+		const preparados = new Map<string, Recorrido2D>();
+		const colocar = (paso: number, zViaje: number, camino: Punto[]): { nodos: Punto[]; trazo: Trazo } => {
+			const d = paso * PASO_LATERAL;
+			const nodos = orthogonalize([
+				{ x: p.de.x, y: p.de.y },
+				{ x: p.salidaA.x + d, y: p.salidaA.y },
+				...camino.map((q) => ({ x: q.x + d, y: q.y })),
+				{ x: p.salidaB.x + d, y: p.salidaB.y },
+				{ x: p.a.x, y: p.a.y },
+			]);
+			const clave = `${paso}|${camino.map((q) => `${q.x},${q.y}`).join(';')}`;
+			let base = preparados.get(clave);
+			if (!base) { base = prepararRecorrido(nodos, codo); preparados.set(clave, base); }
+			return {
+				nodos,
+				trazo: {
+					id: conductor.id, radio, bornes, extremos: [p.de, p.a],
+					puntos: recorrido3D(base, p.de.z, p.a.z, zViaje, RAMPA_MM, sueloMin),
+				},
+			};
+		};
+
+		// Primera pasada: sin correr la bajada, que es lo que menos desvía el cable de su sitio.
+		let mejor: Puesto | undefined;
+		let mejorHolgura = -Infinity;
+		buscar: for (const zViaje of capasZ) {
+			for (const camino of caminos) {
+				const { nodos, trazo } = colocar(0, zViaje, camino);
+				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, mejorHolgura);
+				const holgura = choque ? choque.holgura : Infinity;
+				if (holgura > mejorHolgura) {
+					mejorHolgura = holgura;
+					mejor = {
+						conductorId: conductor.id, trazo, nodos, z: zViaje, clave: '',
+						colocar, caminos, de: p.de, a: p.a,
+					};
+				}
+				if (!choque) break buscar;
+			}
+		}
+		if (!mejor) continue;
+		mejor.clave = rejilla.anadir(mejor.trazo);
+		puestos.push(mejor);
+	}
+
+	/*
+	 * SEGUNDA PASADA: LEVANTAR Y VOLVER A TENDER a los que quedaron mal.
+	 *
+	 * En la primera pasada cada cable se coloca contra los que YA estaban; los que vienen después
+	 * no existían todavía. Así que el último tiene el tablero entero en contra y el primero no tuvo
+	 * que esquivar a nadie. Aquí se levanta cada cable en conflicto y se le busca sitio contra el
+	 * tablero COMPLETO, ahora sí con permiso para correr la bajada a un lado.
+	 *
+	 * Los conflictos se vuelven a medir de verdad entre vuelta y vuelta: fiarse de la holgura que
+	 * se apuntó al colocar sería fiarse de un número viejo, medido contra medio tablero.
+	 */
+	const enConflicto = (): Set<string> => {
+		const malos = new Set<string>();
+		for (const c of conflictosDe(puestos.map((q) => q.trazo), HOLGURA_CABLE)) { malos.add(c.a); malos.add(c.b); }
+		return malos;
+	};
+	for (let vuelta = 0; vuelta < 2; vuelta++) {
+		const malos = enConflicto();
+		if (!malos.size) break;
+		for (const puesto of puestos) {
+			if (!malos.has(puesto.conductorId)) continue;
+			rejilla.retirar(puesto.clave);
+			let mejor: { nodos: Punto[]; trazo: Trazo; z: number } | undefined;
+			let mejorHolgura = -Infinity;
+			salir: for (const paso of PASOS_LATERALES) {
+				for (const zViaje of capasZ) {
+					for (const camino of puesto.caminos) {
+						const { nodos, trazo } = puesto.colocar(paso, zViaje, camino);
+						const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, mejorHolgura);
+						const holgura = choque ? choque.holgura : Infinity;
+						if (holgura > mejorHolgura) { mejorHolgura = holgura; mejor = { nodos, trazo, z: zViaje }; }
+						if (!choque) break salir;
+					}
+				}
+			}
+			if (mejor) Object.assign(puesto, mejor);
+			puesto.clave = rejilla.anadir(puesto.trazo);
+		}
+	}
+
+	return puestos.map((q) => ({
+		conductorId: q.conductorId, de: q.de, a: q.a, nodos: q.nodos, z: q.z,
+		puntos: q.trazo.puntos, radio: q.trazo.radio,
+	}));
+}
+
+/**
+ * Los cables del tablero como volúmenes: el recorrido 3D final de cada uno con su radio. Sale de
+ * las MISMAS funciones que dibujan, no de una copia paralela.
+ */
+export function trazosDeCables(proyecto: Proyecto): Trazo[] {
+	return rutasDeCables(proyecto).map((ruta) => {
+		const conductor = proyecto.conductores.find((c) => c.id === ruta.conductorId)!;
+		return {
+			id: ruta.conductorId,
+			radio: ruta.radio,
+			puntos: ruta.puntos,
+			bornes: [
+				`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
+				`${conductor.a.dispositivoId}:${conductor.a.borneId}`,
+			] as [string, string],
+			extremos: [ruta.de, ruta.a] as [Punto3, Punto3],
+		};
+	});
+}
+
+/**
+ * LO QUE HAY EN EL TABLERO POR DONDE UN CABLE NO DEBERÍA PASAR.
+ *
+ * Las canaletas no estaban en el modelo de ruteo de ninguna forma: `corredoresLibresDe()` solo
+ * descuenta las huellas de los APARATOS, así que un corredor libre podía caer justo encima de una
+ * canaleta y el cable la cruzaba de lado a lado, atravesando sus dedos. Eran decoración. Aquí
+ * entran como sólidos de verdad, junto con el carril y los aparatos.
+ */
+export function solidosDelTablero(proyecto: Proyecto): Solido[] {
+	const g = proyecto.gabinete;
+	if (!g) return [];
+	const solidos: Solido[] = [];
+	for (const c of g.canaletas) {
+		const esH = c.orientacion === 'h';
+		solidos.push({
+			id: `canaleta ${c.id}`,
+			x0: c.x, x1: c.x + (esH ? c.largo : c.ancho),
+			y0: c.y, y1: c.y + (esH ? c.ancho : c.largo),
+			z0: 0, z1: c.alto,
 		});
 	}
-	return rutas;
+	for (const r of g.rieles) {
+		const esV = r.orientacion === 'v';
+		solidos.push({
+			id: `carril ${r.id ?? ''}`.trim(),
+			x0: r.x - (esV ? 17.5 : 0), x1: r.x + (esV ? 17.5 : r.largo),
+			y0: r.y - (esV ? 0 : 17.5), y1: r.y + (esV ? r.largo : 17.5),
+			z0: 0, z1: ALTURA_CARRIL,
+		});
+	}
+	for (const col of g.colocaciones) {
+		/*
+		 * El aparato cuenta hasta POR DEBAJO del hombro de bornes. El hombro es la superficie donde
+		 * se apoya el hilo al salir del tornillo: es exactamente lo que tiene que pasar ahí.
+		 * Contándolo como sólido hasta la cota del borne, cada cable salía marcado como invasor de
+		 * su propio aparato por un milímetro, y eso es ruido que tapa las invasiones de verdad.
+		 */
+		solidos.push({
+			id: `aparato ${col.dispositivoId}`,
+			x0: col.x, x1: col.x + col.ancho,
+			y0: col.y, y1: col.y + col.alto,
+			z0: 0, z1: Z_BORNE - 7,
+		});
+	}
+	return solidos;
+}
+
+/**
+ * DIAGNÓSTICO DEL CABLEADO: qué pares de cables se tocan, y qué cable invade algo sólido.
+ *
+ * Es la respuesta a «¿de verdad no se cruzan?», contestada MIDIENDO la geometría final y no
+ * razonando sobre carriles. La usan las pruebas y la sonda de QA.
+ */
+export function diagnosticoCables(proyecto: Proyecto, margen = HOLGURA_CABLE): {
+	cables: number;
+	holguraMinima: number;
+	conflictos: Conflicto[];
+	invasiones: Conflicto[];
+} {
+	const trazos = trazosDeCables(proyecto);
+	const conflictos = conflictosDe(trazos, margen);
+	return {
+		cables: trazos.length,
+		holguraMinima: conflictos.length ? conflictos[0].holgura : Infinity,
+		conflictos,
+		invasiones: invasionesDe(trazos, solidosDelTablero(proyecto)),
+	};
 }
 
 export function construirCables(
@@ -916,41 +1296,15 @@ export function construirCables(
 	// del tablero para no atravesar los aparatos.
 	for (const ruta of rutasDeCables(proyecto)) {
 		const conductor = proyecto.conductores.find((c) => c.id === ruta.conductorId)!;
-		const radio = 0.9 + (conductor.seccion ?? 1.5) * 0.35;
-		// Codos redondeados con el radio mínimo de curvatura del cable (más grueso, más radio),
-		// para que dobla como un conductor de verdad y el tubo no se pellizque en las esquinas.
-		const suave = redondearEsquinas(ruta.nodos, 10 + radio * 4);
-		/*
-		 * LA PROFUNDIDAD VARÍA A LO LARGO DEL RECORRIDO.
-		 *
-		 * Se mide cuánto camino lleva cada punto y con eso se interpola: en los primeros y últimos
-		 * `RAMPA_MM` el cable está subiendo (o bajando) entre la profundidad de su borne y la de su
-		 * carril; en medio viaja a su carril. Antes todos los puntos intermedios estaban a la MISMA
-		 * z y el salto al borne ocurría de golpe en el último tramo, que es lo que hacía que el
-		 * cable pareciera una cinta pegada a un plano y no un conductor tendido.
-		 */
-		const acumulado: number[] = [0];
-		for (let i = 1; i < suave.length; i++) {
-			acumulado.push(acumulado[i - 1] + Math.hypot(suave[i].x - suave[i - 1].x, suave[i].y - suave[i - 1].y));
-		}
-		const largo = acumulado[acumulado.length - 1] || 1;
-		const zEn = (recorrido: number): number => {
-			const entrada = Math.min(1, recorrido / RAMPA_MM);
-			const salida = Math.min(1, (largo - recorrido) / RAMPA_MM);
-			// `smoothstep` en los dos extremos: la subida y la bajada no tienen esquina.
-			const suavizar = (t: number) => t * t * (3 - 2 * t);
-			const zBorde = recorrido * 2 < largo ? ruta.de.z : ruta.a.z;
-			const mezcla = suavizar(Math.min(entrada, salida));
-			return zBorde + (ruta.z - zBorde) * mezcla;
-		};
-		const puntos = [
-			aEscena(ruta.de.x, ruta.de.y, ruta.de.z),
-			...suave.map((p, i) => aEscena(p.x, p.y, zEn(acumulado[i]))),
-			aEscena(ruta.a.x, ruta.a.y, ruta.a.z),
-		];
+		// Los puntos vienen YA RESUELTOS en la ruta: son los mismos con los que el repartidor
+		// comprobó que este cable cabía ahí y los mismos que miden las pruebas. No hay dos.
+		const puntos = ruta.puntos.map((p) => aEscena(p.x, p.y, p.z));
 		// «centripetal» evita los lazos y cúspides que salían al pasar por vértices muy juntos.
 		const curva = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
-		anadirTuboCable(grupo, curva, Math.max(64, puntos.length * 6), radio, colorDe(conductor), conductor.id);
+		anadirTuboCable(
+			grupo, curva, Math.min(260, Math.max(64, puntos.length * 3)),
+			ruta.radio, colorDe(conductor), conductor.id,
+		);
 	}
 	return grupo;
 }
