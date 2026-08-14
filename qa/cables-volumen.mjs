@@ -46,7 +46,13 @@ async function abrirEjemplo(i) {
 		await p.evaluate(() => document.getElementById('btn-empezar-ejemplo')?.click());
 		await p.waitForTimeout(600);
 	}
-	await p.locator('.tarjeta-ejemplo button').nth(i).click({ timeout: 30_000 });
+	/*
+	 * Espera larga a propósito. Este navegador de pruebas no tiene tarjeta gráfica —va por
+	 * SwiftShader— y un clic real ya cuesta unos cinco segundos; abrir el tablero de 52 conductores
+	 * significa además resolver el reparto y subir toda la geometría. En una máquina con GPU no se
+	 * nota, pero aquí los 30 s de por defecto se agotan y la prueba muere sin haber probado nada.
+	 */
+	await p.locator('.tarjeta-ejemplo button').nth(i).click({ timeout: 120_000 });
 	await p.waitForTimeout(1800);
 	for (const [modal, boton] of [['#modal-dialogo', 'dialogo-ok'], ['#modal-explicacion', 'btn-cerrar-explicacion']]) {
 		if (await p.isVisible(modal)) {
