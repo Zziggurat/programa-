@@ -30,7 +30,8 @@ import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
-	largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable, vaciar, VOLTAJE_COLOR,
+	diagnosticoCables, largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable,
+	vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
 import { colorDeTipo } from './dispositivos3d.js';
@@ -5342,7 +5343,16 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			}
 		},
 		/** Recorrido resuelto de cada cable (mm de modelo), tal cual se dibuja. */
-		rutas: () => rutasDeCables(proyecto).map((r) => ({ id: r.conductorId, nodos: r.nodos, z: r.z })),
+		/**
+		 * Las rutas con su recorrido 3D FINAL incluido. Los `nodos` son la polilínea ortogonal antes
+		 * de redondear y de darle profundidad: apuntar ahí es apuntar a donde el cable NO está.
+		 */
+		rutas: () => rutasDeCables(proyecto).map((r) => ({
+			id: r.conductorId, nodos: r.nodos, z: r.z, radio: r.radio,
+			puntos: r.puntos.map((q) => ({
+				x: Math.round(q.x * 10) / 10, y: Math.round(q.y * 10) / 10, z: Math.round(q.z * 10) / 10,
+			})),
+		})),
 		/**
 		 * Punto de pantalla donde el propio programa agarraría ESE cable: se comprueba en la misma
 		 * pasada que el rayo cae en su tubo visible y que ningún borne se le pone delante. Así la
@@ -5602,6 +5612,30 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				});
 			}
 			return salida;
+		},
+		/**
+		 * EL CHOQUE ENTRE CABLES, MEDIDO SOBRE LA GEOMETRÍA QUE SE VE.
+		 *
+		 * «Cero pares a la misma profundidad» era la comprobación anterior, y es cierta sin demostrar
+		 * nada: dos cables en capas distintas se cruzan igual mientras entran y salen de ellas, y dos
+		 * ejes a 3 mm siguen siendo dos tubos de 3 mm de radio metidos uno dentro de otro. Esto mide
+		 * la distancia mínima entre los recorridos tridimensionales completos, con sus radios, y dice
+		 * quién choca con quién y en qué punto del tablero.
+		 */
+		choquesCable: () => {
+			const d = diagnosticoCables(proyecto);
+			const corto = (c: { a: string; b: string; holgura: number; donde: { x: number; y: number; z: number } }) => ({
+				a: c.a, b: c.b,
+				holgura: Math.round(c.holgura * 100) / 100,
+				x: Math.round(c.donde.x), y: Math.round(c.donde.y), z: Math.round(c.donde.z),
+			});
+			return {
+				cables: d.cables,
+				holguraMinima: Number.isFinite(d.holguraMinima) ? Math.round(d.holguraMinima * 100) / 100 : null,
+				penetraciones: d.conflictos.filter((c) => c.holgura < 0).length,
+				conflictos: d.conflictos.slice(0, 20).map(corto),
+				invasiones: d.invasiones.slice(0, 20).map(corto),
+			};
 		},
 		cablesEncendidos: () => {
 			let n = 0;
