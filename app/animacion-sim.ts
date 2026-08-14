@@ -110,6 +110,10 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		const corrientes = e.energizado ? e.resultado?.corrientePorConductor : undefined;
 		e.cables.traverse((o) => {
 			if (!(o instanceof THREE.Mesh)) return;
+			// Solo el TUBO. Del cable cuelgan además el tubo de agarre invisible y las punteras de
+			// las dos puntas, y una puntera de plástico blanco encendiéndose no es un cable con
+			// tensión: es una bombilla donde no la hay.
+			if (!o.userData.tuboVisible) return;
 			const id = o.userData.conductorId as string | undefined;
 			if (!id) return;
 			const mat = o.material as THREE.MeshStandardMaterial | undefined;

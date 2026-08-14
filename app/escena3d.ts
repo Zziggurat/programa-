@@ -651,13 +651,66 @@ function anadirTuboCable(
 	color: number,
 	conductorId: string,
 ): void {
+	/*
+	 * EL AISLANTE ES PVC, NO TIZA.
+	 *
+	 * Con `roughness: 0.55` el tubo devolvía la luz repartida por toda su superficie, así que no
+	 * cogía la RAYA de brillo que corre a lo largo de un cable y que es lo que dice que es
+	 * redondo. Sin esa raya, cincuenta cables juntos se leen como cincuenta cintas de color. El
+	 * PVC de un hilo de tablero es satinado tirando a brillante, y ahí sale la línea especular.
+	 *
+	 * Y se le da a cada conductor su punto de acabado a partir de su id: dos hilos nuevos y del
+	 * mismo color siguen sin ser el mismo objeto, igual que en un tablero de verdad.
+	 */
+	const grano = ((conductorId.charCodeAt(0) + conductorId.length * 13) % 7) / 100;
 	const tubo = new THREE.Mesh(
-		new THREE.TubeGeometry(curva, segmentos, radio, 7, false),
-		new THREE.MeshStandardMaterial({ color, roughness: 0.55 }),
+		// Doce lados en vez de siete: a la distancia a la que se mira un borne, un tubo de siete
+		// caras se ve poligonal y delata que es un modelo.
+		new THREE.TubeGeometry(curva, segmentos, radio, 12, false),
+		new THREE.MeshStandardMaterial({ color, roughness: 0.32 + grano, metalness: 0.04 }),
 	);
 	tubo.userData.conductorId = conductorId;
 	tubo.userData.tuboVisible = true; // el que se ve: manda al seleccionar con el ratón
 	grupo.add(tubo);
+	/*
+	 * PUNTERAS EN LAS DOS PUNTAS.
+	 *
+	 * Un hilo de tablero no entra pelado en el borne: lleva su puntera engastada, y es de lo
+	 * primero que se mira para saber si un cuadro está bien hecho. Son dos casquillos por cable
+	 * —el cuello de plástico y el tubo metálico—, sin texto y sin textura, así que no cuestan
+	 * memoria: es geometría y ya.
+	 */
+	const collarin = new THREE.MeshStandardMaterial({ color: 0xe9ebec, roughness: 0.5 });
+	const metal = new THREE.MeshStandardMaterial({ color: 0xc3c8cc, metalness: 0.85, roughness: 0.4 });
+	const largoCurva = curva.getLength();
+	if (largoCurva > 40) {
+		const eje = new THREE.Vector3(0, 1, 0);
+		/*
+		 * La puntera va SOBRE el hilo, medida en milímetros de recorrido desde la punta. Colocarla
+		 * por parámetro de curva y luego correrla a lo largo de la tangente la sacaba del cable:
+		 * el desplazamiento se aplicaba hacia FUERA del recorrido, así que el casquillo metálico
+		 * acababa clavado dentro del aparato y torcido respecto del hilo del que cuelga.
+		 *
+		 *   3,5 mm  el tubo metálico engastado, el que entra en el tornillo
+		 *   9,5 mm  el cuello de plástico, un poco más gordo, ya sobre el aislante
+		 */
+		for (const desdeLaPunta of [3.5, 9.5]) {
+			const esCuello = desdeLaPunta > 6;
+			const largo = esCuello ? 5.5 : 6;
+			const r = radio + (esCuello ? 1.1 : 0.45);
+			for (const extremo of [0, 1]) {
+				const t = extremo === 0 ? desdeLaPunta / largoCurva : 1 - desdeLaPunta / largoCurva;
+				const casquillo = new THREE.Mesh(
+					new THREE.CylinderGeometry(r, r, largo, 10),
+					esCuello ? collarin : metal,
+				);
+				casquillo.position.copy(curva.getPointAt(t));
+				casquillo.quaternion.setFromUnitVectors(eje, curva.getTangentAt(t).normalize());
+				casquillo.userData.conductorId = conductorId;
+				grupo.add(casquillo);
+			}
+		}
+	}
 	// Tubo de agarre invisible (más grueso) para poder pinchar el cable con facilidad aunque se
 	// esté viendo el tablero alejado. Solo se usa si el puntero NO está sobre un cable visible.
 	const agarre = new THREE.Mesh(

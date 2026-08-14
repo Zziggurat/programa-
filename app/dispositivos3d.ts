@@ -537,9 +537,14 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		// mate: con el plástico satinado de una carcasa parecían todos la misma pieza.
 		const cuerpo = esPE ? M.baquelita(0x3f9142) : M.baquelita(0xaeb4b9);
 		cuerpoDeCarril(g, paso - 1.2, h, prof, cuerpo, 0.9, 0.4, x);
-		// La franja amarilla va algo más estrecha y sobresale 1 mm: con la misma anchura y 0,3 mm,
-		// sus costados coincidían con los del bloque y se peleaban al girar la vista.
-		if (esPE) g.add(caja(paso - 1.8, h * 0.3, prof + 2, M.baquelita(0xe4c437), x, 0, prof / 2));
+		/*
+		 * La franja amarilla, en la CARA de la borna.
+		 *
+		 * Antes era un bloque de `prof + 2` de fondo centrado en `prof / 2`: iba de z = −1 —un
+		 * milímetro metido en la placa de montaje— hasta prof+1, y por el camino atravesaba el
+		 * carril de punta a punta. Una franja pintada no tiene fondo: va en la cara.
+		 */
+		if (esPE) g.add(caja(paso - 1.8, h * 0.34, 1.4, M.baquelita(0xe4c437), x, 0, prof + 0.3));
 		/*
 		 * Tornillo del lado de campo. El del lado del cuadro lo pone `dibujarBornesReales()` en el
 		 * punto exacto donde se engancha el cable, para que sea el mismo tornillo que se ve.
@@ -549,11 +554,20 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		// Ventana de identificación: la tira donde va el número de borna.
 		g.add(caja(paso - 2.4, h * 0.1, 1, M.baquelita(0xe9ecee), x, h * 0.02, prof + 0.4));
 	}
-	// Topes finales, con su tornillo de apriete al carril.
+	/*
+	 * Topes finales, con su tornillo de apriete al carril.
+	 *
+	 * Iban de z = −1 a prof+1, o sea, un milímetro METIDOS en la placa y otro por delante de la
+	 * cara de las bornas; y a lo ancho salían tres milímetros fuera de la huella declarada de la
+	 * regleta, que es la que el editor usa para repartir los corredores de cable. Ahora caben
+	 * dentro de su huella y se apoyan en el carril como el resto.
+	 */
 	const tope = M.plastico(0x5d666e, 0.62);
+	const zCanal = ALTURA_CARRIL + 0.5;
 	for (const lado of [-1, 1]) {
-		g.add(cajaCanto(3, h + 2, prof + 2, tope, lado * (w / 2 + 1.5), 0, (prof + 2) / 2, 0.8, 0.4));
-		g.add(cilindro(1.6, 2, M.metal(0xa8aeb3), lado * (w / 2 + 1.5), h * 0.3, prof + 1.4));
+		const x = lado * (w / 2 + 1);
+		g.add(cajaCanto(2, h, prof - zCanal, tope, x, 0, zCanal + (prof - zCanal) / 2, 0.6, 0.3));
+		g.add(cilindro(1.4, 2, M.metal(0xa8aeb3), x, h * 0.3, prof - 0.6));
 	}
 	return prof;
 }
