@@ -951,8 +951,6 @@ export const HOLGURA_CABLE = 1.2;
 
 /** Cuánto se puede correr una bajada a un lado para buscarle sitio, y en cuántos pasos. */
 const PASO_LATERAL = 5;
-/** Cuánto se arrima al lado la punta del cable dentro de la cabeza del tornillo. */
-const ARRIMO_MM = 2.2;
 const PASOS_LATERALES = [0, 1, -1, 2, -2];
 
 /**
@@ -1107,27 +1105,30 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		 */
 		const preparados = new Map<string, Recorrido2D>();
 		const colocar = (paso: number, zViaje: number, camino: Punto[]): { nodos: Punto[]; trazo: Trazo } => {
-			const d = paso * PASO_LATERAL;
 			/*
-			 * El cable arranca EN EL TORNILLO, pero no en su eje exacto.
+			 * LA PUNTA SE QUEDA DONDE LA PONE EL ABANICO; lo que se corre es el resto.
 			 *
-			 * Anclando los dos hilos que van a un mismo borne en el mismo punto salían coincidentes
-			 * justo ahí: cero milímetros de separación, un pegote donde tendrían que verse dos
-			 * punteras. Y en un borne de verdad tampoco están en el mismo eje: entran una al lado de
-			 * la otra bajo la cabeza del tornillo. Se arranca 2,2 mm hacia su lado —que sigue cayendo
-			 * dentro de la cabeza del tornillo, de 2,4 mm de radio—, y cero cuando nadie comparte el
-			 * borne. Dos hilos quedan así a 4,4 mm en la punta: se ven dos, no un pegote.
+			 * Probé a anclar el cable en el centro exacto del tornillo, que suena a lo correcto —el
+			 * hilo va AHÍ—, y sale mal por dos sitios. Dos hilos al mismo borne quedaban con cero
+			 * milímetros de separación en la punta: un pegote donde tienen que verse dos punteras.
+			 * Y arrimándolos un poco a cada lado tampoco: con tres hilos en un borne, el del medio
+			 * se queda a la mitad de distancia de sus dos vecinos, y vuelven a fundirse.
+			 *
+			 * El abanico ya reparte las puntas con la separación física que necesitan, así que la
+			 * punta se respeta tal cual. `paso` corre el RESTO del recorrido, que es donde hace
+			 * falta: dos bornes que caen en la misma vertical y en filas distintas bajan por la
+			 * misma recta, y ahí no hay capa que valga —sus dos rampas de profundidad se cruzan por
+			 * el camino pongan la capa que pongan—. Lo único que los separa es mover una bajada.
+			 * Al quedarse la punta fija y moverse la bajada, sale el pequeño quiebro que hace un
+			 * electricista al sacar el hilo del borne antes de peinarlo.
 			 */
-			const arrimo = (borne: number, salida: number): number => {
-				const abre = salida - borne;
-				return borne + Math.sign(abre) * Math.min(ARRIMO_MM, Math.abs(abre));
-			};
+			const d = paso * PASO_LATERAL;
 			const nodos = orthogonalize([
-				{ x: arrimo(p.de.x, p.salidaA.x), y: p.de.y },
-				{ x: p.salidaA.x + d, y: p.salidaA.y },
+				{ x: p.salidaA.x, y: p.salidaA.y },
+				{ x: p.salidaA.x + d, y: p.salidaA.y + Math.sign(p.salidaB.y - p.salidaA.y) * 4 },
 				...camino.map((q) => ({ x: q.x + d, y: q.y })),
-				{ x: p.salidaB.x + d, y: p.salidaB.y },
-				{ x: arrimo(p.a.x, p.salidaB.x), y: p.a.y },
+				{ x: p.salidaB.x + d, y: p.salidaB.y - Math.sign(p.salidaB.y - p.salidaA.y) * 4 },
+				{ x: p.salidaB.x, y: p.salidaB.y },
 			]);
 			const clave = `${paso}|${camino.map((q) => `${q.x},${q.y}`).join(';')}`;
 			let base = preparados.get(clave);
