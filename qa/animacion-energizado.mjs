@@ -154,6 +154,40 @@ must('y la bomba se pone a girar', giroBomba1 !== giroBomba2, `giro ${giroBomba1
 
 /* ------------------------------------------------------------------ */
 
+console.log('\n### 6 · el tablero de control: la pantalla del autómata se enciende');
+
+/*
+ * Un autómata sin tensión tiene la pantalla APAGADA. Antes nacía siempre iluminada, así que daba
+ * exactamente igual energizar o no: el equipo parecía vivo aunque no le llegara ni un voltio.
+ */
+await abrirEjemplo(3);   // tablero de control 24 V, que lleva autómata
+/*
+ * SE APAGA A PROPÓSITO ANTES DE MIRAR. Energizar no se pierde al cambiar de tablero —y está bien
+ * que no se pierda—, así que llegar aquí desde el ejemplo anterior con tensión puesta hacía que
+ * el botón la QUITARA en vez de darla: la pantalla salía encendida antes y apagada después, justo
+ * al revés. La prueba daba por hecho un estado en vez de fijarlo.
+ */
+const ponerTension = async (encendida) => {
+	if ((await qa('simulacion')).energizado !== encendida) {
+		await p.evaluate(() => document.getElementById('btn-energizar')?.click());
+		await p.waitForTimeout(1200);
+	}
+};
+await ponerTension(false);
+const apagada = await piezas('a1');
+must('el autómata tiene pantalla en la escena', (apagada?.pantalla?.length ?? 0) > 0,
+	Object.keys(apagada ?? {}).join(' '));
+must('sin tensión, la pantalla está apagada', (apagada?.pantalla?.[0]?.brillo ?? 1) === 0,
+	`brillo ${apagada?.pantalla?.[0]?.brillo}`);
+
+await ponerTension(true);
+const encendida = await piezas('a1');
+must('al energizar, la pantalla del autómata SE ENCIENDE',
+	(encendida?.pantalla?.[0]?.brillo ?? 0) > 0.5,
+	`brillo ${apagada?.pantalla?.[0]?.brillo} → ${encendida?.pantalla?.[0]?.brillo}`);
+must('y sus LEDs también', (encendida?.led ?? []).some((l) => l.brillo > 0),
+	(encendida?.led ?? []).map((l) => l.brillo).join(' '));
+
 console.log(`\nerrores de JavaScript: ${errores.length}`);
 must('ni un error de JavaScript', errores.length === 0, errores.slice(0, 2).join(' | '));
 

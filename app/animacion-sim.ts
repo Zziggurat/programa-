@@ -40,12 +40,15 @@ interface Piezas {
 	boton: THREE.Mesh[];
 	eje: THREE.Mesh[];
 	vastago: THREE.Mesh[];
+	pantalla: THREE.Mesh[];
+	led: THREE.Mesh[];
 	/** Posición de reposo de cada pieza, para poder devolverla al desenergizar. */
 	reposo: Map<THREE.Object3D, THREE.Vector3>;
 }
 
 const VACIO = (): Piezas => ({
 	armadura: [], palanca: [], mirilla: [], lente: [], boton: [], eje: [], vastago: [],
+	pantalla: [], led: [],
 	reposo: new Map(),
 });
 
@@ -75,6 +78,8 @@ export interface EntradaAnimacion {
 	energizado: boolean;
 	/** Segundos transcurridos desde el fotograma anterior. */
 	dt: number;
+	/** Segundos desde que arrancó el editor, para los latidos lentos (el refresco de un display). */
+	reloj: number;
 }
 
 /**
@@ -85,6 +90,7 @@ export interface EntradaAnimacion {
  * dos sitios donde se pueda quedar algo a medias.
  */
 export function animarSimulacion(e: EntradaAnimacion): void {
+	const reloj = e.reloj;
 	const porId = new Map<string, Dispositivo>();
 	for (const d of e.proyecto.dispositivos) porId.set(d.id, d);
 	const activos = e.energizado ? e.resultado?.activos : undefined;
@@ -146,6 +152,41 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		for (const m of p.vastago) {
 			const base = p.reposo.get(m);
 			if (base) m.position.y = base.y + (enMarcha ? 6 : 0);
+		}
+
+		/*
+		 * --- PANTALLAS Y LEDS ---
+		 *
+		 * Un autómata, un variador o una fuente con tensión tienen la pantalla ENCENDIDA; sin
+		 * tensión están a oscuras. Antes nacían siempre iluminados, así que daban igual el tablero
+		 * energizado que apagado: el equipo parecía vivo aunque no llegara ni un voltio.
+		 *
+		 * «Tener tensión» se toma de la simulación: o está haciendo algo, o el motor de lógica lo
+		 * reconoce como controlador en marcha. Con el tablero sin energizar, todo apagado.
+		 */
+		const ctrl = e.energizado
+			? e.resultado?.controladores.find((c) => c.dispositivoId === id)
+			: undefined;
+		const conTension = enMarcha || !!ctrl;
+		for (const m of p.pantalla) {
+			const propio = (m.userData.colorPropio as number | undefined) ?? 0x39e08a;
+			const mat = m.material as THREE.MeshStandardMaterial;
+			mat.emissive.setHex(propio);
+			// Un parpadeo lentísimo, como el refresco de un display: vivo sin llamar la atención.
+			mat.emissiveIntensity = conTension ? 0.75 + 0.06 * Math.sin(reloj * 2.2) : 0;
+		}
+		/*
+		 * Los LEDs del autómata dicen lo que dice el programa: el primero es el de tensión y los
+		 * demás, sus salidas. Así se ve entrar DO1 sin abrir el panel de la simulación, que es
+		 * media gracia de tener un autómata dibujado.
+		 */
+		for (const m of p.led) {
+			const propio = (m.userData.colorPropio as number | undefined) ?? 0x21d07a;
+			const i = (m.userData.indiceLed as number | undefined) ?? 0;
+			const mat = m.material as THREE.MeshStandardMaterial;
+			const encendido = i === 0 ? conTension : conTension && (ctrl?.salidas.length ?? 0) >= i;
+			mat.emissive.setHex(propio);
+			mat.emissiveIntensity = encendido ? 1 : 0;
 		}
 	}
 }

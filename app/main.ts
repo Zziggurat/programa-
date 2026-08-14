@@ -4969,6 +4969,7 @@ renderer.setAnimationLoop(() => {
 		estado: panelSim.estadoDeLosMandos(),
 		energizado: panelSim.energizado(),
 		dt,
+		reloj: ahora / 1000,
 	});
 	(vista2D ? controlesOrto : controles).update();
 	renderer.render(escena, camaraViva());

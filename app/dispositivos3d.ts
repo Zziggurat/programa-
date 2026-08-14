@@ -164,15 +164,25 @@ function plc(g: THREE.Group, w: number, h: number, color: number, ref: string): 
 	const cara = prof + 1;
 	for (let i = 0; i < 6; i++) {
 		const led = new THREE.MeshStandardMaterial({
-			color: 0x21d07a, emissive: 0x21d07a, emissiveIntensity: i < 4 ? 0.9 : 0.1, roughness: 0.3,
+			color: 0x21d07a, emissive: 0x21d07a, emissiveIntensity: 0, roughness: 0.3,
 		});
-		g.add(caja(2.6, 1.6, 1.2, led, -w * 0.32 + i * 6, h * 0.2, cara + 0.8));
+		// Los LEDs nacen APAGADOS: los enciende la simulación según lo que haga el autómata.
+		const m = caja(2.6, 1.6, 1.2, led, -w * 0.32 + i * 6, h * 0.2, cara + 0.8);
+		m.userData.pieza = 'led';
+		m.userData.colorPropio = 0x21d07a;
+		m.userData.indiceLed = i;
+		g.add(m);
 	}
 	const et = etiquetaImpresa(ref, w * 0.5, 8, '#23272b', '#dfe3e6');
 	et.position.set(-w * 0.2, h * 0.06, cara + 0.6);
 	g.add(et);
-	// Pantalla pequeña.
-	g.add(caja(w * 0.3, h * 0.24, 1.4, M.plastico(0x0d2b20, 0.3), w * 0.24, h * 0.12, cara + 1));
+	// Pantalla pequeña: apagada sin tensión, iluminada en verde cuando el autómata vive.
+	const pantalla = caja(w * 0.3, h * 0.24, 1.4,
+		new THREE.MeshStandardMaterial({ color: 0x0d2b20, emissive: 0x39e08a, emissiveIntensity: 0, roughness: 0.3 }),
+		w * 0.24, h * 0.12, cara + 1);
+	pantalla.userData.pieza = 'pantalla';
+	pantalla.userData.colorPropio = 0x39e08a;
+	g.add(pantalla);
 	return prof;
 }
 
@@ -190,8 +200,13 @@ function fuente(g: THREE.Group, w: number, h: number, color: number, ref: string
 	const et = etiquetaImpresa(ref, w * 0.8, 10, '#dfe3e6', '#222');
 	et.position.set(0, h * 0.18, prof - 5.2);
 	g.add(et);
-	// LED DC OK.
-	g.add(caja(3, 3, 1.2, new THREE.MeshStandardMaterial({ color: 0x21d07a, emissive: 0x21d07a, emissiveIntensity: 0.9 }), w * 0.25, -h * 0.1, prof - 5));
+	// LED DC OK: se enciende cuando la fuente tiene de verdad su primario alimentado.
+	const dcok = caja(3, 3, 1.2,
+		new THREE.MeshStandardMaterial({ color: 0x21d07a, emissive: 0x21d07a, emissiveIntensity: 0 }),
+		w * 0.25, -h * 0.1, prof - 5);
+	dcok.userData.pieza = 'led';
+	dcok.userData.colorPropio = 0x21d07a;
+	g.add(dcok);
 	filaBornes(g, 5, w * 0.9, -h / 2 + 5, prof - 14);
 	return prof;
 }
@@ -252,8 +267,13 @@ function variador(g: THREE.Group, w: number, h: number, color: number, ref: stri
 	for (let i = 0; i < 7; i++) {
 		g.add(caja(w * 0.1, h * 0.9, 8, aleta, -w * 0.42 + i * (w * 0.14), 0, 5));
 	}
-	// Display y teclas.
-	g.add(caja(w * 0.4, h * 0.14, 1.6, new THREE.MeshStandardMaterial({ color: 0x16a34a, emissive: 0x16a34a, emissiveIntensity: 0.55 }), 0, h * 0.28, prof + 0.8));
+	// Display y teclas. El display se apaga sin tensión, como el de un variador de verdad.
+	const disp = caja(w * 0.4, h * 0.14, 1.6,
+		new THREE.MeshStandardMaterial({ color: 0x0b2b18, emissive: 0x16a34a, emissiveIntensity: 0 }),
+		0, h * 0.28, prof + 0.8);
+	disp.userData.pieza = 'pantalla';
+	disp.userData.colorPropio = 0x16a34a;
+	g.add(disp);
 	const et = etiquetaImpresa(ref, w * 0.6, 8, '#26292c', '#c8cdd2');
 	et.position.set(0, h * 0.1, prof + 0.6);
 	g.add(et);
@@ -421,10 +441,15 @@ function controlador(g: THREE.Group, d: Dispositivo, w: number, h: number, color
 	const altoDisplay = Math.min(h * 0.26, 28);
 	const yDisplay = -util * 0.06;
 	if (rasgos.display) {
-		g.add(caja(
+		// La pantalla del controlador se ilumina cuando el equipo tiene tensión, no siempre.
+		const pantalla = caja(
 			Math.min(w * 0.42, 48), altoDisplay, 1.6,
-			M.plastico(0x0d2b20, 0.3), 0, yDisplay, Z_SOBRE + 0.8,
-		));
+			new THREE.MeshStandardMaterial({ color: 0x0d2b20, emissive: 0x39e08a, emissiveIntensity: 0, roughness: 0.3 }),
+			0, yDisplay, Z_SOBRE + 0.8,
+		);
+		pantalla.userData.pieza = 'pantalla';
+		pantalla.userData.colorPropio = 0x39e08a;
+		g.add(pantalla);
 	}
 
 	// Marca y modelo impresos en la cara: es como se identifica el equipo en obra. Va SIEMPRE

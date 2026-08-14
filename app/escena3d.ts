@@ -999,6 +999,39 @@ export function construirEntradasCampo(
 	const campo = aparatosDeCampo(proyecto);
 	if (campo.length === 0) return grupo;
 	const y = yEntradasCampo(proyecto);
+	const anchoGab = proyecto.gabinete?.ancho ?? 600;
+
+	/*
+	 * LA BANCADA DE CAMPO.
+	 *
+	 * Los aparatos de campo se dibujaban colgando en mitad de la nada por debajo del gabinete, y
+	 * eso es lo que se ve: cosas flotando en el aire. En un tablero de verdad el motor está en el
+	 * suelo y los pulsadores en la puerta; aquí no hay ni suelo ni puerta, así que se dibuja lo que
+	 * hace de las dos cosas: una bancada con su zócalo sobre la que APOYAN, y de cada prensaestopas
+	 * baja un tubo corrugado hasta su aparato.
+	 *
+	 * No es adorno: sin una superficie de referencia, el ojo no sabe a qué altura está cada cosa y
+	 * todo el conjunto parece un montaje pegado.
+	 */
+	const bancada = new THREE.Group();
+	const grisBanco = new THREE.MeshStandardMaterial({ color: 0x2b3138, roughness: 0.85, metalness: 0.05 });
+	const cantoBanco = new THREE.MeshStandardMaterial({ color: 0x3a424b, roughness: 0.7, metalness: 0.2 });
+	const anchoBanco = anchoGab + 90;
+	// El tablero de la bancada, con su canto al frente.
+	const tablero = new THREE.Mesh(new THREE.BoxGeometry(anchoBanco, 14, 96), grisBanco);
+	tablero.position.copy(aEscena(anchoGab / 2, y + 78, 6));
+	tablero.receiveShadow = true;
+	bancada.add(tablero);
+	const canto = new THREE.Mesh(new THREE.BoxGeometry(anchoBanco, 5, 4), cantoBanco);
+	canto.position.copy(aEscena(anchoGab / 2, y + 70, 54));
+	bancada.add(canto);
+	// Zócalo: da fondo y evita que la bancada parezca a su vez una tabla en el aire.
+	const zocalo = new THREE.Mesh(new THREE.BoxGeometry(anchoBanco - 40, 26, 70),
+		new THREE.MeshStandardMaterial({ color: 0x22272d, roughness: 0.9 }));
+	zocalo.position.copy(aEscena(anchoGab / 2, y + 98, 0));
+	bancada.add(zocalo);
+	grupo.add(bancada);
+
 	for (const d of campo) {
 		const cx = xEntradaCampo(proyecto, d.id);
 		if (cx === undefined) continue;
@@ -1016,9 +1049,21 @@ export function construirEntradasCampo(
 		etq.position.copy(aEscena(cx, y + 24, 26));
 		etq.scale.set(44, 14.6, 1);
 		grupo.add(etq);
-		// Y el aparato en sí, por debajo del prensaestopas: el motor, la lámpara, la boya…
+		/*
+		 * EL TUBO que baja del prensaestopas al aparato. Es lo que ata visualmente una cosa con la
+		 * otra: sin él, el aparato queda suelto y parece pegado encima del fondo.
+		 */
+		const tubo = new THREE.Mesh(
+			new THREE.CylinderGeometry(4.5, 4.5, 30, 12),
+			new THREE.MeshStandardMaterial({ color: 0x353b42, roughness: 0.8 }),
+		);
+		tubo.position.copy(aEscena(cx, y + 23, 12));
+		tubo.castShadow = true;
+		grupo.add(tubo);
+
+		// Y el aparato en sí, APOYADO en la bancada: el motor, la lámpara, la boya…
 		const cuerpoCampo = cuerpoDeCampo(d);
-		cuerpoCampo.position.copy(aEscena(cx, y + 46, 14));
+		cuerpoCampo.position.copy(aEscena(cx, y + 52, 14));
 		cuerpoCampo.userData.dispositivoId = d.id;
 		(dispositivos ?? grupo).add(cuerpoCampo);
 	}
