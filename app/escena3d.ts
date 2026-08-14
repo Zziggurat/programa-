@@ -951,6 +951,8 @@ export const HOLGURA_CABLE = 1.2;
 
 /** Cuánto se puede correr una bajada a un lado para buscarle sitio, y en cuántos pasos. */
 const PASO_LATERAL = 5;
+/** Cuánto se arrima al lado la punta del cable dentro de la cabeza del tornillo. */
+const ARRIMO_MM = 2.2;
 const PASOS_LATERALES = [0, 1, -1, 2, -2];
 
 /**
@@ -1112,16 +1114,20 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 			 * Anclando los dos hilos que van a un mismo borne en el mismo punto salían coincidentes
 			 * justo ahí: cero milímetros de separación, un pegote donde tendrían que verse dos
 			 * punteras. Y en un borne de verdad tampoco están en el mismo eje: entran una al lado de
-			 * la otra bajo la cabeza del tornillo. Se arranca a una fracción de su propia apertura,
-			 * que vale cero cuando el borne no lo comparte nadie y son un par de milímetros cuando sí.
+			 * la otra bajo la cabeza del tornillo. Se arranca 2,2 mm hacia su lado —que sigue cayendo
+			 * dentro de la cabeza del tornillo, de 2,4 mm de radio—, y cero cuando nadie comparte el
+			 * borne. Dos hilos quedan así a 4,4 mm en la punta: se ven dos, no un pegote.
 			 */
-			const ARRIMO = 0.35;
+			const arrimo = (borne: number, salida: number): number => {
+				const abre = salida - borne;
+				return borne + Math.sign(abre) * Math.min(ARRIMO_MM, Math.abs(abre));
+			};
 			const nodos = orthogonalize([
-				{ x: p.de.x + (p.salidaA.x - p.de.x) * ARRIMO, y: p.de.y },
+				{ x: arrimo(p.de.x, p.salidaA.x), y: p.de.y },
 				{ x: p.salidaA.x + d, y: p.salidaA.y },
 				...camino.map((q) => ({ x: q.x + d, y: q.y })),
 				{ x: p.salidaB.x + d, y: p.salidaB.y },
-				{ x: p.a.x + (p.salidaB.x - p.a.x) * ARRIMO, y: p.a.y },
+				{ x: arrimo(p.a.x, p.salidaB.x), y: p.a.y },
 			]);
 			const clave = `${paso}|${camino.map((q) => `${q.x},${q.y}`).join(';')}`;
 			let base = preparados.get(clave);
