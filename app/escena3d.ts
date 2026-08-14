@@ -1128,8 +1128,8 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		// Primera pasada: sin correr la bajada, que es lo que menos desvía el cable de su sitio.
 		let mejor: Puesto | undefined;
 		let mejorHolgura = -Infinity;
-		buscar: for (const zViaje of capasZ) {
-			for (const camino of caminos) {
+		buscar: for (const camino of caminos) {
+			for (const zViaje of capasZ) {
 				const { nodos, trazo } = colocar(0, zViaje, camino);
 				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, mejorHolgura);
 				const holgura = choque ? choque.holgura : Infinity;
@@ -1173,8 +1173,8 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 			let mejor: { nodos: Punto[]; trazo: Trazo; z: number } | undefined;
 			let mejorHolgura = -Infinity;
 			salir: for (const paso of PASOS_LATERALES) {
-				for (const zViaje of capasZ) {
-					for (const camino of puesto.caminos) {
+				for (const camino of puesto.caminos) {
+					for (const zViaje of capasZ) {
 						const { nodos, trazo } = puesto.colocar(paso, zViaje, camino);
 						const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, mejorHolgura);
 						const holgura = choque ? choque.holgura : Infinity;

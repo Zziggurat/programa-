@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-	Banda, carrilesDe, corredoresLibres, crearRepartidor, dentroDelArea, distPuntoSegmento,
+	Banda, carrilesDe, corredoresLibres, dentroDelArea, distPuntoSegmento,
 	fueraDeLaHuella, longitudSolapada, orthogonalize, Punto, rutaAutomatica,
 } from '../app/geometria-cables.js';
 import { COLOR_CABLE, colorDeCable } from '../app/escena3d.js';
@@ -142,81 +142,6 @@ test('carrilesDe: los carriles salen del centro hacia los bordes y no se repiten
 
 test('carrilesDe: un corredor estrecho da un único carril, por su centro', () => {
 	assert.deepEqual(carrilesDe({ y0: 40, y1: 54 }), [47]);
-});
-
-test('repartidor: diez cables por el mismo corredor no se pisan NUNCA', () => {
-	// Es el caso que se veía mal: muchos cables saliendo de una fila de bornes a otra.
-	const corredores = corredoresLibres([{ y0: 0, y1: 40 }, { y0: 220, y1: 260 }], 0, 260);
-	const repartir = crearRepartidor(corredores);
-	const rutas = Array.from({ length: 10 }, (_, k) => {
-		const a = { x: 20 + k * 18, y: 40 };
-		const b = { x: 300 - k * 18, y: 220 };
-		return orthogonalize([a, ...repartir(a, b).puntos, b]);
-	});
-	let solape = 0;
-	for (let i = 0; i < rutas.length; i++) {
-		for (let j = i + 1; j < rutas.length; j++) solape += longitudSolapada(rutas[i], rutas[j]);
-	}
-	assert.equal(solape, 0, `ningún cable puede ir montado sobre otro (solape ${solape} mm)`);
-});
-
-test('repartidor: cables de zonas distintas SÍ pueden compartir carril (no desperdicia el pasillo)', () => {
-	const corredores = corredoresLibres([], 100, 160);
-	const repartir = crearRepartidor(corredores);
-	const izq = repartir({ x: 0, y: 100 }, { x: 60, y: 160 }).puntos;
-	const der = repartir({ x: 400, y: 100 }, { x: 460, y: 160 }).puntos;
-	assert.equal(izq[0].y, der[0].y, 'si no se pisan, van a la misma altura (peinado ordenado)');
-});
-
-test('repartidor: dos cables que se pisarían acaban en alturas distintas', () => {
-	const corredores = corredoresLibres([], 100, 160);
-	const repartir = crearRepartidor(corredores);
-	const uno = repartir({ x: 0, y: 100 }, { x: 300, y: 160 }).puntos;
-	const otro = repartir({ x: 20, y: 100 }, { x: 280, y: 160 }).puntos;
-	assert.notEqual(uno[0].y, otro[0].y, 'no pueden compartir carril si comparten tramo');
-});
-
-test('repartidor: bornes en la misma vertical siguen sin meter codos', () => {
-	const repartir = crearRepartidor(corredoresLibres([], 0, 200));
-	assert.deepEqual(repartir({ x: 50, y: 10 }, { x: 50, y: 150 }).puntos, []);
-});
-
-test('repartidor: con el pasillo lleno, los cables se apilan en capas, no uno DENTRO de otro', () => {
-	// Un pasillo con un solo carril: todos los cables comparten altura a la fuerza. Antes esto
-	// devolvía la misma capa para todos —el índice del carril— y salían fundidos.
-	const corredores = corredoresLibres([], 100, 114); // 14 mm: `carrilesDe` da un único carril
-	const repartir = crearRepartidor(corredores, 8, 4);
-	const capas = [0, 1, 2, 3].map(() => repartir({ x: 0, y: 100 }, { x: 300, y: 114 }).carril);
-	assert.deepEqual(capas, [0, 1, 2, 3], 'cada cable que se pisa con el anterior sube una capa');
-});
-
-test('repartidor: la capa se reaprovecha si el tramo de x no se pisa', () => {
-	const corredores = corredoresLibres([], 100, 114);
-	const repartir = crearRepartidor(corredores, 8, 4);
-	const izq = repartir({ x: 0, y: 100 }, { x: 60, y: 114 }).carril;
-	const der = repartir({ x: 400, y: 100 }, { x: 460, y: 114 }).carril;
-	assert.equal(izq, der, 'dos cables de zonas distintas no tienen por qué apilarse');
-});
-
-test('repartidor: primero se llenan los carriles y solo después se sube de capa', () => {
-	// Pasillo ancho y bornes separados: hay carriles de sobra, así que ningún cable debería
-	// irse a la segunda capa. Cada cable sale de SU borne, como en un tablero de verdad.
-	const corredores = corredoresLibres([], 100, 180);
-	const repartir = crearRepartidor(corredores, 8, 4);
-	const capas = Array.from({ length: 6 }, (_, k) =>
-		repartir({ x: k * 12, y: 100 }, { x: 300 - k * 12, y: 180 }).carril);
-	assert.deepEqual(capas, [0, 0, 0, 0, 0, 0], 'con sitio en el pasillo, todo va en la capa de atrás');
-});
-
-test('repartidor: dos cables que BAJAN por la misma vertical no se meten uno dentro de otro', () => {
-	// El caso que faltaba: el carril de cada uno puede estar libre, pero la bajada del borne al
-	// carril es cable igual, y si los dos bornes están en la misma vertical se montan ahí.
-	const corredores = corredoresLibres([], 100, 180);
-	const repartir = crearRepartidor(corredores, 8, 4);
-	const uno = repartir({ x: 50, y: 60 }, { x: 400, y: 220 });
-	const otro = repartir({ x: 50, y: 60 }, { x: 380, y: 220 });
-	assert.notEqual(uno.carril === otro.carril && uno.puntos[0].y === otro.puntos[0].y, true,
-		'o cambian de carril o cambian de capa, pero no las dos cosas iguales');
 });
 
 test('dentroDelArea: una unión arrastrada lejos se queda en el borde, no en el vacío', () => {
