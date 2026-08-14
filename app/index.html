@@ -629,6 +629,14 @@
 		padding: 2px 5px; }
 	#sim-reloj-caja b { margin-left: auto; color: #ffd54f; font-variant-numeric: tabular-nums; }
 
+	/* El selector de color de la ficha del aparato, con su botón de volver al de fábrica. */
+	.fila-color { display: flex; align-items: center; gap: 6px; }
+	.fila-color input[type="color"] { width: 46px; height: 26px; padding: 0; border: 1px solid var(--borde);
+		border-radius: 6px; background: var(--panel); cursor: pointer; }
+	.fila-color button { background: var(--panel); border: 1px solid var(--borde); color: var(--texto-suave);
+		border-radius: 6px; width: 26px; height: 26px; font-size: 13px; cursor: pointer; }
+	.fila-color button:hover { color: var(--texto); background: #2b323a; }
+
 	/* Los MANDOS: la botonera de la maniobra. Es lo que permite arrancar un tablero cuyos
 	   pulsadores van en la puerta y por tanto no se pueden pinchar en el 3D. */
 	.fila-mando { display: flex; align-items: center; gap: 8px; padding: 5px 8px;

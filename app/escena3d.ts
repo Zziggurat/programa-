@@ -888,6 +888,15 @@ function anclajeCampo(
  */
 function cuerpoDeCampo(d: Dispositivo): THREE.Group {
 	const g = new THREE.Group();
+	/*
+	 * EL COLOR QUE HAYA ELEGIDO EL USUARIO manda sobre el de fábrica.
+	 *
+	 * Antes cada tipo traía su color a fuego, y el del pulsador lo adivinaba yo mirando si el
+	 * marcado llevaba «S0» —o sea que un paro rotulado «-PARO» salía verde—. Adivinar por el
+	 * nombre es exactamente lo que no hay que hacer: ahora se elige en la ficha del aparato y esto
+	 * lo respeta, tanto para el cuerpo como para lo que alumbra.
+	 */
+	const elegido = d.colorCuerpo ? new THREE.Color(d.colorCuerpo).getHex() : undefined;
 	const pintura = (c: number, rug = 0.55) => new THREE.MeshStandardMaterial({ color: c, roughness: rug });
 	const marca = (m: THREE.Mesh, pieza: string, color?: number): THREE.Mesh => {
 		m.userData.pieza = pieza;
@@ -898,7 +907,7 @@ function cuerpoDeCampo(d: Dispositivo): THREE.Group {
 	switch (d.tipo) {
 		case 'motor': {
 			// Carcasa con aletas, caja de bornes y el ventilador de la cola, que es lo que gira.
-			const carcasa = new THREE.Mesh(new THREE.CylinderGeometry(17, 17, 46, 20), pintura(0x2f6f9e, 0.45));
+			const carcasa = new THREE.Mesh(new THREE.CylinderGeometry(17, 17, 46, 20), pintura(elegido ?? 0x2f6f9e, 0.45));
 			carcasa.rotation.z = Math.PI / 2;
 			g.add(carcasa);
 			for (let i = 0; i < 7; i++) {
@@ -926,7 +935,7 @@ function cuerpoDeCampo(d: Dispositivo): THREE.Group {
 		case 'resistencia': {
 			// Una lámpara: casquillo y globo. El globo alumbra con SU color, no con un amarillo igual
 			// para todo: el piloto de defecto tiene que verse rojo y el de marcha, verde.
-			const color = d.tipo === 'resistencia' ? 0xff7043 : 0xffd54f;
+			const color = elegido ?? (d.tipo === 'resistencia' ? 0xff7043 : 0xffd54f);
 			const casquillo = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 9, 14), pintura(0x9aa1a8, 0.5));
 			casquillo.position.y = 14;
 			g.add(casquillo);
@@ -954,8 +963,9 @@ function cuerpoDeCampo(d: Dispositivo): THREE.Group {
 			 * EL MANDO DE LA PUERTA, que además arregla algo que no era solo estético: estos
 			 * pulsadores no tenían cuerpo, así que no se podían pinchar en el tablero. Ahora sí.
 			 */
-			const paro = (d.designacion ?? '').toUpperCase().includes('S0') || d.tipo === 'selector';
-			const color = paro ? 0xd32f2f : 0x2e7d32;
+			// Sin color elegido se usa el convenio de siempre —rojo el selector/paro, verde la
+			// marcha—, pero como PUNTO DE PARTIDA, no como adivinanza sobre el rótulo.
+			const color = elegido ?? (d.tipo === 'selector' ? 0xd32f2f : 0x2e7d32);
 			const aro = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 5, 20), pintura(0xb6bcc2, 0.35));
 			aro.rotation.x = Math.PI / 2;
 			g.add(aro);

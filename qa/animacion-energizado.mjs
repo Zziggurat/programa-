@@ -24,7 +24,7 @@
  *   node qa/animacion-energizado.mjs
  */
 import { chromium } from 'playwright-core';
-import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const { servidor } = await servidorDeQA();
 const b = await abrirNavegador(chromium);
@@ -187,6 +187,44 @@ must('al energizar, la pantalla del autómata SE ENCIENDE',
 	`brillo ${apagada?.pantalla?.[0]?.brillo} → ${encendida?.pantalla?.[0]?.brillo}`);
 must('y sus LEDs también', (encendida?.led ?? []).some((l) => l.brillo > 0),
 	(encendida?.led ?? []).map((l) => l.brillo).join(' '));
+
+console.log('\n### 7 · personalización: el color se elige y manda sobre el de fábrica');
+
+/*
+ * El color lo ponía el catálogo y no había forma de cambiarlo, así que dos contactores de marcas
+ * distintas salían idénticos. Y en los aparatos de campo yo lo ADIVINABA del rótulo —si el marcado
+ * llevaba «S0», rojo—, o sea que un paro rotulado «-PARO» salía verde. Ahora se elige en la ficha.
+ */
+await abrirEjemplo(0);
+/*
+ * Se trabaja sobre una COPIA. Un ejemplo es de solo lectura, así que elegir un color no se guarda
+ * —y está bien que no se guarde—: la primera versión de esta comprobación fallaba por eso, con la
+ * regla haciendo exactamente su trabajo. Es el mismo camino que sigue el usuario.
+ */
+await trabajarSobreCopia(p);
+await p.evaluate(() => document.getElementById('modo-editor')?.click());
+await p.waitForTimeout(400);
+await qa('elegir', 'km1');
+await p.waitForTimeout(600);
+const hayCampo = await p.isVisible('#dev-color');
+must('la ficha del aparato ofrece elegir color', hayCampo);
+
+if (hayCampo) {
+	const antes = (await qa('proyecto')).dispositivos.find((x) => x.id === 'km1')?.colorCuerpo;
+	await p.evaluate(() => {
+		const c = document.getElementById('dev-color');
+		c.value = '#c81e5a';
+		c.dispatchEvent(new Event('change', { bubbles: true }));
+	});
+	await p.waitForTimeout(900);
+	const despues = (await qa('proyecto')).dispositivos.find((x) => x.id === 'km1')?.colorCuerpo;
+	must('elegir un color lo guarda en el aparato', despues === '#c81e5a', `${antes} → ${despues}`);
+	// Y el botón de volver al de fábrica tiene que dejarlo como estaba.
+	await p.evaluate(() => document.getElementById('dev-color-reset')?.click());
+	await p.waitForTimeout(700);
+	const vuelto = (await qa('proyecto')).dispositivos.find((x) => x.id === 'km1')?.colorCuerpo;
+	must('el botón ↺ devuelve el color de fábrica', vuelto === undefined, String(vuelto));
+}
 
 console.log(`\nerrores de JavaScript: ${errores.length}`);
 must('ni un error de JavaScript', errores.length === 0, errores.slice(0, 2).join(' | '));

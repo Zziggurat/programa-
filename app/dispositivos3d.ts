@@ -537,6 +537,11 @@ function mando(g: THREE.Group, w: number, h: number, color: number, forma: 'seta
 	return prof;
 }
 
+/** El color de fábrica de cada tipo, para que el editor pueda enseñarlo antes de tocarlo. */
+export function colorDeTipo(tipo: string): number {
+	return COLOR_TIPO[tipo] ?? COLOR_TIPO.otro;
+}
+
 const COLOR_TIPO: Record<string, number> = {
 	disyuntor: 0xe8e8e4, diferencial: 0xe8e8e4, guardamotor: 0x3d4348, fusible: 0x5d666e,
 	contactor: 0x2f3437, rele: 0x3b6ea5, variador: 0x26292c, plc: 0x23272b,

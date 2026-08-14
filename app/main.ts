@@ -33,6 +33,7 @@ import {
 	largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable, vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
+import { colorDeTipo } from './dispositivos3d.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
 import { huellaMinima, leerRotulos } from '../src/motores/terminales.js';
@@ -978,6 +979,19 @@ function trasCambiarProyecto(): void {
 
 /* --------------------------- Utilidades UI --------------------------- */
 
+/**
+ * El color con el que se dibujaría un aparato si nadie lo ha elegido.
+ *
+ * Hace falta para que el selector de color arranque enseñando el color REAL del aparato y no un
+ * negro genérico: si el cuadrito no coincide con lo que se ve en el tablero, el usuario cree que
+ * ya lo ha cambiado cuando todavía no ha tocado nada.
+ */
+function colorPorDefectoDe(d: Dispositivo): string {
+	if (d.colorCuerpo) return d.colorCuerpo;
+	return '#' + colorDeTipo(d.tipo).toString(16).padStart(6, '0');
+}
+
+
 function $(id: string): HTMLElement {
 	return document.getElementById(id)!;
 }
@@ -1621,6 +1635,14 @@ function pintarSeleccion(): void {
 				</select></label>
 			<label class="ancho-2">Descripción<input id="dev-descripcion" type="text" value="${escaparHtml(d.descripcion ?? '')}" placeholder="Contactor tripolar 9 A"></label>
 			<label>Fabricante<input id="dev-fabricante" type="text" value="${escaparHtml(d.fabricante ?? '')}" placeholder="Schneider"></label>
+			<!-- El COLOR del aparato. Lo ponía el catálogo y no había forma de cambiarlo, así que
+			     dos contactores de marcas distintas salían idénticos y un piloto rojo de defecto
+			     no se podía distinguir de uno verde de marcha. Ahora se elige, y vale también
+			     para los aparatos de campo (la lámpara alumbra con ESE color). -->
+			<label>Color<span class="fila-color">
+				<input id="dev-color" type="color" value="${escaparHtml(d.colorCuerpo ?? colorPorDefectoDe(d))}">
+				<button type="button" id="dev-color-reset" title="Volver al color del catálogo">↺</button>
+			</span></label>
 			<label>Referencia<input id="dev-referencia" type="text" value="${escaparHtml(d.referencia ?? '')}" placeholder="LC1D09B7"></label>
 			<label>In / Ib (A)<input id="dev-corriente" type="number" step="0.1" min="0" value="${num(d.corrienteNominal)}" placeholder="9"></label>
 			<label>Polos<input id="dev-polos" type="number" step="1" min="1" max="4" value="${num(d.polos)}" placeholder="3"></label>
@@ -1822,6 +1844,10 @@ function pintarSeleccion(): void {
 		}, true);
 		texto('dev-descripcion', (v) => { d.descripcion = v || undefined; });
 		texto('dev-fabricante', (v) => { d.fabricante = v || undefined; });
+		// El color se aplica al soltar (`change`) y rehace la escena: el aparato se repinta.
+		texto('dev-color', (v) => { d.colorCuerpo = v || undefined; }, true);
+		const btnColor = panel.querySelector('#dev-color-reset') as HTMLButtonElement | null;
+		if (btnColor) btnColor.onclick = () => aplicar(() => { d.colorCuerpo = undefined; }, true);
 		texto('dev-referencia', (v) => { d.referencia = v || undefined; }, true);
 		numero('dev-corriente', (v) => { d.corrienteNominal = v; });
 		numero('dev-polos', (v) => { d.polos = v === undefined ? undefined : Math.min(4, Math.max(1, Math.round(v))); });
@@ -4970,6 +4996,7 @@ renderer.setAnimationLoop(() => {
 		energizado: panelSim.energizado(),
 		dt,
 		reloj: ahora / 1000,
+		cables: escenario.cables,
 	});
 	(vista2D ? controlesOrto : controles).update();
 	renderer.render(escena, camaraViva());
@@ -5080,6 +5107,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Qué hay seleccionado ahora mismo (para distinguir a quién agarró un clic). */
 		seleccion: () => (sel ? { tipo: sel.tipo, id: sel.id } : undefined),
+		/** Selecciona un aparato, para poder abrir su ficha desde las pruebas. */
+		elegir: (id: string) => { seleccionar(id); },
 		/** Selecciona un aparato por id, como si se hubiera pinchado en él. */
 		seleccionarPorId: (id: string) => seleccionar(id),
 		/** Fotogramas que ha dibujado el editor (para ver si su bucle está parado). */

@@ -80,6 +80,8 @@ export interface EntradaAnimacion {
 	dt: number;
 	/** Segundos desde que arrancó el editor, para los latidos lentos (el refresco de un display). */
 	reloj: number;
+	/** El grupo de los cables, para encenderlos según la corriente que llevan. */
+	cables?: THREE.Object3D;
 }
 
 /**
@@ -94,6 +96,34 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 	const porId = new Map<string, Dispositivo>();
 	for (const d of e.proyecto.dispositivos) porId.set(d.id, d);
 	const activos = e.energizado ? e.resultado?.activos : undefined;
+
+	/*
+	 * --- LOS CABLES RESPIRAN, Y BRILLAN SEGÚN LO QUE LLEVAN ---
+	 *
+	 * Todos los cables vivos se encendían con el MISMO amarillo fijo, así que el tablero
+	 * energizado era una maraña uniforme: no se distinguía la maniobra de la potencia ni se veía
+	 * por dónde iba de verdad la corriente. Ahora el brillo sale de la intensidad que la
+	 * simulación calcula para cada conductor, y cada uno late con su propia fase: el conjunto se
+	 * ve VIVO en vez de pintado.
+	 */
+	if (e.cables) {
+		const corrientes = e.energizado ? e.resultado?.corrientePorConductor : undefined;
+		e.cables.traverse((o) => {
+			if (!(o instanceof THREE.Mesh)) return;
+			const id = o.userData.conductorId as string | undefined;
+			if (!id) return;
+			const mat = o.material as THREE.MeshStandardMaterial | undefined;
+			if (!mat?.emissive) return;
+			if (!e.energizado || !e.resultado?.conductoresVivos.has(id)) { mat.emissiveIntensity = 0; return; }
+			const amperios = corrientes?.get(id) ?? 0;
+			// Un hilo de maniobra lleva miliamperios y uno de potencia varios amperios: la escala es
+			// logarítmica para que el de mando se vea sin que el de potencia deslumbre.
+			const base = 0.5 + Math.min(0.6, Math.log10(1 + amperios * 4) * 0.42);
+			// La fase sale del id, así que cada cable late a su aire y no parpadean todos a la vez.
+			const fase = (id.charCodeAt(0) + id.length * 7) % 10;
+			mat.emissiveIntensity = base + 0.09 * Math.sin(reloj * 2.6 + fase);
+		});
+	}
 
 	for (const grupo of e.grupos) {
 		const id = grupo.userData.dispositivoId as string | undefined;
@@ -142,10 +172,20 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 			if (base) m.position.z = base.z - (st.activo ? 3.2 : 0);
 		}
 
-		/* --- Motores: el eje gira, y más deprisa cuanto más se le exige --- */
-		if (p.eje.length) {
-			const vueltas = enMarcha ? 9 : 0;   // rad/s: rápido pero sin marear
-			if (vueltas > 0) for (const m of p.eje) m.rotation.x += vueltas * e.dt;
+		/*
+		 * --- MOTORES: el eje gira, y a la velocidad que le toca ---
+		 *
+		 * Antes giraba siempre a la misma velocidad aunque el comentario prometiera «más deprisa
+		 * cuanta más tensión»: el comentario decía una cosa y el código hacía otra. Ahora sale de
+		 * la simulación de verdad —de la tensión a la que está trabajando— así que un motor a 380 V
+		 * se ve girar más vivo que uno a 220, y uno de 24 V apenas. No es un dato de catálogo: es
+		 * lo que el propio circuito le está dando.
+		 */
+		if (p.eje.length && enMarcha) {
+			const tension = d.tensionNominal ?? 220;
+			// 220 V como referencia: ~9 rad/s. Se acota para que ni se pare ni maree.
+			const vueltas = Math.min(16, Math.max(4, 9 * Math.sqrt(tension / 220)));
+			for (const m of p.eje) m.rotation.x += vueltas * e.dt;
 		}
 
 		/* --- Válvulas: el vástago sale al abrir --- */
