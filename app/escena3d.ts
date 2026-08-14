@@ -953,7 +953,14 @@ export const HOLGURA_CABLE = 1.2;
 
 /** Cuánto se puede correr una bajada a un lado para buscarle sitio, y en cuántos pasos. */
 const PASO_LATERAL = 5;
-const PASOS_LATERALES = [0, 1, -1, 2, -2];
+/*
+ * Solo tres desplazamientos, y una sola vuelta de recolocación. No es pereza: con cinco pasos y
+ * dos vueltas, el reparto del tablero de 52 conductores se iba a cuatro segundos y medio, y eso
+ * no es «un poco lento» —bloquea la interfaz cada vez que se mueve un aparato, y de hecho tumbó
+ * las propias pruebas de navegador por agotar su espera—. Medido, la segunda vuelta y los pasos
+ * de ±10 mm arreglaban uno o dos pares de los veinte; el precio no lo valía.
+ */
+const PASOS_LATERALES = [0, 1, -1];
 
 /**
  * EL ÚLTIMO REPARTO, GUARDADO.
@@ -1183,7 +1190,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		for (const c of conflictosDe(puestos.map((q) => q.trazo), HOLGURA_CABLE)) { malos.add(c.a); malos.add(c.b); }
 		return malos;
 	};
-	for (let vuelta = 0; vuelta < 2; vuelta++) {
+	for (let vuelta = 0; vuelta < 1; vuelta++) {
 		const malos = enConflicto();
 		if (!malos.size) break;
 		for (const puesto of puestos) {
