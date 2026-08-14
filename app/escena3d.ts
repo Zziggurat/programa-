@@ -10,7 +10,7 @@ import { Colocacion, Conductor, Dispositivo, Gabinete, Proyecto } from '../src/m
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
 import { posicionesDeTerminales } from '../src/motores/terminales.js';
 import { Banda, corredoresLibres, crearRepartidor, orthogonalize, redondearEsquinas } from './geometria-cables.js';
-import { construirAparato3D } from './dispositivos3d.js';
+import { ALTURA_CARRIL, bornesGenericos, construirAparato3D, Z_BORNE } from './dispositivos3d.js';
 
 export const COLOR_CABLE: Record<string, number> = {
 	'negro': 0x20242a,
@@ -395,23 +395,51 @@ export function construirRiel(
 	aEscena: Escenario['aEscena'],
 ): THREE.Group {
 	const grupo = new THREE.Group();
-	const material = new THREE.MeshStandardMaterial({ color: 0xc9a86a, metalness: 0.7, roughness: 0.35 });
+	/*
+	 * CARRIL TS35 DE VERDAD: acero cincado con perfil de sombrero.
+	 *
+	 * Era un perfil dorado y plano —una losa de 5 mm con dos aletas pegadas encima— con
+	 * `metalness: 0.7` y color latón. Un carril DIN no es de latón: es chapa de acero cincada,
+	 * gris y algo mate. Y su forma es un sombrero: la base atornillada a la placa, dos almas que
+	 * suben 7,5 mm y, arriba, los dos LABIOS vueltos hacia fuera, que son de lo que agarra la
+	 * pinza del aparato. Sin esos labios no había nada de lo que engancharse, y de perfil el
+	 * carril se leía como un listón.
+	 */
+	const material = new THREE.MeshStandardMaterial({ color: 0xb8bec3, metalness: 0.78, roughness: 0.42 });
 	const esV = riel.orientacion === 'v';
-	// Perfil sombrero simplificado: base + dos alas. El largo corre en X (h) o en Y (v).
-	const lx = esV ? ALTO_RIEL - 10 : riel.largo;
-	const ly = esV ? riel.largo : ALTO_RIEL - 10;
-	const base = new THREE.Mesh(new THREE.BoxGeometry(lx, ly, 5), material);
-	base.position.z = 5;
-	const ala = (desp: number) => {
-		const a = esV
-			? new THREE.Mesh(new THREE.BoxGeometry(6, riel.largo, 2), material)
-			: new THREE.Mesh(new THREE.BoxGeometry(riel.largo, 6, 2), material);
-		a.position.set(esV ? desp : 0, esV ? 0 : desp, 7.5);
-		grupo.add(a);
+	const CHAPA = 1.3;
+	const anchoBase = ALTO_RIEL - 16;   // el alma queda 8 mm por dentro de cada labio
+	const anchoLabio = 7;
+	/** Una tira a lo largo del carril: `t` es su medida en el eje corto. */
+	const tira = (t: number, grosor: number, desp: number, z: number): THREE.Mesh => {
+		const m = new THREE.Mesh(
+			esV ? new THREE.BoxGeometry(t, riel.largo, grosor) : new THREE.BoxGeometry(riel.largo, t, grosor),
+			material,
+		);
+		m.position.set(esV ? desp : 0, esV ? 0 : desp, z);
+		m.castShadow = true;
+		m.receiveShadow = true;
+		grupo.add(m);
+		return m;
 	};
-	grupo.add(base);
-	ala((ALTO_RIEL - 10) / 2 + 2);
-	ala(-(ALTO_RIEL - 10) / 2 - 2);
+	// Base contra la placa, con sus taladros alargados de fijación.
+	tira(anchoBase, CHAPA, 0, CHAPA / 2);
+	const taladros = Math.max(2, Math.floor(riel.largo / 55));
+	for (let i = 0; i < taladros; i++) {
+		const d = (i + 0.5) * (riel.largo / taladros) - riel.largo / 2;
+		const t = new THREE.Mesh(
+			new THREE.BoxGeometry(esV ? 6.5 : 14, esV ? 14 : 6.5, CHAPA + 0.6),
+			new THREE.MeshStandardMaterial({ color: 0x8e959b, metalness: 0.6, roughness: 0.6 }),
+		);
+		t.position.set(esV ? 0 : d, esV ? d : 0, CHAPA / 2);
+		grupo.add(t);
+	}
+	// Almas y labios: el sombrero.
+	for (const signo of [1, -1]) {
+		const alma = signo * (anchoBase / 2 - CHAPA / 2);
+		tira(CHAPA, ALTURA_CARRIL - CHAPA, alma, (ALTURA_CARRIL + CHAPA) / 2);
+		tira(anchoLabio, CHAPA, signo * (anchoBase / 2 + anchoLabio / 2 - CHAPA), ALTURA_CARRIL - CHAPA / 2);
+	}
 	const cx = riel.x + (esV ? 0 : riel.largo / 2);
 	const cy = riel.y + (esV ? riel.largo / 2 : 0);
 	const c = aEscena(cx, cy, 0);
@@ -1158,16 +1186,15 @@ export function anclajeBorne(
 	// que dice su ficha de datos, no de un reparto genérico en dos filas.
 	if (d.terminales?.length) {
 		const p = posicionesDeTerminales(d, col.ancho, col.alto).get(borneId);
-		if (p) return { x: col.x + p.dx, y: col.y + p.dy, z: 46 };
+		if (p) return { x: col.x + p.dx, y: col.y + p.dy, z: Z_BORNE };
 	}
-	const idx = d.bornes.findIndex((b) => b.id === borneId);
-	if (idx < 0) return { x: col.x + col.ancho / 2, y: col.y + col.alto / 2, z: 44 };
-	// Índices pares → fila superior; impares → fila inferior (como 1/3/5 vs 2/4/6).
-	const arriba = idx % 2 === 0;
-	const fila = d.bornes.filter((_, i) => (i % 2 === 0) === arriba);
-	const pos = fila.findIndex((b) => b.id === borneId);
-	const n = Math.max(1, fila.length);
-	const x = col.x + (n === 1 ? 0.5 : (pos + 0.5) / n) * col.ancho;
-	const y = arriba ? col.y + 5 : col.y + col.alto - 5;
-	return { x, y, z: 46 };
+	/*
+	 * El reparto en dos filas lo decide `bornesGenericos()`, que es la MISMA función que usa el
+	 * modelo 3D para poner el tornillo. Antes vivía aquí dentro y el dibujo no tenía forma de
+	 * consultarla, así que cada aparato pintaba sus bornes donde le parecía y el cable salía de
+	 * un punto donde no había ningún tornillo.
+	 */
+	const p = bornesGenericos(d, col.ancho, col.alto).find((q) => q.id === borneId);
+	if (!p) return { x: col.x + col.ancho / 2, y: col.y + col.alto / 2, z: Z_BORNE - 2 };
+	return { x: col.x + p.dx, y: col.y + p.dy, z: Z_BORNE };
 }

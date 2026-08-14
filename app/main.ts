@@ -768,11 +768,27 @@ sol.shadow.camera.left = -1000;
 sol.shadow.camera.right = 1000;
 sol.shadow.camera.top = 1200;
 sol.shadow.camera.bottom = -1200;
-sol.shadow.bias = -0.0004;
+/*
+ * `bias` mueve la PROFUNDIDAD de la muestra, así que corregirlo con un número grande despega la
+ * sombra del objeto (el aparato parece flotar sobre su propia sombra). `normalBias` separa la
+ * muestra a lo largo de la normal de la superficie: quita el rayado sin abrir hueco en el
+ * contacto. Con las cotas de este modelo —milímetros— 0,7 es lo justo.
+ */
+sol.shadow.bias = -0.00006;
+sol.shadow.normalBias = 0.7;
 escena.add(sol);
+escena.add(sol.target);
 const contraluz = new THREE.DirectionalLight(0x88aaff, 0.3);
 contraluz.position.set(-600, 200, -400);
 escena.add(contraluz);
+/*
+ * Relleno frontal muy flojo: los huecos que acaban de aparecer —el pocillo de cada borne, el
+ * canal del carril, las ranuras de ventilación— quedaban en negro cerrado, y un agujero negro no
+ * se lee como un hueco, se lee como una mancha. Con esto tienen fondo.
+ */
+const relleno = new THREE.DirectionalLight(0xdce6f2, 0.28);
+relleno.position.set(-120, -260, 900);
+escena.add(relleno);
 
 const suelo = new THREE.GridHelper(4000, 80, 0x2c3238, 0x22272c);
 escena.add(suelo);
@@ -920,6 +936,39 @@ function montarEscenario(): void {
 	const verEtiquetas = !visualizacion && ($('ver-etiquetas') as HTMLInputElement).checked;
 	for (const t of escenario.etiquetas) t.visible = verEtiquetas;
 	asentarSuelo();
+	ajustarSombras();
+}
+
+/**
+ * LA SOMBRA TIENE QUE PEGARSE AL APARATO, y para eso hay que apretar la cámara de sombras.
+ *
+ * Estaba clavada en ±1000 × ±1200 mm con un `bias` de −0,0004. Para un tablero de 600 × 800 eso
+ * significa que el mapa de 2048 píxeles se reparte sobre 2400 mm: cada píxel de sombra mide más de
+ * un milímetro, y el desplazamiento del `bias` sobre esa escala DESPEGA la sombra del objeto que
+ * la hace. Un aparato con la sombra corrida cuatro milímetros no se lee apoyado: se lee flotando,
+ * que es exactamente la queja de «se ven en el aire las cosas».
+ *
+ * Ajustando el tronco al gabinete de verdad, el mismo mapa cae sobre 800 mm en vez de 2400: la
+ * sombra de contacto sale tres veces más fina y nace donde el aparato toca. Y el desplazamiento se
+ * hace con `normalBias`, que separa la muestra a lo largo de la normal en vez de mover el objeto
+ * entero: quita el rayado sin despegar el contacto.
+ */
+function ajustarSombras(): void {
+	const g = proyecto.gabinete;
+	if (!g) return;
+	const caja = cajaDe(g);
+	const radio = Math.max(caja.ancho, caja.alto) / 2 + 60;
+	sol.shadow.camera.left = -radio;
+	sol.shadow.camera.right = radio;
+	sol.shadow.camera.top = radio;
+	sol.shadow.camera.bottom = -radio;
+	sol.shadow.camera.near = 100;
+	sol.shadow.camera.far = 3000;
+	sol.shadow.camera.updateProjectionMatrix();
+	// El sol apunta al centro del tablero: si mira al origen del mundo, con el tablero desplazado
+	// el tronco de sombras se queda a un lado y media placa se dibuja sin sombra ninguna.
+	sol.target.position.set(0, 0, caja.profundidad / 2);
+	sol.target.updateMatrixWorld();
 }
 
 /** Recalcula, reconstruye y repinta todo (tras un cambio estructural). */
@@ -5498,6 +5547,61 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				});
 			});
 			return piezas;
+		},
+		/**
+		 * EL VOLUMEN QUE OCUPA DE VERDAD CADA APARATO, medido sobre la geometría ya montada.
+		 *
+		 * Sirve para cazar con números lo que a ojo cuesta ver: una pieza que se sale de la huella
+		 * declarada, o dos aparatos cuyos cuerpos se atraviesan. Un modelo puede DECLARAR 72 mm de
+		 * fondo y tener una tapa girada que llega a 56 y otra mitad hundida diez milímetros dentro
+		 * de su propio cuerpo: de frente no se ve, y medido salta a la primera.
+		 *
+		 * Las cotas van en milímetros de modelo (Y hacia abajo), como la colocación.
+		 */
+		cuerpos: () => {
+			const g = proyecto.gabinete;
+			if (!g) return [];
+			const caja = new THREE.Box3();
+			const salida = [];
+			for (const grupo of escenario.dispositivos.children) {
+				const id = grupo.userData.dispositivoId as string | undefined;
+				const col = id && g.colocaciones.find((c) => c.dispositivoId === id);
+				if (!id || !col) continue;   // los aparatos de campo no tienen huella en la placa
+				/*
+				 * Solo el CUERPO. Los rótulos flotan a propósito por encima del aparato —la
+				 * designación a 13 mm y la chapa de tensión a 26— y son carteles orientados a la
+				 * cámara, no plástico: metiéndolos en la medida, todos los aparatos parecerían
+				 * desbordar su huella y la comprobación no diría nada.
+				 */
+				caja.makeEmpty();
+				grupo.traverse((o) => { if (o instanceof THREE.Mesh) caja.expandByObject(o); });
+				if (caja.isEmpty()) continue;
+				/*
+				 * A qué profundidad arranca la geometría que cae SOBRE EL CARRIL.
+				 *
+				 * El carril ocupa los primeros 8 mm por detrás del aparato, en una banda de 35 mm de
+				 * alto. Un cuerpo macizo que arranque en la placa se lo lleva dentro —era el caso de
+				 * todos los aparatos, y no se nota de frente porque el carril queda tapado—. Con el
+				 * canal por detrás, lo que quede en esa banda tiene que empezar por delante del
+				 * carril; solo la pinza baja a agarrarse a los labios.
+				 */
+				const pieza = new THREE.Box3();
+				let enCarril = Infinity;
+				grupo.traverse((o) => {
+					if (!(o instanceof THREE.Mesh)) return;
+					pieza.setFromObject(o);
+					const yModelo = g.alto / 2 - (pieza.min.y + pieza.max.y) / 2;
+					if (Math.abs(yModelo - (col.y + col.alto / 2)) < 17) enCarril = Math.min(enCarril, pieza.min.z);
+				});
+				salida.push({
+					id, x: col.x, y: col.y, ancho: col.ancho, alto: col.alto,
+					minX: caja.min.x + g.ancho / 2, maxX: caja.max.x + g.ancho / 2,
+					minY: g.alto / 2 - caja.max.y, maxY: g.alto / 2 - caja.min.y,
+					minZ: caja.min.z, maxZ: caja.max.z,
+					zSobreCarril: Number.isFinite(enCarril) ? enCarril : null,
+				});
+			}
+			return salida;
 		},
 		cablesEncendidos: () => {
 			let n = 0;

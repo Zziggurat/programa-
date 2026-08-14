@@ -11,14 +11,91 @@ import * as THREE from 'three';
 import { BloqueTerminales, Colocacion, Dispositivo } from '../src/modelo/tipos.js';
 import { MARGEN_BORNERA, pasoDelBloque, PosicionTerminal, posicionesDeTerminales } from '../src/motores/terminales.js';
 
+/**
+ * PROFUNDIDAD A LA QUE TODO APARATO PRESENTA SUS BORNES, en mm desde la placa de montaje.
+ *
+ * Es la MISMA cota a la que `anclajeBorne()` engancha el cable. Tienen que coincidir: si no, el
+ * cable sale de un punto y el tornillo está dibujado en otro. Era justo lo que pasaba —el anclaje
+ * fijo en 46 y cada modelo pintando su fila de bornes donde le venía bien: 60 en el disyuntor, 68
+ * en el contactor, 16 en el relé, 6 en el pulsador— así que el cable nacía dentro del cuerpo, a
+ * catorce milímetros por detrás del tornillo del que decía salir, y las filas de bornes quedaban
+ * ENTERRADAS en el plástico: geometría invisible que solo servía para interpenetrar.
+ *
+ * Con una sola cota compartida el cable sale del tornillo de verdad, y los cuerpos se construyen
+ * escalonados para que esta profundidad caiga sobre un hombro descubierto, como el escalón donde
+ * un aparato modular de verdad tiene sus bornes.
+ */
+export const Z_BORNE = 46;
+
+/**
+ * MATERIALES POR FAMILIA.
+ *
+ * Antes había tres: metal, plástico y «oscuro». Con eso, el plástico de la carcasa de un
+ * disyuntor, la baquelita de un borne, la goma de un prensaestopas y el policarbonato de una
+ * lente se veían iguales, porque solo cambiaba el color. Lo que distingue a un material de otro
+ * de cerca no es el tono: es cómo devuelve la luz.
+ */
 const M = {
+	/** Chapa y tornillería: refleja el entorno y devuelve un brillo estrecho. */
 	metal: (color = 0xb9bec2) => new THREE.MeshStandardMaterial({ color, metalness: 0.85, roughness: 0.35 }),
+	/** Aluminio de radiador y perfilería: mate, con el grano del extrusionado. */
+	aluminio: (color = 0x9aa0a5) => new THREE.MeshStandardMaterial({ color, metalness: 0.7, roughness: 0.58 }),
+	/** Cobre desnudo: pletinas, bobinas, puentes. */
+	cobre: () => new THREE.MeshStandardMaterial({ color: 0xb87333, metalness: 0.9, roughness: 0.34 }),
+	/** Termoplástico de carcasa: satinado, ni espejo ni tiza. */
 	plastico: (color: number, roughness = 0.55) => new THREE.MeshStandardMaterial({ color, roughness }),
+	/** Baquelita y poliamida de bornes: mate de verdad, casi sin brillo. */
+	baquelita: (color = 0x1b1e21) => new THREE.MeshStandardMaterial({ color, roughness: 0.86, metalness: 0.02 }),
+	/** Policarbonato de lentes y tapas transparentes. */
+	translucido: (color: number, opacidad = 0.55) => new THREE.MeshStandardMaterial({
+		color, roughness: 0.16, metalness: 0.02, transparent: true, opacity: opacidad,
+	}),
 	oscuro: () => new THREE.MeshStandardMaterial({ color: 0x1b1e21, roughness: 0.6 }),
 };
 
 function caja(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
 	const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+	m.position.set(x, y, z);
+	return m;
+}
+
+/**
+ * Caja con las aristas MATADAS: esquinas verticales redondeadas y canto frontal achaflanado.
+ *
+ * Ningún aparato real tiene aristas vivas —se desmoldean con radio y se rematan con chaflán— y es
+ * lo primero que delata a un modelo hecho con cubos: de cerca, un canto perfectamente afilado no
+ * coge NINGÚN reflejo, así que dos caras contiguas se funden en una mancha plana y la pieza pierde
+ * el volumen. Un chaflán de medio milímetro basta para que la arista devuelva una línea de luz y
+ * el cuerpo se lea como un objeto sólido.
+ *
+ * No se cachea a propósito: la escena se reconstruye llamando a `geometry.dispose()` sobre cada
+ * malla, así que una geometría compartida se quedaría desmontada bajo los pies del siguiente
+ * tablero. Construirlas cuesta una vez por aparato, no una vez por fotograma.
+ */
+function cajaCanto(
+	w: number, h: number, d: number, mat: THREE.Material,
+	x = 0, y = 0, z = 0, radio = 1.6, chaflan = 0.6,
+): THREE.Mesh {
+	const r = Math.max(0.2, Math.min(radio, w / 2 - 0.2, h / 2 - 0.2));
+	const c = Math.max(0.05, Math.min(chaflan, d / 2 - 0.05, r * 0.8));
+	const s = new THREE.Shape();
+	const hw = w / 2;
+	const hh = h / 2;
+	s.moveTo(-hw + r, -hh);
+	s.lineTo(hw - r, -hh);
+	s.quadraticCurveTo(hw, -hh, hw, -hh + r);
+	s.lineTo(hw, hh - r);
+	s.quadraticCurveTo(hw, hh, hw - r, hh);
+	s.lineTo(-hw + r, hh);
+	s.quadraticCurveTo(-hw, hh, -hw, hh - r);
+	s.lineTo(-hw, -hh + r);
+	s.quadraticCurveTo(-hw, -hh, -hw + r, -hh);
+	const geo = new THREE.ExtrudeGeometry(s, {
+		depth: d - 2 * c, bevelEnabled: true, bevelThickness: c, bevelSize: c, bevelSegments: 2, curveSegments: 4,
+	});
+	// El extrusionado con bisel ocupa de -c a d-c: se recentra para que se comporte como una caja.
+	geo.translate(0, 0, c - d / 2);
+	const m = new THREE.Mesh(geo, mat);
 	m.position.set(x, y, z);
 	return m;
 }
@@ -30,17 +107,107 @@ function cilindro(r: number, largo: number, mat: THREE.Material, x = 0, y = 0, z
 	return m;
 }
 
-/** Fila de bornes con tornillo (cuerpo oscuro + tornillo metálico con ranura). */
-function filaBornes(g: THREE.Group, n: number, ancho: number, y: number, z: number): void {
-	const cuerpoMat = M.oscuro();
-	const tornilloMat = M.metal(0xcfd4d8);
-	const paso = ancho / n;
+/**
+ * UN BORNE DE VERDAD, no un taco con un disco encima.
+ *
+ * Lo que se ve al asomarse a un aparato conectado, de fuera adentro: el alojamiento rehundido en
+ * el plástico, la jaula metálica dentro, y el tornillo con su ranura HUNDIDA. Antes la «ranura»
+ * era una cajita puesta 0,3 mm POR DELANTE de la cabeza del tornillo: desde cerca no era una
+ * ranura, era una pestaña saliendo del tornillo.
+ *
+ * El tornillo queda con su cara justo en `Z_BORNE`, que es de donde arranca el cable.
+ */
+function borneTornillo(g: THREE.Group, x: number, y: number, ancho: number): void {
+	const z = Z_BORNE;   // no es un parámetro a propósito: nadie puede ponerle otra profundidad
+	const hueco = M.baquelita(0x101315);
+	const jaula = M.metal(0x8d949a);
+	const tornillo = M.metal(0xd6dbdf);
+	const a = Math.min(ancho, 9);
+	// Alojamiento: un pocillo rehundido 3 mm, con su boca en la superficie.
+	g.add(caja(a, Math.min(a, 8), 3, hueco, x, y, z - 1.5));
+	// Jaula de apriete al fondo del pocillo.
+	g.add(caja(a * 0.72, Math.min(a, 8) * 0.62, 1.6, jaula, x, y, z - 2.2));
+	// Cabeza del tornillo, enrasada con la boca del pocillo.
+	const r = Math.min(2.4, a * 0.34);
+	g.add(cilindro(r, 1.8, tornillo, x, y, z - 0.9));
+	// Ranura: HUNDIDA en la cabeza, no montada sobre ella.
+	g.add(caja(r * 1.7, 0.7, 0.5, hueco, x, y, z - 0.25));
+}
+
+/** Un borne del reparto genérico, en coordenadas de la huella (mm desde su esquina, Y hacia abajo). */
+export interface PuntoBorne {
+	id: string;
+	dx: number;
+	dy: number;
+}
+
+/**
+ * DÓNDE ESTÁ CADA BORNE de un aparato sin ficha de terminales: dos filas, los índices pares
+ * arriba y los impares abajo, como el 1/3/5 contra 2/4/6 de un aparato modular.
+ *
+ * Esta función la usan LOS DOS lados —el modelo 3D para poner el tornillo y `anclajeBorne()` para
+ * enganchar el cable— y por eso está exportada. El reparto vivía metido dentro del anclaje, así
+ * que el dibujo no tenía forma de consultarlo: cada modelo pintaba «tres bornes arriba y tres
+ * abajo» a ojo, y el resultado era que un contactor con diez bornes enseñaba seis tornillos y los
+ * cables salían de sitios donde no había ninguno.
+ */
+export function bornesGenericos(d: Dispositivo, w: number, h: number): PuntoBorne[] {
+	const n = d.bornes.length;
+	if (n === 0) return [];
+	/*
+	 * Una bornera no tiene dos filas: es una HILERA, y cada borna es un bloque con su tornillo.
+	 * Con el reparto en dos filas, una regleta de doce bornas anclaba los cables en seis
+	 * posiciones a lo ancho, así que ninguno caía sobre su bloque.
+	 */
+	if (d.tipo === 'bornero') {
+		return d.bornes.map((b, i) => ({ id: b.id, dx: ((i + 0.5) / n) * w, dy: h * 0.22 }));
+	}
+	const puntos: PuntoBorne[] = [];
+	for (const arriba of [true, false]) {
+		const fila = d.bornes.filter((_, i) => (i % 2 === 0) === arriba);
+		const m = Math.max(1, fila.length);
+		fila.forEach((b, pos) => puntos.push({
+			id: b.id,
+			dx: (m === 1 ? 0.5 : (pos + 0.5) / m) * w,
+			dy: arriba ? 5 : h - 5,
+		}));
+	}
+	return puntos;
+}
+
+/**
+ * Dibuja UN tornillo por cada borne que el aparato tiene de verdad, exactamente donde el cable
+ * se va a enganchar. Devuelve cuántos ha puesto en cada fila, para que el modelo sepa dónde
+ * dejarle sitio.
+ */
+function dibujarBornesReales(g: THREE.Group, d: Dispositivo, w: number, h: number): void {
+	const puntos = bornesGenericos(d, w, h);
+	if (puntos.length === 0) return;
+	// El ancho de cada alojamiento sale del hueco disponible entre bornes vecinos de la misma fila.
+	const porFila = new Map<number, PuntoBorne[]>();
+	for (const p of puntos) {
+		const fila = porFila.get(p.dy) ?? [];
+		fila.push(p);
+		porFila.set(p.dy, fila);
+	}
+	for (const fila of porFila.values()) {
+		const ancho = Math.min(9, Math.max(3, (w / fila.length) - 1.5));
+		for (const p of fila) borneTornillo(g, p.dx - w / 2, h / 2 - p.dy, ancho);
+	}
+}
+
+/**
+ * Rejilla de ventilación: ranuras de verdad, repetidas y rehundidas.
+ *
+ * El contactor tenía en su sitio un bucle `for (…) { …; break; }` que se cortaba en la primera
+ * vuelta y pintaba dos losas de medio aparato de fondo. No era una rejilla: era un tablón negro
+ * pegado al costado, y encima sobresalía 0,2 mm del cuerpo.
+ */
+function rejilla(g: THREE.Group, n: number, largo: number, alto: number, x: number, y: number, z: number): void {
+	const ranura = M.baquelita(0x0e1113);
+	const paso = alto / n;
 	for (let i = 0; i < n; i++) {
-		const x = (i + 0.5) * paso - ancho / 2;
-		g.add(caja(Math.min(paso - 2, 10), 9, 7, cuerpoMat, x, y, z));
-		const t = cilindro(2.4, 2, tornilloMat, x, y, z + 4.2);
-		g.add(t);
-		g.add(caja(3.6, 0.8, 0.6, cuerpoMat, x, y, z + 5.2)); // ranura del tornillo
+		g.add(caja(largo, Math.max(0.8, paso * 0.45), 1.2, ranura, x, y + (i + 0.5) * paso - alto / 2, z));
 	}
 }
 
@@ -86,41 +253,114 @@ function etiquetaImpresa(texto: string, w: number, h: number, fondo: string, tin
 
 /* --------------------------- Modelos por tipo --------------------------- */
 
+/** Lo que un carril TS35 levanta al aparato sobre la placa. Lo comparten el carril y su canal. */
+export const ALTURA_CARRIL = 8;
+
+/**
+ * EL CUERPO DE UN APARATO DE CARRIL, con su canal por detrás.
+ *
+ * Aquí había un fallo que no se ve de frente y que es de los gordos: el cuerpo era un bloque
+ * macizo que arrancaba en la placa (z=0), y el carril ocupa de 0 a 7,5 mm justo por detrás del
+ * aparato. O sea, TODOS los aparatos llevaban el carril metido dentro del plástico. Dos sólidos
+ * atravesándose de punta a punta, en cada aparato del tablero.
+ *
+ * Un aparato modular de verdad no se apoya en la placa: tiene el dorso plano con un CANAL
+ * rebajado por el que entra el carril, y se cuelga de los labios con una pinza. Eso es lo que se
+ * construye aquí: dos franjas que sí bajan hasta la placa, y la franja central arrancando por
+ * encima del carril, con la pinza dentro del canal.
+ */
+function cuerpoDeCarril(
+	g: THREE.Group, w: number, h: number, zFin: number, mat: THREE.Material,
+	radio = 1.6, chaflan = 0.6, x = 0,
+): void {
+	const canal = 37;   // el hueco: el carril mide 35 y necesita holgura para entrar
+	const zCanal = ALTURA_CARRIL + 0.5;
+	if (h <= canal + 10) {
+		/*
+		 * Un aparato más bajo que el propio canal se monta entero por delante del carril, y su
+		 * pinza va centrada y a escala. Con la pinza del caso grande —fija a 15 y −18,5 mm del
+		 * centro— se habría quedado FUERA del cuerpo en un pulsador de 24 mm: dos tacos metálicos
+		 * flotando por encima y por debajo del aparato.
+		 */
+		g.add(cajaCanto(w, h, zFin - zCanal, mat, x, 0, zCanal + (zFin - zCanal) / 2, radio, chaflan));
+		g.add(caja(w * 0.7, Math.min(3, h * 0.14), 3, M.baquelita(0x1a1e21), x, h * 0.26, zCanal - 1.5));
+		g.add(caja(w * 0.6, Math.min(4, h * 0.18), 2.6, M.metal(0x8d949a), x, -h * 0.26, zCanal - 1.3));
+		return;
+	}
+	const franja = (h - canal) / 2;
+	for (const signo of [1, -1]) {
+		g.add(cajaCanto(w, franja, zFin, mat, x, signo * (canal + franja) / 2, zFin / 2, radio, chaflan));
+	}
+	g.add(cajaCanto(w, canal, zFin - zCanal, mat, x, 0, zCanal + (zFin - zCanal) / 2, radio, chaflan));
+	// La pinza: el gancho fijo arriba y el resorte que se tira con el destornillador abajo.
+	g.add(caja(w * 0.8, 3, 3, M.baquelita(0x1a1e21), x, 15, zCanal - 1.5));
+	g.add(caja(w * 0.66, 4.5, 2.6, M.metal(0x8d949a), x, -14, zCanal - 1.3));
+	g.add(caja(w * 0.5, 3, 1.6, M.metal(0x767d83), x, -18.5, zCanal - 0.8));
+}
+
 function modular(g: THREE.Group, w: number, h: number, color: number, ref: string, polos: number): number {
-	// Aparato modular DIN (disyuntor/diferencial): cuerpo, cara, palanca y mirilla.
+	/*
+	 * EL PERFIL DE VERDAD DE UN APARATO MODULAR, que es escalonado y no un ladrillo.
+	 *
+	 * Desde el carril hasta el hombro (Z_BORNE) el cuerpo va a toda su altura; de ahí para delante
+	 * sale la NARIZ, más estrecha, y en el escalón que queda a los dos lados es donde están los
+	 * bornes. Así es como se llega con el destornillador a un diferencial montado, y es lo que
+	 * hace que los bornes se VEAN: antes se pintaban a 60 mm dentro de un cuerpo macizo de 68, o
+	 * sea, sepultados en el plástico.
+	 */
 	const prof = 74;
-	const cuerpo = M.plastico(color);
-	g.add(caja(w, h, prof - 6, cuerpo, 0, 0, (prof - 6) / 2));
-	g.add(caja(w * 0.96, h * 0.55, 8, M.plastico(0xf4f4f0), 0, 0, prof - 2));
+	const zNariz = 67;
+	const cuerpo = M.plastico(color, 0.52);
+	cuerpoDeCarril(g, w, h, Z_BORNE, cuerpo, 1.4, 0.5);
+	const altoNariz = h * 0.5;
+	g.add(cajaCanto(w * 0.99, altoNariz, zNariz - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + zNariz) / 2, 1.3, 0.6));
+	// Cara clara del frente, donde va impresa la referencia.
+	g.add(cajaCanto(w * 0.95, altoNariz * 0.93, 1.4, M.plastico(0xf2f2ee, 0.62), 0, 0, zNariz - 0.3, 1, 0.35));
+
+	// Hueco por el que asoma la maneta, rehundido en la cara: la maneta sale de un sitio.
+	const hueco = Math.max(6, altoNariz * 0.62);
+	g.add(caja(w * 0.9, hueco, 2.2, M.baquelita(0x15181a), 0, 0, zNariz - 1.1));
 	/*
 	 * Palanca por polo (unidas), en gris oscuro. Se marcan como PIEZA porque con el tablero
 	 * energizado se mueven: una protección abierta baja la palanca y una disparada la deja a
 	 * medias, que es como se lee un cuadro de un vistazo sin tocar nada.
+	 *
+	 * Ahora la maneta acaba DENTRO de la profundidad declarada. Sobresalía 5 mm por delante de
+	 * ella, así que el aparato ocupaba más de lo que decía ocupar y un cable tendido a ras de su
+	 * cara lo atravesaba.
 	 */
-	const palanca = M.plastico(0x33383c, 0.45);
+	const palanca = M.plastico(0x2f3438, 0.42);
 	for (let i = 0; i < polos; i++) {
 		const x = (i + 0.5) * (w / polos) - w / 2;
-		const p1 = caja(w / polos - 4, 7, 6, palanca, x, 6, prof + 2);
-		const p2 = caja(w / polos - 4, 16, 4, palanca, x, 12, prof - 1);
+		const anchoP = Math.max(3.5, w / polos - 5);
+		const p1 = cajaCanto(anchoP, hueco * 0.55, 5.5, palanca, x, hueco * 0.2, prof - 3, 1, 0.5);
+		const p2 = caja(anchoP * 0.85, hueco * 0.5, 5, palanca, x, hueco * 0.02, zNariz - 2);
 		p1.userData.pieza = 'palanca';
 		p2.userData.pieza = 'palanca';
 		g.add(p1, p2);
 	}
+	// Marcas I/O serigrafiadas junto al hueco: es como se lee si está metido sin tocar nada.
+	const io = etiquetaImpresa('I  ·  O', Math.min(w * 0.5, 16), 4, '#f2f2ee', '#4a4a46');
+	io.position.set(0, hueco * 0.5 + 3, zNariz + 0.5);
+	g.add(io);
 	// Mirilla de estado: verde con el aparato cerrado, roja al abrirlo o dispararlo.
-	const mirilla = caja(Math.min(10, w * 0.4), 3.5, 1, M.plastico(0x2e7d32, 0.35), 0, -6, prof + 2.2);
+	const mirilla = caja(Math.min(10, w * 0.4), 3.5, 1.2, M.plastico(0x2e7d32, 0.32), 0, -hueco * 0.5 - 3, zNariz + 0.4);
 	mirilla.userData.pieza = 'mirilla';
 	g.add(mirilla);
-	const et = etiquetaImpresa(ref, Math.min(w * 0.9, 30), 6, '#f4f4f0', '#333');
-	et.position.set(0, -h * 0.32, prof + 3);   // 1 mm sobre la cara blanca, no rozándola
+	const et = etiquetaImpresa(ref, Math.min(w * 0.9, 30), 5.5, '#f2f2ee', '#333');
+	et.position.set(0, -altoNariz * 0.38, zNariz + 0.5);
 	g.add(et);
-	filaBornes(g, polos, w, h / 2 - 5, prof - 14);
-	filaBornes(g, polos, w, -h / 2 + 5, prof - 14);
 	return prof;
 }
 
 function contactor(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
 	const prof = 84;
-	g.add(caja(w, h, prof - 10, M.plastico(color), 0, 0, (prof - 10) / 2));
+	const cuerpo = M.plastico(color, 0.5);
+	// Mismo escalón que el modular: cuerpo hasta el hombro de bornes, y de ahí la nariz.
+	cuerpoDeCarril(g, w, h, Z_BORNE, cuerpo, 2, 0.8);
+	const altoNariz = h * 0.54;
+	const zNariz = prof - 12;
+	g.add(cajaCanto(w * 0.99, altoNariz, zNariz - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + zNariz) / 2, 1.8, 0.8));
 	/*
 	 * La ARMADURA: el bloque frontal que lleva los contactos móviles.
 	 *
@@ -128,37 +368,45 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	 * su golpe seco. Es LO que se mira para saber si el contactor ha metido, y por eso se marca
 	 * como pieza: con el tablero energizado se mueve de verdad.
 	 */
-	const armadura = caja(w * 0.9, h * 0.42, 12, M.plastico(0x22262a), 0, 2, prof - 4);
+	const armadura = cajaCanto(w * 0.86, altoNariz * 0.66, 12, M.plastico(0x22262a, 0.45), 0, 0, prof - 6, 1.6, 0.6);
 	armadura.userData.pieza = 'armadura';
 	g.add(armadura);
-	// Ventana portaetiquetas y referencia.
-	const et = etiquetaImpresa(ref, w * 0.72, 7, '#e8e8e4', '#222');
-	et.position.set(0, 2, prof + 3);   // la ventana portaetiquetas acaba en prof+2
+	/*
+	 * Rejilla de ventilación de verdad, ranura a ranura.
+	 *
+	 * Aquí había un bucle `for (let i = 0; i < 4; i++) { …; break; }`: se cortaba siempre en la
+	 * primera vuelta, el `+ i * 0` no sumaba nada y lo que salía eran DOS losas negras de medio
+	 * aparato de fondo pegadas a los costados —y sobresaliendo 0,2 mm de ellos—, no una rejilla.
+	 */
+	rejilla(g, 3, w * 0.62, altoNariz * 0.18, 0, altoNariz * 0.41, zNariz - 0.5);
+	/*
+	 * Ventana portaetiquetas en la NARIZ, no sobre la armadura: la armadura baja 2,2 mm al meter
+	 * el contactor, así que un rótulo pegado a ella se despegaría del aparato cada vez que entra.
+	 */
+	const yEt = -altoNariz * 0.41;
+	g.add(caja(w * 0.76, Math.min(9, altoNariz * 0.16), 1.4, M.baquelita(0x1a1e21), 0, yEt, zNariz - 0.4));
+	const et = etiquetaImpresa(ref, w * 0.72, Math.min(7, altoNariz * 0.14), '#e8e8e4', '#222');
+	et.position.set(0, yEt, zNariz + 0.5);
 	g.add(et);
-	// Rejillas de ventilación laterales.
-	const rejilla = M.plastico(0x191c1f);
-	for (let i = 0; i < 4; i++) {
-		g.add(caja(1.2, h * 0.5, prof * 0.5, rejilla, -w / 2 + 0.4, 0, prof * 0.35 + i * 0));
-		g.add(caja(1.2, h * 0.5, prof * 0.5, rejilla, w / 2 - 0.4, 0, prof * 0.35));
-		break;
-	}
-	filaBornes(g, 3, w, h / 2 - 5, prof - 16);
-	filaBornes(g, 3, w, -h / 2 + 5, prof - 16);
-	// Bornes de bobina A1/A2 en la esquina frontal superior.
-	filaBornes(g, 2, w * 0.5, h / 2 - 14, prof - 6);
 	return prof;
 }
 
 function plc(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
 	const prof = 62;
-	g.add(caja(w, h, prof - 4, M.plastico(color), 0, 0, (prof - 4) / 2));
-	g.add(caja(w * 0.98, h * 0.5, 4, M.plastico(0x2c3136), 0, -2, prof - 1));
-	// Peines de conexión verdes arriba y abajo (estilo autómata compacto).
+	cuerpoDeCarril(g, w, h * 0.72, prof - 4, M.plastico(color, 0.55), 1.8, 0.7);
+	g.add(cajaCanto(w * 0.98, h * 0.42, 4, M.plastico(0x2c3136, 0.6), 0, -2, prof - 1, 1.2, 0.5));
+	/*
+	 * PEINES DE CONEXIÓN extraíbles, arriba y abajo. Salen HASTA la cota de conexión, para que el
+	 * cable entre por el peine que se ve. Antes acababan en 54 y los bornes se pintaban a 59:
+	 * flotando cinco milímetros por delante del peine, sin nada debajo.
+	 */
 	const verde = M.plastico(0x2e5d3a, 0.5);
-	g.add(caja(w * 0.94, 10, 10, verde, 0, h / 2 - 6, prof - 8));
-	g.add(caja(w * 0.94, 10, 10, verde, 0, -h / 2 + 6, prof - 8));
-	filaBornes(g, Math.max(6, Math.floor(w / 11)), w * 0.9, h / 2 - 6, prof - 3);
-	filaBornes(g, Math.max(4, Math.floor(w / 16)), w * 0.9, -h / 2 + 6, prof - 3);
+	for (const signo of [1, -1]) {
+		const y = signo * (h * 0.42);
+		g.add(cajaCanto(w * 0.96, h * 0.16, Z_BORNE, verde, 0, y, Z_BORNE / 2, 1, 0.4));
+		// Palanquita de extracción del peine, en un extremo.
+		g.add(caja(4, h * 0.1, 3, M.plastico(0x1e3d27, 0.5), w * 0.44, y, Z_BORNE + 1));
+	}
 	// La cara oscura acaba en prof+1: LEDs, rótulo y pantalla van SOBRE ella. Antes se colocaban
 	// por detrás (prof-0,5 / prof+0,2) y la propia cara los tapaba: el autómata salía sin marcado.
 	const cara = prof + 1;
@@ -187,49 +435,96 @@ function plc(g: THREE.Group, w: number, h: number, color: number, ref: string): 
 }
 
 function fuente(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
+	/*
+	 * FUENTE CONMUTADA: caja de chapa perforada, con los bornes en las tapas de arriba y abajo.
+	 *
+	 * Antes era un ladrillo de 94 mm con los bornes pintados a 86, dentro de la propia chapa, y
+	 * unas «aletas» que eran tacos de 2×2 mm sueltos por los costados. Ahora la caja se queda por
+	 * detrás de la cota de conexión y las tapas de bornes salen a ella, que es donde se atornilla.
+	 */
 	const prof = 100;
-	g.add(caja(w, h, prof - 6, M.metal(color), 0, 0, (prof - 6) / 2));
-	// Aletas de disipación laterales.
-	const aleta = M.metal(0x9aa0a5);
-	for (let i = 0; i < 6; i++) {
-		const z = 14 + i * ((prof - 30) / 5);
-		g.add(caja(2, h * 0.9, 2, aleta, -w / 2 + 1, 0, z));
-		g.add(caja(2, h * 0.9, 2, aleta, w / 2 - 1, 0, z));
+	const chapa = M.aluminio(color);
+	// Cuerpo, retranqueado para que las regletas de bornes se vean sobresalir.
+	cuerpoDeCarril(g, w * 0.94, h * 0.78, prof - 4, chapa, 1.6, 0.8);
+	// Perforaciones de ventilación en el frente: es lo que tiene una fuente por delante.
+	rejilla(g, 7, w * 0.62, h * 0.34, 0, 0, prof - 4.2);
+	// Aletas de disipación: chapas de verdad, altas y a lo largo, no tacos sueltos.
+	const aleta = M.aluminio(0x9aa0a5);
+	for (let i = 0; i < 7; i++) {
+		const z = 12 + i * ((prof - 34) / 6);
+		g.add(caja(2.4, h * 0.74, 3.5, aleta, -w * 0.47 + 1.2, 0, z));
+		g.add(caja(2.4, h * 0.74, 3.5, aleta, w * 0.47 - 1.2, 0, z));
 	}
-	// La chapa acaba en prof-6: el rótulo y el piloto van pegados a ella, no flotando delante.
-	const et = etiquetaImpresa(ref, w * 0.8, 10, '#dfe3e6', '#222');
-	et.position.set(0, h * 0.18, prof - 5.2);
+	// Regletas de entrada y salida, sobre la caja, a la cota de conexión.
+	const regleta = M.baquelita(0x24282b);
+	g.add(caja(w, h * 0.14, Z_BORNE, regleta, 0, h * 0.43, Z_BORNE / 2));
+	g.add(caja(w, h * 0.14, Z_BORNE, regleta, 0, -h * 0.43, Z_BORNE / 2));
+	const et = etiquetaImpresa(ref, w * 0.7, 9, '#dfe3e6', '#222');
+	et.position.set(0, h * 0.24, prof - 3.6);
 	g.add(et);
 	// LED DC OK: se enciende cuando la fuente tiene de verdad su primario alimentado.
-	const dcok = caja(3, 3, 1.2,
+	const dcok = caja(3, 3, 1.4,
 		new THREE.MeshStandardMaterial({ color: 0x21d07a, emissive: 0x21d07a, emissiveIntensity: 0 }),
-		w * 0.25, -h * 0.1, prof - 5);
+		w * 0.28, -h * 0.24, prof - 3.4);
 	dcok.userData.pieza = 'led';
 	dcok.userData.colorPropio = 0x21d07a;
 	g.add(dcok);
-	filaBornes(g, 5, w * 0.9, -h / 2 + 5, prof - 14);
+	// Potenciómetro de ajuste fino de la tensión: toda fuente lo lleva y se busca con el dedo.
+	g.add(cilindro(2.6, 2, M.plastico(0xd8d2b8, 0.5), -w * 0.28, -h * 0.24, prof - 3.2));
 	return prof;
 }
 
 function transformador(g: THREE.Group, w: number, h: number): number {
-	const prof = 85;
-	// Núcleo laminado (paquete de chapas) + bobina de cobre encintada.
+	/*
+	 * TRANSFORMADOR DE MANDO: núcleo laminado, bobinas y regletas de conexión.
+	 *
+	 * Antes el núcleo era un bloque macizo y la bobina otro bloque MÁS GRUESO metido dentro: dos
+	 * sólidos atravesándose, con la bobina saliendo por las dos caras del hierro. Un transformador
+	 * no es eso: el hierro tiene una VENTANA y la bobina va enhebrada por ella. Y los bornes se
+	 * pintaban a 52 mm, o sea, dentro de la propia bobina.
+	 */
+	const prof = 62;
 	const nucleo = M.metal(0x6f7377);
-	g.add(caja(w, h * 0.85, prof * 0.5, nucleo, 0, 0, prof * 0.32));
-	const bobina = M.plastico(0x8a5a2b, 0.5);
-	g.add(caja(w * 0.55, h * 0.92, prof * 0.62, bobina, 0, 0, prof * 0.34));
-	const cinta = M.plastico(0xc9a86a, 0.6);
-	g.add(caja(w * 0.57, h * 0.3, prof * 0.64, cinta, 0, 0, prof * 0.34));
-	// Patas de fijación.
+	// El paquete de chapas arranca por delante del carril, no encima de él.
+	const zBase = ALTURA_CARRIL + 0.5;
+	const zHierro = 34;
+	const anchoColumna = w * 0.22;
+	// Culatas de arriba y abajo, y las dos columnas laterales: entre ellas queda la ventana.
+	g.add(caja(w, h * 0.16, zHierro, nucleo, 0, h * 0.34, zBase + zHierro / 2));
+	g.add(caja(w, h * 0.16, zHierro, nucleo, 0, -h * 0.34, zBase + zHierro / 2));
+	g.add(caja(anchoColumna, h * 0.52, zHierro, nucleo, -w / 2 + anchoColumna / 2, 0, zBase + zHierro / 2));
+	g.add(caja(anchoColumna, h * 0.52, zHierro, nucleo, w / 2 - anchoColumna / 2, 0, zBase + zHierro / 2));
+	// Las chapas del paquete se ven de canto: es lo que delata a un núcleo laminado.
+	for (let i = 0; i < 7; i++) {
+		g.add(caja(w * 0.99, 0.5, zHierro * 0.99, M.metal(0x5e6367), 0, h * 0.34 - h * 0.06 + i * (h * 0.02), zBase + zHierro / 2));
+	}
+	// Bobina sobre la columna central, DENTRO de la ventana del hierro.
+	const carrete = M.plastico(0x23272a, 0.6);
+	g.add(caja(w * 0.3, h * 0.5, zHierro * 0.86, carrete, 0, 0, zBase + zHierro / 2));
+	const hilo = M.cobre();
+	for (let i = 0; i < 9; i++) {
+		g.add(caja(w * 0.33, h * 0.045, zHierro * 0.9, hilo, 0, -h * 0.2 + i * (h * 0.05), zBase + zHierro / 2));
+	}
+	g.add(caja(w * 0.35, h * 0.14, zHierro * 0.92, M.plastico(0xc9a86a, 0.65), 0, 0, zBase + zHierro / 2)); // cinta
+	// Columna central del hierro, cerrando el circuito magnético por delante y por detrás.
+	g.add(caja(anchoColumna * 0.9, h * 0.52, zHierro * 0.3, nucleo, 0, 0, zBase + zHierro * 0.15));
+	// Patas de fijación a la placa.
 	const pata = M.metal(0x8b9095);
-	g.add(caja(w * 1.06, 6, 12, pata, 0, -h / 2 + 3, 6));
-	g.add(caja(w * 1.06, 6, 12, pata, 0, h / 2 - 3, 6));
-	filaBornes(g, 4, w * 0.8, -h / 2 + 9, prof * 0.62);
-	return prof * 0.7;
+	g.add(caja(w * 1.06, 6, 10, pata, 0, -h / 2 + 3, 5));
+	g.add(caja(w * 1.06, 6, 10, pata, 0, h / 2 - 3, 5));
+	// Regletas de primario y secundario, sobre el hierro, a la cota de conexión.
+	const regleta = M.baquelita(0x2b2f32);
+	const altoRegleta = Z_BORNE - zBase - zHierro;
+	for (const signo of [1, -1]) {
+		g.add(caja(w * 0.92, 11, altoRegleta, regleta, 0, signo * h * 0.34, Z_BORNE - altoRegleta / 2));
+	}
+	return prof;
 }
 
 function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
-	const prof = 48;
+	// La cara de la borna ES la cota de conexión: así el pocillo del tornillo queda enrasado con
+	// ella en vez de quedarse dos milímetros por dentro del plástico.
+	const prof = Z_BORNE;
 	// Una borna suelta es un caso legítimo y muy común (un puente, una reserva, un PE aislado):
 	// con un mínimo de 2 se dibujaban dos bloques donde el usuario había puesto uno.
 	const n = Math.max(1, d.bornes.length);
@@ -238,35 +533,52 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		const b = d.bornes[i];
 		const esPE = b?.tipo === 'PE';
 		const x = (i + 0.5) * paso - w / 2;
-		// Bloque individual: gris (o verde/amarillo si es tierra).
-		const cuerpo = esPE ? M.plastico(0x3f9142, 0.55) : M.plastico(0xaeb4b9, 0.6);
-		g.add(caja(paso - 1.2, h, prof, cuerpo, x, 0, prof / 2));
+		// Bloque individual: gris (o verde/amarillo si es tierra). La poliamida de una borna es
+		// mate: con el plástico satinado de una carcasa parecían todos la misma pieza.
+		const cuerpo = esPE ? M.baquelita(0x3f9142) : M.baquelita(0xaeb4b9);
+		cuerpoDeCarril(g, paso - 1.2, h, prof, cuerpo, 0.9, 0.4, x);
 		// La franja amarilla va algo más estrecha y sobresale 1 mm: con la misma anchura y 0,3 mm,
 		// sus costados coincidían con los del bloque y se peleaban al girar la vista.
-		if (esPE) g.add(caja(paso - 1.8, h * 0.3, prof + 2, M.plastico(0xe4c437, 0.55), x, 0, prof / 2));
-		// Tornillos superior e inferior.
-		const tor = M.metal(0xcfd4d8);
-		g.add(cilindro(2, 2, tor, x, h * 0.28, prof + 0.8));
-		g.add(cilindro(2, 2, tor, x, -h * 0.28, prof + 0.8));
+		if (esPE) g.add(caja(paso - 1.8, h * 0.3, prof + 2, M.baquelita(0xe4c437), x, 0, prof / 2));
+		/*
+		 * Tornillo del lado de campo. El del lado del cuadro lo pone `dibujarBornesReales()` en el
+		 * punto exacto donde se engancha el cable, para que sea el mismo tornillo que se ve.
+		 */
+		g.add(caja(paso * 0.55, 6, 2.4, M.baquelita(0x14171a), x, -h * 0.28, prof - 1));
+		g.add(cilindro(Math.min(2, paso * 0.28), 1.8, M.metal(0xd6dbdf), x, -h * 0.28, prof - 0.4));
+		// Ventana de identificación: la tira donde va el número de borna.
+		g.add(caja(paso - 2.4, h * 0.1, 1, M.baquelita(0xe9ecee), x, h * 0.02, prof + 0.4));
 	}
-	// Topes finales.
-	const tope = M.plastico(0x5d666e, 0.6);
-	g.add(caja(3, h + 2, prof + 2, tope, -w / 2 - 1.5, 0, prof / 2));
-	g.add(caja(3, h + 2, prof + 2, tope, w / 2 + 1.5, 0, prof / 2));
+	// Topes finales, con su tornillo de apriete al carril.
+	const tope = M.plastico(0x5d666e, 0.62);
+	for (const lado of [-1, 1]) {
+		g.add(cajaCanto(3, h + 2, prof + 2, tope, lado * (w / 2 + 1.5), 0, (prof + 2) / 2, 0.8, 0.4));
+		g.add(cilindro(1.6, 2, M.metal(0xa8aeb3), lado * (w / 2 + 1.5), h * 0.3, prof + 1.4));
+	}
 	return prof;
 }
 
 function variador(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
 	const prof = 120;
-	g.add(caja(w, h, prof * 0.55, M.plastico(color), 0, 0, prof * 0.27));
+	/*
+	 * VARIADOR: radiador atrás, electrónica en medio y panel de mando delante, con las regletas
+	 * de potencia y control saliendo arriba y abajo hasta la cota de conexión. Antes los bornes
+	 * se pintaban a 108 mm, enterrados en el bloque del frente.
+	 */
+	cuerpoDeCarril(g, w * 0.96, h * 0.76, prof * 0.55, M.plastico(color, 0.5), 2, 0.9);
 	// El bloque del frente llega hasta la cara declarada del aparato. Antes se quedaba 10 mm
 	// corto y el display y el rótulo salían flotando en el aire por delante de él.
-	g.add(caja(w * 0.92, h * 0.9, prof * 0.48, M.plastico(0x33383d), 0, 0, prof * 0.76));
-	// Radiador trasero.
-	const aleta = M.metal(0x7d838a);
-	for (let i = 0; i < 7; i++) {
-		g.add(caja(w * 0.1, h * 0.9, 8, aleta, -w * 0.42 + i * (w * 0.14), 0, 5));
+	g.add(cajaCanto(w * 0.88, h * 0.7, prof * 0.48, M.plastico(0x33383d, 0.55), 0, 0, prof * 0.76, 1.8, 0.8));
+	// Radiador trasero: aletas altas y profundas, con su hueco entre medias.
+	const aleta = M.aluminio(0x7d838a);
+	for (let i = 0; i < 9; i++) {
+		g.add(caja(w * 0.055, h * 0.74, 15, aleta, -w * 0.42 + i * (w * 0.105), 0, ALTURA_CARRIL + 8));
 	}
+	// Regletas de potencia (arriba) y de control (abajo), a la cota a la que entra el cable.
+	g.add(cajaCanto(w * 0.9, h * 0.13, Z_BORNE, M.baquelita(0x22262a), 0, h * 0.43, Z_BORNE / 2, 1, 0.4));
+	g.add(cajaCanto(w * 0.9, h * 0.13, Z_BORNE, M.baquelita(0x22262a), 0, -h * 0.43, Z_BORNE / 2, 1, 0.4));
+	// Rejilla del ventilador, abajo del frente: un variador respira por ahí.
+	rejilla(g, 5, w * 0.5, h * 0.16, 0, -h * 0.26, prof + 0.2);
 	// Display y teclas. El display se apaga sin tensión, como el de un variador de verdad.
 	const disp = caja(w * 0.4, h * 0.14, 1.6,
 		new THREE.MeshStandardMaterial({ color: 0x0b2b18, emissive: 0x16a34a, emissiveIntensity: 0 }),
@@ -277,62 +589,100 @@ function variador(g: THREE.Group, w: number, h: number, color: number, ref: stri
 	const et = etiquetaImpresa(ref, w * 0.6, 8, '#26292c', '#c8cdd2');
 	et.position.set(0, h * 0.1, prof + 0.6);
 	g.add(et);
-	const rueda = cilindro(w * 0.12, 2, M.plastico(0x0f766e, 0.4), 0, -h * 0.18, prof + 1);
-	g.add(rueda);
-	filaBornes(g, 5, w * 0.85, -h / 2 + 6, prof - 12);
+	// Rueda de ajuste con su marca de posición, y las teclas de marcha y paro.
+	g.add(cilindro(w * 0.12, 2.4, M.plastico(0x0f766e, 0.4), 0, -h * 0.06, prof + 1.2));
+	g.add(caja(1.4, w * 0.1, 1, M.plastico(0xe9ecee, 0.5), 0, -h * 0.02, prof + 2.3));
+	g.add(cajaCanto(w * 0.14, h * 0.05, 1.8, M.plastico(0x2e7d32, 0.45), -w * 0.24, -h * 0.06, prof + 0.9, 0.6, 0.3));
+	g.add(cajaCanto(w * 0.14, h * 0.05, 1.8, M.plastico(0xb0342c, 0.45), w * 0.24, -h * 0.06, prof + 0.9, 0.6, 0.3));
 	return prof;
 }
 
 function guardamotorModelo(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
 	const prof = 90;
-	g.add(caja(w, h, prof - 8, M.plastico(color), 0, 0, (prof - 8) / 2));
+	const zNariz = prof - 9;
+	const cuerpo = M.plastico(color, 0.5);
+	cuerpoDeCarril(g, w, h, Z_BORNE, cuerpo, 2, 0.8);
+	const altoNariz = h * 0.56;
+	g.add(cajaCanto(w * 0.99, altoNariz, zNariz - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + zNariz) / 2, 1.8, 0.8));
 	/*
 	 * Mando giratorio al frente. La maneta roja es la PALANCA: gira con el aparato, igual que en
 	 * el guardamotor de verdad, y así se ve abierto o disparado sin abrir el panel. Y se le pone
 	 * una mirilla, que este modelo no tenía y es donde se lee el estado de un vistazo.
 	 */
-	g.add(cilindro(w * 0.26, 6, M.plastico(0x16181b, 0.45), 0, h * 0.12, prof));
-	const maneta = caja(4, w * 0.36, 7, M.plastico(0xd23b3b, 0.45), 0, h * 0.12, prof + 1);
+	const yMando = altoNariz * 0.16;
+	// Aro rehundido del mando, con la corona graduada alrededor del disco.
+	g.add(cilindro(w * 0.32, 2.4, M.baquelita(0x191d20), 0, yMando, zNariz - 0.6));
+	g.add(cilindro(w * 0.26, 6, M.plastico(0x16181b, 0.42), 0, yMando, zNariz + 2.4));
+	const maneta = cajaCanto(4.5, w * 0.4, 7, M.plastico(0xd23b3b, 0.42), 0, yMando, zNariz + 5.6, 1.2, 0.5);
 	maneta.userData.pieza = 'palanca';
 	g.add(maneta);
-	const mirilla = caja(Math.min(9, w * 0.35), 3.5, 1, M.plastico(0x2e7d32, 0.35), 0, -h * 0.05, prof + 0.6);
+	const mirilla = caja(Math.min(9, w * 0.35), 3.5, 1.2, M.plastico(0x2e7d32, 0.32), 0, -altoNariz * 0.3, zNariz + 0.4);
 	mirilla.userData.pieza = 'mirilla';
 	g.add(mirilla);
-	const et = etiquetaImpresa(ref, w * 0.7, 7, '#3d4348', '#d5dade');
-	et.position.set(0, -h * 0.2, prof - 3.8);
+	// Rueda de reglaje de la intensidad: el guardamotor se tara, y se ve por dónde.
+	g.add(cilindro(w * 0.13, 3, M.plastico(0xd8d2b8, 0.5), -w * 0.28, -altoNariz * 0.3, zNariz + 0.8));
+	const et = etiquetaImpresa(ref, w * 0.6, 6, '#3d4348', '#d5dade');
+	et.position.set(w * 0.1, -altoNariz * 0.42, zNariz + 0.5);
 	g.add(et);
-	filaBornes(g, 3, w, h / 2 - 5, prof - 18);
-	filaBornes(g, 3, w, -h / 2 + 5, prof - 18);
 	return prof;
 }
 
 function releAux(g: THREE.Group, w: number, h: number, color: number): number {
 	const prof = 70;
-	// Zócalo + relé translúcido con clip metálico.
-	g.add(caja(w, h * 0.4, 22, M.plastico(0x33383c), 0, -h * 0.3, 11));
-	const cuerpoRele = new THREE.MeshStandardMaterial({
-		color, roughness: 0.25, transparent: true, opacity: 0.85,
-	});
-	g.add(caja(w * 0.86, h * 0.62, prof - 26, cuerpoRele, 0, h * 0.12, 22 + (prof - 26) / 2));
-	g.add(caja(w * 0.5, h * 0.4, prof - 32, M.plastico(0x8b6f3f, 0.5), 0, h * 0.1, 24 + (prof - 32) / 2)); // bobina visible
-	const clip = M.metal(0xcfd4d8);
-	g.add(caja(2, h * 0.7, prof - 20, clip, -w * 0.46, h * 0.08, 20 + (prof - 20) / 2));
-	filaBornes(g, 4, w, -h / 2 + 5, 16);
+	/*
+	 * Zócalo + relé enchufable translúcido con su clip.
+	 *
+	 * El zócalo llegaba a 22 mm de fondo y los bornes se pintaban a 16: quedaban DENTRO del
+	 * zócalo, invisibles y atravesándolo. Ahora el zócalo se queda por detrás del hombro de
+	 * conexión y los bornes salen en su cara superior, que es donde se atornillan de verdad.
+	 */
+	const zZocalo = Z_BORNE - 4;
+	cuerpoDeCarril(g, w, h, zZocalo, M.plastico(0x33383c, 0.6), 1.4, 0.5);
+	// Cuerpo transparente del relé, montado sobre el zócalo y hacia delante.
+	const cuerpoRele = M.translucido(color, 0.42);
+	const altoRele = h * 0.58;
+	g.add(cajaCanto(w * 0.82, altoRele, prof - Z_BORNE, cuerpoRele, 0, 0, (Z_BORNE + prof) / 2, 1.4, 0.5));
+	// Por dentro se ve la bobina de cobre y el yugo: es lo que hace creíble el relé transparente.
+	g.add(cilindro(Math.min(w * 0.2, altoRele * 0.3), prof - Z_BORNE - 8, M.cobre(), 0, 0, (Z_BORNE + prof) / 2));
+	g.add(caja(w * 0.5, 2.5, prof - Z_BORNE - 10, M.metal(0x9aa1a8), 0, altoRele * 0.3, (Z_BORNE + prof) / 2));
+	// Banderita de estado y clip de retención.
+	g.add(caja(w * 0.3, 3, 2, M.plastico(0xe0653a, 0.4), 0, -altoRele * 0.34, prof - 1));
+	g.add(caja(2, altoRele * 0.9, prof - Z_BORNE - 4, M.metal(0xcfd4d8), -w * 0.44, 0, (Z_BORNE + prof) / 2));
 	return prof;
 }
 
 function fusibleModelo(g: THREE.Group, w: number, h: number, color: number): number {
 	const prof = 72;
-	g.add(caja(w, h, prof * 0.6, M.plastico(color), 0, 0, prof * 0.3));
-	// Palanca portafusible abatible.
-	const palanca = M.plastico(0x2b3035, 0.45);
-	const p = caja(w * 0.8, h * 0.5, 10, palanca, 0, h * 0.12, prof * 0.62);
-	p.rotation.x = -0.35;
-	g.add(p);
-	g.add(caja(w * 0.5, 3, 1.2, new THREE.MeshStandardMaterial({ color: 0xd23b3b, emissive: 0x881111, emissiveIntensity: 0.3 }), 0, -h * 0.3, prof * 0.61));
-	filaBornes(g, 1, w, h / 2 - 5, prof * 0.45);
-	filaBornes(g, 1, w, -h / 2 + 5, prof * 0.45);
-	return prof * 0.72;
+	const zCuerpo = Z_BORNE;
+	cuerpoDeCarril(g, w, h, zCuerpo, M.plastico(color, 0.55), 1.4, 0.5);
+	/*
+	 * PORTAFUSIBLE ABATIBLE, articulado por su bisagra.
+	 *
+	 * La tapa era una caja girada 0,35 rad sobre su propio centro: al girar sobre el centro, la
+	 * mitad de atrás se hundía diez milímetros DENTRO del cuerpo del fusible, y la punta de
+	 * delante se iba a 56 mm cuando el aparato declaraba ocupar 51,8. O sea: atravesaba su propio
+	 * cuerpo por detrás y sobresalía de su huella por delante, y un cable tendido a ras de su cara
+	 * lo cruzaba. Ahora gira sobre la BISAGRA, que es un eje de verdad en la parte baja, y toda la
+	 * tapa cabe dentro de la profundidad declarada.
+	 */
+	const altoTapa = Math.min(h * 0.62, 48);
+	const bisagra = new THREE.Group();
+	bisagra.position.set(0, -h * 0.3, zCuerpo + 1.5);
+	// Positivo: la tapa se abate HACIA FUERA. Con el signo al revés la punta se iba hacia dentro.
+	bisagra.rotation.x = 0.18;
+	const tapa = cajaCanto(w * 0.82, altoTapa, 9, M.plastico(0x2b3035, 0.45), 0, altoTapa / 2, 4.5, 1.4, 0.6);
+	bisagra.add(tapa);
+	// El cartucho cerámico asomando por la ventana de la tapa.
+	bisagra.add(cilindro(Math.min(w * 0.16, 6), altoTapa * 0.7, M.plastico(0xd9cdb4, 0.7),
+		0, altoTapa / 2, 8.6, false));
+	bisagra.add(caja(w * 0.4, 1.6, 1.4, M.baquelita(0x15181a), 0, altoTapa * 0.86, 9.2));
+	g.add(bisagra);
+	g.add(cilindro(2, w * 0.86, M.metal(0x8d949a), 0, -h * 0.3, zCuerpo + 1.5, false));
+	// Testigo de fusión.
+	g.add(caja(w * 0.4, 3, 1.4,
+		new THREE.MeshStandardMaterial({ color: 0xd23b3b, emissive: 0x881111, emissiveIntensity: 0.3 }),
+		0, -h * 0.42, zCuerpo + 0.4));
+	return prof;
 }
 
 /* ---------------------- Controladores con borneras reales ---------------------- */
@@ -485,9 +835,11 @@ function controlador(g: THREE.Group, d: Dispositivo, w: number, h: number, color
 }
 
 function generico(g: THREE.Group, w: number, h: number, color: number): number {
+	// Aparato sin modelo propio: aun así, con el hombro de bornes descubierto y las aristas
+	// matadas, para que no desentone al lado de los que sí lo tienen.
 	const prof = 55;
-	g.add(caja(w, h, prof, M.plastico(color), 0, 0, prof / 2));
-	filaBornes(g, Math.max(2, Math.floor(w / 14)), w * 0.9, -h / 2 + 5, prof - 8);
+	cuerpoDeCarril(g, w, h, Z_BORNE, M.plastico(color, 0.55), 1.6, 0.7);
+	g.add(cajaCanto(w * 0.94, h * 0.56, prof - Z_BORNE, M.plastico(color, 0.55), 0, 0, (Z_BORNE + prof) / 2, 1.4, 0.6));
 	return prof;
 }
 
@@ -497,16 +849,28 @@ function generico(g: THREE.Group, w: number, h: number, color: number): number {
  * se ve desde fuera del tablero.
  */
 function mando(g: THREE.Group, w: number, h: number, color: number, forma: 'seta' | 'pulsador' | 'piloto' | 'selector'): number {
-	const prof = 46;
+	/*
+	 * PULSADOR / SETA / PILOTO / SELECTOR de 22 mm.
+	 *
+	 * El bloque de contactos ocupaba hasta 34 mm y los cuatro bornes se pintaban a 6 mm: DENTRO
+	 * del bloque, invisibles y atravesándolo, y a cuarenta milímetros de donde el cable decía
+	 * engancharse. Ahora el bloque se queda por detrás, y sobre él hay una repisa de conexión a
+	 * la cota común: los bornes se ven, y el cable sale de ellos.
+	 */
+	const prof = 58;
 	const cuerpo = Math.min(w, h) * 0.8;
-	g.add(caja(cuerpo, cuerpo, prof - 12, M.plastico(0x2a2f33), 0, 0, (prof - 12) / 2));
-	// Aro metálico de fijación a la puerta.
+	const zBloque = 34;
+	cuerpoDeCarril(g, cuerpo, cuerpo, zBloque, M.plastico(0x2a2f33, 0.6), 1.4, 0.6);
+	// Repisa de bornes: llega hasta la cota de conexión y es más ancha que el bloque.
+	g.add(cajaCanto(Math.min(w, cuerpo * 1.25), Math.min(h, cuerpo * 1.25), Z_BORNE - zBloque,
+		M.baquelita(0x23272a), 0, 0, (zBloque + Z_BORNE) / 2, 1.2, 0.5));
+	// Tuerca y aro metálico de fijación a la chapa.
 	const aro = new THREE.Mesh(
-		new THREE.CylinderGeometry(cuerpo * 0.52, cuerpo * 0.52, 4, 24),
+		new THREE.CylinderGeometry(cuerpo * 0.52, cuerpo * 0.56, 5, 24),
 		M.metal(0xb6bcc2),
 	);
 	aro.rotation.x = Math.PI / 2;
-	aro.position.set(0, 0, prof - 10);
+	aro.position.set(0, 0, Z_BORNE + 2.5);
 	g.add(aro);
 
 	const r = cuerpo * (forma === 'seta' ? 0.58 : 0.36);
@@ -533,7 +897,6 @@ function mando(g: THREE.Group, w: number, h: number, color: number, forma: 'seta
 		maneta.userData.pieza = 'maneta';
 		g.add(maneta);
 	}
-	filaBornes(g, 4, cuerpo * 0.8, -h / 2 + 5, 6);
 	return prof;
 }
 
@@ -664,6 +1027,17 @@ export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: TH
 		default:
 			profundidad = generico(g, w, h, color);
 	}
+
+	/*
+	 * LOS BORNES SE DIBUJAN AL FINAL, UNA SOLA VEZ Y PARA TODOS.
+	 *
+	 * Antes cada modelo pintaba su propia fila «a ojo»: tres arriba y tres abajo en el contactor,
+	 * cinco en la fuente, cuatro en el pulsador… sin mirar cuántos bornes tiene el aparato de
+	 * verdad ni dónde se le engancha el cable. Un contactor con diez bornes enseñaba seis
+	 * tornillos, y ninguno estaba donde salía el cable. Ahora sale un tornillo por borne real, en
+	 * su punto exacto, con el mismo reparto que usa `anclajeBorne()`.
+	 */
+	dibujarBornesReales(g, d, w, h);
 
 	g.traverse((o) => {
 		o.userData.dispositivoId = d.id;
