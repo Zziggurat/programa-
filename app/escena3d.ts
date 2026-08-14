@@ -665,8 +665,29 @@ export interface RutaCable {
  * Son pocas y muy juntas a propósito: el agarre con el ratón proyecta sobre el plano de
  * referencia, y una separación grande descuadraría el clic respecto de lo que se ve.
  */
-const CAPAS_CABLE = 4;
-const SEPARACION_CAPAS = 3;
+/*
+ * CUÁNTAS PROFUNDIDADES DISTINTAS HAY PARA TENDER, Y CUÁNTO SE SEPARAN.
+ *
+ * Eran 4 capas a 3 mm. Con un tablero de 52 conductores eso obliga al repartidor a meter trece
+ * cables en cada plano, y 3 mm de separación con tubos de hasta 1,9 mm de radio deja los de capas
+ * vecinas prácticamente tocándose. De frente colaba; de lado el tablero era una lámina de cables
+ * coplanares, que es exactamente lo que se ve al girar la cámara.
+ *
+ * Con nueve capas a 3,6 mm el repartidor tiene sitio de verdad para separar, y el bloque de
+ * cableado ocupa 29 mm de fondo: sigue por delante de la placa y por detrás de la cara de los
+ * aparatos altos (el guardamotor saca 90 mm), así que no atraviesa nada ni se pega a la puerta.
+ */
+const CAPAS_CABLE = 9;
+const SEPARACION_CAPAS = 3.6;
+
+/**
+ * Cuánto tarda un cable en pasar de la profundidad de su borne a la de su carril, en mm de
+ * recorrido. Es lo que convierte el cable en un objeto tendido en el espacio en vez de una cinta
+ * plana: sale del terminal a la profundidad del terminal, se va al frente para viajar, y vuelve a
+ * hundirse al llegar. Sin esto, la Z era constante de punta a punta y el cable no bajaba nunca a
+ * buscar su borne.
+ */
+const RAMPA_MM = 26;
 
 /**
  * Resuelve el recorrido de TODOS los cables: única fuente de verdad que usan tanto el dibujo
@@ -818,9 +839,32 @@ export function construirCables(
 		// Codos redondeados con el radio mínimo de curvatura del cable (más grueso, más radio),
 		// para que dobla como un conductor de verdad y el tubo no se pellizque en las esquinas.
 		const suave = redondearEsquinas(ruta.nodos, 10 + radio * 4);
+		/*
+		 * LA PROFUNDIDAD VARÍA A LO LARGO DEL RECORRIDO.
+		 *
+		 * Se mide cuánto camino lleva cada punto y con eso se interpola: en los primeros y últimos
+		 * `RAMPA_MM` el cable está subiendo (o bajando) entre la profundidad de su borne y la de su
+		 * carril; en medio viaja a su carril. Antes todos los puntos intermedios estaban a la MISMA
+		 * z y el salto al borne ocurría de golpe en el último tramo, que es lo que hacía que el
+		 * cable pareciera una cinta pegada a un plano y no un conductor tendido.
+		 */
+		const acumulado: number[] = [0];
+		for (let i = 1; i < suave.length; i++) {
+			acumulado.push(acumulado[i - 1] + Math.hypot(suave[i].x - suave[i - 1].x, suave[i].y - suave[i - 1].y));
+		}
+		const largo = acumulado[acumulado.length - 1] || 1;
+		const zEn = (recorrido: number): number => {
+			const entrada = Math.min(1, recorrido / RAMPA_MM);
+			const salida = Math.min(1, (largo - recorrido) / RAMPA_MM);
+			// `smoothstep` en los dos extremos: la subida y la bajada no tienen esquina.
+			const suavizar = (t: number) => t * t * (3 - 2 * t);
+			const zBorde = recorrido * 2 < largo ? ruta.de.z : ruta.a.z;
+			const mezcla = suavizar(Math.min(entrada, salida));
+			return zBorde + (ruta.z - zBorde) * mezcla;
+		};
 		const puntos = [
 			aEscena(ruta.de.x, ruta.de.y, ruta.de.z),
-			...suave.map((p) => aEscena(p.x, p.y, ruta.z)),
+			...suave.map((p, i) => aEscena(p.x, p.y, zEn(acumulado[i]))),
 			aEscena(ruta.a.x, ruta.a.y, ruta.a.z),
 		];
 		// «centripetal» evita los lazos y cúspides que salían al pasar por vértices muy juntos.
