@@ -858,7 +858,9 @@ export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, bor
 		const acumulado: number[] = [];
 		let suma = 0;
 		for (let i = 0; i < fila.length; i++) {
-			if (i > 0) suma += fila[i - 1].radio + fila[i].radio + HOLGURA_CABLE;
+			// Lo que pide la física —los dos radios más aire— y nunca menos de 4,2 mm: por debajo de
+			// eso dos puntas se leen como una sola aunque el hilo sea fino y los números cuadren.
+			if (i > 0) suma += Math.max(4.2, fila[i - 1].radio + fila[i].radio + HOLGURA_CABLE);
 			acumulado.push(suma);
 		}
 		const bloques: { media: number; n: number }[] = [];
