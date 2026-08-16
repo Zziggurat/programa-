@@ -16,6 +16,9 @@ import {
 import {
 	Conflicto, conflictosDe, invasionesDe, RejillaCables, Solido, Trazo,
 } from './colisiones-cables.js';
+import {
+	DIENTE, dientesDe, ESPESOR, huellaCanaleta, RedCanaletas, TAPA, ZOCALO,
+} from './canaletas-red.js';
 import { ALTURA_CARRIL, bornesGenericos, construirAparato3D, Z_BORNE } from './dispositivos3d.js';
 
 export const COLOR_CABLE: Record<string, number> = {
@@ -137,7 +140,10 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	for (const riel of g.rieles) raiz.add(construirRiel(riel, aEscena));
 
 	const tapas: THREE.Object3D[] = [];
-	for (const can of g.canaletas) raiz.add(construirCanaleta(can, aEscena, tapas, realista));
+	// La red se calcula UNA vez y la comparten todas: cada canaleta necesita saber quién la cruza
+	// para abrirse ahí, y el router necesita la misma topología para poder pasar por esos cruces.
+	const red = new RedCanaletas(g.canaletas);
+	for (const can of g.canaletas) raiz.add(construirCanaleta(can, aEscena, tapas, realista, red));
 
 	const dispositivos = new THREE.Group();
 	const etiquetas: THREE.Object3D[] = [];
@@ -460,10 +466,11 @@ export function construirRiel(
  * aparato justo en su punto de conexión. Tapa translúcida desmontable.
  */
 export function construirCanaleta(
-	can: { id: string; x: number; y: number; largo: number; orientacion: 'h' | 'v'; ancho: number; alto: number },
+	can: Canaleta,
 	aEscena: Escenario['aEscena'],
 	tapas: THREE.Object3D[],
 	realista = false,
+	red?: RedCanaletas,
 ): THREE.Group {
 	const grupo = new THREE.Group();
 	const pvc = new THREE.MeshStandardMaterial({ color: 0xb0b6ba, roughness: 0.75 });
@@ -477,61 +484,95 @@ export function construirCanaleta(
 	const esH = can.orientacion === 'h';
 	const largoX = esH ? can.largo : can.ancho;
 	const largoY = esH ? can.ancho : can.largo;
+	const ejeCentro = (esH ? can.x : can.y) + can.largo / 2;
 
-	const DIENTE = 6;   // ancho de cada diente (mm)
-	const RANURA = 6;   // ancho de cada ranura (mm)
-	const ESPESOR = 2;  // espesor de pared
+	/*
+	 * LOS CRUCES SE ABREN DE VERDAD.
+	 *
+	 * Dos canaletas que se cruzaban tenían las paredes de cada una atravesando el interior de la
+	 * otra: geometría superpuesta y, sobre todo, ningún paso. Un conductor no podía cambiar de la
+	 * horizontal a la vertical sin atravesar plástico, así que las canaletas no eran una red: eran
+	 * canales aislados. Un instalador, en ese cruce, CORTA la canaleta.
+	 *
+	 * Aquí se hace lo mismo: en el trozo donde otra canaleta cruza no se dibujan ni el zócalo ni
+	 * los dientes. Solo ahí, y solo por cruces reales entre una horizontal y una vertical: no son
+	 * agujeros de conveniencia, es la unión que existiría en el tablero montado.
+	 *
+	 * El fondo y la tapa los pone UNA sola de las dos —la que va antes en el proyecto—, porque dos
+	 * placas en el mismo plano se pelean por el buffer de profundidad y el cruce parpadea.
+	 */
+	const cruces = red?.crucesDe(can.id) ?? [];
+	const orden = red?.tramos.map((t) => t.id) ?? [];
+	const enCruce = (a: number, medio: number): boolean =>
+		cruces.some((c) => a + medio > c.desde && a - medio < c.hasta);
+	const cede = (a: number, medio: number): boolean => cruces.some(
+		(c) => a + medio > c.desde && a - medio < c.hasta && orden.indexOf(c.otro) < orden.indexOf(can.id),
+	);
 
-	// Base perforada (simplificada como placa llena).
-	const base = new THREE.Mesh(new THREE.BoxGeometry(largoX, largoY, ESPESOR), pvc);
-	base.position.z = ESPESOR / 2;
-	grupo.add(base);
+	/**
+	 * Recorre el ducto en pasos cortos y llama a `poner` con cada tramo SEGUIDO en el que la
+	 * respuesta a `saltar` es que no. Sirve igual para el fondo, la tapa y el zócalo: los tres son
+	 * piezas continuas a las que hay que hacerles un hueco en los cruces.
+	 */
+	const porTrozos = (paso: number, saltar: (a: number, medio: number) => boolean,
+		poner: (desde: number, largo: number) => void): void => {
+		const n = Math.max(1, Math.round(can.largo / paso));
+		let inicio: number | undefined;
+		for (let i = 0; i <= n; i++) {
+			const a = (esH ? can.x : can.y) + (can.largo * i) / n;
+			const corta = i === n || saltar(a, paso / 2);
+			if (!corta && inicio === undefined) inicio = a;
+			if (corta && inicio !== undefined) {
+				if (a - inicio > 0.5) poner(inicio, a - inicio);
+				inicio = undefined;
+			}
+		}
+	};
 
-	// Paredes ranuradas: una sola geometría fusionada por pared (dientes + zócalo).
-	const paredRanurada = (lado: -1 | 1): THREE.Mesh => {
+	const placa = (grosor: number, z: number, mat: THREE.Material, esTapa: boolean): void => {
+		porTrozos(6, cede, (desde, largo) => {
+			const caja = esH
+				? new THREE.BoxGeometry(largo, largoY, grosor)
+				: new THREE.BoxGeometry(largoX, largo, grosor);
+			const m = new THREE.Mesh(caja, mat);
+			const centro = desde + largo / 2 - ejeCentro;
+			m.position.set(esH ? centro : 0, esH ? 0 : centro, z);
+			grupo.add(m);
+			if (esTapa) tapas.push(m);
+		});
+	};
+	placa(ESPESOR, ESPESOR / 2, pvc, false);
+	placa(TAPA, can.alto + TAPA / 2, pvcTapa, true);
+
+	// Paredes: zócalo continuo y dientes, ambos interrumpidos en los cruces.
+	const pared = (lado: -1 | 1): void => {
 		const cajas: THREE.BoxGeometry[] = [];
-		const trasladar = (g: THREE.BoxGeometry, a: number, z: number) => {
-			// `a` corre a lo largo de la canaleta; el lado fija la coordenada transversal.
-			const t = (largoY / 2 - ESPESOR / 2) * lado;
-			if (esH) g.translate(a, t, z);
-			else g.translate((largoX / 2 - ESPESOR / 2) * lado, a, z);
+		const t = ((esH ? largoY : largoX) / 2 - ESPESOR / 2) * lado;
+		const poner = (g: THREE.BoxGeometry, a: number, z: number) => {
+			if (esH) g.translate(a - ejeCentro, t, z); else g.translate(t, a - ejeCentro, z);
 			cajas.push(g);
 		};
-		const largo = can.largo;
-		// Zócalo continuo abajo (de él nacen los dientes).
-		const zocaloAlto = 8;
-		trasladar(
-			esH
-				? new THREE.BoxGeometry(largo, ESPESOR, zocaloAlto)
-				: new THREE.BoxGeometry(ESPESOR, largo, zocaloAlto),
-			0,
-			ESPESOR + zocaloAlto / 2,
-		);
-		// Dientes periódicos hasta el borde superior.
-		const alturaDiente = can.alto - ESPESOR - zocaloAlto;
-		const paso = DIENTE + RANURA;
-		const n = Math.floor((largo - RANURA) / paso);
-		const inicio = -((n - 1) * paso) / 2;
-		for (let i = 0; i < n; i++) {
-			trasladar(
-				esH
-					? new THREE.BoxGeometry(DIENTE, ESPESOR, alturaDiente)
+		porTrozos(4, enCruce, (desde, largo) => {
+			poner(
+				esH ? new THREE.BoxGeometry(largo, ESPESOR, ZOCALO)
+					: new THREE.BoxGeometry(ESPESOR, largo, ZOCALO),
+				desde + largo / 2, ESPESOR + ZOCALO / 2,
+			);
+		});
+		// Dientes: los mismos que conoce la red, y ninguno dentro de un cruce.
+		const alturaDiente = can.alto - ESPESOR - ZOCALO;
+		for (const centro of dientesDe(can)) {
+			if (enCruce(centro, DIENTE / 2)) continue;
+			poner(
+				esH ? new THREE.BoxGeometry(DIENTE, ESPESOR, alturaDiente)
 					: new THREE.BoxGeometry(ESPESOR, DIENTE, alturaDiente),
-				inicio + i * paso,
-				ESPESOR + zocaloAlto + alturaDiente / 2,
+				centro, ESPESOR + ZOCALO + alturaDiente / 2,
 			);
 		}
-		const geometria = fusionarCajas(cajas);
-		return new THREE.Mesh(geometria, pvc);
+		if (cajas.length) grupo.add(new THREE.Mesh(fusionarCajas(cajas), pvc));
 	};
-	grupo.add(paredRanurada(1));
-	grupo.add(paredRanurada(-1));
-
-	// Tapa translúcida para poder ver los cables.
-	const tapa = new THREE.Mesh(new THREE.BoxGeometry(largoX, largoY, 2), pvcTapa);
-	tapa.position.z = can.alto + 1;
-	grupo.add(tapa);
-	tapas.push(tapa);
+	pared(1);
+	pared(-1);
 
 	const cx = can.x + (esH ? can.largo / 2 : 0);
 	const cy = can.y + (esH ? 0 : can.largo / 2);
@@ -1243,26 +1284,6 @@ export function trazosDeCables(proyecto: Proyecto): Trazo[] {
  * canaleta y el cable la cruzaba de lado a lado, atravesando sus dedos. Eran decoración. Aquí
  * entran como sólidos de verdad, junto con el carril y los aparatos.
  */
-/**
- * LA HUELLA REAL DE UNA CANALETA, sacada de cómo se construye y no de cómo se declara.
- *
- * `construirCanaleta` coloca el grupo CENTRADO en la coordenada transversal declarada: una
- * canaleta horizontal puesta en `y` ocupa de `y − ancho/2` a `y + ancho/2`, no de `y` a
- * `y + ancho`. Yo la había modelado de la segunda forma, así que la caja contra la que medía las
- * invasiones estaba corrida MEDIO ANCHO —veinte milímetros— respecto del ducto de verdad: solapaba
- * con él a medias. Es decir, el «0 invasiones de canaleta» del informe anterior estaba medido
- * contra una caja que no era la canaleta. Y por arriba llega a `alto + 2`, porque la tapa tiene
- * dos milímetros de espesor y también es sólida.
- */
-export function huellaCanaleta(c: Canaleta): { x0: number; x1: number; y0: number; y1: number } {
-	const esH = c.orientacion === 'h';
-	const largoX = esH ? c.largo : c.ancho;
-	const largoY = esH ? c.ancho : c.largo;
-	const cx = c.x + (esH ? c.largo / 2 : 0);
-	const cy = c.y + (esH ? 0 : c.largo / 2);
-	return { x0: cx - largoX / 2, x1: cx + largoX / 2, y0: cy - largoY / 2, y1: cy + largoY / 2 };
-}
-
 export function solidosDelTablero(proyecto: Proyecto): Solido[] {
 	const g = proyecto.gabinete;
 	if (!g) return [];
