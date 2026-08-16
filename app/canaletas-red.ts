@@ -27,9 +27,19 @@ import { Canaleta } from '../src/modelo/tipos.js';
 
 /** Espesor de las paredes y del fondo, en mm. */
 export const ESPESOR = 2;
-/** Ancho de cada diente y de cada ranura, en mm. */
-export const DIENTE = 6;
-export const RANURA = 6;
+/**
+ * Ancho de cada diente y de cada ranura, en mm.
+ *
+ * No son iguales, y eso importa. Una canaleta ranurada de verdad tiene el dedo más estrecho que
+ * el hueco —en un ducto de 40 × 60 el paso ronda los 13 mm con 8 de ranura— precisamente para que
+ * quepa el conductor más gordo que va a pasar por ella. Con los dos a 6 mm que había aquí, un
+ * cable de 6 mm² medía exactamente el ancho de la ranura: entraba con cero holgura, así que
+ * cualquier curva, cualquier milímetro de aproximación, lo dejaba tocando el diente. Los 9
+ * «cables metidos en el diente» que medía la prueba no eran un fallo de ruteo: era el modelo del
+ * ducto, que no daba de sí para el cable que el propio programa le mandaba.
+ */
+export const DIENTE = 5;
+export const RANURA = 8;
 /** Altura del zócalo continuo del que nacen los dientes: por debajo no hay acceso. */
 export const ZOCALO = 8;
 /** Espesor de la tapa. */
