@@ -216,3 +216,95 @@ export class RedCanaletas {
 		return undefined;
 	}
 }
+
+/** Un punto del cable metido en una parte sólida de una canaleta. */
+export interface Invasion {
+	canaleta: string;
+	parte: 'fondo' | 'zócalo' | 'diente' | 'tapa';
+	dentro: number;
+	donde: { x: number; y: number; z: number };
+}
+
+/**
+ * ¿ESTE PUNTO ESTÁ DENTRO DE ALGO SÓLIDO DE UNA CANALETA?
+ *
+ * Aquí está la diferencia que pide esta fase. Antes la canaleta era una caja maciza y cualquier
+ * cable dentro contaba como invasión; ahora el INTERIOR es un sitio legítimo por el que circular
+ * —es para lo que sirve un ducto— y lo que no se puede atravesar son sus partes: el fondo, el
+ * zócalo continuo, los dientes y la tapa. Un cable que viaja por el hueco entre dos dientes está
+ * bien; el mismo cable dos centímetros más allá, metido en un diente, está mal.
+ *
+ * Se resuelve con aritmética en vez de con una lista de cajas: un ducto de medio metro tiene
+ * cuarenta y tantos dientes por lado, y comprobar cada muestra de cada cable contra todos ellos
+ * costaría millones de comparaciones. Preguntar «¿en qué diente cae esta coordenada?» es una
+ * división.
+ */
+export function invasionSolida(
+	red: RedCanaletas, canaletas: Canaleta[], p: { x: number; y: number; z: number }, radio: number,
+): Invasion | undefined {
+	let peor: Invasion | undefined;
+	const anota = (canaleta: string, parte: Invasion['parte'], dentro: number) => {
+		if (dentro <= 0) return;
+		if (!peor || dentro > peor.dentro) peor = { canaleta, parte, dentro, donde: p };
+	};
+	for (const c of canaletas) {
+		const t = red.tramo(c.id);
+		if (!t) continue;
+		const eje = ejeDe(t, p.x, p.y);
+		const cruz = cruzDe(t, p.x, p.y);
+		if (eje < t.desde - radio || eje > t.hasta + radio) continue;
+		if (Math.abs(cruz - t.centro) > c.ancho / 2 + radio) continue;
+		// En un cruce no hay paredes: es la unión, y por ahí se pasa. El fondo y la tapa siguen.
+		const enCruce = red.crucesDe(c.id).some((x) => eje > x.desde && eje < x.hasta);
+		anota(c.id, 'fondo', ESPESOR + radio - p.z);
+		anota(c.id, 'tapa', p.z - (c.alto - radio));
+		if (enCruce) continue;
+		// La pared ocupa de `semiancho` a `semiancho + ESPESOR` a cada lado del centro.
+		const fuera = Math.abs(cruz - t.centro) - t.semiancho;
+		const dentroPared = Math.min(fuera + radio, ESPESOR + radio - fuera);
+		if (dentroPared <= 0) continue;
+		if (p.z < ESPESOR + ZOCALO + radio) { anota(c.id, 'zócalo', dentroPared); continue; }
+		// Por encima del zócalo solo hay plástico donde hay diente; entre ellos está la ranura.
+		const paso = DIENTE + RANURA;
+		let enDiente = false;
+		for (const d of dientesDe(c)) {
+			if (Math.abs(eje - d) < DIENTE / 2 + radio) { enDiente = true; break; }
+			if (d - eje > paso) break;   // los dientes van ordenados: en cuanto se pasa, se corta
+		}
+		if (enDiente) anota(c.id, 'diente', dentroPared);
+	}
+	return peor;
+}
+
+/**
+ * Cables que invaden algo sólido de la red de canaletas, muestreando su recorrido. Lo usan las
+ * pruebas: es la comprobación de «entra por una ranura de verdad y no atravesando el plástico».
+ */
+export function invasionesDeCanaletas(
+	red: RedCanaletas, canaletas: Canaleta[],
+	trazos: { id: string; radio: number; puntos: { x: number; y: number; z: number }[] }[],
+	paso = 3,
+): (Invasion & { cable: string })[] {
+	const salida: (Invasion & { cable: string })[] = [];
+	for (const t of trazos) {
+		let peor: (Invasion & { cable: string }) | undefined;
+		for (let n = 0; n < t.puntos.length - 1; n++) {
+			const p0 = t.puntos[n];
+			const p1 = t.puntos[n + 1];
+			const largo = Math.hypot(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
+			const trozos = Math.max(1, Math.ceil(largo / paso));
+			for (let k = 0; k <= trozos; k++) {
+				const u = k / trozos;
+				const q = {
+					x: p0.x + (p1.x - p0.x) * u,
+					y: p0.y + (p1.y - p0.y) * u,
+					z: p0.z + (p1.z - p0.z) * u,
+				};
+				const inv = invasionSolida(red, canaletas, q, t.radio);
+				if (inv && (!peor || inv.dentro > peor.dentro)) peor = { ...inv, cable: t.id };
+			}
+		}
+		if (peor) salida.push(peor);
+	}
+	return salida.sort((a, b) => b.dentro - a.dentro);
+}

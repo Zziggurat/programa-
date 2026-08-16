@@ -26,10 +26,11 @@ import assert from 'node:assert/strict';
 
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import { conflictosDe, distanciaSegmentos, invasionesDe } from '../app/colisiones-cables.js';
-import { prepararRecorrido, recorrido3D } from '../app/geometria-cables.js';
+import { Punto3, tenderCable } from '../app/geometria-cables.js';
 import {
 	HOLGURA_CABLE, solidosDelTablero, trazosDeCables,
 } from '../app/escena3d.js';
+import { invasionesDeCanaletas, RedCanaletas } from '../app/canaletas-red.js';
 
 /** Cuánto se permite que se metan dos tubos, en mm. Cero sería lo ideal; esto es lo alcanzado. */
 const PENETRACION_TOLERADA = 2.5;
@@ -60,8 +61,9 @@ test('la rampa de profundidad llega a su capa en una tirada recta', () => {
 	 * borne a 46 y la de viaje a 80: en el medio el cable TIENE que estar a 80. Con la versión
 	 * que calculaba la rampa sobre los vértices de las esquinas, en el medio estaba a 46,9.
 	 */
-	const base = prepararRecorrido([{ x: 100, y: 40 }, { x: 100, y: 440 }], 22);
-	const puntos = recorrido3D(base, 46, 46, 80, 26);
+	const puntos = tenderCable([
+		{ x: 100, y: 40, z: 46 }, { x: 100, y: 80, z: 80 }, { x: 100, y: 400, z: 80 }, { x: 100, y: 440, z: 46 },
+	], 22);
 	const medio = puntos[Math.floor(puntos.length / 2)];
 	assert.ok(medio.z > 79, `en el medio de la tirada el cable está a z=${medio.z.toFixed(1)}, no en su capa (80)`);
 	assert.equal(puntos[0].z, 46, 'arranca en la cota del borne');
@@ -70,10 +72,11 @@ test('la rampa de profundidad llega a su capa en una tirada recta', () => {
 
 test('el cable trepa por encima de un obstáculo en vez de atravesarlo', () => {
 	// Una canaleta de 60 mm de alto entre y=200 e y=240, cruzada por una bajada recta.
-	const base = prepararRecorrido([{ x: 100, y: 40 }, { x: 100, y: 440 }], 22);
 	const suelo = (x: number, y: number): number => (y >= 200 && y <= 240 ? 64 : 0);
-	const puntos = recorrido3D(base, 46, 46, 52, 26, suelo);
-	const dentro = puntos.filter((p) => p.y >= 200 && p.y <= 240);
+	const puntos = tenderCable(
+		[{ x: 100, y: 40, z: 46 }, { x: 100, y: 440, z: 46 }], 22, suelo,
+	);
+	const dentro = puntos.filter((p: Punto3) => p.y >= 200 && p.y <= 240);
 	assert.ok(dentro.length > 0, 'la canaleta tiene que quedar muestreada');
 	for (const p of dentro) assert.ok(p.z >= 64, `dentro de la canaleta el cable está a z=${p.z.toFixed(1)}`);
 	// Y trepa, no salta: entre dos puntos seguidos no puede haber un escalón vertical.
@@ -101,13 +104,31 @@ for (const ej of EJEMPLOS) {
 		);
 	});
 
-	test(`${ej.titulo}: ningún cable atraviesa canaleta, carril ni aparato`, () => {
+	test(`${ej.titulo}: ningún cable atraviesa carril ni aparato`, () => {
 		const proyecto = ej.crear();
 		const invasiones = invasionesDe(trazosDeCables(proyecto), solidosDelTablero(proyecto));
 		const peor = invasiones[0];
 		assert.ok(
 			!peor || -peor.holgura < 2,
 			peor ? `${peor.a} se mete ${(-peor.holgura).toFixed(1)} mm en ${peor.b}` : '',
+		);
+	});
+
+	test(`${ej.titulo}: los cables entran por ranura, no atravesando el plástico`, () => {
+		/*
+		 * La comprobación que de verdad importa en esta fase. El INTERIOR de la canaleta es un
+		 * sitio legítimo —es para lo que sirve un ducto—; lo que no se puede atravesar son sus
+		 * partes. Si un cable entrara por donde le viniera bien en vez de por una ranura, aquí
+		 * saldría metido en un diente o en el zócalo.
+		 */
+		const proyecto = ej.crear();
+		const canaletas = proyecto.gabinete?.canaletas ?? [];
+		const red = new RedCanaletas(canaletas);
+		const invasiones = invasionesDeCanaletas(red, canaletas, trazosDeCables(proyecto));
+		const peor = invasiones[0];
+		assert.ok(
+			!peor || peor.dentro < 2,
+			peor ? `${peor.cable} se mete ${peor.dentro.toFixed(1)} mm en el ${peor.parte} de ${peor.canaleta}` : '',
 		);
 	});
 

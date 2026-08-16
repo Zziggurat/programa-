@@ -222,113 +222,106 @@ export function redondearEsquinas(nodos: Punto[], radio = 14, pasos = 6): Punto[
 	return salida;
 }
 
-/** El recorrido en planta, ya redondeado y partido en trozos cortos, con su medida acumulada. */
-export interface Recorrido2D {
-	puntos: Punto[];
-	acumulado: number[];
-	largo: number;
+/**
+ * Redondea las esquinas de una polilínea 3D, arrastrando la profundidad.
+ *
+ * Es `redondearEsquinas` con la z a cuestas: el arco que sustituye a cada vértice interpola entre
+ * la profundidad de entrada y la de salida. Hace falta porque desde que los cables entran y salen
+ * de las canaletas, la profundidad ya no es una rampa entre los dos bornes: es un dato de cada
+ * punto del recorrido —46 mm en el borne, la del carril dentro del ducto— y el suavizado tiene
+ * que respetarla en vez de recalcularla.
+ */
+function redondear3D(nodos: Punto3[], radio: number, pasos = 6): Punto3[] {
+	if (nodos.length < 3) return nodos.slice();
+	const salida: Punto3[] = [nodos[0]];
+	for (let i = 1; i < nodos.length - 1; i++) {
+		const a = nodos[i - 1];
+		const b = nodos[i];
+		const c = nodos[i + 1];
+		const d1 = Math.hypot(b.x - a.x, b.y - a.y);
+		const d2 = Math.hypot(c.x - b.x, c.y - b.y);
+		const r = Math.min(radio, d1 / 2, d2 / 2);
+		if (r < 1.5 || d1 < 1e-6 || d2 < 1e-6) { salida.push(b); continue; }
+		const t1 = r / d1;
+		const t2 = r / d2;
+		const p1 = { x: b.x + (a.x - b.x) * t1, y: b.y + (a.y - b.y) * t1, z: b.z + (a.z - b.z) * t1 };
+		const p2 = { x: b.x + (c.x - b.x) * t2, y: b.y + (c.y - b.y) * t2, z: b.z + (c.z - b.z) * t2 };
+		salida.push(p1);
+		for (let k = 1; k < pasos; k++) {
+			const t = k / pasos;
+			const u = 1 - t;
+			salida.push({
+				x: u * u * p1.x + 2 * u * t * b.x + t * t * p2.x,
+				y: u * u * p1.y + 2 * u * t * b.y + t * t * p2.y,
+				z: u * u * p1.z + 2 * u * t * b.z + t * t * p2.z,
+			});
+		}
+		salida.push(p2);
+	}
+	salida.push(nodos[nodos.length - 1]);
+	return salida;
 }
 
 /**
- * LA PARTE CARA DEL RECORRIDO, la que no depende de la profundidad.
+ * EL RECORRIDO QUE DE VERDAD SE VE, a partir de los puntos por los que tiene que pasar el cable.
  *
- * Se calcula una vez por trazado en planta y se reaprovecha para todas las capas, porque buscarle
- * sitio a un cable es probar el MISMO camino a distintas profundidades. Sin este reparto, el
- * tablero de 52 conductores se pasaba un segundo largo repitiendo el mismo cálculo noventa veces
- * por cable.
+ * Esta función es la única fuente de verdad de la geometría del cableado: la usa el repartidor
+ * para probar dónde cabe cada cable, sus puntos son los que dibuja la escena y son los que miden
+ * las pruebas. Si las tres miran lo mismo, lo que se mide es lo que se ve.
+ *
+ * Antes recibía una polilínea plana y le inventaba la profundidad con una rampa entre los dos
+ * bornes. Eso valía mientras todos los cables viajaran por delante del tablero; desde que entran
+ * en las canaletas, la profundidad es un dato del recorrido —46 mm en el borne, la del carril
+ * dentro del ducto, y el paso por la ranura entre medias— y quien la decide es el router.
+ *
+ *   `nodos`      los puntos por los que pasa, cada uno con su profundidad
+ *   `radioCodo`  el radio mínimo de curvatura del conductor
+ *   `sueloMin`   por debajo de qué profundidad no se puede ir en cada punto (lo que se cruza
+ *                por fuera y no se puede atravesar)
  */
-export function prepararRecorrido(nodos: Punto[], radioCodo: number): Recorrido2D {
-	const suave = redondearEsquinas(nodos, radioCodo);
+export function tenderCable(
+	nodos: Punto3[], radioCodo: number, sueloMin?: (x: number, y: number) => number,
+): Punto3[] {
+	const suave = redondear3D(nodos, radioCodo);
 	/*
-	 * EL RECORRIDO SE PARTE EN TROZOS CORTOS ANTES DE DARLE PROFUNDIDAD, y esto era EL fallo.
-	 *
-	 * `redondearEsquinas` solo mete vértices en las ESQUINAS: una bajada recta de cuatrocientos
-	 * milímetros sale de ahí como UN SOLO segmento, con sus dos únicos puntos pegados a los dos
-	 * bornes. Y la rampa de profundidad se calcula punto a punto… sobre esos dos puntos, que están
-	 * los dos dentro de los 26 mm de rampa. Resultado: el cable salía del borne a 46 mm, subía dos
-	 * milímetros y volvía a bajar, en línea recta de punta a punta.
-	 *
-	 * O sea: la capa que el repartidor asignaba a cada cable NO SE APLICABA en las tiradas rectas,
-	 * que son casi todas. Los conductores viajaban amontonados entre 46 y 50 mm dijera lo que
-	 * dijera su carril, y por eso seguían viéndose fundidos por mucho que se repartieran las
-	 * profundidades: repartir capas no servía de nada porque nadie llegaba a la suya. Partiendo el
-	 * recorrido cada 8 mm, la rampa tiene dónde apoyarse y el cable llega de verdad a su capa.
+	 * EL RECORRIDO SE PARTE EN TROZOS CORTOS, y esto no es un detalle: es lo que hace que la
+	 * profundidad exista. Redondear solo mete vértices en las esquinas, así que una tirada recta
+	 * de cuatrocientos milímetros sale como UN segmento con sus dos puntos pegados a los extremos,
+	 * y cualquier perfil de profundidad calculado sobre esos dos puntos es una línea recta entre
+	 * ellos. Con trozos de 8 mm, el perfil tiene dónde apoyarse.
 	 */
 	const PASO = 8;
-	const puntos: Punto[] = [suave[0]];
+	const denso: Punto3[] = [suave[0]];
 	for (let i = 1; i < suave.length; i++) {
 		const trozos = Math.max(1, Math.ceil(
-			Math.hypot(suave[i].x - suave[i - 1].x, suave[i].y - suave[i - 1].y) / PASO,
+			Math.hypot(suave[i].x - suave[i - 1].x, suave[i].y - suave[i - 1].y, suave[i].z - suave[i - 1].z) / PASO,
 		));
 		for (let k = 1; k <= trozos; k++) {
 			const u = k / trozos;
-			puntos.push({
+			denso.push({
 				x: suave[i - 1].x + (suave[i].x - suave[i - 1].x) * u,
 				y: suave[i - 1].y + (suave[i].y - suave[i - 1].y) * u,
+				z: suave[i - 1].z + (suave[i].z - suave[i - 1].z) * u,
 			});
 		}
 	}
-	const acumulado: number[] = [0];
-	for (let i = 1; i < puntos.length; i++) {
-		acumulado.push(acumulado[i - 1] + Math.hypot(puntos[i].x - puntos[i - 1].x, puntos[i].y - puntos[i - 1].y));
-	}
-	return { puntos, acumulado, largo: acumulado[acumulado.length - 1] || 1 };
-}
 
-/**
- * EL RECORRIDO QUE DE VERDAD SE VE, en tres dimensiones.
- *
- * Esta función es el punto entero de la iteración, así que conviene explicar por qué existe.
- *
- * Antes había dos geometrías distintas y nadie las enfrentaba. El repartidor decidía dónde va cada
- * cable mirando una polilínea ORTOGONAL de esquinas vivas y una z constante; el dibujo, después,
- * redondeaba esos codos —el arco se come hasta cinco milímetros hacia dentro de la esquina— y
- * hacía subir y bajar la z en los extremos. Se reservaba el sitio de un recorrido y se pintaba
- * otro: todo lo que el arco invadía y todo lo que la rampa cruzaba estaba fuera de la
- * contabilidad, por definición.
- *
- * Ahora hay UNA función. La usa el repartidor para probar dónde cabe cada cable, sus puntos son
- * los que dibuja la escena y son los que miden las pruebas. Si los tres miran lo mismo, lo que se
- * mide es lo que se ve.
- *
- *   `base`       el recorrido en planta ya preparado
- *   `zDe`/`zA`   la profundidad de cada borne (de ahí arranca y ahí acaba el cable)
- *   `zViaje`     la profundidad del carril por el que cruza el tablero
- *   `rampa`      en cuántos mm de recorrido pasa de la cota del borne a la del carril
- *   `sueloMin`   por debajo de qué profundidad no se puede ir en cada punto (las canaletas)
- */
-export function recorrido3D(
-	base: Recorrido2D, zDe: number, zA: number, zViaje: number, rampa: number,
-	sueloMin?: (x: number, y: number) => number,
-): Punto3[] {
-	const denso = base.puntos;
-	const acumulado = base.acumulado;
-	const largo = base.largo;
-	// La rampa nunca se come más de un tercio del cable por cada punta: en un cable corto, dos
-	// rampas de 26 mm se solapaban en el medio y la z no llegaba nunca a la del carril.
-	const r = Math.max(4, Math.min(rampa, largo / 3));
-	const suavizar = (t: number): number => t * t * (3 - 2 * t);
-	const z = denso.map((p, i) => {
-		const d = acumulado[i];
-		const entrada = Math.min(1, d / r);
-		const salida = Math.min(1, (largo - d) / r);
-		const zBorde = d * 2 < largo ? zDe : zA;
-		return zBorde + (zViaje - zBorde) * suavizar(Math.min(entrada, salida));
-	});
+	const acumulado: number[] = [0];
+	for (let i = 1; i < denso.length; i++) {
+		acumulado.push(acumulado[i - 1] + Math.hypot(
+			denso[i].x - denso[i - 1].x, denso[i].y - denso[i - 1].y, denso[i].z - denso[i - 1].z,
+		));
+	}
+	const z = denso.map((q) => q.z);
 
 	/*
-	 * EL CABLE PASA POR DELANTE DE LO QUE HAY, NO POR DENTRO.
+	 * EL CABLE PASA POR DELANTE DE LO QUE NO PUEDE ATRAVESAR.
 	 *
-	 * `sueloMin` dice, para cada punto del tablero, por debajo de qué profundidad no se puede ir:
-	 * una canaleta de 60 mm obliga a pasar por encima de sus dedos. Las canaletas no estaban en el
-	 * modelo de ruteo de ninguna forma —`corredoresLibresDe()` solo descuenta las huellas de los
-	 * APARATOS, y los corredores libres son justamente las bandas donde se ponen las canaletas—,
-	 * así que casi todo cable que cruzaba el tablero atravesaba una de lado a lado.
-	 *
-	 * Se levanta el perfil donde haga falta y luego se le limita la PENDIENTE con dos barridos, uno
-	 * hacia delante y otro hacia atrás: sin eso el cable subiría de golpe justo en el borde de la
-	 * canaleta —un escalón vertical, que ningún conductor hace— en vez de trepar. Los barridos solo
-	 * suben el perfil, nunca lo bajan, así que lo levantado no se vuelve a hundir en el obstáculo.
+	 * `sueloMin` dice, para cada punto, por debajo de qué profundidad no se puede ir. Lo usan los
+	 * tramos que cruzan una canaleta POR FUERA: si un cable no entra en ese ducto, tiene que pasar
+	 * por encima de sus dedos y no a través de ellos. Los dos barridos limitan la pendiente para
+	 * que trepe en vez de dar un escalón, y solo suben el perfil: lo levantado no se vuelve a
+	 * hundir en el obstáculo.
 	 */
 	const levantado = new Array<boolean>(denso.length).fill(false);
 	if (sueloMin) {
@@ -345,16 +338,15 @@ export function recorrido3D(
 		}
 	}
 	// Los dos extremos son el borne: ahí manda el tornillo, pase lo que pase.
-	z[0] = zDe;
-	z[z.length - 1] = zA;
+	z[0] = nodos[0].z;
+	z[z.length - 1] = nodos[nodos.length - 1].z;
 
 	/*
 	 * Y se quitan los puntos que no dicen nada: los que caen sobre la recta que une a sus vecinos.
-	 * Partir cada 8 mm hace falta para que la rampa y el suelo tengan dónde apoyarse, pero dejarlo
-	 * partido multiplica por tres los tramos que hay que comparar contra los demás cables. Un punto
-	 * levantado por un obstáculo no se quita nunca: es el que sostiene el perfil por encima.
+	 * Partir cada 8 mm hace falta, pero dejarlo partido multiplica por tres los tramos que hay que
+	 * comparar contra los demás cables. Un punto levantado por un obstáculo no se quita nunca.
 	 */
-	const salida: Punto3[] = [{ x: denso[0].x, y: denso[0].y, z: z[0] }];
+	const salida: Punto3[] = [{ ...denso[0], z: z[0] }];
 	for (let i = 1; i < denso.length - 1; i++) {
 		const b = { x: denso[i].x, y: denso[i].y, z: z[i] };
 		if (levantado[i] || levantado[i - 1] || levantado[i + 1]) { salida.push(b); continue; }
@@ -363,13 +355,12 @@ export function recorrido3D(
 		const u = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
 		const v = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
 		const largoAC = Math.hypot(u.x, u.y, u.z) || 1;
-		// Distancia de b a la recta a→c, por el módulo del producto vectorial.
 		const fuera = Math.hypot(
 			u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x,
 		) / largoAC;
 		if (fuera > 0.15) salida.push(b);
 	}
-	salida.push({ x: denso[denso.length - 1].x, y: denso[denso.length - 1].y, z: z[z.length - 1] });
+	salida.push({ ...denso[denso.length - 1], z: z[z.length - 1] });
 	return salida;
 }
 
