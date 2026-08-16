@@ -6,7 +6,7 @@
  * hacia el frente. Todo se centra en el origen para orbitar cómodo.
  */
 import * as THREE from 'three';
-import { Colocacion, Conductor, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
+import { Canaleta, Colocacion, Conductor, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
 import { posicionesDeTerminales } from '../src/motores/terminales.js';
 import {
@@ -1017,14 +1017,9 @@ export function rutasDeCables(proyecto: Proyecto): RutaCable[] {
 function repartirCables(proyecto: Proyecto): RutaCable[] {
 	const corredores = corredoresLibresDe(proyecto);
 	const abanico = abanicoDeSalida(proyecto);
-	const canaletas = (proyecto.gabinete?.canaletas ?? []).map((c) => {
-		const esH = c.orientacion === 'h';
-		return {
-			x0: c.x, x1: c.x + (esH ? c.largo : c.ancho),
-			y0: c.y, y1: c.y + (esH ? c.ancho : c.largo),
-			alto: c.alto,
-		};
-	});
+	const canaletas = (proyecto.gabinete?.canaletas ?? []).map((c) => ({
+		...huellaCanaleta(c), alto: c.alto + 2,
+	}));
 	/*
 	 * LA PROFUNDIDAD DE VIAJE ARRANCA POR DELANTE DE LAS CANALETAS.
 	 *
@@ -1248,18 +1243,33 @@ export function trazosDeCables(proyecto: Proyecto): Trazo[] {
  * canaleta y el cable la cruzaba de lado a lado, atravesando sus dedos. Eran decoración. Aquí
  * entran como sólidos de verdad, junto con el carril y los aparatos.
  */
+/**
+ * LA HUELLA REAL DE UNA CANALETA, sacada de cómo se construye y no de cómo se declara.
+ *
+ * `construirCanaleta` coloca el grupo CENTRADO en la coordenada transversal declarada: una
+ * canaleta horizontal puesta en `y` ocupa de `y − ancho/2` a `y + ancho/2`, no de `y` a
+ * `y + ancho`. Yo la había modelado de la segunda forma, así que la caja contra la que medía las
+ * invasiones estaba corrida MEDIO ANCHO —veinte milímetros— respecto del ducto de verdad: solapaba
+ * con él a medias. Es decir, el «0 invasiones de canaleta» del informe anterior estaba medido
+ * contra una caja que no era la canaleta. Y por arriba llega a `alto + 2`, porque la tapa tiene
+ * dos milímetros de espesor y también es sólida.
+ */
+export function huellaCanaleta(c: Canaleta): { x0: number; x1: number; y0: number; y1: number } {
+	const esH = c.orientacion === 'h';
+	const largoX = esH ? c.largo : c.ancho;
+	const largoY = esH ? c.ancho : c.largo;
+	const cx = c.x + (esH ? c.largo / 2 : 0);
+	const cy = c.y + (esH ? 0 : c.largo / 2);
+	return { x0: cx - largoX / 2, x1: cx + largoX / 2, y0: cy - largoY / 2, y1: cy + largoY / 2 };
+}
+
 export function solidosDelTablero(proyecto: Proyecto): Solido[] {
 	const g = proyecto.gabinete;
 	if (!g) return [];
 	const solidos: Solido[] = [];
 	for (const c of g.canaletas) {
-		const esH = c.orientacion === 'h';
-		solidos.push({
-			id: `canaleta ${c.id}`,
-			x0: c.x, x1: c.x + (esH ? c.largo : c.ancho),
-			y0: c.y, y1: c.y + (esH ? c.ancho : c.largo),
-			z0: 0, z1: c.alto,
-		});
+		const h = huellaCanaleta(c);
+		solidos.push({ id: `canaleta ${c.id}`, ...h, z0: 0, z1: c.alto + 2 });
 	}
 	for (const r of g.rieles) {
 		const esV = r.orientacion === 'v';
