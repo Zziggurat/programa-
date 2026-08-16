@@ -280,7 +280,7 @@ function redondear3D(nodos: Punto3[], radio: number, pasos = 6): Punto3[] {
  *                por fuera y no se puede atravesar)
  */
 export function tenderCable(
-	nodos: Punto3[], radioCodo: number, sueloMin?: (x: number, y: number) => number,
+	nodos: Punto3[], radioCodo: number, sueloMin?: (x: number, y: number, z: number) => number,
 ): Punto3[] {
 	const suave = redondear3D(nodos, radioCodo);
 	/*
@@ -326,7 +326,7 @@ export function tenderCable(
 	const levantado = new Array<boolean>(denso.length).fill(false);
 	if (sueloMin) {
 		for (let i = 0; i < denso.length; i++) {
-			const suelo = sueloMin(denso[i].x, denso[i].y);
+			const suelo = sueloMin(denso[i].x, denso[i].y, denso[i].z);
 			if (suelo > z[i]) { z[i] = suelo; levantado[i] = true; }
 		}
 		const PENDIENTE = 0.55;   // 29° de subida: lo que trepa un conductor sin pellizcarse

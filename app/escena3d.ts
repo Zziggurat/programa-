@@ -1524,7 +1524,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 	 * por dentro no se le aplica: sus puntos ya están en el interior útil.
 	 */
 	const solidas = (proyecto.gabinete?.canaletas ?? []).map((c) => ({
-		id: '', ...huellaCanaleta(c), alto: c.alto + TAPA,
+		id: '', ducto: c.id, ...huellaCanaleta(c), alto: c.alto + TAPA,
 	}));
 	/*
 	 * Y los CUERPOS DE LOS APARATOS también son suelo para el cable que no va a ellos. Un hilo que
@@ -1535,7 +1535,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 	 */
 	for (const s of solidosDelTablero(proyecto)) {
 		if (!s.id.startsWith('aparato ')) continue;
-		solidas.push({ id: s.id, x0: s.x0, x1: s.x1, y0: s.y0, y1: s.y1, alto: s.z1 });
+		solidas.push({ id: s.id, ducto: '', x0: s.x0, x1: s.x1, y0: s.y0, y1: s.y1, alto: s.z1 });
 	}
 
 	interface Puesto {
@@ -1549,8 +1549,9 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		reserva: Reserva[];
 		radio: number;
 		codo: number;
-		sueloMin: (x: number, y: number) => number;
-		sueloDentro: (x: number, y: number) => number;
+		sueloMin: (x: number, y: number, z: number) => number;
+		sueloDe: (suyos: Set<string>) => (x: number, y: number, z: number) => number;
+		suyosDe: (c: Candidato) => Set<string>;
 		de: Anclaje;
 		a: Anclaje;
 	}
@@ -1602,26 +1603,45 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		/**
 		 * El suelo que le imponen al cable las cosas por encima de las que tiene que pasar.
 		 *
-		 * `porDentro` distingue los dos casos: al que viaja por dentro de un ducto no se le puede
-		 * aplicar el suelo del propio ducto —lo sacaría de él— pero sí el de los aparatos, porque
-		 * cruzar una bornera por dentro es igual de malo se venga de donde se venga.
+		 * `suyos` son los ductos por los que ESTE camino viaja: en esos, y solo en esos, no hay
+		 * suelo que valga, porque estar dentro es justo lo que se le pide. Levantar la excepción
+		 * para CUALQUIER ducto —que es lo primero que se escribió— dejaba a un cable que va por la
+		 * canaleta de arriba cruzar la de abajo por la mitad de su pared, y de ahí salían las
+		 * invasiones de diente que quedaban: el cable no estaba en una ranura equivocada, estaba
+		 * atravesando plástico macizo a media altura.
 		 */
-		const suelo = (porDentro: boolean) => (x: number, y: number): number => {
+		const sueloDe = (suyos: Set<string>) => (x: number, y: number, alturaAqui: number): number => {
+			/*
+			 * Dentro de su propio ducto no hay suelo… si de verdad va por dentro. Dos matices que
+			 * costaron sendas invasiones medidas:
+			 *
+			 *   — «Dentro» se mide con la huella EXACTA. Con el margen de aproximación —doce
+			 *     milímetros— la exención se estiraba más allá del ducto, y justo ahí está la tapa
+			 *     del ducto vecino: un cable que salía de la canaleta vertical trepaba a 61 mm en
+			 *     vez de a 66 y cruzaba la tapa de la horizontal.
+			 *   — Y solo vale si el cable está POR DEBAJO de la tapa. Un cable que usa un ducto en
+			 *     un trozo de su recorrido puede volver a cruzarlo más allá, por encima; ahí la
+			 *     exención le dejaba pasar a media tapa en vez de por encima de ella.
+			 */
+			for (const c of solidas) {
+				if (!c.ducto || !suyos.has(c.ducto)) continue;
+				if (x < c.x0 || x > c.x1 || y < c.y0 || y > c.y1) continue;
+				if (alturaAqui <= c.alto - TAPA - radio) return 0;
+			}
 			let z = 0;
 			for (const c of solidas) {
+				if (c.ducto && suyos.has(c.ducto)) continue;
 				if (x < c.x0 - MARGEN || x > c.x1 + MARGEN || y < c.y0 - MARGEN || y > c.y1 + MARGEN) continue;
-				if (!c.id) {
-					if (porDentro) return 0;   // es su ducto: aquí no hay suelo que valga
-					z = Math.max(z, c.alto + radio + HOLGURA_CABLE);
-					continue;
-				}
-				if (mios.includes(c.id)) continue;
+				if (!c.ducto && mios.includes(c.id)) continue;
 				z = Math.max(z, c.alto + radio + HOLGURA_CABLE);
 			}
 			return z;
 		};
-		const sueloMin = suelo(false);
-		const sueloDentro = suelo(true);
+		const NINGUNO = new Set<string>();
+		const sueloMin = sueloDe(NINGUNO);
+		/** Los ductos por los que pasa un candidato, sacados de lo que reserva. */
+		const suyosDe = (cand: Candidato): Set<string> =>
+			new Set(cand.reserva.map((r) => r.tramo.split('|')[0]));
 		const bornes: [string, string] = [
 			`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
 			`${conductor.a.dispositivoId}:${conductor.a.borneId}`,
@@ -1672,7 +1692,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 				for (const n of cand.nodos) firma += `|${n.x.toFixed(1)},${n.y.toFixed(1)},${n.z.toFixed(1)}`;
 				if (vistos.has(firma)) continue;
 				vistos.add(firma);
-				const puntos = tenderCable(cand.nodos, codo, cand.ductos ? sueloDentro : sueloMin);
+				const puntos = tenderCable(cand.nodos, codo, cand.ductos ? sueloDe(suyosDe(cand)) : sueloMin);
 				const trazo: Trazo = { id: conductor.id, radio, puntos, bornes, extremos: [p.de, p.a] };
 				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, rendirse(cand, mejorNota));
 				const nota = puntuar(cand, choque ? choque.holgura : Infinity);
@@ -1691,7 +1711,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 					mejor = {
 						conductorId: conductor.id, trazo, nodos: cand.nodos, reserva: cand.reserva,
 						z: puntos[Math.floor(puntos.length / 2)].z,
-						clave: '', generar, radio, codo, sueloMin, sueloDentro, de: p.de, a: p.a,
+						clave: '', generar, radio, codo, sueloMin, sueloDe, suyosDe, de: p.de, a: p.a,
 					};
 				}
 				// Suficientemente bueno: no choca con nadie. Los candidatos vienen ordenados de
@@ -1734,7 +1754,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		let presupuesto = 400;
 		for (const cand of puesto.generar(3)) {
 			if (presupuesto-- <= 0) break;
-			const puntos = tenderCable(cand.nodos, puesto.codo, cand.ductos ? puesto.sueloDentro : puesto.sueloMin);
+			const puntos = tenderCable(cand.nodos, puesto.codo, cand.ductos ? puesto.sueloDe(puesto.suyosDe(cand)) : puesto.sueloMin);
 			const trazo: Trazo = {
 				id: puesto.conductorId, radio: puesto.radio, puntos,
 				bornes: puesto.trazo.bornes, extremos: puesto.trazo.extremos,
