@@ -853,7 +853,7 @@ const Z_EXPUESTO = 66;
  * La usan por igual el dibujo 3D y la interacción del ratón, para que el cable que se ve y el
  * cable con el que se trabaja sean exactamente el mismo (si no, la selección queda descalibrada).
  */
-export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, borneId: string, conductorId: string) => number {
+export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, borneId: string, conductorId: string) => { dx: number; dz: number } {
 	/*
 	 * EL ABANICO SE RESUELVE PARA TODA UNA FILA DE BORNES A LA VEZ, NO CUBO A CUBO.
 	 *
@@ -926,23 +926,85 @@ export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, bor
 			for (let k = 0; k < b.n; k++, i++) desvio.set(fila[i].clave, b.media + acumulado[i] - fila[i].x);
 		}
 	}
-	return (dispositivoId, borneId, conductorId) => desvio.get(`${dispositivoId}|${borneId}|${conductorId}`) ?? 0;
+	/*
+	 * --- Y EL REPARTO EN PROFUNDIDAD, QUE ES LA MITAD QUE FALTABA ---
+	 *
+	 * Abrir las puntas a lo ancho arregla la hilera de tornillos, y con eso se acabaron las
+	 * bajadas superpuestas. Pero deja fuera el otro choque, que resultó ser el más frecuente:
+	 * clasificando los conflictos por fase del recorrido, 12 de los 14 que quedaban en el
+	 * estrella-triángulo estaban en el borne o en el abanico, y NINGUNO dentro de una canaleta.
+	 * El caso típico son dos hilos del MISMO aparato que van a sitios distintos —uno sale hacia la
+	 * derecha, otro llega desde abajo— y se cruzan en la propia cara del aparato, porque los dos
+	 * viajan por el mismo plano: el de los bornes, a 46 mm. Abrirlos a lo ancho no los separa,
+	 * porque no comparten la hilera; comparten el PLANO.
+	 *
+	 * Un hilo de verdad no hace eso: sale del tornillo hacia afuera antes de doblar, y en un
+	 * aparato con varios hilos cada uno sale un poco más adelante que el anterior. Aquí se reparte
+	 * igual: los conductores de una misma cara se numeran y se les da su profundidad, con lo que
+	 * dos cables del mismo aparato no comparten nunca plano y eje a la vez. Los que van al mismo
+	 * tornillo quedan seguidos, así que siguen saliendo juntos de donde tienen que salir juntos.
+	 */
+	const hondo = new Map<string, number>();
+	const porAparato = new Map<string, { clave: string; borne: string; radio: number }[]>();
+	for (const c of proyecto.conductores) {
+		const radio = radioDeCable(c.seccion);
+		for (const extremo of [c.de, c.a]) {
+			const l = porAparato.get(extremo.dispositivoId) ?? [];
+			l.push({ clave: `${extremo.dispositivoId}|${extremo.borneId}|${c.id}`, borne: extremo.borneId, radio });
+			porAparato.set(extremo.dispositivoId, l);
+		}
+	}
+	for (const lista of porAparato.values()) {
+		// Orden estable por borne y por clave: mismo proyecto, mismas profundidades.
+		lista.sort((x, y) => (x.borne < y.borne ? -1 : x.borne > y.borne ? 1 : x.clave < y.clave ? -1 : 1));
+		let z = 0;
+		let previo = 0;
+		for (const q of lista) {
+			if (previo) z += Math.max(3.2, previo + q.radio + HOLGURA_CABLE);
+			previo = q.radio;
+			/*
+			 * La banda va de cuatro milímetros HACIA EL TABLERO a nueve hacia afuera, y no es un
+			 * número redondo: por debajo está el hombro del aparato, a 39 mm, y por encima la tapa
+			 * de las canaletas, que empieza a 60. Saliendo más, el mazo se metía en la tapa del
+			 * ducto que tuviera delante y aparecían invasiones de plástico donde antes no había.
+			 * Cuando se acaba la banda se vuelve a empezar: dos cables a la misma profundidad
+			 * siguen estando separados a lo ancho por el abanico.
+			 */
+			hondo.set(q.clave, (z % BANDA_SALIENTE) - 4);
+		}
+	}
+
+	return (dispositivoId, borneId, conductorId) => {
+		const clave = `${dispositivoId}|${borneId}|${conductorId}`;
+		return { dx: desvio.get(clave) ?? 0, dz: hondo.get(clave) ?? 0 };
+	};
 }
+
+/** Cuánto se reparte en profundidad el mazo que sale de una cara, en mm. */
+const BANDA_SALIENTE = 13;
 
 /** Puntas de un cable: el borne real y el punto al que se abre para no fundirse con sus vecinos. */
 export function salidasDeCable(
 	proyecto: Proyecto,
 	conductor: Conductor,
 	abanico = abanicoDeSalida(proyecto),
-): { de: Anclaje; a: Anclaje; salidaA: { x: number; y: number }; salidaB: { x: number; y: number } } | undefined {
+): { de: Anclaje; a: Anclaje; salidaA: Punto3; salidaB: Punto3 } | undefined {
 	const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
 	const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
 	if (!a || !b) return undefined; // solo si falta el aparato entero (se limpia al eliminarlo)
 	return {
 		de: a,
 		a: b,
-		salidaA: { x: a.x + abanico(conductor.de.dispositivoId, conductor.de.borneId, conductor.id), y: a.y },
-		salidaB: { x: b.x + abanico(conductor.a.dispositivoId, conductor.a.borneId, conductor.id), y: b.y },
+		salidaA: {
+			x: a.x + abanico(conductor.de.dispositivoId, conductor.de.borneId, conductor.id).dx,
+			y: a.y,
+			z: a.z + abanico(conductor.de.dispositivoId, conductor.de.borneId, conductor.id).dz,
+		},
+		salidaB: {
+			x: b.x + abanico(conductor.a.dispositivoId, conductor.a.borneId, conductor.id).dx,
+			y: b.y,
+			z: b.z + abanico(conductor.a.dispositivoId, conductor.a.borneId, conductor.id).dz,
+		},
 	};
 }
 
@@ -1324,7 +1386,7 @@ function largoDe(nodos: Punto3[]): number {
  * del tablero.
  */
 function caminosPosibles(
-	red: RedCanaletas, ocupacion: Ocupacion, a: Anclaje, b: Anclaje, sa: Punto, sb: Punto,
+	red: RedCanaletas, ocupacion: Ocupacion, a: Anclaje, b: Anclaje, sa: Punto3, sb: Punto3,
 	corredores: Banda[], amplitud: number, radio: number, codo: number,
 ): Candidato[] {
 	const salida: Candidato[] = [];
@@ -1347,21 +1409,21 @@ function caminosPosibles(
 				const apA = ocupacion.mejorAproximacion(t.id, ladoA, dA, hA);
 				const apB = ocupacion.mejorAproximacion(t.id, ladoB, dB, hB);
 				for (const s of ocupacion.mejoresSitios(t, A.ranura, B.ranura, radio, nSitios)) {
-					const entra = acceso(t, A, ea, ca, a.z, codo, apA);
-					const sale = acceso(t, B, eb, cb, b.z, codo, apB);
+					const entra = acceso(t, A, ea, ca, sa.z, codo, apA);
+					const sale = acceso(t, B, eb, cb, sb.z, codo, apB);
 					salida.push({
 						nodos: [
 							{ x: a.x, y: a.y, z: a.z },
-							{ x: sa.x, y: sa.y, z: a.z },
+							{ x: sa.x, y: sa.y, z: sa.z },
 							...entra,
 							{ ...puntoDe(t, A.ranura, s.cruz), z: s.z },
 							{ ...puntoDe(t, B.ranura, s.cruz), z: s.z },
 							...sale.slice().reverse(),
-							{ x: sb.x, y: sb.y, z: b.z },
+							{ x: sb.x, y: sb.y, z: sb.z },
 							{ x: b.x, y: b.y, z: b.z },
 						],
-						expuesto: largoDe([{ x: sa.x, y: sa.y, z: a.z }, ...entra])
-							+ largoDe([{ x: sb.x, y: sb.y, z: b.z }, ...sale]),
+						expuesto: largoDe([{ x: sa.x, y: sa.y, z: sa.z }, ...entra])
+							+ largoDe([{ x: sb.x, y: sb.y, z: sb.z }, ...sale]),
 						ductos: 1,
 						reserva: [
 							{
@@ -1400,23 +1462,23 @@ function caminosPosibles(
 					const { desde: dB, hasta: hB } = tramoAcceso(eb, B.ranura);
 					const apA = ocupacion.mejorAproximacion(ta.id, ladoA, dA, hA);
 					const apB = ocupacion.mejorAproximacion(tb.id, ladoB, dB, hB);
-					const entra = acceso(ta, A, ea, ca, a.z, codo, apA);
-					const sale = acceso(tb, B, eb, cb, b.z, codo, apB);
+					const entra = acceso(ta, A, ea, ca, sa.z, codo, apA);
+					const sale = acceso(tb, B, eb, cb, sb.z, codo, apB);
 					salida.push({
 						nodos: [
 							{ x: a.x, y: a.y, z: a.z },
-							{ x: sa.x, y: sa.y, z: a.z },
+							{ x: sa.x, y: sa.y, z: sa.z },
 							...entra,
 							{ ...puntoDe(ta, A.ranura, s.cruz), z: s.z },
 							{ ...puntoDe(ta, ejeCruceA, s.cruz), z: s.z },
 							{ ...puntoDe(tb, ejeCruceB, sb2.cruz), z: sb2.z },
 							{ ...puntoDe(tb, B.ranura, sb2.cruz), z: sb2.z },
 							...sale.slice().reverse(),
-							{ x: sb.x, y: sb.y, z: b.z },
+							{ x: sb.x, y: sb.y, z: sb.z },
 							{ x: b.x, y: b.y, z: b.z },
 						],
-						expuesto: largoDe([{ x: sa.x, y: sa.y, z: a.z }, ...entra])
-							+ largoDe([{ x: sb.x, y: sb.y, z: b.z }, ...sale]),
+						expuesto: largoDe([{ x: sa.x, y: sa.y, z: sa.z }, ...entra])
+							+ largoDe([{ x: sb.x, y: sb.y, z: sb.z }, ...sale]),
 						ductos: 2,
 						reserva: [
 							{
@@ -1490,10 +1552,10 @@ function caminosPosibles(
 				const zc = Z_EXPUESTO + capa * SEPARACION_CAPAS;
 				const nodos: Punto3[] = [
 					{ x: a.x, y: a.y, z: a.z },
-					{ x: sa.x, y: sa.y, z: a.z },
+					{ x: sa.x, y: sa.y, z: sa.z },
 					{ x: sa.x + d, y: yCarril, z: zc },
 					{ x: sb.x + d, y: yCarril, z: zc },
-					{ x: sb.x, y: sb.y, z: b.z },
+					{ x: sb.x, y: sb.y, z: sb.z },
 					{ x: b.x, y: b.y, z: b.z },
 				];
 				salida.push({ nodos, expuesto: largoDe(nodos), ductos: 0, reserva: [] });
