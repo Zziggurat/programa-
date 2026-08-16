@@ -41,6 +41,8 @@ export interface Trazo {
 	bornes?: [string, string];
 	/** Dónde están esos bornes, para saber si un contacto es el del propio tornillo. */
 	extremos?: [Punto3, Punto3];
+	/** Los sólidos de los aparatos a los que este cable va conectado. */
+	propios?: string[];
 }
 
 /** Dónde y cuánto se acercan (o se meten) dos cables. */
@@ -295,6 +297,18 @@ export function invasionesDe(trazos: Trazo[], solidos: Solido[], paso = 3): Conf
 				);
 				if (enUnBorne) continue;
 				for (const s of solidos) {
+					/*
+					 * EL CUERPO DEL APARATO AL QUE ESTE CABLE VA CONECTADO NO ES UNA INVASIÓN.
+					 *
+					 * Es el mismo principio que el de los dos hilos en un tornillo: un cable que
+					 * sale de una bornera hacia el campo tiene que atravesar el sitio que ocupa la
+					 * bornera, porque es de donde sale. La exención por cercanía al borne no
+					 * alcanzaba: una bornera de 50 mm de fondo deja al hilo dentro de su caja
+					 * treinta milímetros más allá del tornillo, y salían veinte «invasiones» de
+					 * 12 mm que no eran ningún defecto. Lo que sí lo es —pasar por dentro del
+					 * aparato del vecino— se sigue midiendo igual.
+					 */
+					if (t.propios?.includes(s.id)) continue;
 					const dentro = penetracion(p, s, t.radio);
 					if (dentro <= 0) continue;
 					if (!peor || -dentro < peor.holgura) {

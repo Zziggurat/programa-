@@ -1074,7 +1074,7 @@ const PASO_INTERIOR = 8.5;
 /** Aire que se le pide a una ranura por encima del diámetro del cable que va a pasar. */
 const AIRE_RANURA = 0.8;
 /** Separación entre carriles paralelos de aproximación a un ducto. */
-const SEPARACION_APROXIMACION = 6;
+const SEPARACION_APROXIMACION = 8;
 
 const SITIOS = new Map<string, Sitio[]>();
 
@@ -1148,8 +1148,17 @@ class Ocupacion {
 	private readonly accesos = new Map<string, number>();
 
 	private clave(tramo: string, sitio: number): string { return `${tramo}|${sitio}`; }
-	private claveAcceso(tramo: string, ranura: number, z: number): string {
-		return `${tramo}|${Math.round(ranura)}|${Math.round(z)}`;
+	/*
+	 * La ocupación de una ranura NO distingue alturas, y esa fue una lección medida. La idea de
+	 * contar la ranura como una ventana alta —dos cables por ella, uno encima de otro— es cierta
+	 * DENTRO del ducto, pero para llegar hasta ahí los dos vienen del borne a la misma altura y
+	 * cruzan la boca por el mismo sitio. Contando alturas, dos conductores de 6 mm² compartían
+	 * ranura «legalmente» y acababan uno DENTRO del otro, a −6,00 mm, justo delante de ella: tres
+	 * pares fundidos en el estrella-triángulo. El cuello de botella es la boca, así que la boca es
+	 * lo que se reserva.
+	 */
+	private claveAcceso(tramo: string, ranura: number): string {
+		return `${tramo}|${Math.round(ranura)}`;
 	}
 
 	apuntar(reservas: Reserva[]): void {
@@ -1158,7 +1167,7 @@ class Ocupacion {
 			l.push({ desde: Math.min(r.desde, r.hasta), hasta: Math.max(r.desde, r.hasta) });
 			this.carriles.set(this.clave(r.tramo, r.sitio), l);
 			for (const a of r.accesos) {
-				const k = this.claveAcceso(r.tramo, a.ranura, a.z);
+				const k = this.claveAcceso(r.tramo, a.ranura);
 				this.accesos.set(k, (this.accesos.get(k) ?? 0) + a.ancho);
 			}
 		}
@@ -1173,7 +1182,7 @@ class Ocupacion {
 			const i = l?.findIndex((q) => q.desde === desde && q.hasta === hasta) ?? -1;
 			if (l && i >= 0) l.splice(i, 1);
 			for (const a of r.accesos) {
-				const k = this.claveAcceso(r.tramo, a.ranura, a.z);
+				const k = this.claveAcceso(r.tramo, a.ranura);
 				this.accesos.set(k, Math.max(0, (this.accesos.get(k) ?? 0) - a.ancho));
 			}
 		}
@@ -1233,7 +1242,7 @@ class Ocupacion {
 		for (const ranura of t.ranuras) {
 			for (const z of bandasDe(t)) {
 				if (z - radio < ZOCALO + 1 || z + radio > t.zMax - 1) continue;
-				const usado = this.accesos.get(this.claveAcceso(t.id, ranura, z)) ?? 0;
+				const usado = this.accesos.get(this.claveAcceso(t.id, ranura)) ?? 0;
 				/*
 				 * Un cable de 6 mm² mide justo 6 mm y la ranura mide justo 6: entra, y en la obra
 				 * se mete empujando. Pedirle además un aire de holgura dejaba a los 31 conductores
@@ -1289,6 +1298,15 @@ function acceso(
 	];
 }
 
+/**
+ * El trozo de carril de aproximación que un cable comprometa al entrar por una ranura: lo que
+ * recorre en paralelo al ducto MÁS el ancho de la propia boca, porque para meterse en ella cruza
+ * el carril en perpendicular y ese cruce también ocupa sitio.
+ */
+function tramoAcceso(eje: number, ranura: number): { desde: number; hasta: number } {
+	return { desde: Math.min(eje, ranura) - RANURA, hasta: Math.max(eje, ranura) + RANURA };
+}
+
 /** Lo que un camino viaja por fuera del ducto: la parte que se ve y hace cortina. */
 function largoDe(nodos: Punto3[]): number {
 	let l = 0;
@@ -1324,8 +1342,10 @@ function caminosPosibles(
 			for (const B of ocupacion.mejoresAccesos(t, eb, radio, nAccesos)) {
 				const ladoA = Math.sign(ca - t.centro) || 1;
 				const ladoB = Math.sign(cb - t.centro) || 1;
-				const apA = ocupacion.mejorAproximacion(t.id, ladoA, ea, A.ranura);
-				const apB = ocupacion.mejorAproximacion(t.id, ladoB, eb, B.ranura);
+				const { desde: dA, hasta: hA } = tramoAcceso(ea, A.ranura);
+				const { desde: dB, hasta: hB } = tramoAcceso(eb, B.ranura);
+				const apA = ocupacion.mejorAproximacion(t.id, ladoA, dA, hA);
+				const apB = ocupacion.mejorAproximacion(t.id, ladoB, dB, hB);
 				for (const s of ocupacion.mejoresSitios(t, A.ranura, B.ranura, radio, nSitios)) {
 					const entra = acceso(t, A, ea, ca, a.z, codo, apA);
 					const sale = acceso(t, B, eb, cb, b.z, codo, apB);
@@ -1348,8 +1368,8 @@ function caminosPosibles(
 								tramo: t.id, sitio: s.sitio, desde: A.ranura, hasta: B.ranura,
 								accesos: [{ ranura: A.ranura, z: A.z, ancho }, { ranura: B.ranura, z: B.z, ancho }],
 							},
-							{ tramo: `${t.id}|ap${ladoA}`, sitio: apA, desde: ea, hasta: A.ranura, accesos: [] },
-							{ tramo: `${t.id}|ap${ladoB}`, sitio: apB, desde: eb, hasta: B.ranura, accesos: [] },
+							{ tramo: `${t.id}|ap${ladoA}`, sitio: apA, ...tramoAcceso(ea, A.ranura), accesos: [] },
+							{ tramo: `${t.id}|ap${ladoB}`, sitio: apB, ...tramoAcceso(eb, B.ranura), accesos: [] },
 						],
 					});
 				}
@@ -1376,8 +1396,10 @@ function caminosPosibles(
 					if (!sb2) continue;
 					const ladoA = Math.sign(ca - ta.centro) || 1;
 					const ladoB = Math.sign(cb - tb.centro) || 1;
-					const apA = ocupacion.mejorAproximacion(ta.id, ladoA, ea, A.ranura);
-					const apB = ocupacion.mejorAproximacion(tb.id, ladoB, eb, B.ranura);
+					const { desde: dA, hasta: hA } = tramoAcceso(ea, A.ranura);
+					const { desde: dB, hasta: hB } = tramoAcceso(eb, B.ranura);
+					const apA = ocupacion.mejorAproximacion(ta.id, ladoA, dA, hA);
+					const apB = ocupacion.mejorAproximacion(tb.id, ladoB, dB, hB);
 					const entra = acceso(ta, A, ea, ca, a.z, codo, apA);
 					const sale = acceso(tb, B, eb, cb, b.z, codo, apB);
 					salida.push({
@@ -1405,8 +1427,8 @@ function caminosPosibles(
 								tramo: tb.id, sitio: sb2.sitio, desde: ejeCruceB, hasta: B.ranura,
 								accesos: [{ ranura: B.ranura, z: B.z, ancho }],
 							},
-							{ tramo: `${ta.id}|ap${ladoA}`, sitio: apA, desde: ea, hasta: A.ranura, accesos: [] },
-							{ tramo: `${tb.id}|ap${ladoB}`, sitio: apB, desde: eb, hasta: B.ranura, accesos: [] },
+							{ tramo: `${ta.id}|ap${ladoA}`, sitio: apA, ...tramoAcceso(ea, A.ranura), accesos: [] },
+							{ tramo: `${tb.id}|ap${ladoB}`, sitio: apB, ...tramoAcceso(eb, B.ranura), accesos: [] },
 						],
 					});
 				}
@@ -1501,7 +1523,20 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 	 * cruza un ducto por fuera tiene que pasar por encima de los dientes, no a través. Al que va
 	 * por dentro no se le aplica: sus puntos ya están en el interior útil.
 	 */
-	const solidas = (proyecto.gabinete?.canaletas ?? []).map((c) => ({ ...huellaCanaleta(c), alto: c.alto + TAPA }));
+	const solidas = (proyecto.gabinete?.canaletas ?? []).map((c) => ({
+		id: '', ...huellaCanaleta(c), alto: c.alto + TAPA,
+	}));
+	/*
+	 * Y los CUERPOS DE LOS APARATOS también son suelo para el cable que no va a ellos. Un hilo que
+	 * sale hacia el campo lo hace a 30 mm de la placa —es la altura a la que entra por abajo— y si
+	 * cruza medio tablero a esa altura se mete por dentro de la bornera o del contactor que se
+	 * encuentre: doce milímetros dentro, medidos. Al aparato al que el cable va conectado no se le
+	 * aplica, porque ahí tiene que estar.
+	 */
+	for (const s of solidosDelTablero(proyecto)) {
+		if (!s.id.startsWith('aparato ')) continue;
+		solidas.push({ id: s.id, x0: s.x0, x1: s.x1, y0: s.y0, y1: s.y1, alto: s.z1 });
+	}
 
 	interface Puesto {
 		conductorId: string;
@@ -1515,6 +1550,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		radio: number;
 		codo: number;
 		sueloMin: (x: number, y: number) => number;
+		sueloDentro: (x: number, y: number) => number;
 		de: Anclaje;
 		a: Anclaje;
 	}
@@ -1560,15 +1596,32 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		const radio = radioDeCable(conductor.seccion);
 		const codo = radioCodo(radio);
 		const MARGEN = radio + HOLGURA_CABLE + 8;
-		const sueloMin = (x: number, y: number): number => {
+		const mios = [
+			`aparato ${conductor.de.dispositivoId}`, `aparato ${conductor.a.dispositivoId}`,
+		];
+		/**
+		 * El suelo que le imponen al cable las cosas por encima de las que tiene que pasar.
+		 *
+		 * `porDentro` distingue los dos casos: al que viaja por dentro de un ducto no se le puede
+		 * aplicar el suelo del propio ducto —lo sacaría de él— pero sí el de los aparatos, porque
+		 * cruzar una bornera por dentro es igual de malo se venga de donde se venga.
+		 */
+		const suelo = (porDentro: boolean) => (x: number, y: number): number => {
 			let z = 0;
 			for (const c of solidas) {
-				if (x >= c.x0 - MARGEN && x <= c.x1 + MARGEN && y >= c.y0 - MARGEN && y <= c.y1 + MARGEN) {
+				if (x < c.x0 - MARGEN || x > c.x1 + MARGEN || y < c.y0 - MARGEN || y > c.y1 + MARGEN) continue;
+				if (!c.id) {
+					if (porDentro) return 0;   // es su ducto: aquí no hay suelo que valga
 					z = Math.max(z, c.alto + radio + HOLGURA_CABLE);
+					continue;
 				}
+				if (mios.includes(c.id)) continue;
+				z = Math.max(z, c.alto + radio + HOLGURA_CABLE);
 			}
 			return z;
 		};
+		const sueloMin = suelo(false);
+		const sueloDentro = suelo(true);
 		const bornes: [string, string] = [
 			`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
 			`${conductor.a.dispositivoId}:${conductor.a.borneId}`,
@@ -1619,7 +1672,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 				for (const n of cand.nodos) firma += `|${n.x.toFixed(1)},${n.y.toFixed(1)},${n.z.toFixed(1)}`;
 				if (vistos.has(firma)) continue;
 				vistos.add(firma);
-				const puntos = tenderCable(cand.nodos, codo, cand.ductos ? undefined : sueloMin);
+				const puntos = tenderCable(cand.nodos, codo, cand.ductos ? sueloDentro : sueloMin);
 				const trazo: Trazo = { id: conductor.id, radio, puntos, bornes, extremos: [p.de, p.a] };
 				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, rendirse(cand, mejorNota));
 				const nota = puntuar(cand, choque ? choque.holgura : Infinity);
@@ -1638,7 +1691,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 					mejor = {
 						conductorId: conductor.id, trazo, nodos: cand.nodos, reserva: cand.reserva,
 						z: puntos[Math.floor(puntos.length / 2)].z,
-						clave: '', generar, radio, codo, sueloMin, de: p.de, a: p.a,
+						clave: '', generar, radio, codo, sueloMin, sueloDentro, de: p.de, a: p.a,
 					};
 				}
 				// Suficientemente bueno: no choca con nadie. Los candidatos vienen ordenados de
@@ -1681,7 +1734,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		let presupuesto = 400;
 		for (const cand of puesto.generar(3)) {
 			if (presupuesto-- <= 0) break;
-			const puntos = tenderCable(cand.nodos, puesto.codo, cand.ductos ? undefined : puesto.sueloMin);
+			const puntos = tenderCable(cand.nodos, puesto.codo, cand.ductos ? puesto.sueloDentro : puesto.sueloMin);
 			const trazo: Trazo = {
 				id: puesto.conductorId, radio: puesto.radio, puntos,
 				bornes: puesto.trazo.bornes, extremos: puesto.trazo.extremos,
@@ -1727,6 +1780,7 @@ export function trazosDeCables(proyecto: Proyecto): Trazo[] {
 				`${conductor.a.dispositivoId}:${conductor.a.borneId}`,
 			] as [string, string],
 			extremos: [ruta.de, ruta.a] as [Punto3, Punto3],
+			propios: [`aparato ${conductor.de.dispositivoId}`, `aparato ${conductor.a.dispositivoId}`],
 		};
 	});
 }
