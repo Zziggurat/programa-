@@ -443,29 +443,82 @@ function estrellaTriangulo(): Proyecto {
 		cable(['f2', '96'], ['red', 'N'], 1, 'azul'),
 	];
 
+	/*
+	 * LA DISTRIBUCIÓN FÍSICA, REHECHA PARA QUE LA CANALIZACIÓN SIRVA DE ALGO.
+	 *
+	 * El montaje anterior tenía tres filas de aparatos alineadas a la izquierda, dos canaletas
+	 * horizontales debajo de cada fila y una vertical arrimada al borde izquierdo del armario, a
+	 * cuarenta milímetros de la pared y a doscientos de cualquier aparato. La auditoría de
+	 * capacidad dejó claro que las canaletas no estaban llenas —ninguna pasaba del 7 % de su
+	 * sección y quedaban 27 de 41 ranuras sin estrenar en la más cargada—: lo que faltaba era
+	 * infraestructura donde hace falta.
+	 *
+	 * Y hace falta EN VERTICAL. Contando los conductores por parejas de aparatos, el tráfico
+	 * gordo de este tablero es el que baja: nueve hilos de km1 y km3 a la bornera X1 —seis de
+	 * ellos de 6 mm²— recorriendo 312 mm, cinco más de los contactores al temporizador y tres de
+	 * F2 a Q1. Ninguno tenía por dónde bajar, así que los 52 conductores dejaban un 13 % de su
+	 * longitud dentro de canaleta y el resto colgando por delante del tablero.
+	 *
+	 * No se puede poner un ducto vertical ENCIMA de ese tráfico, porque km1, Q1 y X1 comparten
+	 * columna: el ducto se comería los aparatos. Lo que se hace en un tablero de verdad es otra
+	 * cosa: el hilo baja veinte milímetros a la canaleta horizontal que tiene debajo, viaja por
+	 * dentro hasta un ESPINAZO VERTICAL y baja por él. Así que el espinazo no tiene que estar
+	 * pegado al aparato, sino cruzarse con las horizontales; y las horizontales llegan a todos.
+	 *
+	 *   ┌── columna A ──┬─ espinazo ─┬──────── columna B ────────┐
+	 *   │      Q1       │            │  F2   KM1   KM2   KM3     │  r1  potencia
+	 *   │ ═══════════ C1 ═══════════════════════════════════════ │
+	 *   │      F1       │    CV1     │  KT                       │  r2  mando
+	 *   │ ═══════════ C2 ═══════════════════════════════════════ │
+	 *   │      X1       │            │  X2                       │  r3  borneras
+	 *   │ ═══════════ C3 ═══════════════════════════════════════ │      salida a campo
+	 *   └───────────────┴────────────┴───────────────────────────┘
+	 *      50..180        205..245      265..530
+	 *
+	 * Es la partición de siempre en un armario montado como es debido: la acometida y las
+	 * borneras a un lado, la potencia y el mando al otro, y entre las dos el ducto por el que
+	 * sube y baja todo. Con eso, los nueve hilos que van de los contactores a X1 tienen el
+	 * espinazo A MEDIO CAMINO en vez de a trescientos milímetros, que es lo que decide si al
+	 * router le sale a cuenta meterse dentro: el coste de un candidato es el tramo que queda al
+	 * aire, y con el ducto lejos entrar cuesta casi tanto como no entrar.
+	 *
+	 * El espinazo se cruza con las TRES horizontales, así que la red está de verdad conectada, y
+	 * queda a 25 mm del borde derecho de X1 y del izquierdo de X2: las dos borneras, que son las
+	 * que concentran conexiones, lo tienen al lado. Se añade además una tercera horizontal bajo
+	 * las borneras, que es por donde sale el cableado al campo (motor, red, pulsadores) en
+	 * cualquier armario montado como es debido.
+	 *
+	 * Los aparatos NO se apiñan para hacer sitio: los contactores mantienen un paso regular de
+	 * 75 mm —se leen como el conjunto que son—, Q1/F1/KT quedan alineados bajo ellos y hay 25 mm
+	 * libres a cada lado del espinazo para montar y para que el cable curve al entrar.
+	 *
+	 * El armario sigue siendo de 600 × 600. La lógica eléctrica no cambia ni un hilo: los mismos
+	 * aparatos, los mismos bornes y las mismas conexiones; sólo se mueven de sitio.
+	 */
 	p.gabinete = {
 		ancho: 600,
 		alto: 600,
 		rieles: [
-			{ id: 'r1', x: 30, y: 90, largo: 540 },
-			{ id: 'r2', x: 30, y: 280, largo: 540 },
-			{ id: 'r3', x: 30, y: 470, largo: 540 },
+			{ id: 'r1', x: 35, y: 90, largo: 530 },
+			{ id: 'r2', x: 35, y: 280, largo: 530 },
+			{ id: 'r3', x: 35, y: 470, largo: 530 },
 		],
 		canaletas: [
-			{ id: 'c1', x: 20, y: 175, largo: 560, orientacion: 'h', ancho: 40, alto: 60 },
-			{ id: 'c2', x: 20, y: 365, largo: 560, orientacion: 'h', ancho: 40, alto: 60 },
-			{ id: 'c3', x: 20, y: 175, largo: 250, orientacion: 'v', ancho: 40, alto: 60 },
+			{ id: 'c1', x: 30, y: 175, largo: 540, orientacion: 'h', ancho: 40, alto: 60 },
+			{ id: 'c2', x: 30, y: 365, largo: 540, orientacion: 'h', ancho: 40, alto: 60 },
+			{ id: 'c3', x: 30, y: 545, largo: 540, orientacion: 'h', ancho: 40, alto: 60 },
+			{ id: 'cv1', x: 225, y: 150, largo: 420, orientacion: 'v', ancho: 40, alto: 60 },
 		],
 		colocaciones: [
-			{ dispositivoId: 'km1', x: 80, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
-			{ dispositivoId: 'km2', x: 175, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
-			{ dispositivoId: 'km3', x: 270, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
-			{ dispositivoId: 'f2', x: 380, y: 55, ancho: 45, alto: 70, rielId: 'r1' },
-			{ dispositivoId: 'q1', x: 80, y: 238, ancho: 54, alto: 85, rielId: 'r2' },
-			{ dispositivoId: 'f1', x: 180, y: 245, ancho: 18, alto: 70, rielId: 'r2' },
-			{ dispositivoId: 'kt', x: 240, y: 240, ancho: 22, alto: 80, rielId: 'r2' },
-			{ dispositivoId: 'x1', x: 80, y: 445, ancho: 130, alto: 50, rielId: 'r3' },
-			{ dispositivoId: 'x2', x: 280, y: 445, ancho: 110, alto: 50, rielId: 'r3' },
+			{ dispositivoId: 'f1', x: 50, y: 55, ancho: 18, alto: 70, rielId: 'r1' },
+			{ dispositivoId: 'q1', x: 50, y: 238, ancho: 54, alto: 85, rielId: 'r2' },
+			{ dispositivoId: 'x1', x: 50, y: 445, ancho: 130, alto: 50, rielId: 'r3' },
+			{ dispositivoId: 'f2', x: 265, y: 55, ancho: 45, alto: 70, rielId: 'r1' },
+			{ dispositivoId: 'km1', x: 335, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
+			{ dispositivoId: 'km2', x: 410, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
+			{ dispositivoId: 'km3', x: 485, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
+			{ dispositivoId: 'kt', x: 265, y: 240, ancho: 22, alto: 80, rielId: 'r2' },
+			{ dispositivoId: 'x2', x: 265, y: 445, ancho: 110, alto: 50, rielId: 'r3' },
 		],
 	};
 	return p;
