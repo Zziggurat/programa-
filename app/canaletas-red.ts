@@ -256,9 +256,17 @@ export function invasionSolida(
 		if (Math.abs(cruz - t.centro) > c.ancho / 2 + radio) continue;
 		// En un cruce no hay paredes: es la unión, y por ahí se pasa. El fondo y la tapa siguen.
 		const enCruce = red.crucesDe(c.id).some((x) => eje > x.desde && eje < x.hasta);
-		anota(c.id, 'fondo', ESPESOR + radio - p.z);
-		anota(c.id, 'tapa', p.z - (c.alto - radio));
+		/*
+		 * Fondo y tapa se miden POR LOS DOS LADOS. Midiéndolos por uno solo, un cable que pasa muy
+		 * por delante del tablero —a 90 mm, ni cerca del ducto— salía marcado como metido treinta
+		 * milímetros dentro de la tapa: la cuenta crecía sin tope según se alejaba.
+		 */
+		const dentroDe = (z0: number, z1: number): number => Math.min(p.z - (z0 - radio), z1 + radio - p.z);
+		anota(c.id, 'fondo', dentroDe(0, ESPESOR));
+		anota(c.id, 'tapa', dentroDe(c.alto, c.alto + TAPA));
 		if (enCruce) continue;
+		// Por encima de la tapa o por debajo del fondo no hay pared que valga: está fuera del ducto.
+		if (p.z < -radio || p.z > c.alto + radio) continue;
 		// La pared ocupa de `semiancho` a `semiancho + ESPESOR` a cada lado del centro.
 		const fuera = Math.abs(cruz - t.centro) - t.semiancho;
 		const dentroPared = Math.min(fuera + radio, ESPESOR + radio - fuera);

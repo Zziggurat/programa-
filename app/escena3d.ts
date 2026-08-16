@@ -827,16 +827,11 @@ const SEPARACION_CAPAS = 3.6;
  * hundirse al llegar. Sin esto, la Z era constante de punta a punta y el cable no bajaba nunca a
  * buscar su borne.
  */
-/**
- * Profundidad a la que un cable atraviesa la boca de una ranura.
- *
- * Las ranuras van de 10 mm (donde acaba el zócalo continuo) a la altura de la canaleta, y los
- * bornes están a 46: por eso un cable puede salir del tornillo y entrar en el ducto a su misma
- * profundidad, sin rodeos. Se cruza la pared a 34 mm, con margen de sobra por arriba y por abajo
- * respecto de las dos partes sólidas.
+/*
+ * Las ranuras van de 10 mm —donde acaba el zócalo continuo— hasta la altura de la canaleta, y los
+ * bornes están a 46. Por eso un cable puede salir del tornillo y entrar en el ducto A SU MISMA
+ * PROFUNDIDAD, sin rodeos: cruza la boca de la ranura a 46 y solo entonces baja a su carril.
  */
-const Z_RANURA = 34;
-
 /** Base de las capas para el cable que NO entra en canaleta y cruza por delante del tablero. */
 const Z_EXPUESTO = 66;
 
@@ -1007,7 +1002,15 @@ export const HOLGURA_CABLE = 1.2;
 const PASO_LATERAL = 5;
 const PASOS_LATERALES = [0, 1, -1];
 /** Cuántas ranuras vecinas se prueban a cada lado antes de rendirse con una entrada. */
-const RANURAS_CERCA = 3;
+const RANURAS_CERCA = 2;
+/*
+ * Carriles dentro del ducto: tres posiciones a lo ancho por dos profundidades. Con cinco por tres
+ * el reparto del tablero de 52 conductores se iba a once segundos, que es exactamente el error que
+ * ya cometí una vez: una búsqueda preciosa que congela el editor. Seis sitios por ducto bastan
+ * para que los cables no compartan volumen, y el resto lo arregla elegir otra ranura u otro ducto.
+ */
+const CARRILES_DUCTO = [0, 1, -1];
+const PROFUNDIDADES_DUCTO = [0.42, 0.68];
 
 /**
  * EL ÚLTIMO REPARTO, GUARDADO.
@@ -1086,10 +1089,18 @@ function caminosPosibles(
 		if (Math.min(ca, cb) > t.centro || Math.max(ca, cb) < t.centro) continue;
 		const ea = ejeDe(t, sa.x, sa.y);
 		const eb = ejeDe(t, sb.x, sb.y);
+		/*
+		 * Se cruza la boca de la ranura A LA PROFUNDIDAD DEL BORNE, y solo una vez dentro se baja
+		 * al carril. Bajando antes, el cable se hundía mientras todavía estaba por encima del
+		 * aparato del que sale y lo atravesaba: la ranura llega hasta arriba del ducto, así que no
+		 * hay ninguna razón para empezar a bajar antes de llegar a ella.
+		 */
+		const zEntradaA = Math.min(a.z, t.zMax - 4);
+		const zEntradaB = Math.min(b.z, t.zMax - 4);
 		for (const ra of ranurasCerca(t, ea)) {
 			for (const rb of ranurasCerca(t, eb)) {
-				for (const carril of [0, 1, -1, 2, -2]) {
-					for (const prof of [0.42, 0.66, 0.24]) {
+				for (const carril of CARRILES_DUCTO) {
+					for (const prof of PROFUNDIDADES_DUCTO) {
 						const tt = t.centro + carril * (t.semiancho / 3);
 						if (Math.abs(tt - t.centro) > t.semiancho - 3) continue;
 						const zc = t.zMin + (t.zMax - t.zMin) * prof;
@@ -1100,10 +1111,10 @@ function caminosPosibles(
 							{ x: a.x, y: a.y, z: a.z },
 							{ x: sa.x, y: sa.y, z: a.z },
 							{ ...puntoDe(t, ra, ca), z: a.z },
-							{ ...puntoDe(t, ra, paredA), z: Z_RANURA },
+							{ ...puntoDe(t, ra, paredA), z: zEntradaA },
 							{ ...puntoDe(t, ra, tt), z: zc },
 							{ ...puntoDe(t, rb, tt), z: zc },
-							{ ...puntoDe(t, rb, paredB), z: Z_RANURA },
+							{ ...puntoDe(t, rb, paredB), z: zEntradaB },
 							{ ...puntoDe(t, rb, cb), z: b.z },
 							{ x: sb.x, y: sb.y, z: b.z },
 							{ x: b.x, y: b.y, z: b.z },
@@ -1137,12 +1148,14 @@ function caminosPosibles(
 			// Cada ducto tiene que servir para su punta: el primero para A, el segundo para B.
 			const ea = ejeDe(ta, sa.x, sa.y);
 			const eb = ejeDe(tb, sb.x, sb.y);
+			const zEntradaA = Math.min(a.z, ta.zMax - 4);
+			const zEntradaB = Math.min(b.z, tb.zMax - 4);
 			const ejeCruceA = ta.esH ? (cruce.zona.x0 + cruce.zona.x1) / 2 : (cruce.zona.y0 + cruce.zona.y1) / 2;
 			const ejeCruceB = tb.esH ? (cruce.zona.x0 + cruce.zona.x1) / 2 : (cruce.zona.y0 + cruce.zona.y1) / 2;
 			for (const ra of ranurasCerca(ta, ea)) {
 				for (const rb of ranurasCerca(tb, eb)) {
-					for (const carril of [0, 1, -1]) {
-						for (const prof of [0.42, 0.66]) {
+					for (const carril of CARRILES_DUCTO) {
+						for (const prof of PROFUNDIDADES_DUCTO) {
 							const tta = ta.centro + carril * (ta.semiancho / 3);
 							const ttb = tb.centro + carril * (tb.semiancho / 3);
 							if (Math.abs(carril * (ta.semiancho / 3)) > ta.semiancho - 3) continue;
@@ -1153,13 +1166,13 @@ function caminosPosibles(
 								{ x: a.x, y: a.y, z: a.z },
 								{ x: sa.x, y: sa.y, z: a.z },
 								{ ...puntoDe(ta, ra, ca), z: a.z },
-								{ ...puntoDe(ta, ra, paredA), z: Z_RANURA },
+								{ ...puntoDe(ta, ra, paredA), z: zEntradaA },
 								{ ...puntoDe(ta, ra, tta), z: zc },
 								// Hasta el cruce por dentro de la primera, girar, y seguir por la segunda.
 								{ ...puntoDe(ta, ejeCruceA, tta), z: zc },
 								{ ...puntoDe(tb, ejeCruceB, ttb), z: zc },
 								{ ...puntoDe(tb, rb, ttb), z: zc },
-								{ ...puntoDe(tb, rb, paredB), z: Z_RANURA },
+								{ ...puntoDe(tb, rb, paredB), z: zEntradaB },
 								{ ...puntoDe(tb, rb, cb), z: b.z },
 								{ x: sb.x, y: sb.y, z: b.z },
 								{ x: b.x, y: b.y, z: b.z },
