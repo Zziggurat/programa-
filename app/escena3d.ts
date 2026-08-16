@@ -1073,6 +1073,8 @@ interface Sitio { cruz: number; z: number; }
 const PASO_INTERIOR = 8.5;
 /** Aire que se le pide a una ranura por encima del diámetro del cable que va a pasar. */
 const AIRE_RANURA = 0.8;
+/** Separación entre carriles paralelos de aproximación a un ducto. */
+const SEPARACION_APROXIMACION = 6;
 
 const SITIOS = new Map<string, Sitio[]>();
 
@@ -1178,7 +1180,7 @@ class Ocupacion {
 	}
 
 	/** Milímetros que un trozo compartiría con lo ya tendido en ese sitio. */
-	private solape(tramo: string, sitio: number, desde: number, hasta: number): number {
+	solape(tramo: string, sitio: number, desde: number, hasta: number): number {
 		const a = Math.min(desde, hasta);
 		const b = Math.max(desde, hasta);
 		let total = 0;
@@ -1204,6 +1206,25 @@ class Ocupacion {
 		}
 		cabe.sort((a, b) => a.coste - b.coste || a.sitio - b.sitio);
 		return cabe.slice(0, n);
+	}
+
+	/**
+	 * EL CARRIL DE APROXIMACIÓN, que es donde se juntaban los cables sin que nadie lo mirara.
+	 *
+	 * Para entrar por una ranura que no le queda enfrente, el cable sale a una línea paralela al
+	 * ducto y se desliza por ella hasta ponerse en el eje de la ranura. Esa línea salía siempre a
+	 * la misma distancia del ducto, así que todos los cables de la misma fila se deslizaban por la
+	 * MISMA recta y los que compartían un trozo de camino quedaban uno dentro de otro. La zona de
+	 * convergencia también es un recurso, así que se reparte como los demás.
+	 */
+	mejorAproximacion(tramo: string, lado: number, desde: number, hasta: number): number {
+		let mejor = 0;
+		let coste = Infinity;
+		for (let k = 0; k < 4; k++) {
+			const c = this.solape(`${tramo}|ap${lado}`, k, desde, hasta) + k * 0.5;
+			if (c < coste) { coste = c; mejor = k; }
+		}
+		return mejor;
 	}
 
 	/** Los `n` accesos mejores cerca de `coord`: los que dan la anchura, el más cercano primero. */
@@ -1243,11 +1264,14 @@ class Ocupacion {
  * que cuando el cable llega a la pared ya viene alineado con la ranura y el último tramo es recto.
  * Es también lo que se hace en la obra: se saca el hilo, se alinea con la ranura y se mete.
  */
-function acceso(t: Tramo, ac: Acceso, ejeBorne: number, cruzBorne: number, zBorne: number, codo: number): Punto3[] {
+function acceso(
+	t: Tramo, ac: Acceso, ejeBorne: number, cruzBorne: number, zBorne: number, codo: number,
+	carril: number,
+): Punto3[] {
 	const lado = Math.sign(cruzBorne - t.centro) || 1;
-	const fuera = t.centro + lado * Math.max(
+	const fuera = t.centro + lado * (Math.max(
 		Math.abs(cruzBorne - t.centro), t.semiancho + ESPESOR + codo + 2,
-	);
+	) + carril * SEPARACION_APROXIMACION);
 	const pared = t.centro + lado * t.semiancho;
 	/*
 	 * Y la bajada a la altura de entrada se hace YA DENTRO de la ranura. Hacerla fuera —que es lo
@@ -1298,9 +1322,13 @@ function caminosPosibles(
 		const eb = ejeDe(t, sb.x, sb.y);
 		for (const A of ocupacion.mejoresAccesos(t, ea, radio, nAccesos)) {
 			for (const B of ocupacion.mejoresAccesos(t, eb, radio, nAccesos)) {
+				const ladoA = Math.sign(ca - t.centro) || 1;
+				const ladoB = Math.sign(cb - t.centro) || 1;
+				const apA = ocupacion.mejorAproximacion(t.id, ladoA, ea, A.ranura);
+				const apB = ocupacion.mejorAproximacion(t.id, ladoB, eb, B.ranura);
 				for (const s of ocupacion.mejoresSitios(t, A.ranura, B.ranura, radio, nSitios)) {
-					const entra = acceso(t, A, ea, ca, a.z, codo);
-					const sale = acceso(t, B, eb, cb, b.z, codo);
+					const entra = acceso(t, A, ea, ca, a.z, codo, apA);
+					const sale = acceso(t, B, eb, cb, b.z, codo, apB);
 					salida.push({
 						nodos: [
 							{ x: a.x, y: a.y, z: a.z },
@@ -1315,10 +1343,14 @@ function caminosPosibles(
 						expuesto: largoDe([{ x: sa.x, y: sa.y, z: a.z }, ...entra])
 							+ largoDe([{ x: sb.x, y: sb.y, z: b.z }, ...sale]),
 						ductos: 1,
-						reserva: [{
-							tramo: t.id, sitio: s.sitio, desde: A.ranura, hasta: B.ranura,
-							accesos: [{ ranura: A.ranura, z: A.z, ancho }, { ranura: B.ranura, z: B.z, ancho }],
-						}],
+						reserva: [
+							{
+								tramo: t.id, sitio: s.sitio, desde: A.ranura, hasta: B.ranura,
+								accesos: [{ ranura: A.ranura, z: A.z, ancho }, { ranura: B.ranura, z: B.z, ancho }],
+							},
+							{ tramo: `${t.id}|ap${ladoA}`, sitio: apA, desde: ea, hasta: A.ranura, accesos: [] },
+							{ tramo: `${t.id}|ap${ladoB}`, sitio: apB, desde: eb, hasta: B.ranura, accesos: [] },
+						],
 					});
 				}
 			}
@@ -1342,8 +1374,12 @@ function caminosPosibles(
 					// a la misma altura, y la coordenada transversal de cada uno es el eje del otro.
 					const sb2 = ocupacion.mejoresSitios(tb, ejeCruceB, B.ranura, radio, 1)[0];
 					if (!sb2) continue;
-					const entra = acceso(ta, A, ea, ca, a.z, codo);
-					const sale = acceso(tb, B, eb, cb, b.z, codo);
+					const ladoA = Math.sign(ca - ta.centro) || 1;
+					const ladoB = Math.sign(cb - tb.centro) || 1;
+					const apA = ocupacion.mejorAproximacion(ta.id, ladoA, ea, A.ranura);
+					const apB = ocupacion.mejorAproximacion(tb.id, ladoB, eb, B.ranura);
+					const entra = acceso(ta, A, ea, ca, a.z, codo, apA);
+					const sale = acceso(tb, B, eb, cb, b.z, codo, apB);
 					salida.push({
 						nodos: [
 							{ x: a.x, y: a.y, z: a.z },
@@ -1369,6 +1405,8 @@ function caminosPosibles(
 								tramo: tb.id, sitio: sb2.sitio, desde: ejeCruceB, hasta: B.ranura,
 								accesos: [{ ranura: B.ranura, z: B.z, ancho }],
 							},
+							{ tramo: `${ta.id}|ap${ladoA}`, sitio: apA, desde: ea, hasta: A.ranura, accesos: [] },
+							{ tramo: `${tb.id}|ap${ladoB}`, sitio: apB, desde: eb, hasta: B.ranura, accesos: [] },
 						],
 					});
 				}
@@ -1481,14 +1519,42 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		a: Anclaje;
 	}
 
+	/** ¿Ese punto está en la salida de un borne, donde no hay camino alternativo que valga? */
+	const cerca = (p: Punto3, q: Anclaje): boolean =>
+		Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z) < 34;
+
 	const puestos: Puesto[] = [];
 	const rejilla = new RejillaCables();
 	const ocupacion = new Ocupacion();
 	/** Primero que no choque; luego, que vaya lo menos expuesto posible. */
 	const puntuar = (c: Candidato, holgura: number): number =>
 		Math.min(holgura, HOLGURA_CABLE) * 1000 - c.expuesto - c.ductos * 30;
+	/**
+	 * MEDIR SOLO HASTA QUE SE SEPA QUE PIERDE. La nota de arriba se conoce a medias antes de
+	 * medir: el tramo expuesto y el número de ductos son datos del candidato. De ahí sale
+	 * exactamente qué holgura necesitaría para ganar al mejor de momento, y en cuanto se le
+	 * encuentra un choque peor que eso ya no hace falta recorrer el resto del cable. Es una poda
+	 * exacta —nunca descarta un candidato que fuera a ganar— y es lo que baja el
+	 * estrella-triángulo de 5,1 a 1,3 segundos.
+	 */
+	const rendirse = (c: Candidato, nota: number): number =>
+		(nota === -Infinity ? -Infinity : (nota + c.expuesto + c.ductos * 30) / 1000);
 
-	for (const conductor of proyecto.conductores) {
+	/*
+	 * EN QUÉ ORDEN SE COLOCAN. El primero elige con el tablero vacío y el último, con todo en
+	 * contra, así que se colocan primero los GORDOS: un 6 mm² necesita una ranura entera y sitio
+	 * de sobra dentro del ducto, mientras que un hilo de mando se acomoda en cualquier hueco.
+	 * (Medido: en los cinco tableros de la biblioteca no cambia ni una cifra, porque los ejemplos
+	 * ya declaran la potencia antes que el mando. Se deja porque en un tablero dibujado en otro
+	 * orden sí importaría, y no cuesta nada.)
+	 *
+	 * El desempate es el índice del proyecto, así que el reparto sigue siendo determinista.
+	 */
+	const orden = proyecto.conductores
+		.map((c, i) => ({ c, i }))
+		.sort((p, q) => radioDeCable(q.c.seccion) - radioDeCable(p.c.seccion) || p.i - q.i);
+
+	for (const { c: conductor } of orden) {
 		const p = salidasDeCable(proyecto, conductor, abanico);
 		if (!p) continue;
 		const radio = radioDeCable(conductor.seccion);
@@ -1540,24 +1606,46 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 
 		let mejor: Puesto | undefined;
 		let mejorNota = -Infinity;
+		let basta = false;
+		/*
+		 * Ampliar el presupuesto vuelve a proponer los caminos del anterior más los nuevos: sin
+		 * recordar cuáles ya se midieron, cada ampliación repetiría todo el trabajo de la anterior.
+		 */
+		const vistos = new Set<string>();
 		for (const amplitud of [1, 2, 3]) {
+			let hayDondeMejorar = false;
 			for (const cand of generar(amplitud)) {
+				let firma = `${cand.ductos}`;
+				for (const n of cand.nodos) firma += `|${n.x.toFixed(1)},${n.y.toFixed(1)},${n.z.toFixed(1)}`;
+				if (vistos.has(firma)) continue;
+				vistos.add(firma);
 				const puntos = tenderCable(cand.nodos, codo, cand.ductos ? undefined : sueloMin);
 				const trazo: Trazo = { id: conductor.id, radio, puntos, bornes, extremos: [p.de, p.a] };
-				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE);
+				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, rendirse(cand, mejorNota));
 				const nota = puntuar(cand, choque ? choque.holgura : Infinity);
 				if (nota > mejorNota) {
 					mejorNota = nota;
+					/*
+					 * ¿Y el choque que queda, se puede arreglar cambiando de camino? Si está pegado
+					 * a uno de los dos bornes, NO: por ahí tienen que pasar todos los candidatos,
+					 * porque es la salida del propio terminal. Ampliar la búsqueda para esos cables
+					 * era gastar cuatrocientas geometrías más para acabar con el mismo choque en el
+					 * mismo sitio. Lo que falta ahí no es camino, es sitio en el borne, y eso lo
+					 * reparte el abanico. Solo se mira en el candidato que va ganando, que es el
+					 * único cuya medida llegó al final sin rendirse.
+					 */
+					hayDondeMejorar = !!choque && !cerca(choque.donde, p.de) && !cerca(choque.donde, p.a);
 					mejor = {
 						conductorId: conductor.id, trazo, nodos: cand.nodos, reserva: cand.reserva,
 						z: puntos[Math.floor(puntos.length / 2)].z,
 						clave: '', generar, radio, codo, sueloMin, de: p.de, a: p.a,
 					};
 				}
-				// Suficientemente bueno: entra en canaleta y no choca con nadie. No se busca más.
-				if (!choque && cand.ductos > 0) break;
+				// Suficientemente bueno: no choca con nadie. Los candidatos vienen ordenados de
+				// mejor a peor, así que el primero limpio es el mejor limpio que había.
+				if (!choque) { basta = true; break; }
 			}
-			if (mejorNota >= HOLGURA_CABLE * 1000 - 400) break;   // aceptado: no hace falta ampliar
+			if (basta || !hayDondeMejorar || mejorNota >= HOLGURA_CABLE * 1000 - 400) break;
 			if (conductor.trazado?.length) break;
 		}
 		if (!mejor) continue;
@@ -1598,7 +1686,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 				id: puesto.conductorId, radio: puesto.radio, puntos,
 				bornes: puesto.trazo.bornes, extremos: puesto.trazo.extremos,
 			};
-			const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE);
+			const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, rendirse(cand, mejorNota));
 			const nota = puntuar(cand, choque ? choque.holgura : Infinity);
 			if (nota > mejorNota) {
 				mejorNota = nota;
@@ -1607,13 +1695,15 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 					z: puntos[Math.floor(puntos.length / 2)].z,
 				};
 			}
-			if (!choque && cand.ductos > 0) break;
+			if (!choque) break;
 		}
 		if (mejor) Object.assign(puesto, mejor);
 		ocupacion.apuntar(puesto.reserva);
 		puesto.clave = rejilla.anadir(puesto.trazo);
 	}
 
+	const sitioEnProyecto = new Map(proyecto.conductores.map((c, i) => [c.id, i]));
+	puestos.sort((p, q) => (sitioEnProyecto.get(p.conductorId) ?? 0) - (sitioEnProyecto.get(q.conductorId) ?? 0));
 	return puestos.map((q) => ({
 		conductorId: q.conductorId, de: q.de, a: q.a,
 		nodos: q.nodos.map((n) => ({ x: n.x, y: n.y })), z: q.z,
