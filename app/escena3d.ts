@@ -1002,15 +1002,7 @@ export const HOLGURA_CABLE = 1.2;
 const PASO_LATERAL = 5;
 const PASOS_LATERALES = [0, 1, -1];
 /** Cuántas ranuras vecinas se prueban a cada lado antes de rendirse con una entrada. */
-const RANURAS_CERCA = 2;
-/*
- * Carriles dentro del ducto: tres posiciones a lo ancho por dos profundidades. Con cinco por tres
- * el reparto del tablero de 52 conductores se iba a once segundos, que es exactamente el error que
- * ya cometí una vez: una búsqueda preciosa que congela el editor. Seis sitios por ducto bastan
- * para que los cables no compartan volumen, y el resto lo arregla elegir otra ranura u otro ducto.
- */
-const CARRILES_DUCTO = [0, 1, -1];
-const PROFUNDIDADES_DUCTO = [0.42, 0.68];
+
 
 /**
  * EL ÚLTIMO REPARTO, GUARDADO.
@@ -1048,66 +1040,127 @@ interface Candidato {
 	expuesto: number;
 	/** Por cuántas canaletas pasa: sirve para preferir lo simple a igualdad de lo demás. */
 	ductos: number;
+	/** Qué recursos de la red ocupa, para poder apuntarlos cuando el camino se acepta. */
+	reserva: Reserva[];
+}
+
+/** Un trozo de canaleta que un cable ocupa: qué tramo, qué carril y entre qué coordenadas. */
+interface Reserva {
+	tramo: string;
+	carril: number;
+	prof: number;
+	desde: number;
+	hasta: number;
+	ranuras: number[];
+}
+
+/** Posiciones internas que se ofrecen dentro de un ducto: tres a lo ancho por dos de profundidad. */
+const CARRILES_DUCTO = [0, 1, -1];
+const PROFUNDIDADES_DUCTO = [0.42, 0.68];
+
+/**
+ * EL MAPA DE OCUPACIÓN DE LA RED.
+ *
+ * Es la pieza que convierte el reparto de fuerza bruta en asignación incremental. Antes se
+ * generaban todas las combinaciones de ranura × carril × profundidad × camino —medidas: 355
+ * candidatos por cable, 18.504 en el estrella-triángulo— y se construía la geometría completa de
+ * cada una para medirla contra todo lo tendido. Generarlas costaba 21 ms; medirlas, un segundo y
+ * medio, y con las dos pasadas se iba a seis segundos.
+ *
+ * Con el mapa, el router no PRUEBA sitios: los ELIGE. Pregunta qué carril está más libre en el
+ * trozo que va a recorrer y qué ranura está menos cargada, construye una geometría —no
+ * trescientas— y solo si esa choca amplía la búsqueda.
+ */
+class Ocupacion {
+	/** Por tramo y carril: los trozos de eje ya ocupados. */
+	private readonly carriles = new Map<string, { desde: number; hasta: number }[]>();
+	private readonly ranuras = new Map<string, number>();
+
+	private clave(tramo: string, carril: number, prof: number): string { return `${tramo}|${carril}|${prof}`; }
+
+	apuntar(reservas: Reserva[]): void {
+		for (const r of reservas) {
+			const k = this.clave(r.tramo, r.carril, r.prof);
+			const l = this.carriles.get(k) ?? [];
+			l.push({ desde: Math.min(r.desde, r.hasta), hasta: Math.max(r.desde, r.hasta) });
+			this.carriles.set(k, l);
+			for (const x of r.ranuras) this.ranuras.set(`${r.tramo}|${Math.round(x)}`, (this.ranuras.get(`${r.tramo}|${Math.round(x)}`) ?? 0) + 1);
+		}
+	}
+
+	/** Milímetros que un trozo compartiría con lo ya tendido en ese carril. */
+	solape(tramo: string, carril: number, prof: number, desde: number, hasta: number): number {
+		const a = Math.min(desde, hasta);
+		const b = Math.max(desde, hasta);
+		let total = 0;
+		for (const r of this.carriles.get(this.clave(tramo, carril, prof)) ?? []) {
+			total += Math.max(0, Math.min(b, r.hasta) - Math.max(a, r.desde));
+		}
+		return total;
+	}
+
+	cablesEnRanura(tramo: string, x: number): number { return this.ranuras.get(`${tramo}|${Math.round(x)}`) ?? 0; }
+
+	/**
+	 * Los carriles de un tramo ordenados por lo libres que están en ese trozo. Es la pregunta que
+	 * sustituye a «genera los seis y mídelos»: aquí se contesta con aritmética sobre intervalos.
+	 */
+	mejoresCarriles(tramo: string, desde: number, hasta: number): { carril: number; prof: number }[] {
+		const sitios: { carril: number; prof: number; coste: number }[] = [];
+		for (const carril of CARRILES_DUCTO) {
+			for (const prof of PROFUNDIDADES_DUCTO) {
+				sitios.push({ carril, prof, coste: this.solape(tramo, carril, prof, desde, hasta) });
+			}
+		}
+		return sitios.sort((a, b) => a.coste - b.coste || a.carril - b.carril || a.prof - b.prof);
+	}
+
+	/** Las `n` ranuras mejores para entrar cerca de `coord`: cerca, pero repartiendo la carga. */
+	mejoresRanuras(t: Tramo, coord: number, n: number): number[] {
+		return [...t.ranuras]
+			.map((x) => ({ x, coste: Math.abs(x - coord) + this.cablesEnRanura(t.id, x) * 26 }))
+			.sort((a, b) => a.coste - b.coste)
+			.slice(0, n)
+			.map((r) => r.x);
+	}
 }
 
 /**
- * LOS CAMINOS QUE PUEDE TOMAR UN CABLE, del más deseable al menos.
+ * LOS CAMINOS QUE SE LE OFRECEN A UN CABLE, ya elegidos y pocos.
  *
- * El primero de la lista es el que el sistema preferiría: meterse en una canaleta y hacer el
- * viaje largo por dentro. Los últimos son el recurso de siempre —cruzar por delante del tablero—,
- * que sigue existiendo porque no todo par de bornes tiene una canaleta útil en medio.
- *
- * Cada camino se describe por los puntos por los que pasa, CON su profundidad: 46 mm en el borne,
- * la del carril elegido dentro del ducto, y el paso por la ranura entre medias. No hay saltos: el
- * recorrido atraviesa físicamente la boca de la ranura y el volumen de la unión.
+ * `amplitud` es el presupuesto: cuántas ranuras y cuántos carriles se consideran. Se empieza por
+ * uno de cada —lo más barato— y solo se amplía si esa primera propuesta choca. Un cable en zona
+ * despejada se resuelve con una sola geometría; uno en el centro del lío puede llegar a unas
+ * decenas. Es lo que hace que el coste dependa de la dificultad y no del tamaño del tablero.
  */
 function caminosPosibles(
-	red: RedCanaletas, a: Anclaje, b: Anclaje, sa: Punto, sb: Punto, corredores: Banda[],
+	red: RedCanaletas, ocupacion: Ocupacion, a: Anclaje, b: Anclaje, sa: Punto, sb: Punto,
+	corredores: Banda[], amplitud: number,
 ): Candidato[] {
 	const salida: Candidato[] = [];
-	const largo2D = (p: Punto3[]): number => {
-		let t = 0;
-		for (let i = 1; i < p.length; i++) t += Math.hypot(p[i].x - p[i - 1].x, p[i].y - p[i - 1].y);
-		return t;
-	};
+	const nRanuras = amplitud;
+	const nCarriles = amplitud;
 
-	/** Las `RANURAS_CERCA` ranuras más próximas a una coordenada, de cerca a lejos. */
-	const ranurasCerca = (t: Tramo, coord: number): number[] =>
-		[...t.ranuras].sort((p, q) => Math.abs(p - coord) - Math.abs(q - coord)).slice(0, RANURAS_CERCA);
-
-	/*
-	 * --- POR UNA SOLA CANALETA ---
-	 *
-	 * Sirve cuando el ducto queda ENTRE los dos bornes: el cable baja de su tornillo, entra por una
-	 * ranura, viaja por dentro y sale por otra cerca del destino. Es el caso más común con diferencia
-	 * en un tablero de verdad, donde las canaletas van entre las filas de aparatos.
-	 */
-	for (const t of red.tramos) {
+	/** Un viaje por dentro de un tramo, del eje `e0` al `e1`, entrando y saliendo por sus ranuras. */
+	const porUnDucto = (t: Tramo): void => {
 		const ca = cruzDe(t, sa.x, sa.y);
 		const cb = cruzDe(t, sb.x, sb.y);
-		// El ducto tiene que quedar entre los dos bornes; si no, entrar en él es dar un rodeo.
-		if (Math.min(ca, cb) > t.centro || Math.max(ca, cb) < t.centro) continue;
+		// El ducto tiene que quedar ENTRE los dos bornes; si no, meterse en él es dar un rodeo.
+		if (Math.min(ca, cb) > t.centro || Math.max(ca, cb) < t.centro) return;
 		const ea = ejeDe(t, sa.x, sa.y);
 		const eb = ejeDe(t, sb.x, sb.y);
-		/*
-		 * Se cruza la boca de la ranura A LA PROFUNDIDAD DEL BORNE, y solo una vez dentro se baja
-		 * al carril. Bajando antes, el cable se hundía mientras todavía estaba por encima del
-		 * aparato del que sale y lo atravesaba: la ranura llega hasta arriba del ducto, así que no
-		 * hay ninguna razón para empezar a bajar antes de llegar a ella.
-		 */
 		const zEntradaA = Math.min(a.z, t.zMax - 4);
 		const zEntradaB = Math.min(b.z, t.zMax - 4);
-		for (const ra of ranurasCerca(t, ea)) {
-			for (const rb of ranurasCerca(t, eb)) {
-				for (const carril of CARRILES_DUCTO) {
-					for (const prof of PROFUNDIDADES_DUCTO) {
-						const tt = t.centro + carril * (t.semiancho / 3);
-						if (Math.abs(tt - t.centro) > t.semiancho - 3) continue;
-						const zc = t.zMin + (t.zMax - t.zMin) * prof;
-						// Se entra por el lado del ducto que da al borne, que es por donde se llega.
-						const paredA = t.centro + Math.sign(ca - t.centro || 1) * t.semiancho;
-						const paredB = t.centro + Math.sign(cb - t.centro || 1) * t.semiancho;
-						const nodos: Punto3[] = [
+		const paredA = t.centro + Math.sign(ca - t.centro || 1) * t.semiancho;
+		const paredB = t.centro + Math.sign(cb - t.centro || 1) * t.semiancho;
+		for (const ra of ocupacion.mejoresRanuras(t, ea, nRanuras)) {
+			for (const rb of ocupacion.mejoresRanuras(t, eb, nRanuras)) {
+				for (const sitio of ocupacion.mejoresCarriles(t.id, ra, rb).slice(0, nCarriles)) {
+					const tt = t.centro + sitio.carril * (t.semiancho / 2.2);
+					if (Math.abs(tt - t.centro) > t.semiancho - 3) continue;
+					const zc = t.zMin + (t.zMax - t.zMin) * sitio.prof;
+					salida.push({
+						nodos: [
 							{ x: a.x, y: a.y, z: a.z },
 							{ x: sa.x, y: sa.y, z: a.z },
 							{ ...puntoDe(t, ra, ca), z: a.z },
@@ -1118,85 +1171,81 @@ function caminosPosibles(
 							{ ...puntoDe(t, rb, cb), z: b.z },
 							{ x: sb.x, y: sb.y, z: b.z },
 							{ x: b.x, y: b.y, z: b.z },
-						];
-						// Lo expuesto es lo que va fuera del ducto: las dos aproximaciones.
-						const fuera = Math.abs(ca - paredA) + Math.abs(ra - ea) + Math.abs(cb - paredB) + Math.abs(rb - eb);
-						salida.push({ nodos, expuesto: fuera, ductos: 1 });
-					}
+						],
+						expuesto: Math.abs(ca - paredA) + Math.abs(ra - ea) + Math.abs(cb - paredB) + Math.abs(rb - eb),
+						ductos: 1,
+						reserva: [{ tramo: t.id, carril: sitio.carril, prof: sitio.prof, desde: ra, hasta: rb, ranuras: [ra, rb] }],
+					});
 				}
+			}
+		}
+	};
+
+	/** Lo mismo cambiando de ducto en un cruce: entra por la horizontal y sale por la vertical. */
+	const porDosDuctos = (ta: Tramo, tb: Tramo): void => {
+		const cruce = red.cruceEntre(ta.id, tb.id);
+		if (!cruce) return;
+		const ca = cruzDe(ta, sa.x, sa.y);
+		const cb = cruzDe(tb, sb.x, sb.y);
+		const ea = ejeDe(ta, sa.x, sa.y);
+		const eb = ejeDe(tb, sb.x, sb.y);
+		const ejeCruceA = ta.esH ? (cruce.zona.x0 + cruce.zona.x1) / 2 : (cruce.zona.y0 + cruce.zona.y1) / 2;
+		const ejeCruceB = tb.esH ? (cruce.zona.x0 + cruce.zona.x1) / 2 : (cruce.zona.y0 + cruce.zona.y1) / 2;
+		const paredA = ta.centro + Math.sign(ca - ta.centro || 1) * ta.semiancho;
+		const paredB = tb.centro + Math.sign(cb - tb.centro || 1) * tb.semiancho;
+		for (const ra of ocupacion.mejoresRanuras(ta, ea, nRanuras)) {
+			for (const rb of ocupacion.mejoresRanuras(tb, eb, nRanuras)) {
+				for (const sitio of ocupacion.mejoresCarriles(ta.id, ra, ejeCruceA).slice(0, nCarriles)) {
+					const tta = ta.centro + sitio.carril * (ta.semiancho / 2.2);
+					const ttb = tb.centro + sitio.carril * (tb.semiancho / 2.2);
+					if (Math.abs(tta - ta.centro) > ta.semiancho - 3) continue;
+					const zc = ta.zMin + (ta.zMax - ta.zMin) * sitio.prof;
+					salida.push({
+						nodos: [
+							{ x: a.x, y: a.y, z: a.z },
+							{ x: sa.x, y: sa.y, z: a.z },
+							{ ...puntoDe(ta, ra, ca), z: a.z },
+							{ ...puntoDe(ta, ra, paredA), z: Math.min(a.z, ta.zMax - 4) },
+							{ ...puntoDe(ta, ra, tta), z: zc },
+							{ ...puntoDe(ta, ejeCruceA, tta), z: zc },
+							{ ...puntoDe(tb, ejeCruceB, ttb), z: zc },
+							{ ...puntoDe(tb, rb, ttb), z: zc },
+							{ ...puntoDe(tb, rb, paredB), z: Math.min(b.z, tb.zMax - 4) },
+							{ ...puntoDe(tb, rb, cb), z: b.z },
+							{ x: sb.x, y: sb.y, z: b.z },
+							{ x: b.x, y: b.y, z: b.z },
+						],
+						expuesto: Math.abs(ca - paredA) + Math.abs(ra - ea) + Math.abs(cb - paredB) + Math.abs(rb - eb),
+						ductos: 2,
+						reserva: [
+							{ tramo: ta.id, carril: sitio.carril, prof: sitio.prof, desde: ra, hasta: ejeCruceA, ranuras: [ra] },
+							{ tramo: tb.id, carril: sitio.carril, prof: sitio.prof, desde: ejeCruceB, hasta: rb, ranuras: [rb] },
+						],
+					});
+				}
+			}
+		}
+	};
+
+	for (const t of red.tramos) porUnDucto(t);
+	// Solo se prueban dos ductos si con uno no había forma: es el caso de cambiar de dirección.
+	if (salida.length === 0 || amplitud > 1) {
+		for (const ta of red.tramos) {
+			for (const tb of red.tramos) {
+				if (ta.id !== tb.id) porDosDuctos(ta, tb);
 			}
 		}
 	}
 
 	/*
-	 * --- POR DOS CANALETAS, CAMBIANDO EN UN CRUCE ---
-	 *
-	 * Ahora que los cruces están abiertos de verdad, un cable puede entrar por la horizontal, girar
-	 * dentro de la unión y seguir por la vertical. Es lo que permite sacar del frente los recorridos
-	 * que cambian de dirección, que antes obligaban a volver a la cara del tablero.
-	 *
-	 * El paso por el cruce NO va por el centro de la unión: cada cable lo cruza por su propio
-	 * carril. Si no, se trasladaría el amontonamiento de delante del tablero al interior del cruce.
-	 */
-	for (const ta of red.tramos) {
-		for (const tb of red.tramos) {
-			if (ta.id === tb.id) continue;
-			const cruce = red.cruceEntre(ta.id, tb.id);
-			if (!cruce) continue;
-			const ca = cruzDe(ta, sa.x, sa.y);
-			const cb = cruzDe(tb, sb.x, sb.y);
-			// Cada ducto tiene que servir para su punta: el primero para A, el segundo para B.
-			const ea = ejeDe(ta, sa.x, sa.y);
-			const eb = ejeDe(tb, sb.x, sb.y);
-			const zEntradaA = Math.min(a.z, ta.zMax - 4);
-			const zEntradaB = Math.min(b.z, tb.zMax - 4);
-			const ejeCruceA = ta.esH ? (cruce.zona.x0 + cruce.zona.x1) / 2 : (cruce.zona.y0 + cruce.zona.y1) / 2;
-			const ejeCruceB = tb.esH ? (cruce.zona.x0 + cruce.zona.x1) / 2 : (cruce.zona.y0 + cruce.zona.y1) / 2;
-			for (const ra of ranurasCerca(ta, ea)) {
-				for (const rb of ranurasCerca(tb, eb)) {
-					for (const carril of CARRILES_DUCTO) {
-						for (const prof of PROFUNDIDADES_DUCTO) {
-							const tta = ta.centro + carril * (ta.semiancho / 3);
-							const ttb = tb.centro + carril * (tb.semiancho / 3);
-							if (Math.abs(carril * (ta.semiancho / 3)) > ta.semiancho - 3) continue;
-							const zc = ta.zMin + (ta.zMax - ta.zMin) * prof;
-							const paredA = ta.centro + Math.sign(ca - ta.centro || 1) * ta.semiancho;
-							const paredB = tb.centro + Math.sign(cb - tb.centro || 1) * tb.semiancho;
-							const nodos: Punto3[] = [
-								{ x: a.x, y: a.y, z: a.z },
-								{ x: sa.x, y: sa.y, z: a.z },
-								{ ...puntoDe(ta, ra, ca), z: a.z },
-								{ ...puntoDe(ta, ra, paredA), z: zEntradaA },
-								{ ...puntoDe(ta, ra, tta), z: zc },
-								// Hasta el cruce por dentro de la primera, girar, y seguir por la segunda.
-								{ ...puntoDe(ta, ejeCruceA, tta), z: zc },
-								{ ...puntoDe(tb, ejeCruceB, ttb), z: zc },
-								{ ...puntoDe(tb, rb, ttb), z: zc },
-								{ ...puntoDe(tb, rb, paredB), z: zEntradaB },
-								{ ...puntoDe(tb, rb, cb), z: b.z },
-								{ x: sb.x, y: sb.y, z: b.z },
-								{ x: b.x, y: b.y, z: b.z },
-							];
-							const fuera = Math.abs(ca - paredA) + Math.abs(ra - ea)
-								+ Math.abs(cb - paredB) + Math.abs(rb - eb);
-							salida.push({ nodos, expuesto: fuera, ductos: 2 });
-						}
-					}
-				}
-			}
-		}
-	}
-
-	/*
-	 * --- POR DELANTE DEL TABLERO ---
-	 *
-	 * El camino de siempre, que sigue haciendo falta: dos bornes sin ninguna canaleta útil entre
-	 * ellos, o un tablero sin canaletas. Va el último porque es el que produce la cortina.
+	 * Y el camino de siempre, por delante del tablero. Sigue haciendo falta —dos bornes sin
+	 * canaleta útil en medio, o un tablero sin canaletas— pero va el último porque es el que
+	 * produce la cortina.
 	 */
 	const corredor = mejorCorredor(sa, sb, corredores);
 	const alturas = corredor ? carrilesDe(corredor) : [Math.round((sa.y + sb.y) / 2)];
-	for (const yCarril of alturas) {
-		for (const paso of PASOS_LATERALES) {
+	for (const yCarril of alturas.slice(0, Math.max(2, amplitud))) {
+		for (const paso of PASOS_LATERALES.slice(0, amplitud > 1 ? 3 : 1)) {
 			const d = paso * PASO_LATERAL;
 			for (let capa = 0; capa < CAPAS_CABLE; capa++) {
 				const zc = Z_EXPUESTO + capa * SEPARACION_CAPAS;
@@ -1208,7 +1257,9 @@ function caminosPosibles(
 					{ x: sb.x, y: sb.y, z: b.z },
 					{ x: b.x, y: b.y, z: b.z },
 				];
-				salida.push({ nodos, expuesto: largo2D(nodos), ductos: 0 });
+				let largo = 0;
+				for (let i = 1; i < nodos.length; i++) largo += Math.hypot(nodos[i].x - nodos[i - 1].x, nodos[i].y - nodos[i - 1].y);
+				salida.push({ nodos, expuesto: largo, ductos: 0, reserva: [] });
 			}
 		}
 	}
@@ -1244,6 +1295,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		z: number;
 		clave: string;
 		candidatos: Candidato[];
+		reserva: Reserva[];
 		radio: number;
 		codo: number;
 		sueloMin: (x: number, y: number) => number;
@@ -1253,6 +1305,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 
 	const puestos: Puesto[] = [];
 	const rejilla = new RejillaCables();
+	const ocupacion = new Ocupacion();
 	/** Primero que no choque; luego, que vaya lo menos expuesto posible. */
 	const puntuar = (c: Candidato, holgura: number): number =>
 		Math.min(holgura, HOLGURA_CABLE) * 1000 - c.expuesto - c.ductos * 30;
@@ -1278,43 +1331,59 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		];
 
 		// Un cable peinado a mano manda: se le respeta el trazado y solo se le busca profundidad.
-		let candidatos: Candidato[];
-		if (conductor.trazado?.length) {
-			candidatos = Array.from({ length: CAPAS_CABLE }, (_, capa) => {
-				const zc = Z_EXPUESTO + capa * SEPARACION_CAPAS;
-				return {
-					nodos: [
-						{ x: p.de.x, y: p.de.y, z: p.de.z },
-						{ x: p.salidaA.x, y: p.salidaA.y, z: p.de.z },
-						...conductor.trazado!.map((q) => ({ x: q.x, y: q.y, z: zc })),
-						{ x: p.salidaB.x, y: p.salidaB.y, z: p.a.z },
-						{ x: p.a.x, y: p.a.y, z: p.a.z },
-					] as Punto3[],
-					expuesto: 0,
-					ductos: 0,
-				};
-			});
-		} else {
-			candidatos = caminosPosibles(red, p.de, p.a, p.salidaA, p.salidaB, corredores);
-		}
+		const aMano = (): Candidato[] => Array.from({ length: CAPAS_CABLE }, (_, capa) => {
+			const zc = Z_EXPUESTO + capa * SEPARACION_CAPAS;
+			return {
+				nodos: [
+					{ x: p.de.x, y: p.de.y, z: p.de.z },
+					{ x: p.salidaA.x, y: p.salidaA.y, z: p.de.z },
+					...conductor.trazado!.map((q) => ({ x: q.x, y: q.y, z: zc })),
+					{ x: p.salidaB.x, y: p.salidaB.y, z: p.a.z },
+					{ x: p.a.x, y: p.a.y, z: p.a.z },
+				] as Punto3[],
+				expuesto: 0,
+				ductos: 0,
+				reserva: [],
+			};
+		});
 
+		/*
+		 * BÚSQUEDA POR PRESUPUESTO, CON ACEPTACIÓN TEMPRANA.
+		 *
+		 * Se empieza pidiendo una sola ranura y un solo carril —la propuesta que el mapa de
+		 * ocupación considera mejor— y se mide. Si deja holgura, se acepta y no se mira nada más:
+		 * un cable en zona despejada cuesta UNA geometría. Solo si choca se amplía la búsqueda, y
+		 * aun así con tope. Es lo que hace que el coste dependa de la dificultad del cable y no del
+		 * tamaño del tablero.
+		 */
 		let mejor: Puesto | undefined;
 		let mejorNota = -Infinity;
-		for (const cand of candidatos) {
-			const puntos = tenderCable(cand.nodos, codo, cand.ductos ? undefined : sueloMin);
-			const trazo: Trazo = { id: conductor.id, radio, puntos, bornes, extremos: [p.de, p.a] };
-			const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE);
-			const nota = puntuar(cand, choque ? choque.holgura : Infinity);
-			if (nota > mejorNota) {
-				mejorNota = nota;
-				mejor = {
-					conductorId: conductor.id, trazo, nodos: cand.nodos,
-					z: puntos[Math.floor(puntos.length / 2)].z,
-					clave: '', candidatos, radio, codo, sueloMin, de: p.de, a: p.a,
-				};
+		let candidatos: Candidato[] = [];
+		for (const amplitud of [1, 2, 3]) {
+			candidatos = conductor.trazado?.length
+				? aMano()
+				: caminosPosibles(red, ocupacion, p.de, p.a, p.salidaA, p.salidaB, corredores, amplitud);
+			for (const cand of candidatos) {
+				const puntos = tenderCable(cand.nodos, codo, cand.ductos ? undefined : sueloMin);
+				const trazo: Trazo = { id: conductor.id, radio, puntos, bornes, extremos: [p.de, p.a] };
+				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE);
+				const nota = puntuar(cand, choque ? choque.holgura : Infinity);
+				if (nota > mejorNota) {
+					mejorNota = nota;
+					mejor = {
+						conductorId: conductor.id, trazo, nodos: cand.nodos, reserva: cand.reserva,
+						z: puntos[Math.floor(puntos.length / 2)].z,
+						clave: '', candidatos, radio, codo, sueloMin, de: p.de, a: p.a,
+					};
+				}
+				// Suficientemente bueno: entra en canaleta y no choca con nadie. No se busca más.
+				if (!choque && cand.ductos > 0) break;
 			}
+			if (mejorNota >= HOLGURA_CABLE * 1000 - 400) break;   // aceptado: no hace falta ampliar
+			if (conductor.trazado?.length) break;
 		}
 		if (!mejor) continue;
+		ocupacion.apuntar(mejor.reserva);
 		mejor.clave = rejilla.anadir(mejor.trazo);
 		puestos.push(mejor);
 	}
