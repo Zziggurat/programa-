@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ESPESOR, tramoDe } from '../app/canaletas-red.js';
+import { ESPESOR, RedCanaletas, tramoDe } from '../app/canaletas-red.js';
 import {
 	auditarTramo, medidaRecomendada, seccionNecesaria,
 } from '../app/capacidad-canaletas.js';
@@ -80,4 +80,32 @@ test('una canaleta con sitio dentro pero sin ranuras libres NO se llama llena', 
 	const a = auditarTramo(t, [entra('a'), entra('b')], 3);
 	assert.equal(a.ranurasSaturadas, 1);
 	assert.match(a.motivo, /ranura/);
+});
+
+test('el router encuentra la ruta horizontal → vertical → horizontal', () => {
+	/*
+	 * LA BARRERA CONTRA LA LIMITACIÓN QUE COSTÓ TRES FASES DESCUBRIR.
+	 *
+	 * Durante mucho tiempo el generador sólo componía recorridos de uno o dos ductos, y como
+	 * ningún tablero de la biblioteca lo dejaba ver a las claras, la limitación pasó desapercibida
+	 * hasta que se midió que las canaletas iban al 3 % de su capacidad mientras los cables
+	 * pasaban por delante. Este escenario es el mínimo que la delata: dos horizontales que NO se
+	 * tocan entre sí, unidas sólo por una vertical, y un cable que tiene que ir de una a otra.
+	 *
+	 * No depende de ningún ejemplo de la biblioteca: si alguien vuelve a limitar el router a dos
+	 * tramos, esto se pone rojo.
+	 */
+	const canaletas = [
+		{ id: 'h1', orientacion: 'h' as const, x: 0, y: 100, largo: 400, ancho: 40, alto: 60 },
+		{ id: 'h2', orientacion: 'h' as const, x: 0, y: 400, largo: 400, ancho: 40, alto: 60 },
+		{ id: 'v1', orientacion: 'v' as const, x: 200, y: 80, largo: 340, ancho: 40, alto: 60 },
+	];
+	const red = new RedCanaletas(canaletas);
+	// La topología tiene que ver las dos uniones y ninguna entre las horizontales.
+	assert.ok(red.cruceEntre('h1', 'v1'), 'h1 se cruza con la vertical');
+	assert.ok(red.cruceEntre('h2', 'v1'), 'h2 se cruza con la vertical');
+	assert.ok(!red.cruceEntre('h1', 'h2'), 'las dos horizontales no se tocan');
+	// Y el camino entre ellas tiene que existir pasando por la vertical: tres tramos.
+	const ruta = red.camino('h1', 'h2');
+	assert.deepEqual(ruta, ['h1', 'v1', 'h2']);
 });
