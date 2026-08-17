@@ -5281,16 +5281,40 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			const vertical = e.orientacion === 'v';
 			const clave = tipo === 'riel' ? 'rielId' : 'canaletaId';
 			const r = renderer.domElement.getBoundingClientRect();
+			/*
+			 * SE PROBABA UN SOLO PUNTO POR TRAMO, Y ENCIMA FUERA DEL PERFIL.
+			 *
+			 * El desplazamiento perpendicular era fijo, +20 mm, y la cota fija, z = 30. Un carril
+			 * mide 35 mm de ancho medidos desde su eje, o sea que +20 cae dos milímetros y medio
+			 * POR FUERA del perfil; y z = 30 es un punto flotando veintidós milímetros por delante
+			 * de él. Que la sonda acertara dependía de que la perspectiva, desde el ángulo en que
+			 * estuviera la cámara, proyectara ese punto del aire encima del carril. Cuando no lo
+			 * hacía —y en el primer ejemplo no lo hace— la sonda daba «el perfil está cubierto de
+			 * aparatos» sobre un carril que se ve perfectamente.
+			 *
+			 * Ahora se barren varios desplazamientos DENTRO del perfil, a los dos lados de su eje,
+			 * y a la altura a la que el perfil está de verdad. La condición de aceptación no se
+			 * toca: sigue exigiendo que lo primero que se vea en ese píxel sea el propio perfil,
+			 * que es lo que distingue «hay un trozo libre» de «pincho a ver si suena la flauta».
+			 */
+			const canal = tipo === 'canaleta' ? (e as typeof g.canaletas[number]) : undefined;
+			const medio = (canal ? canal.ancho : 35) / 2;
+			const desvios = [0, medio * 0.5, -medio * 0.5, medio * 0.8, -medio * 0.8];
+			const cotas = canal ? [canal.alto, 2] : [8, 4, 12];
 			for (let t = 6; t <= e.largo - 6; t += 4) {
-				const x = vertical ? e.x + 20 : e.x + t;
-				const y = vertical ? e.y + t : e.y + 20;
-				const p = aPantalla(escenario.aEscena(x, y, 30));
-				// Solo vale si en ese píxel lo primero que se ve es el propio perfil (no un aparato).
-				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
-				raycaster.setFromCamera(puntero, camaraViva());
-				const golpe = raycaster.intersectObjects(escenario.raiz.children, true)
-					.find((h) => h.object.userData[clave] || h.object.userData.dispositivoId);
-				if (golpe?.object.userData[clave] === id) return p;
+				for (const d of desvios) {
+					for (const z of cotas) {
+						const x = vertical ? e.x + d : e.x + t;
+						const y = vertical ? e.y + t : e.y + d;
+						const p = aPantalla(escenario.aEscena(x, y, z));
+						// Solo vale si en ese píxel lo primero que se ve es el propio perfil.
+						puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
+						raycaster.setFromCamera(puntero, camaraViva());
+						const golpe = raycaster.intersectObjects(escenario.raiz.children, true)
+							.find((h) => h.object.userData[clave] || h.object.userData.dispositivoId);
+						if (golpe?.object.userData[clave] === id) return p;
+					}
+				}
 			}
 			return undefined; // el perfil está totalmente cubierto de aparatos
 		},
