@@ -370,13 +370,34 @@ function modular(g: THREE.Group, w: number, h: number, color: number, ref: strin
 	 */
 	const prof = 74;
 	const zNariz = 67;
-	const cuerpo = M.plastico(color, 0.52);
+	// Termoplástico técnico, no plástico brillante: un modular es de poliamida cargada y responde
+	// a la luz seco y mate. Con brillo de plástico de juguete, un cuadro entero de modulares se
+	// convierte en una fila de pastillas de jabón.
+	const cuerpo = M.tecnico(color);
 	cuerpoDeCarril(g, w, h, Z_BORNE, cuerpo, 1.4, 0.5);
 	const altoNariz = h * 0.5;
 	g.add(cajaCanto(w * 0.99, altoNariz, zNariz - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + zNariz) / 2, 1.3, 0.6));
+	// EL HOMBRO: el escalón achaflanado del que nace la nariz. Es lo que impide que la nariz se lea
+	// como una caja posada sobre otra caja, y es donde de verdad se apoya el destornillador.
+	for (const s of [-1, 1]) {
+		g.add(cajaCanto(w * 0.99, 2.6, 5, cuerpo, 0, s * (altoNariz / 2 + 1), Z_BORNE + 2.5, 1, 1));
+	}
 	// Cara clara del frente, donde va impresa la referencia. Va EMBUTIDA en la nariz, no posada
 	// encima: el escaloncito de medio milímetro es lo que la separa visualmente del cuerpo.
-	panelEmbutido(g, w * 0.95, altoNariz * 0.93, zNariz, M.plastico(0xf2f2ee, 0.62), 1.4, 0, 0, 1);
+	panelEmbutido(g, w * 0.95, altoNariz * 0.93, zNariz, M.plastico(0xe7e4dc, 0.66), 1.4, 0, 0, 1);
+	/*
+	 * TABIQUES ENTRE POLOS SOBRE LAS ALAS DE BORNES: las paredes que asoman entre tornillo y
+	 * tornillo. Sin ellas, la fila de bornes de un tetrapolar es una explanada lisa con cuatro
+	 * agujeros, y es justo lo contrario de lo que se ve al asomarse a un cuadro cableado.
+	 */
+	const yAla = (altoNariz / 2 + h / 2) / 2;
+	const altoAla = h / 2 - altoNariz / 2;
+	for (const s of [-1, 1]) {
+		for (let i = 1; i < polos; i++) {
+			g.add(cajaCanto(1.3, altoAla * 0.9, 6, cuerpo, i * (w / polos) - w / 2, s * yAla, Z_BORNE + 1.2, 0.4, 0.4));
+		}
+		g.add(cajaCanto(w * 0.99, 1.8, 5, cuerpo, 0, s * (h / 2 - 0.9), Z_BORNE + 0.8, 0.6, 0.5));
+	}
 
 	/*
 	 * SEPARACIÓN ENTRE POLOS. Un tetrapolar no es una caja de cuatro anchos: son cuatro módulos
@@ -385,13 +406,34 @@ function modular(g: THREE.Group, w: number, h: number, color: number, ref: strin
 	 */
 	for (let i = 1; i < polos; i++) {
 		const x = i * (w / polos) - w / 2;
-		g.add(caja(0.9, altoNariz * 0.96, 2.4, M.baquelita(0x1a1d20), x, 0, zNariz - 1));
-		g.add(caja(0.9, h * 0.9, 1.6, M.baquelita(0x1a1d20), x, 0, Z_BORNE - 0.8));
+		// La junta cruza el frontal ENTERO, de canto a canto de la nariz: si se queda corta, el
+		// aparato vuelve a leerse como un bloque único con unas rayas cortas por el medio.
+		g.add(caja(1, altoNariz, 2.4, M.baquelita(0x1a1d20), x, 0, zNariz - 0.6));
+		g.add(caja(1, h * 0.94, 1.6, M.baquelita(0x1a1d20), x, 0, Z_BORNE - 0.6));
 	}
 
-	// Hueco por el que asoma la maneta, rehundido en la cara: la maneta sale de un sitio.
-	const hueco = Math.max(6, altoNariz * 0.62);
-	g.add(caja(w * 0.9, hueco, 2.2, M.baquelita(0x15181a), 0, 0, zNariz - 1.1));
+	/*
+	 * EL ALOJAMIENTO DE LA MANETA, con su resalte alrededor.
+	 *
+	 * Antes había solo la ranura oscura, y la maneta salía de ella asomando siete milímetros: tres
+	 * tacos negros flotando sobre una cara blanca. En un modular la maneta se mueve dentro de un
+	 * RESALTE que sobresale de la cara, y ese collar es lo que hace que la pieza móvil se lea
+	 * encajada en el aparato en vez de pegada encima.
+	 */
+	const hueco = Math.max(6, altoNariz * 0.5);
+	g.add(cajaCanto(w * 0.95, hueco + 7, 3.2, cuerpo, 0, 0, zNariz + 0.4, 1.2, 0.9));
+	/*
+	 * UNA RANURA POR POLO, no una banda de lado a lado.
+	 *
+	 * Con la ranura corrida el frontal se partía en dos por una franja negra enorme y el aparato
+	 * volvía a leerse como una caja con una pegatina. Un tripolar son TRES módulos pegados y cada
+	 * uno tiene su ventana; lo que las une es la barra de acoplamiento, no el hueco. Además así se
+	 * cuentan los polos de un vistazo, que es como se identifica una protección en un cuadro.
+	 */
+	for (let i = 0; i < polos; i++) {
+		const x = (i + 0.5) * (w / polos) - w / 2;
+		g.add(caja(Math.max(4, w / polos - 3.5), hueco, 3.4, M.baquelita(0x15181a), x, 0, zNariz + 0.3));
+	}
 	/*
 	 * Palanca por polo (unidas), en gris oscuro. Se marcan como PIEZA porque con el tablero
 	 * energizado se mueven: una protección abierta baja la palanca y una disparada la deja a
@@ -405,23 +447,47 @@ function modular(g: THREE.Group, w: number, h: number, color: number, ref: strin
 	for (let i = 0; i < polos; i++) {
 		const x = (i + 0.5) * (w / polos) - w / 2;
 		const anchoP = Math.max(3.5, w / polos - 5);
-		const p1 = cajaCanto(anchoP, hueco * 0.55, 5.5, palanca, x, hueco * 0.2, prof - 3, 1, 0.5);
-		const p2 = caja(anchoP * 0.85, hueco * 0.5, 5, palanca, x, hueco * 0.02, zNariz - 2);
+		const p1 = cajaCanto(anchoP, hueco * 0.55, 5.5, palanca, x, hueco * 0.2, prof - 4, 1, 0.5);
+		const p2 = caja(anchoP * 0.85, hueco * 0.5, 5, palanca, x, hueco * 0.02, zNariz - 1);
+		// La huella antideslizante de la cara de agarre: tres estrías. Es lo que da la ESCALA de la
+		// maneta, que es lo que dice de un vistazo el tamaño del aparato entero.
+		for (const dy of [-0.3, 0, 0.3]) {
+			g.add(caja(anchoP * 0.8, 0.7, 0.6, M.baquelita(0x1b1f22), x, hueco * 0.2 + dy * hueco * 0.3, prof - 1.1));
+		}
 		p1.userData.pieza = 'palanca';
 		p2.userData.pieza = 'palanca';
 		g.add(p1, p2);
 	}
-	// Marcas I/O serigrafiadas junto al hueco: es como se lee si está metido sin tocar nada.
-	const io = etiquetaImpresa('I  ·  O', Math.min(w * 0.5, 16), 4, '#f2f2ee', '#4a4a46');
-	io.position.set(0, hueco * 0.5 + 3, zNariz + 0.5);
+	/*
+	 * LA BARRA DE ACOPLAMIENTO de un aparato de varios polos: los pasadores que unen las manetas
+	 * para que abran las tres a la vez. Es lo que distingue un tripolar de tres unipolares pegados,
+	 * y sin ella las manetas parecían justo eso, tres piezas sueltas.
+	 */
+	if (polos > 1) {
+		const barra = caja(w * 0.86, hueco * 0.2, 2.2, M.plastico(0x23272a, 0.45), 0, hueco * 0.2, prof - 5.6);
+		barra.userData.pieza = 'palanca';
+		g.add(barra);
+	}
+	/*
+	 * EL REPARTO DE LA CARA, que antes se pisaba a sí mismo: el rótulo de la referencia caía en
+	 * y = -0,38·alto y la mirilla en y = -hueco/2 - 4,5, o sea prácticamente encima, así que del
+	 * rótulo solo asomaba una franja verde. Ahora cada cosa tiene su banda: la referencia arriba,
+	 * las marcas I/O en el propio resalte de la maneta y la mirilla abajo del todo.
+	 */
+	const io = etiquetaImpresa('I  ·  O', Math.min(w * 0.5, 16), 3, '#e7e4dc', '#4a4a46');
+	io.position.set(0, hueco * 0.5 + 1.9, zNariz + 2.2);
 	g.add(io);
-	// Mirilla de estado: verde con el aparato cerrado, roja al abrirlo o dispararlo.
-	const mirilla = caja(Math.min(10, w * 0.4), 3.5, 1.2, M.plastico(0x2e7d32, 0.32), 0, -hueco * 0.5 - 3, zNariz + 0.4);
+	const et = etiquetaImpresa(ref, Math.min(w * 0.9, 30), 4.5, '#e7e4dc', '#333');
+	et.position.set(0, altoNariz * 0.42, zNariz + 0.5);
+	g.add(et);
+	// Mirilla de estado: verde con el aparato cerrado, roja al abrirlo o dispararlo. Va metida en
+	// su ventanita, no posada sobre la cara: por eso primero el marco oscuro y luego el cristal.
+	const anchoMir = Math.min(10, w * 0.4);
+	const yMir = -hueco * 0.5 - 6.3;
+	g.add(caja(anchoMir + 2, 5.2, 1.6, M.baquelita(0x15181a), 0, yMir, zNariz - 0.4));
+	const mirilla = caja(anchoMir, 3.5, 1.2, M.plastico(0x2e7d32, 0.32), 0, yMir, zNariz + 0.4);
 	mirilla.userData.pieza = 'mirilla';
 	g.add(mirilla);
-	const et = etiquetaImpresa(ref, Math.min(w * 0.9, 30), 5.5, '#f2f2ee', '#333');
-	et.position.set(0, -altoNariz * 0.38, zNariz + 0.5);
-	g.add(et);
 	return prof;
 }
 
@@ -445,20 +511,50 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	const oscuro = M.baquelita(0x15181b);
 	cuerpoDeCarril(g, w, h, Z_BORNE, cuerpo, 2, 0.8);
 	const altoNariz = h * 0.54;
-	const zNariz = prof - 12;
-	g.add(cajaCanto(w * 0.99, altoNariz, zNariz - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + zNariz) / 2, 1.8, 0.8));
-
 	/*
-	 * TABIQUES ENTRE POLOS. En un contactor los tres polos van separados por paredes que suben
-	 * desde la cara: es lo que se ve entre borne y borne y lo que impide que las tres columnas se
-	 * lean como una sola mancha. Se sacan del ancho, así que valen para cualquier tamaño.
+	 * La nariz llega CASI hasta el fondo declarado (prof), y no doce milímetros por detrás.
+	 *
+	 * Antes el volumen que marcaba la profundidad del aparato era la armadura: una losa oscura de
+	 * 12 mm posada encima de la nariz, más ancha que alta y con las esquinas redondeadas. Eso no se
+	 * lee como el bloque móvil de un contactor, se lee como una PANTALLA pegada a una caja. En un
+	 * contactor real el volumen dominante es la carcasa y todo lo demás va METIDO en ella; lo que
+	 * asoma del bloque móvil es una banda estrecha, no medio frontal.
+	 */
+	const zNariz = prof - 3;
+	g.add(cajaCanto(w * 0.99, altoNariz, zNariz - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + zNariz) / 2, 1.8, 0.9));
+	/*
+	 * EL HOMBRO entre la nariz y las alas de bornes: un escalón achaflanado, no un canto vivo.
+	 *
+	 * Es la transición que evita el «cubo sobre cubo»: la nariz no nace de la nada sobre el cuerpo,
+	 * sale de un rebaje que la rodea y por eso las dos piezas se leen encajadas una en otra.
 	 */
 	for (const s of [-1, 1]) {
-		g.add(caja(1.6, altoNariz * 0.9, 3, oscuro, s * w * 0.165, 0, zNariz - 1.4));
+		g.add(cajaCanto(w * 0.99, 3.2, 6, cuerpo, 0, s * (altoNariz / 2 + 1.2), Z_BORNE + 3, 1.4, 1.2));
 	}
-	// Y las ranuras que separan las alas de bornes del cuerpo, arriba y abajo.
+	// NERVIOS de los costados: las paredes de un contactor van acarteladas, y de perfil es lo que
+	// impide que el flanco sea una losa lisa.
 	for (const s of [-1, 1]) {
-		g.add(caja(w * 0.94, 1.4, 2.2, oscuro, 0, s * (altoNariz / 2 + 1.6), Z_BORNE - 1.1));
+		for (const dy of [-0.26, 0, 0.26]) {
+			g.add(caja(1.2, altoNariz * 0.2, zNariz - Z_BORNE - 6, oscuro, s * w * 0.495, dy * altoNariz, (Z_BORNE + zNariz) / 2));
+		}
+	}
+
+	/*
+	 * TABIQUES ENTRE POLOS, sobre las ALAS DE BORNES y no sobre la nariz.
+	 *
+	 * Estaban en el sitio equivocado: subían por el frontal, donde en un contactor no hay nada que
+	 * separar, mientras que los tornillos de arriba y de abajo —que es donde de verdad hace falta
+	 * aislar un polo del siguiente— quedaban en una explanada lisa. Ahora son las paredes que
+	 * asoman ENTRE tornillo y tornillo, que es lo que se ve al asomarse a un contactor cableado.
+	 */
+	const yAla = (altoNariz / 2 + h / 2) / 2;
+	const altoAla = h / 2 - altoNariz / 2;
+	for (const s of [-1, 1]) {
+		for (const dx of [-1, 1]) {
+			g.add(cajaCanto(1.8, altoAla * 0.92, 7, cuerpo, dx * w * 0.165, s * yAla, Z_BORNE + 1.4, 0.5, 0.5));
+		}
+		// El reborde exterior del ala: el labio que remata la fila de bornes por su canto.
+		g.add(cajaCanto(w * 0.99, 2.2, 6, cuerpo, 0, s * (h / 2 - 1.1), Z_BORNE + 1, 0.8, 0.7));
 	}
 
 	/*
@@ -468,11 +564,28 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	 * su golpe seco. Es LO que se mira para saber si el contactor ha metido, y por eso se marca
 	 * como pieza: con el tablero energizado se mueve de verdad.
 	 */
-	const armadura = cajaCanto(w * 0.86, altoNariz * 0.66, 12, M.plastico(0x22262a, 0.45), 0, 0, prof - 6, 1.6, 0.6);
+	// El ALOJAMIENTO donde va metida: un pocillo rehundido en la nariz, más grande que la pieza.
+	// Sin él la armadura estaría posada sobre el frontal; con él está DENTRO de la carcasa, y esa
+	// es la diferencia entre una pieza montada y una pieza pegada.
+	const anchoArm = w * 0.62;
+	const altoArm = altoNariz * 0.28;
+	const yArm = altoNariz * 0.06;
+	g.add(caja(anchoArm + 3, altoArm + 3, 5, oscuro, 0, yArm, zNariz - 2.5));
+	const armadura = cajaCanto(anchoArm, altoArm, 6, M.plastico(0x353b41, 0.42), 0, yArm, zNariz - 1.4, 1, 0.5);
 	armadura.userData.pieza = 'armadura';
 	g.add(armadura);
-	// Frontal embutido de la armadura: el rehundido que devuelve la línea de sombra del contorno.
-	g.add(cajaCanto(w * 0.7, altoNariz * 0.44, 1.2, M.plastico(0x2b3035, 0.5), 0, altoNariz * 0.04, prof - 0.4, 1.2, 0.3));
+	// Su cara vista, embutida a su vez: el reflejo del contorno es lo que la hace leerse como bloque.
+	g.add(cajaCanto(anchoArm * 0.8, altoArm * 0.5, 1.2, M.plastico(0x22262a, 0.5), 0, yArm, zNariz + 1, 0.8, 0.3));
+	/*
+	 * BAHÍAS DE BLOQUE AUXILIAR arriba, una a cada lado: los dos huecos con sus pestañas donde se
+	 * clipa el contacto auxiliar. Es un detalle que solo tienen los contactores, así que es de lo
+	 * que más ayuda a que este aparato no se confunda con ningún otro del tablero.
+	 */
+	for (const s of [-1, 1]) {
+		const xb = s * w * 0.26;
+		g.add(caja(w * 0.3, altoNariz * 0.14, 3.5, oscuro, xb, altoNariz * 0.36, zNariz - 1.7));
+		g.add(caja(w * 0.3, 1.1, 2, M.plastico(0x4a5157, 0.5), xb, altoNariz * 0.29, zNariz - 0.6));
+	}
 	/*
 	 * Rejilla de ventilación de verdad, ranura a ranura.
 	 *
@@ -480,7 +593,7 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	 * primera vuelta, el `+ i * 0` no sumaba nada y lo que salía eran DOS losas negras de medio
 	 * aparato de fondo pegadas a los costados —y sobresaliendo 0,2 mm de ellos—, no una rejilla.
 	 */
-	rejilla(g, 3, w * 0.62, altoNariz * 0.18, 0, altoNariz * 0.41, zNariz - 0.5);
+	rejilla(g, 3, w * 0.62, altoNariz * 0.14, 0, -altoNariz * 0.4, zNariz - 0.9);
 
 	/*
 	 * LA ZONA DE BOBINA, abajo: el bloque que aloja el electroimán, con su tapa de otro plástico
@@ -497,10 +610,10 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	 * Ventana portaetiquetas en la NARIZ, no sobre la armadura: la armadura baja 2,2 mm al meter
 	 * el contactor, así que un rótulo pegado a ella se despegaría del aparato cada vez que entra.
 	 */
-	const yEt = -altoNariz * 0.41;
-	g.add(caja(w * 0.76, Math.min(9, altoNariz * 0.16), 1.4, M.baquelita(0x1a1e21), 0, yEt, zNariz - 0.4));
+	const yEt = -altoNariz * 0.22;
+	g.add(caja(w * 0.76, Math.min(9, altoNariz * 0.16), 1.4, M.baquelita(0x1a1e21), 0, yEt, zNariz - 0.7));
 	const et = etiquetaImpresa(ref, w * 0.72, Math.min(7, altoNariz * 0.14), '#e8e8e4', '#222');
-	et.position.set(0, yEt, zNariz + 0.5);
+	et.position.set(0, yEt, zNariz + 0.2);
 	g.add(et);
 	return prof;
 }
@@ -885,22 +998,67 @@ function fusibleModelo(g: THREE.Group, w: number, h: number, color: number): num
 	 * tapa cabe dentro de la profundidad declarada.
 	 */
 	const altoTapa = Math.min(h * 0.62, 48);
+	const anchoTapa = w * 0.82;
+	const hondoTapa = 12;
+	const cajon = M.plastico(0x2b3035, 0.45);
 	const bisagra = new THREE.Group();
 	bisagra.position.set(0, -h * 0.3, zCuerpo + 1.5);
 	// Positivo: la tapa se abate HACIA FUERA. Con el signo al revés la punta se iba hacia dentro.
 	bisagra.rotation.x = 0.18;
-	const tapa = cajaCanto(w * 0.82, altoTapa, 9, M.plastico(0x2b3035, 0.45), 0, altoTapa / 2, 4.5, 1.4, 0.6);
-	bisagra.add(tapa);
-	// El cartucho cerámico asomando por la ventana de la tapa.
-	bisagra.add(cilindro(Math.min(w * 0.16, 6), altoTapa * 0.7, M.plastico(0xd9cdb4, 0.7),
-		0, altoTapa / 2, 8.6, false));
-	bisagra.add(caja(w * 0.4, 1.6, 1.4, M.baquelita(0x15181a), 0, altoTapa * 0.86, 9.2));
+	/*
+	 * EL CAJÓN ES HUECO, que es toda la gracia de un portafusible.
+	 *
+	 * La tapa era un bloque MACIZO de 9 mm con el cartucho cerámico clavado a 8,6: el cartucho
+	 * atravesaba la tapa de parte a parte y asomaba cinco milímetros y medio por delante, como un
+	 * puro metido en un ladrillo. Un portafusible de verdad es un cajoncito abatible —fondo, dos
+	 * costados, dos topes y un marco frontal con su ventana— y el cartucho va DENTRO, visible por
+	 * la ventana y sin salir por ningún lado. Construyéndolo por piezas sale hueco de verdad, sin
+	 * necesidad de recortar geometría.
+	 */
+	const medioX = anchoTapa / 2;
+	bisagra.add(caja(anchoTapa, altoTapa, 1.6, cajon, 0, altoTapa / 2, 0.8));              // fondo
+	for (const s of [-1, 1]) {
+		bisagra.add(caja(1.8, altoTapa, hondoTapa, cajon, s * (medioX - 0.9), altoTapa / 2, hondoTapa / 2));
+	}
+	for (const y of [1.4, altoTapa - 1.4]) {
+		bisagra.add(caja(anchoTapa, 2.8, hondoTapa, cajon, 0, y, hondoTapa / 2));           // topes
+	}
+	// Marco frontal: cuatro tiras alrededor del hueco, para que la ventana sea un hueco de verdad.
+	const marco = Math.max(2, anchoTapa * 0.14);
+	for (const s of [-1, 1]) {
+		bisagra.add(caja(marco, altoTapa, 2.4, cajon, s * (medioX - marco / 2), altoTapa / 2, hondoTapa - 1.2));
+	}
+	for (const y of [altoTapa * 0.13, altoTapa * 0.87]) {
+		bisagra.add(caja(anchoTapa, altoTapa * 0.2, 2.4, cajon, 0, y, hondoTapa - 1.2));
+	}
+	/*
+	 * El CARTUCHO, dentro del cajón y sin tocar el marco: cuerpo cerámico y los dos casquillos
+	 * metálicos de los extremos, que es por donde hace contacto. Es lo que se mira para saber qué
+	 * calibre lleva puesto un cuadro, así que merece los dos materiales.
+	 */
+	const rCart = Math.min(w * 0.15, (hondoTapa - 4.6) / 2, altoTapa * 0.12);
+	const zCart = 1.6 + (hondoTapa - 4 - 1.6) / 2;
+	const largoCart = altoTapa * 0.6;
+	bisagra.add(cilindro(rCart, largoCart, M.plastico(0xd6cbb2, 0.78), 0, altoTapa / 2, zCart, false));
+	for (const s of [-1, 1]) {
+		bisagra.add(cilindro(rCart * 1.06, largoCart * 0.16, M.galvanizado(0xb4babf),
+			0, altoTapa / 2 + s * largoCart * 0.42, zCart, false));
+	}
+	// La UÑA de agarre arriba: el resalte estriado del que se tira para abatir el cajón.
+	bisagra.add(cajaCanto(anchoTapa * 0.62, 4.4, 3.6, cajon, 0, altoTapa - 2.6, hondoTapa + 1.4, 0.8, 0.6));
+	for (const dx of [-1, 0, 1]) {
+		bisagra.add(caja(0.8, 3.4, 0.8, M.baquelita(0x15181a), dx * anchoTapa * 0.14, altoTapa - 2.6, hondoTapa + 3));
+	}
 	g.add(bisagra);
+	// El ALOJAMIENTO del cajón en el cuerpo, rehundido: el cajón no se apoya en una cara lisa, se
+	// mete en su hueco, y el escalón que lo rodea es lo que lo enseña como pieza desmontable.
+	g.add(caja(anchoTapa + 2.4, altoTapa * 0.9, 4, M.baquelita(0x14171a), 0, -h * 0.3 + altoTapa * 0.42, zCuerpo - 1));
 	g.add(cilindro(2, w * 0.86, M.metal(0x8d949a), 0, -h * 0.3, zCuerpo + 1.5, false));
-	// Testigo de fusión.
+	// Testigo de fusión, metido en su ventanita.
+	g.add(caja(w * 0.46, 4.4, 1.4, M.baquelita(0x15181a), 0, -h * 0.42, zCuerpo - 0.2));
 	g.add(caja(w * 0.4, 3, 1.4,
 		new THREE.MeshStandardMaterial({ color: 0xd23b3b, emissive: 0x881111, emissiveIntensity: 0.3 }),
-		0, -h * 0.42, zCuerpo + 0.4));
+		0, -h * 0.42, zCuerpo + 0.6));
 	return prof;
 }
 
@@ -1216,8 +1374,10 @@ export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: TH
 		case 'rele':
 			// Un aparato que declara rango de regulación es un térmico de sobrecarga: se tara, y
 			// eso se le ve por fuera. Lo demás que llega como relé son relés y temporizadores.
+			// El azul de fábrica del tipo es el del relé ENCHUFABLE, que es azul de verdad. Un
+			// térmico de sobrecarga es gris antracita: con el azul del relé se quedaba de juguete.
 			profundidad = d.rangoRegulacionA
-				? releTermicoModelo(g, w, h, color, ref)
+				? releTermicoModelo(g, w, h, d.colorCuerpo ? color : 0x585f66, ref)
 				: w <= 30 ? releAux(g, w, h, COLOR_TIPO.rele) : contactor(g, w, h, 0x4a545c, ref);
 			break;
 		case 'plc':

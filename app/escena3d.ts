@@ -186,7 +186,22 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
  */
 export function construirBornes(proyecto: Proyecto, aEscena: Escenario['aEscena']): THREE.Group {
 	const grupo = new THREE.Group();
+	/*
+	 * DOS FORMAS, no una.
+	 *
+	 * El borne LIBRE es una invitación a pinchar: bola naranja, que es lo que se ve desde lejos y
+	 * lo que dice «aquí se cablea». El borne YA CABLEADO no invita a nada, y sin embargo se pintaba
+	 * con la misma bola: el resultado era una perla gris flotando por delante del tornillo del
+	 * aparato —que está modelado ahí debajo, con su pocillo y su jaula— y tapándolo. De cerca,
+	 * donde el terminal tenía que ser lo más convincente del tablero, lo que se veía era una canica.
+	 *
+	 * Ahora el cableado es un CASQUILLO metálico bajo y ancho, del mismo radio que la bola: se lee
+	 * como el collar del terminal por el que entra el hilo, no como un cuerpo suelto. El radio se
+	 * mantiene a propósito, porque de él depende lo fácil que es pinchar un borne para cablear.
+	 */
 	const geo = new THREE.SphereGeometry(4.2, 12, 12);
+	const geoCasquillo = new THREE.CylinderGeometry(4.2, 4.2, 3.4, 16);
+	geoCasquillo.rotateX(Math.PI / 2);
 	// Bornes ya cableados: se pintan apagados; los que faltan por conectar, en naranja vivo.
 	// Así de un vistazo se ve qué queda por cablear, como al revisar un tablero de verdad.
 	const usados = new Set<string>();
@@ -199,12 +214,12 @@ export function construirBornes(proyecto: Proyecto, aEscena: Escenario['aEscena'
 			const pos = anclajeBorne(proyecto, d.id, b.id);
 			if (!pos) continue;
 			const conectado = usados.has(`${d.id}:${b.id}`);
-			const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-				color: conectado ? 0x6f7c89 : 0xffb63a,
+			const m = new THREE.Mesh(conectado ? geoCasquillo : geo, new THREE.MeshStandardMaterial({
+				color: conectado ? 0x8d959c : 0xffb63a,
 				emissive: conectado ? 0x11161b : 0x4a3200,
 				emissiveIntensity: 1,
-				roughness: 0.35,
-				metalness: 0.2,
+				roughness: conectado ? 0.42 : 0.35,
+				metalness: conectado ? 0.8 : 0.2,
 			}));
 			// Justo por delante del aparato pero POR DETRÁS del plano por el que corren los cables
 			// (Z_FRENTE): si sobresaliera más, la esfera taparía al cable que pasa por encima del
@@ -354,14 +369,43 @@ function construirCaja(g: Gabinete, realista = false): THREE.Group {
 			transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false,
 		});
 
-	// Placa de montaje (galvanizada, ligeramente cálida).
-	const placa = new THREE.Mesh(
-		new THREE.BoxGeometry(g.ancho, g.alto, 3),
-		new THREE.MeshStandardMaterial({ color: 0xd8d9d2, metalness: 0.35, roughness: 0.5 }),
-	);
+	/*
+	 * LA PLACA DE MONTAJE es la superficie más grande del tablero, y era la que menos decía.
+	 *
+	 * Una losa de 3 mm con `metalness: 0.35` no es ni chapa ni pintura: le sale un lustre metálico
+	 * uniforme que a la escala del tablero se lee como un PLANO, no como una pieza. Una placa de
+	 * montaje real es chapa de acero de 2 mm plegada y pintada: debajo hay metal, pero lo que la
+	 * luz toca es la pintura, que es mate. Y no está pegada al fondo del armario: se atornilla
+	 * sobre unos espárragos que la separan del fondo, y esa separación —con su sombra— es lo que
+	 * hace que se vea como una chapa montada y no como el fondo mismo del armario.
+	 */
+	const pintura = new THREE.MeshStandardMaterial({ color: 0xdcdbd4, metalness: 0.12, roughness: 0.62 });
+	const placa = new THREE.Mesh(new THREE.BoxGeometry(g.ancho, g.alto, 4), pintura);
 	placa.receiveShadow = true;
-	placa.position.z = -1.5;
+	placa.castShadow = true;
+	placa.position.z = -2;
 	grupo.add(placa);
+	// Pliegue perimetral: el canto doblado que rigidiza la chapa. Sin él el borde de la placa es
+	// una arista viva de 4 mm que no coge luz y delata que aquello es una caja, no una plancha.
+	for (const [w, h, x, y] of [
+		[g.ancho, 6, 0, g.alto / 2 - 3], [g.ancho, 6, 0, -g.alto / 2 + 3],
+		[6, g.alto, -g.ancho / 2 + 3, 0], [6, g.alto, g.ancho / 2 - 3, 0],
+	] as const) {
+		const pliegue = new THREE.Mesh(new THREE.BoxGeometry(w, h, 9), pintura);
+		pliegue.position.set(x, y, -6.5);
+		pliegue.receiveShadow = true;
+		grupo.add(pliegue);
+	}
+	// Espárragos de separación: los cuatro que la levantan del fondo del armario.
+	const esparrago = new THREE.MeshStandardMaterial({ color: 0x9aa1a7, metalness: 0.7, roughness: 0.5 });
+	for (const sx of [-1, 1]) {
+		for (const sy of [-1, 1]) {
+			const e = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 8, 12), esparrago);
+			e.rotation.x = Math.PI / 2;
+			e.position.set(sx * (g.ancho / 2 - 22), sy * (g.alto / 2 - 22), -8);
+			grupo.add(e);
+		}
+	}
 
 	// Fondo y paredes de la envolvente (frente abierto para mirar dentro).
 	const fondoCaja = new THREE.Mesh(new THREE.BoxGeometry(ancho, alto, 2), chapaLateral);
@@ -417,7 +461,14 @@ export function construirRiel(
 	 * pinza del aparato. Sin esos labios no había nada de lo que engancharse, y de perfil el
 	 * carril se leía como un listón.
 	 */
-	const material = new THREE.MeshStandardMaterial({ color: 0xb8bec3, metalness: 0.78, roughness: 0.42 });
+	/*
+	 * El cincado NO es un espejo. Con `roughness: 0.42` el carril devolvía un reflejo estrecho y
+	 * limpio, propio de un inoxidable pulido, y a la escala del tablero eso lo dejaba de cromo. El
+	 * zincado electrolítico de un TS35 es metal de verdad pero de brillo ANCHO y algo sucio: se ve
+	 * la luz recorrer el perfil en vez de un punto especular. Es lo que lo separa del plástico de
+	 * los aparatos que lleva encima sin necesidad de cambiarle el color.
+	 */
+	const material = new THREE.MeshStandardMaterial({ color: 0xacb2b7, metalness: 0.72, roughness: 0.54 });
 	const esV = riel.orientacion === 'v';
 	const CHAPA = 1.3;
 	const anchoBase = ALTO_RIEL - 16;   // el alma queda 8 mm por dentro de cada labio
@@ -436,14 +487,22 @@ export function construirRiel(
 	};
 	// Base contra la placa, con sus taladros alargados de fijación.
 	tira(anchoBase, CHAPA, 0, CHAPA / 2);
+	/*
+	 * Los taladros son AGUJEROS, y estaban puestos como pastillas: una caja de CHAPA + 0,6 mm de
+	 * grosor centrada en la chapa asoma tres décimas por delante y tres por detrás, así que lo que
+	 * se veía eran unos tacos grises SALIENDO del carril. Un agujero rasgado no sobresale: se
+	 * hunde, y por él se ve la placa que hay detrás. Con el fondo oscuro y metido bajo la cara del
+	 * carril se lee como lo que es, sin necesidad de recortar la geometría de verdad.
+	 */
+	const agujero = new THREE.MeshStandardMaterial({ color: 0x4d5459, metalness: 0.5, roughness: 0.7 });
 	const taladros = Math.max(2, Math.floor(riel.largo / 55));
 	for (let i = 0; i < taladros; i++) {
 		const d = (i + 0.5) * (riel.largo / taladros) - riel.largo / 2;
 		const t = new THREE.Mesh(
-			new THREE.BoxGeometry(esV ? 6.5 : 14, esV ? 14 : 6.5, CHAPA + 0.6),
-			new THREE.MeshStandardMaterial({ color: 0x8e959b, metalness: 0.6, roughness: 0.6 }),
+			new THREE.BoxGeometry(esV ? 6.5 : 14, esV ? 14 : 6.5, CHAPA),
+			agujero,
 		);
-		t.position.set(esV ? 0 : d, esV ? d : 0, CHAPA / 2);
+		t.position.set(esV ? 0 : d, esV ? d : 0, CHAPA / 2 - 0.35);
 		grupo.add(t);
 	}
 	// Almas y labios: el sombrero.
@@ -473,14 +532,29 @@ export function construirCanaleta(
 	red?: RedCanaletas,
 ): THREE.Group {
 	const grupo = new THREE.Group();
-	const pvc = new THREE.MeshStandardMaterial({ color: 0xb0b6ba, roughness: 0.75 });
+	/*
+	 * EL CUERPO Y LA TAPA TIENEN QUE DISTINGUIRSE, y no se distinguían.
+	 *
+	 * Eran dos grises casi iguales (0xb0b6ba contra 0xc2c8cc) con la misma rugosidad, así que el
+	 * conjunto se leía como UNA pieza de plástico con unas muescas: no se veía dónde acababa el
+	 * ducto y empezaba su tapa. En una canaleta de verdad no hay duda ninguna, porque la tapa es
+	 * una pieza aparte que se monta a presión y descansa sobre las paredes.
+	 *
+	 * El cuerpo es PVC rígido de extrusión: seco, mate y algo más oscuro. La tapa va más clara y
+	 * un punto más satinada —se manosea al montarla y al quitarla— y, sobre todo, MONTA sobre el
+	 * cuerpo: sobresale un milímetro por cada lado, que es el reborde por el que se hace palanca
+	 * con el destornillador. Ese milímetro de vuelo es lo que devuelve la línea de sombra que
+	 * separa las dos piezas sin necesidad de ningún truco de iluminación.
+	 */
+	const pvc = new THREE.MeshStandardMaterial({ color: 0xa2a8ad, roughness: 0.84, metalness: 0.02 });
 	// Trabajando, la tapa es translúcida para ver por dónde va el cableado. En Visualización el
 	// tablero se ve como es de verdad: la tapa es PVC macizo y tapa lo que hay debajo.
 	const pvcTapa = realista
-		? new THREE.MeshStandardMaterial({ color: 0xc2c8cc, roughness: 0.7 })
+		? new THREE.MeshStandardMaterial({ color: 0xd2d7da, roughness: 0.58, metalness: 0.02 })
 		: new THREE.MeshStandardMaterial({
-			color: 0xc2c8cc, roughness: 0.7, transparent: true, opacity: 0.4, depthWrite: false,
+			color: 0xd2d7da, roughness: 0.58, transparent: true, opacity: 0.4, depthWrite: false,
 		});
+	const VUELO_TAPA = 1.1;
 	const esH = can.orientacion === 'h';
 	const largoX = esH ? can.largo : can.ancho;
 	const largoY = esH ? can.ancho : can.largo;
@@ -530,10 +604,12 @@ export function construirCanaleta(
 	};
 
 	const placa = (grosor: number, z: number, mat: THREE.Material, esTapa: boolean): void => {
+		// La tapa vuela sobre el cuerpo; el fondo va justo del ancho interior del ducto.
+		const v = esTapa ? VUELO_TAPA * 2 : 0;
 		porTrozos(6, cede, (desde, largo) => {
 			const caja = esH
-				? new THREE.BoxGeometry(largo, largoY, grosor)
-				: new THREE.BoxGeometry(largoX, largo, grosor);
+				? new THREE.BoxGeometry(largo, largoY + v, grosor)
+				: new THREE.BoxGeometry(largoX + v, largo, grosor);
 			const m = new THREE.Mesh(caja, mat);
 			const centro = desde + largo / 2 - ejeCentro;
 			m.position.set(esH ? centro : 0, esH ? 0 : centro, z);
@@ -727,8 +803,12 @@ function anadirTuboCable(
 	 * —el cuello de plástico y el tubo metálico—, sin texto y sin textura, así que no cuestan
 	 * memoria: es geometría y ya.
 	 */
-	const collarin = new THREE.MeshStandardMaterial({ color: 0xe9ebec, roughness: 0.5 });
-	const metal = new THREE.MeshStandardMaterial({ color: 0xc3c8cc, metalness: 0.85, roughness: 0.4 });
+	// Plástico del cuello: satinado de PVC, ni brillante ni mate del todo, y de un blanco frío. Un
+	// blanco puro y pulido a esta escala se lee como una cuenta de plástico de juguete.
+	const collarin = new THREE.MeshStandardMaterial({ color: 0xdfe3e6, roughness: 0.46, metalness: 0 });
+	// Cobre estañado del tubo engastado: metal de verdad, para que a la luz NO responda como el
+	// plástico que tiene pegado al lado. Es la diferencia que hace legible el conjunto de cerca.
+	const metal = new THREE.MeshStandardMaterial({ color: 0xc9ced2, metalness: 0.88, roughness: 0.31 });
 	const largoCurva = curva.getLength();
 	if (largoCurva > 40) {
 		const eje = new THREE.Vector3(0, 1, 0);
@@ -738,19 +818,37 @@ function anadirTuboCable(
 		 * el desplazamiento se aplicaba hacia FUERA del recorrido, así que el casquillo metálico
 		 * acababa clavado dentro del aparato y torcido respecto del hilo del que cuelga.
 		 *
-		 *   3,5 mm  el tubo metálico engastado, el que entra en el tornillo
-		 *   9,5 mm  el cuello de plástico, un poco más gordo, ya sobre el aislante
+		 *   3,0 mm  el tubo metálico engastado, el que entra bajo el tornillo
+		 *   8,4 mm  el cuello de plástico, ya sobre el aislante
+		 *
+		 * LOS DIÁMETROS IMPORTAN, y estaban al revés: el tubo metálico salía MÁS GORDO que el hilo
+		 * (radio + 0,45) y el cuello más gordo todavía, así que la punta del cable engordaba en dos
+		 * escalones y remataba en un tapón. En una puntera de verdad el metal es más FINO que el
+		 * aislante —es el conductor desnudo, sin la funda— y el cuello es el único resalte. Con el
+		 * cuello además cónico, la transición aislamiento → puntera → borne se lee de un tirón en
+		 * vez de como tres cilindros encajados a tope.
 		 */
-		for (const desdeLaPunta of [3.5, 9.5]) {
-			const esCuello = desdeLaPunta > 6;
-			const largo = esCuello ? 5.5 : 6;
-			const r = radio + (esCuello ? 1.1 : 0.45);
+		const rCuelloGordo = radio + 1.05;
+		const rCuelloFino = radio + 0.35;
+		for (const pieza of ['metal', 'cuello'] as const) {
+			const esCuello = pieza === 'cuello';
+			const desdeLaPunta = esCuello ? 8.4 : 3.0;
+			const largo = esCuello ? 5.6 : 5.2;
 			for (const extremo of [0, 1]) {
 				const t = extremo === 0 ? desdeLaPunta / largoCurva : 1 - desdeLaPunta / largoCurva;
-				const casquillo = new THREE.Mesh(
-					new THREE.CylinderGeometry(r, r, largo, 10),
-					esCuello ? collarin : metal,
-				);
+				/*
+				 * El cono mira al lado que toca. La tangente de la curva apunta SIEMPRE en el
+				 * sentido del recorrido, así que en la punta de salida el ancho del cono queda del
+				 * lado del cable y en la de llegada del lado contrario: sin invertirlo, una de las
+				 * dos punteras del hilo saldría con el embudo al revés.
+				 */
+				const haciaLaPunta = extremo === 1;
+				const geo = esCuello
+					? new THREE.CylinderGeometry(
+						haciaLaPunta ? rCuelloFino : rCuelloGordo,
+						haciaLaPunta ? rCuelloGordo : rCuelloFino, largo, 12)
+					: new THREE.CylinderGeometry(radio * 0.8, radio * 0.8, largo, 12);
+				const casquillo = new THREE.Mesh(geo, esCuello ? collarin : metal);
 				casquillo.position.copy(curva.getPointAt(t));
 				casquillo.quaternion.setFromUnitVectors(eje, curva.getTangentAt(t).normalize());
 				casquillo.userData.conductorId = conductorId;

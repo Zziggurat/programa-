@@ -5655,6 +5655,26 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			x: camara.position.x, y: camara.position.y, z: camara.position.z,
 			tx: controles.target.x, ty: controles.target.y, tz: controles.target.z,
 		}),
+		/**
+		 * Pone la vista EXACTAMENTE donde se le diga, sin pasar por el ratón.
+		 *
+		 * Las fotos de revisión visual tienen que salir desde el mismo sitio antes y después de un
+		 * cambio, y arrastrando el ratón eso no se consigue: cada arrastre real cuesta segundos en
+		 * este contenedor y llega adonde llega. Aquí se dan las coordenadas y se acabó.
+		 */
+		verDesde: (v: { x: number; y: number; z: number; tx?: number; ty?: number; tz?: number }) => {
+			camara.position.set(v.x, v.y, v.z);
+			controles.target.set(v.tx ?? 0, v.ty ?? 0, v.tz ?? 0);
+			controles.update();
+		},
+		/** Centro y radio de un aparato en coordenadas de mundo, para poder encuadrarlo de cerca. */
+		bulto: (dispositivoId: string) => {
+			const g = escenario.dispositivos.children.find((o) => o.userData.dispositivoId === dispositivoId);
+			if (!g) return undefined;
+			const caja = new THREE.Box3().setFromObject(g);
+			const c = caja.getCenter(new THREE.Vector3());
+			return { x: c.x, y: c.y, z: c.z, radio: caja.getSize(new THREE.Vector3()).length() / 2 };
+		},
 		/** Estado de la vista 2D: si está puesta, y si la cámara viva es de verdad ortográfica. */
 		vista2D: () => ({
 			activa: vista2D,
