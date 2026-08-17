@@ -356,6 +356,38 @@ export function cajaDe(g: Gabinete): { ancho: number; alto: number; profundidad:
  * viendo el interior; en modo VISUALIZACIÓN (`realista`) son de chapa opaca y se añade la
  * puerta abierta, para ver el tablero tal como quedaría montado.
  */
+/**
+ * El GRANO de la pintura al horno: ruido suave en el canal de rugosidad, no en el color.
+ *
+ * Va en rugosidad a propósito. Metido en el color saldría suciedad —manchas grises sobre la
+ * chapa—, que es justo el ruido visible que no se quiere. En rugosidad lo que cambia es cómo
+ * devuelve la luz cada trocito de superficie: no se ve el mapa, se ve que la chapa tiene piel.
+ *
+ * Se construye una sola vez y la comparten todas las placas del programa.
+ */
+let granoCache: THREE.CanvasTexture | undefined;
+function granoDePintura(): THREE.CanvasTexture {
+	if (granoCache) return granoCache;
+	const lado = 64;
+	const canvas = document.createElement('canvas');
+	canvas.width = canvas.height = lado;
+	const ctx = canvas.getContext('2d')!;
+	const img = ctx.createImageData(lado, lado);
+	for (let i = 0; i < lado * lado; i++) {
+		// Banda estrecha alrededor del valor medio: el mapa MULTIPLICA la rugosidad del material,
+		// así que un rango amplio convertiría la pintura en una superficie sucia a manchas.
+		const v = 210 + Math.round(Math.random() * 45);
+		img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+		img.data[i * 4 + 3] = 255;
+	}
+	ctx.putImageData(img, 0, 0);
+	const tex = new THREE.CanvasTexture(canvas);
+	tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+	tex.repeat.set(26, 26);
+	granoCache = tex;
+	return tex;
+}
+
 function construirCaja(g: Gabinete, realista = false): THREE.Group {
 	const grupo = new THREE.Group();
 	const caja = cajaDe(g);
@@ -379,7 +411,19 @@ function construirCaja(g: Gabinete, realista = false): THREE.Group {
 	 * sobre unos espárragos que la separan del fondo, y esa separación —con su sombra— es lo que
 	 * hace que se vea como una chapa montada y no como el fondo mismo del armario.
 	 */
-	const pintura = new THREE.MeshStandardMaterial({ color: 0xdcdbd4, metalness: 0.12, roughness: 0.62 });
+	/*
+	 * El TONO también importa: en gris muy claro la placa quedaba al mismo valor que los aparatos
+	 * modulares blancos y que las tapas de las canaletas, y el tablero entero se leía como una
+	 * mancha clara con cables encima. Un RAL 7035 de verdad es bastante más apagado, y con él los
+	 * aparatos claros se recortan contra el fondo en vez de fundirse con él.
+	 *
+	 * Y lleva GRANO. Una pintura al horno no es un espejo mate perfecto: tiene piel de naranja, y
+	 * a esta escala es lo único que distingue una chapa pintada de un plano de color. El mapa de
+	 * rugosidad es un ruido de 64×64 repetido, o sea, dieciséis kilobytes para toda la placa.
+	 */
+	const pintura = new THREE.MeshStandardMaterial({
+		color: 0xc6c5bf, metalness: 0.1, roughness: 0.66, roughnessMap: granoDePintura(),
+	});
 	const placa = new THREE.Mesh(new THREE.BoxGeometry(g.ancho, g.alto, 4), pintura);
 	placa.receiveShadow = true;
 	placa.castShadow = true;

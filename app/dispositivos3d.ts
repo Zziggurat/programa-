@@ -105,12 +105,24 @@ function tornillo(
 ): void {
 	const cabeza = M.metal(0xc9cfd4);
 	const sombra = M.baquelita(0x0e1113);
-	// Pocillo: la cabeza nunca va posada sobre la superficie, va metida en su avellanado.
-	g.add(cilindro(radio * 1.35, 1.2, sombra, x, y, z - 0.6));
-	g.add(cilindro(radio, 1.1, cabeza, x, y, z - 0.1));
-	// La huella, hundida en la cabeza.
-	g.add(caja(radio * 1.5, 0.55, 0.45, sombra, x, y, z + 0.3));
-	if (cruz) g.add(caja(0.55, radio * 1.5, 0.45, sombra, x, y, z + 0.3));
+	/*
+	 * LA CABEZA VA POR DEBAJO DE LA CARA, y antes iba por encima.
+	 *
+	 * El pocillo acababa justo en `z` y la cabeza sobresalía casi medio milímetro de él, con la
+	 * huella otro tanto por delante. Lo que se veía de cerca no era un tornillo metido en su
+	 * alojamiento: era un disco claro posado sobre un anillo oscuro, con una rayita encima. A
+	 * tamaño de borna eso se lee como un SÍMBOLO impreso, no como una pieza —y es exactamente el
+	 * detalle del que depende que una regleta convenza al acercarse—.
+	 *
+	 * Ahora el pocillo es un hueco de 3 mm que muere en la cara, la cabeza queda cuatro décimas
+	 * POR DENTRO y la huella se hunde en ella. Así la boca del alojamiento devuelve su sombra
+	 * anular y el tornillo se lee al fondo, que es como se ve uno de verdad.
+	 */
+	g.add(cilindro(radio * 1.5, 3, sombra, x, y, z - 1.5));
+	g.add(cilindro(radio, 1.6, cabeza, x, y, z - 1.2));
+	// La huella, hundida en la cabeza: arranca por debajo de su cara y sube hasta la boca.
+	g.add(caja(radio * 1.7, 0.6, 0.6, sombra, x, y, z - 0.3));
+	if (cruz) g.add(caja(0.6, radio * 1.7, 0.6, sombra, x, y, z - 0.3));
 }
 
 function caja(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
@@ -181,17 +193,15 @@ function borneTornillo(g: THREE.Group, x: number, y: number, ancho: number): voi
 	const z = Z_BORNE;   // no es un parámetro a propósito: nadie puede ponerle otra profundidad
 	const hueco = M.baquelita(0x101315);
 	const jaula = M.metal(0x8d949a);
-	const tornillo = M.metal(0xd6dbdf);
 	const a = Math.min(ancho, 9);
-	// Alojamiento: un pocillo rehundido 3 mm, con su boca en la superficie.
-	g.add(caja(a, Math.min(a, 8), 3, hueco, x, y, z - 1.5));
-	// Jaula de apriete al fondo del pocillo.
-	g.add(caja(a * 0.72, Math.min(a, 8) * 0.62, 1.6, jaula, x, y, z - 2.2));
-	// Cabeza del tornillo, enrasada con la boca del pocillo.
-	const r = Math.min(2.4, a * 0.34);
-	g.add(cilindro(r, 1.8, tornillo, x, y, z - 0.9));
-	// Ranura: HUNDIDA en la cabeza, no montada sobre ella.
-	g.add(caja(r * 1.7, 0.7, 0.5, hueco, x, y, z - 0.25));
+	// Alojamiento: un pocillo rehundido 3,4 mm, con su boca en la superficie.
+	g.add(caja(a, Math.min(a, 8), 3.4, hueco, x, y, z - 1.7));
+	// Jaula de apriete al fondo del pocillo: la pieza metálica que muerde el hilo.
+	g.add(caja(a * 0.72, Math.min(a, 8) * 0.62, 1.6, jaula, x, y, z - 2.4));
+	// Y el tornillo, con la MISMA primitiva que el resto del catálogo. Antes este modelo se
+	// construía su propia cabeza aparte, así que el borne de un aparato y el de una regleta no
+	// tenían el mismo tornillo: dos piezas que en la realidad son la misma se veían distintas.
+	tornillo(g, x, y, z, Math.min(2.4, a * 0.34));
 }
 
 /** Un borne del reparto genérico, en coordenadas de la huella (mm desde su esquina, Y hacia abajo). */
@@ -574,8 +584,13 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	const armadura = cajaCanto(anchoArm, altoArm, 6, M.plastico(0x353b41, 0.42), 0, yArm, zNariz - 1.4, 1, 0.5);
 	armadura.userData.pieza = 'armadura';
 	g.add(armadura);
-	// Su cara vista, embutida a su vez: el reflejo del contorno es lo que la hace leerse como bloque.
-	g.add(cajaCanto(anchoArm * 0.8, altoArm * 0.5, 1.2, M.plastico(0x22262a, 0.5), 0, yArm, zNariz + 1, 0.8, 0.3));
+	/*
+	 * Su cara vista va MÁS CLARA que el bloque, no más oscura. Con el rehundido en negro sobre gris
+	 * oscuro lo que se leía era un agujero rectangular —una ranura— en vez de un resalte, y el
+	 * frontal del contactor volvía a parecer una pantalla. Un plano que sale hacia la luz se ve más
+	 * claro que el que lo rodea: es así de simple, y es lo que lo convierte en volumen.
+	 */
+	g.add(cajaCanto(anchoArm * 0.8, altoArm * 0.5, 1.6, M.plastico(0x4a5157, 0.42), 0, yArm, zNariz + 1.1, 0.8, 0.4));
 	/*
 	 * BAHÍAS DE BLOQUE AUXILIAR arriba, una a cada lado: los dos huecos con sus pestañas donde se
 	 * clipa el contacto auxiliar. Es un detalle que solo tienen los contactores, así que es de lo
@@ -611,8 +626,10 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	 * el contactor, así que un rótulo pegado a ella se despegaría del aparato cada vez que entra.
 	 */
 	const yEt = -altoNariz * 0.22;
-	g.add(caja(w * 0.76, Math.min(9, altoNariz * 0.16), 1.4, M.baquelita(0x1a1e21), 0, yEt, zNariz - 0.7));
-	const et = etiquetaImpresa(ref, w * 0.72, Math.min(7, altoNariz * 0.14), '#e8e8e4', '#222');
+	// Blanco puro y a toda altura, el portaetiquetas se comía el frontal: era lo primero que se veía
+	// del contactor. Es un rótulo, no la pieza principal, así que va más bajo y en gris de papel.
+	g.add(caja(w * 0.7, Math.min(6.5, altoNariz * 0.12), 1.4, M.baquelita(0x1a1e21), 0, yEt, zNariz - 0.7));
+	const et = etiquetaImpresa(ref, w * 0.66, Math.min(5, altoNariz * 0.1), '#cfccc4', '#2c2c2a');
 	et.position.set(0, yEt, zNariz + 0.2);
 	g.add(et);
 	return prof;
@@ -620,7 +637,7 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 
 function plc(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
 	const prof = 62;
-	cuerpoDeCarril(g, w, h * 0.72, prof - 4, M.plastico(color, 0.55), 1.8, 0.7);
+	cuerpoDeCarril(g, w, h * 0.72, prof - 4, M.tecnico(color), 1.8, 0.7);
 	g.add(cajaCanto(w * 0.98, h * 0.42, 4, M.plastico(0x2c3136, 0.6), 0, -2, prof - 1, 1.2, 0.5));
 	/*
 	 * PEINES DE CONEXIÓN extraíbles, arriba y abajo. Salen HASTA la cota de conexión, para que el
@@ -779,7 +796,9 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		 * vistazo, que es justo para lo que sirve mirar una regleta.
 		 */
 		if (i > 0) {
-			g.add(caja(0.7, h * 0.92, prof - ALTURA_CARRIL - 1, M.baquelita(0x6f767c),
+			// 0,7 mm no se veía: a la distancia a la que se mira una regleta, una junta más fina
+			// que el píxel no separa nada. 1,4 mm sí, y sigue siendo el canto de una carcasa.
+			g.add(caja(1.4, h * 0.94, prof - ALTURA_CARRIL - 0.6, M.baquelita(0x5a6167),
 				x - paso / 2, 0, ALTURA_CARRIL + (prof - ALTURA_CARRIL) / 2));
 		}
 		/*
@@ -787,8 +806,9 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		 * `dibujarBornesReales()` en el punto exacto donde se engancha el cable, para que sea el
 		 * mismo tornillo que se ve.
 		 */
-		g.add(caja(paso * 0.6, 6.5, 2.6, M.baquelita(0x14171a), x, -h * 0.28, prof - 1.3));
-		tornillo(g, x, -h * 0.28, prof + 0.1, Math.min(1.9, paso * 0.26));
+		g.add(caja(paso * 0.62, 7, 3.4, M.baquelita(0x14171a), x, -h * 0.28, prof - 1.7));
+		g.add(caja(paso * 0.44, 5, 1.4, M.metal(0x8d949a), x, -h * 0.28, prof - 3.1));
+		tornillo(g, x, -h * 0.28, prof, Math.min(1.9, paso * 0.26));
 		/*
 		 * La BOCA por donde entra el conductor, debajo del tornillo: el agujero avellanado que
 		 * tiene toda borna y por el que se mete el hilo. Es un detalle de dos milímetros que se
@@ -823,7 +843,7 @@ function variador(g: THREE.Group, w: number, h: number, color: number, ref: stri
 	 * de potencia y control saliendo arriba y abajo hasta la cota de conexión. Antes los bornes
 	 * se pintaban a 108 mm, enterrados en el bloque del frente.
 	 */
-	cuerpoDeCarril(g, w * 0.96, h * 0.76, prof * 0.55, M.plastico(color, 0.5), 2, 0.9);
+	cuerpoDeCarril(g, w * 0.96, h * 0.76, prof * 0.55, M.tecnico(color), 2, 0.9);
 	// El bloque del frente llega hasta la cara declarada del aparato. Antes se quedaba 10 mm
 	// corto y el display y el rótulo salían flotando en el aire por delante de él.
 	g.add(cajaCanto(w * 0.88, h * 0.7, prof * 0.48, M.plastico(0x33383d, 0.55), 0, 0, prof * 0.76, 1.8, 0.8));
@@ -858,10 +878,16 @@ function variador(g: THREE.Group, w: number, h: number, color: number, ref: stri
 function guardamotorModelo(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
 	const prof = 90;
 	const zNariz = prof - 9;
-	const cuerpo = M.plastico(color, 0.5);
+	const cuerpo = M.tecnico(color);
 	cuerpoDeCarril(g, w, h, Z_BORNE, cuerpo, 2, 0.8);
 	const altoNariz = h * 0.56;
 	g.add(cajaCanto(w * 0.99, altoNariz, zNariz - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + zNariz) / 2, 1.8, 0.8));
+	// Hombro achaflanado y frontal embutido: los mismos dos recursos que en el resto de la familia
+	// de carril, para que un guardamotor no se lea como una caja distinta de las de al lado.
+	for (const s2 of [-1, 1]) {
+		g.add(cajaCanto(w * 0.99, 2.8, 5.5, cuerpo, 0, s2 * (altoNariz / 2 + 1.1), Z_BORNE + 2.7, 1.2, 1));
+	}
+	panelEmbutido(g, w * 0.93, altoNariz * 0.9, zNariz, M.plastico(0xc9ccce, 0.6), 1.3, 0, 0, 1.2);
 	/*
 	 * Mando giratorio al frente. La maneta roja es la PALANCA: gira con el aparato, igual que en
 	 * el guardamotor de verdad, y así se ve abierto o disparado sin abrir el panel. Y se le pone
@@ -870,6 +896,13 @@ function guardamotorModelo(g: THREE.Group, w: number, h: number, color: number, 
 	const yMando = altoNariz * 0.16;
 	// Aro rehundido del mando, con la corona graduada alrededor del disco.
 	g.add(cilindro(w * 0.32, 2.4, M.baquelita(0x191d20), 0, yMando, zNariz - 0.6));
+	// La corona graduada: las marcas de posición alrededor del aro. Sin ellas el mando es un disco
+	// negro, y con ellas se ve que es un aparato que se ACCIONA y que tiene posiciones.
+	for (let i = 0; i < 12; i++) {
+		const a = (i / 12) * Math.PI * 2;
+		g.add(caja(0.7, 2, 0.8, M.plastico(0xd5dade, 0.55),
+			Math.cos(a) * w * 0.29, yMando + Math.sin(a) * w * 0.29, zNariz + 0.5));
+	}
 	g.add(cilindro(w * 0.26, 6, M.plastico(0x16181b, 0.42), 0, yMando, zNariz + 2.4));
 	const maneta = cajaCanto(4.5, w * 0.4, 7, M.plastico(0xd23b3b, 0.42), 0, yMando, zNariz + 5.6, 1.2, 0.5);
 	maneta.userData.pieza = 'palanca';
@@ -918,8 +951,10 @@ function releTermicoModelo(g: THREE.Group, w: number, h: number, color: number, 
 	// Las marcas de la escala alrededor de la rueda, y el índice rojo que señala el valor.
 	for (let i = 0; i < 8; i++) {
 		const a = -Math.PI * 0.75 + (i / 7) * Math.PI * 1.5;
-		g.add(caja(0.6, 1.8, 0.8, M.baquelita(0x2a2e31),
-			Math.cos(a) * rMando * 1.15, yMando + Math.sin(a) * rMando * 1.15, zNariz + 0.6));
+		// CLARAS sobre el aro oscuro. En negro sobre negro la corona no existía: la escala estaba
+		// dibujada, pero no se veía ni una marca, que para una escala es lo mismo que no tenerla.
+		g.add(caja(0.7, 2, 0.9, M.plastico(0xc7c3b8, 0.55),
+			Math.cos(a) * rMando * 1.15, yMando + Math.sin(a) * rMando * 1.15, zNariz + 0.8));
 	}
 	g.add(caja(0.9, rMando * 0.8, 1, M.plastico(0xc0392b, 0.4), 0, yMando + rMando * 0.4, zNariz + 2.4));
 
@@ -986,7 +1021,7 @@ function releAux(g: THREE.Group, w: number, h: number, color: number): number {
 function fusibleModelo(g: THREE.Group, w: number, h: number, color: number): number {
 	const prof = 72;
 	const zCuerpo = Z_BORNE;
-	cuerpoDeCarril(g, w, h, zCuerpo, M.plastico(color, 0.55), 1.4, 0.5);
+	cuerpoDeCarril(g, w, h, zCuerpo, M.tecnico(color), 1.4, 0.5);
 	/*
 	 * PORTAFUSIBLE ABATIBLE, articulado por su bisagra.
 	 *
@@ -1139,7 +1174,7 @@ function bloqueTerminales3D(
  */
 function controlador(g: THREE.Group, d: Dispositivo, w: number, h: number, color: number, ref: string): number {
 	const prof = d.profundidad ?? 55;
-	g.add(caja(w, h, prof, M.plastico(color), 0, 0, prof / 2));
+	g.add(caja(w, h, prof, M.tecnico(color), 0, 0, prof / 2));
 
 	/*
 	 * ESCALERA DE PROFUNDIDADES DEL FRENTE. Antes la tapa era una caja de 1,4 mm centrada en
@@ -1215,8 +1250,15 @@ function generico(g: THREE.Group, w: number, h: number, color: number): number {
 	// Aparato sin modelo propio: aun así, con el hombro de bornes descubierto y las aristas
 	// matadas, para que no desentone al lado de los que sí lo tienen.
 	const prof = 55;
-	cuerpoDeCarril(g, w, h, Z_BORNE, M.plastico(color, 0.55), 1.6, 0.7);
-	g.add(cajaCanto(w * 0.94, h * 0.56, prof - Z_BORNE, M.plastico(color, 0.55), 0, 0, (Z_BORNE + prof) / 2, 1.4, 0.6));
+	const cuerpo = M.tecnico(color);
+	cuerpoDeCarril(g, w, h, Z_BORNE, cuerpo, 1.6, 0.7);
+	g.add(cajaCanto(w * 0.94, h * 0.56, prof - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + prof) / 2, 1.4, 0.6));
+	// Aunque no tenga modelo propio, lleva el hombro y el frontal embutido de la familia: es lo
+	// mínimo para que no se vea como el ladrillo de relleno que hay entre aparatos de verdad.
+	for (const s2 of [-1, 1]) {
+		g.add(cajaCanto(w * 0.94, 2.4, 4.5, cuerpo, 0, s2 * (h * 0.28 + 1), Z_BORNE + 2.2, 1, 0.9));
+	}
+	panelEmbutido(g, w * 0.88, h * 0.5, prof, M.plastico(0xd7d9da, 0.64), 1.2, 0, 0, 1);
 	return prof;
 }
 
