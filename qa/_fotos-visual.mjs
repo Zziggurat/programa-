@@ -73,13 +73,17 @@ const foto = async (n) => { await p.screenshot({ path: join(SALIDA, `${n}.png`) 
  * (1.6 es un primer plano cómodo) y `giro`/`alto` inclinan la vista para que el relieve se vea:
  * de frente y plano, un bisel no se distingue de una arista viva.
  */
-const cerca = async (id, dist = 1.6, giro = 0.35, alto = 0.22) => {
+const cerca = async (id, dist = 1.6, giro = 0.35, alto = 0.22, bajar = 0) => {
 	const c = await qa('bulto', id);
 	if (!c) { console.log('  (sin aparato', id, ')'); return false; }
 	const r = Math.max(30, c.radio) * dist * 3.2;
+	// `bajar` corre el punto al que se mira por debajo del aparato, sin mover la cámara de sitio:
+	// es como se encuadra lo que hay AL PIE de un aparato —su carril y su canaleta— sin tener que
+	// dar coordenadas absolutas que dejarían de valer al cambiar el ejemplo.
+	const ty = c.y - bajar;
 	await qa('verDesde', {
-		x: c.x + Math.sin(giro) * r, y: c.y + Math.sin(alto) * r, z: c.z + Math.cos(giro) * Math.cos(alto) * r,
-		tx: c.x, ty: c.y, tz: c.z,
+		x: c.x + Math.sin(giro) * r, y: ty + Math.sin(alto) * r, z: c.z + Math.cos(giro) * Math.cos(alto) * r,
+		tx: c.x, ty, tz: c.z,
 	});
 	await p.waitForTimeout(500);
 	return true;
@@ -119,7 +123,8 @@ if (primero('fusible')) { await cerca(primero('fusible'), 1.4); await foto('07-f
 // Borne con cable puesto: se mira MUY de cerca, que es donde se ve si la puntera encaja.
 if (await cerca(primero('contactor') ?? ids[0].id, 0.6, 0.5, 0.35)) await foto('08-borne-con-cable');
 // El carril y la canaleta se buscan por debajo del primer aparato del riel.
-await cerca(ids[0].id, 1.1, 0.2, -0.3); await foto('09-carril-y-canaleta');
+// Carril y canaleta: se mira al PIE del primer contactor, que es donde caen los dos.
+await cerca(primero('contactor') ?? ids[0].id, 1.5, 0.25, 0.05, 70); await foto('09-carril-y-canaleta');
 if (primero('pulsador', 'selector', 'piloto')) {
 	await cerca(primero('pulsador', 'selector', 'piloto'), 1.3, 0.4, 0.3);
 	await foto('11-mando-de-puerta');
