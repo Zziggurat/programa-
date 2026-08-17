@@ -119,7 +119,11 @@ if (primero('fusible')) { await cerca(primero('fusible'), 1.4); await foto('07-f
 // Borne con cable puesto: se mira MUY de cerca, que es donde se ve si la puntera encaja.
 if (await cerca(primero('contactor') ?? ids[0].id, 0.6, 0.5, 0.35)) await foto('08-borne-con-cable');
 // El carril y la canaleta se buscan por debajo del primer aparato del riel.
-await cerca(ids[0].id, 0.9, 0.15, -0.55); await foto('09-carril-y-canaleta');
+await cerca(ids[0].id, 1.1, 0.2, -0.3); await foto('09-carril-y-canaleta');
+if (primero('pulsador', 'selector', 'piloto')) {
+	await cerca(primero('pulsador', 'selector', 'piloto'), 1.3, 0.4, 0.3);
+	await foto('11-mando-de-puerta');
+}
 await tapas(true); await general(0.5, 0.3); await foto('10-conjunto-con-tapa');
 
 console.log(errores.length ? `ERRORES: ${errores.slice(0, 3).join(' | ')}` : 'sin errores de JavaScript');

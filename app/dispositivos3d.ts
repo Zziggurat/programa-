@@ -1284,16 +1284,28 @@ function mando(g: THREE.Group, w: number, h: number, color: number, forma: 'seta
 	g.add(cajaCanto(Math.min(w, cuerpo * 1.25), Math.min(h, cuerpo * 1.25), Z_BORNE - zBloque,
 		M.baquelita(0x23272a), 0, 0, (zBloque + Z_BORNE) / 2, 1.2, 0.5));
 	// Tuerca y aro metálico de fijación a la chapa.
+	// Níquel mate, no cromo: la tuerca de un mando de 22 mm no es un espejo, y con el brillo alto
+	// era el anillo blanco lo primero que se veía del aparato, por delante de la propia cabeza.
 	const aro = new THREE.Mesh(
 		new THREE.CylinderGeometry(cuerpo * 0.52, cuerpo * 0.56, 5, 24),
-		M.metal(0xb6bcc2),
+		M.galvanizado(0x9298a0),
 	);
 	aro.rotation.x = Math.PI / 2;
 	aro.position.set(0, 0, Z_BORNE + 2.5);
 	g.add(aro);
 
+	/*
+	 * EL EMBELLECEDOR entre la tuerca y la cabeza: el aro de plástico negro que lleva todo mando
+	 * de 22 mm y sobre el que va la corona rotulada. Sin él la cabeza de color salía directamente
+	 * del aro metálico, y un pulsador se leía como un disco de color pegado a una arandela.
+	 */
+	g.add(cilindro(cuerpo * 0.51, 5, M.tecnico(0x24282b), 0, 0, Z_BORNE + 7));
+
 	const r = cuerpo * (forma === 'seta' ? 0.58 : 0.36);
 	const alto = forma === 'seta' ? 12 : forma === 'selector' ? 5 : 8;
+	// Cuánto abomba la cara: una seta es una cúpula, un piloto una lente y un pulsador apenas se
+	// curva. Se decide aquí porque de ella depende dónde se apoya la cabeza.
+	const flecha = forma === 'seta' ? 3.4 : forma === 'piloto' ? 2.4 : 1.1;
 	/*
 	 * La cabeza del mando se marca como pieza para que HAGA lo que hace la de verdad: el pulsador
 	 * se hunde mientras está apretado y el piloto se enciende con SU color —rojo el de defecto,
@@ -1304,17 +1316,60 @@ function mando(g: THREE.Group, w: number, h: number, color: number, forma: 'seta
 			? new THREE.MeshStandardMaterial({ color, roughness: 0.25, transparent: true, opacity: 0.92 })
 			: M.plastico(color));
 	cabeza.rotation.x = Math.PI / 2;
-	cabeza.position.set(0, 0, prof - 8 + alto / 2);
+	// La cabeza retrocede lo que abomba su cúpula, para que el conjunto no ocupe MÁS de lo que
+	// ocupaba antes: la flecha se le quita al cilindro, no se le suma al aparato.
+	cabeza.position.set(0, 0, prof - 8 + alto / 2 - flecha);
 	cabeza.userData.pieza = forma === 'piloto' ? 'lente' : 'boton';
 	cabeza.userData.colorPropio = color;
 	g.add(cabeza);
+	/*
+	 * LA CARA DE LA CABEZA NO ES PLANA, y de plana era de lo que más cantaba: un cilindro cortado a
+	 * escuadra no coge más que una mancha de luz uniforme, así que un pulsador se leía como una
+	 * ficha de parchís. Un piloto es una lente ABOMBADA, una seta es una cúpula y un pulsador tiene
+	 * la cara ligeramente rehundida para el dedo. Con un casquete esférico —doce por diez segmentos,
+	 * unos doscientos triángulos— la pieza pasa a tener silueta.
+	 *
+	 * Va como HIJA de la cabeza a propósito: el pulsador se hunde 3,2 mm al accionarlo, y una cúpula
+	 * suelta se quedaría flotando en el aire mientras el botón entra.
+	 */
+	if (forma !== 'selector') {
+		/*
+		 * El casquete se calcula a partir de la FLECHA que se quiere, no al revés: dado el radio de
+		 * la cabeza y lo que debe abombar, salen el radio de la esfera y el ángulo que hay que
+		 * cortar. Puesto a ojo —una esfera del radio de la cabeza— el polo se iba ocho milímetros
+		 * por delante de la profundidad declarada del aparato, y un cable tendido a ras de la puerta
+		 * lo habría atravesado.
+		 */
+		const rEsfera = (r * r + flecha * flecha) / (2 * flecha);
+		const cupula = new THREE.Mesh(
+			new THREE.SphereGeometry(rEsfera, 24, 8, 0, Math.PI * 2, 0, Math.asin(r / rEsfera)),
+			cabeza.material,
+		);
+		// En coordenadas LOCALES de la cabeza, que está girada 90°: su eje largo es el Y local.
+		cupula.position.set(0, alto / 2 - (rEsfera - flecha), 0);
+		cupula.userData.colorPropio = color;
+		cabeza.add(cupula);
+	}
 
-	if (forma === 'selector') { // maneta de la maneta giratoria
-		const maneta = new THREE.Mesh(new THREE.BoxGeometry(r * 1.9, r * 0.5, 4), M.plastico(0x1b1f22));
-		maneta.position.set(0, 0, prof - 8 + alto + 1.5);
+	if (forma === 'selector') {
+		/*
+		 * La MANETA del selector: cuerpo con las dos caras planas por las que se coge, la flecha
+		 * que señala la posición y el disco del que sale. Una losa de 4 mm de canto no era una
+		 * maneta, era una raya negra atravesada sobre el mando.
+		 */
+		const maneta = new THREE.Group();
+		maneta.add(cajaCanto(r * 1.9, r * 0.62, 5, M.plastico(0x1b1f22, 0.45), 0, 0, 0, 0.8, 0.5));
+		maneta.add(caja(r * 0.55, r * 0.28, 1.2, M.plastico(0xdcd8cc, 0.5), r * 0.6, 0, 2.6));
+		maneta.position.set(0, 0, prof - 8 + alto + 1);
 		maneta.rotation.z = -Math.PI / 6;
 		maneta.userData.pieza = 'maneta';
 		g.add(maneta);
+		// Corona con las posiciones marcadas alrededor del embellecedor: es lo que convierte un
+		// pomo en un SELECTOR, porque dice cuántas posiciones tiene y dónde están.
+		for (const a of [-Math.PI / 3, 0, Math.PI / 3]) {
+			g.add(caja(0.9, 2.2, 0.9, M.plastico(0xdcd8cc, 0.55),
+				Math.sin(a) * cuerpo * 0.42, Math.cos(a) * cuerpo * 0.42, prof - 8.4));
+		}
 	}
 	return prof;
 }
