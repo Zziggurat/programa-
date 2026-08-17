@@ -195,12 +195,43 @@ distinción se hace por **respuesta a la luz**, no por color:
 
 ## Rendimiento
 
+Medido con `qa/coste-arranque.mjs` sobre el mismo contenedor —sin tarjeta gráfica, dibujando
+por software— contra `eb914a6`, el commit anterior a la fase:
+
+| | antes | después |
+|---|---|---|
+| primer tablero interactivo | 3 162 ms | 3 001 ms |
+| abrir un ejemplo | 21 604 ms | 19 034 ms |
+| fotograma, mediana | 9,6 ms | 11,5 ms |
+| memoria en reposo | 15 MB | 15 MB |
+
+El fotograma sube 1,9 ms —de 104 a 87 fotogramas por segundo teóricos— dibujando **por
+software**; con tarjeta gráfica esa diferencia no se mide. El resto de cifras se mueven dentro
+del ruido de la máquina (las dos primeras salen incluso más bajas, que es ruido, no mérito).
+
 El bundle pasa de 2 501,6 kB a 2 505,2 kB —3,6 kB, un 0,14 %— y todo el detalle nuevo es
 geometría paramétrica, no mallas importadas. Las piezas más caras que se han añadido son los
 casquetes esféricos de los mandos (unos 200 triángulos cada uno, y solo hay uno por mando) y
 la corona graduada del guardamotor (doce cajas). El resto son cajas y cilindros de los que ya
 había. No se ha añadido ninguna textura salvo el grano de la placa, que son 64 × 64 píxeles
 en escala de grises compartidos por todas las placas del programa.
+
+## Un fallo de prueba que NO es de esta fase
+
+`qa/riel.mjs` estaba rojo antes de empezar: reventaba en la primera comprobación porque la
+sonda de `puntoDeEstructura` no encontraba el carril. Eso se ha arreglado (ver más arriba) y
+la prueba avanza, pero deja al descubierto un fallo anterior que sigue rojo: la prueba baja el
+carril r1 veinte milímetros «a una zona libre», y en el primer ejemplo esa zona no está libre.
+
+    r1        y = 80
+    q1        de y = 36 a y = 125 (89 mm de alto)
+    canaleta  c1 de y = 140 a y = 180
+
+Quedan **15 mm** entre el pie del aparato más alto del carril y la canaleta de abajo, y la
+prueba empuja 20. El programa rechaza el movimiento y lo devuelve a su sitio, que es lo
+correcto: la prueba pide un movimiento ilegal. Comprobado que pasa exactamente igual en
+`eb914a6` con la misma corrección de sonda aplicada, así que no lo ha traído esta fase. No se
+toca porque es trabajo del editor, no del aspecto, y aflojar la prueba sería taparlo.
 
 ## Lo que se ha dejado a propósito
 
