@@ -38,20 +38,80 @@ export const Z_BORNE = 46;
 const M = {
 	/** Chapa y tornillería: refleja el entorno y devuelve un brillo estrecho. */
 	metal: (color = 0xb9bec2) => new THREE.MeshStandardMaterial({ color, metalness: 0.85, roughness: 0.35 }),
+	/**
+	 * ACERO GALVANIZADO: el del carril DIN y la chapa del armario. No es un metal pulido —no hace
+	 * espejo— pero tampoco es plástico gris: tiene el brillo ancho y algo sucio del zincado, que
+	 * es lo que lo delata a simple vista.
+	 */
+	galvanizado: (color = 0xa8adb2) => new THREE.MeshStandardMaterial({ color, metalness: 0.72, roughness: 0.52 }),
+	/**
+	 * ACERO PINTADO: la placa de montaje y el propio gabinete. Debajo hay metal, pero lo que se ve
+	 * es la capa de pintura, así que apenas tiene respuesta metálica y sí un satinado uniforme.
+	 */
+	pintado: (color = 0xdedbd4) => new THREE.MeshStandardMaterial({ color, metalness: 0.12, roughness: 0.62 }),
 	/** Aluminio de radiador y perfilería: mate, con el grano del extrusionado. */
 	aluminio: (color = 0x9aa0a5) => new THREE.MeshStandardMaterial({ color, metalness: 0.7, roughness: 0.58 }),
 	/** Cobre desnudo: pletinas, bobinas, puentes. */
 	cobre: () => new THREE.MeshStandardMaterial({ color: 0xb87333, metalness: 0.9, roughness: 0.34 }),
 	/** Termoplástico de carcasa: satinado, ni espejo ni tiza. */
 	plastico: (color: number, roughness = 0.55) => new THREE.MeshStandardMaterial({ color, roughness }),
+	/**
+	 * PLÁSTICO TÉCNICO de canaleta y carcasa de aparato: poliamida cargada, más mate y más seca
+	 * que el termoplástico brillante de una tapa. Es la diferencia entre una pieza de catálogo
+	 * industrial y una carcasa de electrodoméstico.
+	 */
+	tecnico: (color: number) => new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.03 }),
 	/** Baquelita y poliamida de bornes: mate de verdad, casi sin brillo. */
 	baquelita: (color = 0x1b1e21) => new THREE.MeshStandardMaterial({ color, roughness: 0.86, metalness: 0.02 }),
+	/**
+	 * AISLAMIENTO de conductor: PVC. Ni mate ni espejo — un satinado suave y algo ceroso, que es
+	 * lo que hace que un cable se lea como cable y no como un tubo de plástico de juguete.
+	 */
+	aislamiento: (color: number) => new THREE.MeshStandardMaterial({ color, roughness: 0.44, metalness: 0.0 }),
 	/** Policarbonato de lentes y tapas transparentes. */
 	translucido: (color: number, opacidad = 0.55) => new THREE.MeshStandardMaterial({
 		color, roughness: 0.16, metalness: 0.02, transparent: true, opacity: opacidad,
 	}),
 	oscuro: () => new THREE.MeshStandardMaterial({ color: 0x1b1e21, roughness: 0.6 }),
 };
+
+/**
+ * UNA CAVIDAD REHUNDIDA EN UNA CARA, que es el recurso que más barato compra profundidad.
+ *
+ * Un frontal liso no tiene nada que la luz pueda revelar: se lee como una mancha de color. Un
+ * frontal con el panel EMBUTIDO un milímetro y medio devuelve una línea de sombra en todo su
+ * contorno, y eso solo ya convierte «una cara» en «una pieza montada sobre otra». Es la misma
+ * razón por la que se matan las aristas: no se trata de añadir polígonos, sino de darle a la
+ * iluminación algo de lo que agarrarse.
+ */
+function panelEmbutido(
+	g: THREE.Group, w: number, h: number, z: number, mat: THREE.Material,
+	hondo = 1.5, x = 0, y = 0, radio = 1.2,
+): void {
+	// El marco: cuatro tiras que rodean el hueco, del mismo material que el cuerpo.
+	g.add(cajaCanto(w, h, hondo, mat, x, y, z - hondo / 2, radio, 0.35));
+}
+
+/**
+ * UN TORNILLO DE VERDAD, con su cabeza, su huella y su alojamiento.
+ *
+ * Los tornillos son de las piezas que más dicen sobre la ESCALA de un objeto: el ojo sabe cuánto
+ * mide un tornillo, así que si están bien puestos el aparato entero se lee al tamaño que es. Los
+ * de aquí llevan cabeza cilíndrica ligeramente rehundida en su pocillo y la huella hundida, en
+ * cruz o de ranura según lo que pida la pieza.
+ */
+function tornillo(
+	g: THREE.Group, x: number, y: number, z: number, radio = 1.6, cruz = false,
+): void {
+	const cabeza = M.metal(0xc9cfd4);
+	const sombra = M.baquelita(0x0e1113);
+	// Pocillo: la cabeza nunca va posada sobre la superficie, va metida en su avellanado.
+	g.add(cilindro(radio * 1.35, 1.2, sombra, x, y, z - 0.6));
+	g.add(cilindro(radio, 1.1, cabeza, x, y, z - 0.1));
+	// La huella, hundida en la cabeza.
+	g.add(caja(radio * 1.5, 0.55, 0.45, sombra, x, y, z + 0.3));
+	if (cruz) g.add(caja(0.55, radio * 1.5, 0.45, sombra, x, y, z + 0.3));
+}
 
 function caja(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
 	const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -314,8 +374,20 @@ function modular(g: THREE.Group, w: number, h: number, color: number, ref: strin
 	cuerpoDeCarril(g, w, h, Z_BORNE, cuerpo, 1.4, 0.5);
 	const altoNariz = h * 0.5;
 	g.add(cajaCanto(w * 0.99, altoNariz, zNariz - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + zNariz) / 2, 1.3, 0.6));
-	// Cara clara del frente, donde va impresa la referencia.
-	g.add(cajaCanto(w * 0.95, altoNariz * 0.93, 1.4, M.plastico(0xf2f2ee, 0.62), 0, 0, zNariz - 0.3, 1, 0.35));
+	// Cara clara del frente, donde va impresa la referencia. Va EMBUTIDA en la nariz, no posada
+	// encima: el escaloncito de medio milímetro es lo que la separa visualmente del cuerpo.
+	panelEmbutido(g, w * 0.95, altoNariz * 0.93, zNariz, M.plastico(0xf2f2ee, 0.62), 1.4, 0, 0, 1);
+
+	/*
+	 * SEPARACIÓN ENTRE POLOS. Un tetrapolar no es una caja de cuatro anchos: son cuatro módulos
+	 * pegados, y entre ellos queda la junta. Marcarla es lo que hace que se LEA cuántos polos
+	 * tiene sin contar las manetas, que es como se identifica una protección de un vistazo.
+	 */
+	for (let i = 1; i < polos; i++) {
+		const x = i * (w / polos) - w / 2;
+		g.add(caja(0.9, altoNariz * 0.96, 2.4, M.baquelita(0x1a1d20), x, 0, zNariz - 1));
+		g.add(caja(0.9, h * 0.9, 1.6, M.baquelita(0x1a1d20), x, 0, Z_BORNE - 0.8));
+	}
 
 	// Hueco por el que asoma la maneta, rehundido en la cara: la maneta sale de un sitio.
 	const hueco = Math.max(6, altoNariz * 0.62);
@@ -354,13 +426,41 @@ function modular(g: THREE.Group, w: number, h: number, color: number, ref: strin
 }
 
 function contactor(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
+	/*
+	 * EL CONTACTOR, que es la pieza que más identidad le da al tablero.
+	 *
+	 * Antes era una caja oscura con otra caja encima: de lejos pasaba, y de cerca no había por
+	 * dónde cogerlo. Un contactor real se lee por cuatro cosas, y son las que se construyen aquí:
+	 *
+	 *   — el CUERPO bajo, ancho, con las dos alas de los bornes a distinta cota que la nariz;
+	 *   — la NARIZ central rehundida respecto de esas alas, con el frontal embutido;
+	 *   — las COLUMNAS de polos separadas por tabiques, que es lo que se ve entre los tornillos;
+	 *   — la ARMADURA, el bloque que baja cuando la bobina tira.
+	 *
+	 * Y por debajo, la zona de bobina: un aparato de potencia no es simétrico arriba y abajo, y
+	 * marcar esa diferencia es lo que evita que parezca un ladrillo.
+	 */
 	const prof = 84;
-	const cuerpo = M.plastico(color, 0.5);
-	// Mismo escalón que el modular: cuerpo hasta el hombro de bornes, y de ahí la nariz.
+	const cuerpo = M.tecnico(color);
+	const oscuro = M.baquelita(0x15181b);
 	cuerpoDeCarril(g, w, h, Z_BORNE, cuerpo, 2, 0.8);
 	const altoNariz = h * 0.54;
 	const zNariz = prof - 12;
 	g.add(cajaCanto(w * 0.99, altoNariz, zNariz - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + zNariz) / 2, 1.8, 0.8));
+
+	/*
+	 * TABIQUES ENTRE POLOS. En un contactor los tres polos van separados por paredes que suben
+	 * desde la cara: es lo que se ve entre borne y borne y lo que impide que las tres columnas se
+	 * lean como una sola mancha. Se sacan del ancho, así que valen para cualquier tamaño.
+	 */
+	for (const s of [-1, 1]) {
+		g.add(caja(1.6, altoNariz * 0.9, 3, oscuro, s * w * 0.165, 0, zNariz - 1.4));
+	}
+	// Y las ranuras que separan las alas de bornes del cuerpo, arriba y abajo.
+	for (const s of [-1, 1]) {
+		g.add(caja(w * 0.94, 1.4, 2.2, oscuro, 0, s * (altoNariz / 2 + 1.6), Z_BORNE - 1.1));
+	}
+
 	/*
 	 * La ARMADURA: el bloque frontal que lleva los contactos móviles.
 	 *
@@ -371,6 +471,8 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	const armadura = cajaCanto(w * 0.86, altoNariz * 0.66, 12, M.plastico(0x22262a, 0.45), 0, 0, prof - 6, 1.6, 0.6);
 	armadura.userData.pieza = 'armadura';
 	g.add(armadura);
+	// Frontal embutido de la armadura: el rehundido que devuelve la línea de sombra del contorno.
+	g.add(cajaCanto(w * 0.7, altoNariz * 0.44, 1.2, M.plastico(0x2b3035, 0.5), 0, altoNariz * 0.04, prof - 0.4, 1.2, 0.3));
 	/*
 	 * Rejilla de ventilación de verdad, ranura a ranura.
 	 *
@@ -379,6 +481,18 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	 * aparato de fondo pegadas a los costados —y sobresaliendo 0,2 mm de ellos—, no una rejilla.
 	 */
 	rejilla(g, 3, w * 0.62, altoNariz * 0.18, 0, altoNariz * 0.41, zNariz - 0.5);
+
+	/*
+	 * LA ZONA DE BOBINA, abajo: el bloque que aloja el electroimán, con su tapa de otro plástico
+	 * y los dos tornillos de A1/A2. Es lo que rompe la simetría del ladrillo y lo que hace que un
+	 * contactor se distinga de un relé grande a primera vista.
+	 */
+	const yBob = -altoNariz * 0.5 - 5;
+	if (h > 50) {
+		g.add(cajaCanto(w * 0.8, 9, 3.2, M.plastico(0x3a4046, 0.6), 0, yBob, Z_BORNE + 1.4, 1, 0.3));
+		for (const s of [-1, 1]) tornillo(g, s * w * 0.24, yBob, Z_BORNE + 3.2, 1.5);
+	}
+
 	/*
 	 * Ventana portaetiquetas en la NARIZ, no sobre la armadura: la armadura baja 2,2 mm al meter
 	 * el contactor, así que un rótulo pegado a ella se despegaría del aparato cada vez que entra.
@@ -546,13 +660,30 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		 */
 		if (esPE) g.add(caja(paso - 1.8, h * 0.34, 1.4, M.baquelita(0xe4c437), x, 0, prof + 0.3));
 		/*
-		 * Tornillo del lado de campo. El del lado del cuadro lo pone `dibujarBornesReales()` en el
-		 * punto exacto donde se engancha el cable, para que sea el mismo tornillo que se ve.
+		 * LA PARED ENTRE MÓDULOS. Una regleta no es un bloque estriado: son bornas sueltas
+		 * apretadas una contra otra, y lo que se ve entre ellas es el canto de cada carcasa. Sin
+		 * esa junta, diez bornas se leen como una losa con rayas; con ella se cuentan de un
+		 * vistazo, que es justo para lo que sirve mirar una regleta.
 		 */
-		g.add(caja(paso * 0.55, 6, 2.4, M.baquelita(0x14171a), x, -h * 0.28, prof - 1));
-		g.add(cilindro(Math.min(2, paso * 0.28), 1.8, M.metal(0xd6dbdf), x, -h * 0.28, prof - 0.4));
-		// Ventana de identificación: la tira donde va el número de borna.
-		g.add(caja(paso - 2.4, h * 0.1, 1, M.baquelita(0xe9ecee), x, h * 0.02, prof + 0.4));
+		if (i > 0) {
+			g.add(caja(0.7, h * 0.92, prof - ALTURA_CARRIL - 1, M.baquelita(0x6f767c),
+				x - paso / 2, 0, ALTURA_CARRIL + (prof - ALTURA_CARRIL) / 2));
+		}
+		/*
+		 * Tornillo del lado de campo, en su POCILLO. El del lado del cuadro lo pone
+		 * `dibujarBornesReales()` en el punto exacto donde se engancha el cable, para que sea el
+		 * mismo tornillo que se ve.
+		 */
+		g.add(caja(paso * 0.6, 6.5, 2.6, M.baquelita(0x14171a), x, -h * 0.28, prof - 1.3));
+		tornillo(g, x, -h * 0.28, prof + 0.1, Math.min(1.9, paso * 0.26));
+		/*
+		 * La BOCA por donde entra el conductor, debajo del tornillo: el agujero avellanado que
+		 * tiene toda borna y por el que se mete el hilo. Es un detalle de dos milímetros que se
+		 * nota mucho de cerca, porque es lo que explica cómo se conecta la pieza.
+		 */
+		g.add(cilindro(Math.min(1.6, paso * 0.22), 2.2, M.baquelita(0x0d1012), x, -h * 0.4, prof - 1.1));
+		// Ventana de identificación: la tira donde va el número de borna, embutida en la cara.
+		g.add(caja(paso - 2.4, h * 0.11, 1.1, M.baquelita(0xe9ecee), x, h * 0.02, prof - 0.2));
 	}
 	/*
 	 * Topes finales, con su tornillo de apriete al carril.
