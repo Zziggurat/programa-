@@ -16,9 +16,39 @@ const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
 const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+// Ninguna espera de Playwright puede quedarse indefinidamente: si algo no llega, FALLA y se ve.
+page.setDefaultTimeout(45_000);
+page.setDefaultNavigationTimeout(60_000);
 const errs = [];
 page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404|Not Found/i.test(m.text())) errs.push(m.text()); });
 page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
+
+/*
+ * PROGRESO Y CRONÓMETRO. Esta suite hace cientos de clics reales y en un navegador sin tarjeta
+ * gráfica cada uno cuesta segundos, así que tarda decenas de minutos y eso es normal. Lo que no es
+ * normal es no saber en qué se ha quedado: una ejecución anterior estuvo más de cuatro horas sin
+ * decir una palabra y hubo que matarla a mano sin saber dónde se había bloqueado. Ahora cada
+ * bloque se anuncia antes de empezar y hay un tope: pasado ese tiempo el proceso se corta y dice
+ * en qué paso estaba.
+ */
+const ARRANQUE = Date.now();
+let pasoActual = 'arrancando';
+const paso = (n) => {
+	pasoActual = n;
+	console.log(`\n[${((Date.now() - ARRANQUE) / 1000).toFixed(0)}s] ${n}`);
+};
+/*
+ * El tope. Medido en esta máquina sin tarjeta gráfica: el bloque de la cámara girada tarda unos
+ * catorce minutos y el barrido de los 47 cables bastante más, así que una hora larga es lo NORMAL
+ * aquí y no hay que confundirlo con un cuelgue. Lo que pasó una vez —cuatro horas y media— fueron
+ * dos ejecuciones simultáneas peleándose por la CPU, sin una línea de salida que lo delatara. Con
+ * el progreso de arriba eso ya se ve, y con este tope se corta solo diciendo dónde estaba.
+ */
+const LIMITE_MS = Number(process.env.LIMITE ?? 100 * 60 * 1000);
+setTimeout(() => {
+	console.log(`\n=== BLOQUEADA en: ${pasoActual} (${((Date.now() - ARRANQUE) / 1000).toFixed(0)} s) ===`);
+	process.exit(2);
+}, LIMITE_MS).unref?.();
 
 let fallos = 0;
 const must = (n, c, extra = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${extra ? ' → ' + extra : ''}`); };
@@ -26,7 +56,15 @@ const jsClick = (id) => page.evaluate((i) => document.getElementById(i)?.click()
 const qa = (fn, ...a) => page.evaluate(([f, args]) => window.qa[f](...args), [fn, a]);
 const proyecto = () => qa('proyecto');
 const LIBRE = { x0: 320, x1: 966, y0: 60, y1: 782 };
-const enZona = (p) => p && p.x > LIBRE.x0 && p.x < LIBRE.x1 && p.y > LIBRE.y0 && p.y < LIBRE.y1;
+/*
+ * INCLUSIVE, igual que la sonda. Aquí estaba uno de los dos fallos que arrastrábamos: la sonda
+ * descarta un punto con `p.y > zona.y1` y esta comprobación lo descartaba con `p.y < LIBRE.y1`.
+ * Para el borde exacto —782— la sonda decía «vale» y la prueba decía «no vale», así que el primer
+ * conductor del estrella-triángulo salía como inagarrable por UN PÍXEL. El cable estaba
+ * perfectamente a la vista y se agarra sin problema; lo que no cuadraba eran las dos definiciones
+ * de la misma zona.
+ */
+const enZona = (p) => p && p.x >= LIBRE.x0 && p.x <= LIBRE.x1 && p.y >= LIBRE.y0 && p.y <= LIBRE.y1;
 const trazadoDe = async (id) => JSON.stringify((await proyecto()).conductores.find((c) => c.id === id)?.trazado ?? null);
 
 /**
@@ -62,10 +100,38 @@ async function girarCamara(dx, dy) {
  * Si el píxel elegido lo ocupa OTRO cable montado encima (cosa que pasa cuando la prueba ya
  * ha movido muchos), se marca `otro` y no cuenta: no es un fallo de agarre.
  */
+/**
+ * Un punto agarrable del cable, insistiendo. La sonda devuelve el PRIMER punto bueno de las
+ * muestras que se le pidan, así que con pocas muestras puede tocarle uno que caiga justo en el
+ * borde del lienzo o en un cruce, y con más muestras encuentra otro perfectamente válido del mismo
+ * cable. Que un conductor esté tapado en un punto concreto no lo hace inagarrable: lo que la
+ * prueba tiene que comprobar es que EXISTE alguna zona visible por la que se pueda coger, que es
+ * lo que haría una persona.
+ */
+async function puntoDeAgarre(id) {
+	/*
+	 * Y se prefiere un punto CÓMODO, no el último píxel del lienzo. El segundo fallo que
+	 * arrastrábamos salía de ahí: la sonda daba un punto a cuatro píxeles del borde inferior, el
+	 * doble clic creaba la unión justo ahí y el tirador —que se dibuja más adelante, a otra
+	 * profundidad— proyectaba ya fuera de la zona, así que el cable se declaraba inagarrable
+	 * cuando lo que pasaba es que se le había cogido por el sitio más incómodo posible. Una
+	 * persona no hace eso: agarra por donde se ve bien. Se busca primero con margen y sólo si no
+	 * hay nada se acepta el borde.
+	 */
+	const HOLGADA = { x0: LIBRE.x0 + 40, x1: LIBRE.x1 - 40, y0: LIBRE.y0 + 40, y1: LIBRE.y1 - 40 };
+	for (const zona of [HOLGADA, LIBRE]) {
+		for (const muestras of [31, 61, 121, 241]) {
+			const p = await qa('puntoParaAgarrar', id, muestras, zona);
+			if (enZona(p)) return p;
+		}
+	}
+	return undefined;
+}
+
 async function intentarAgarrar(id) {
 	const antes = await trazadoDe(id);
-	const p = await qa('puntoParaAgarrar', id, 31, LIBRE);
-	if (!enZona(p)) return { movido: false, sinPuntos: true };
+	const p = await puntoDeAgarre(id);
+	if (!p) return { movido: false, sinPuntos: true };
 
 	// 1) Señalarlo y pinchar tiene que SELECCIONAR ese cable y no otro.
 	await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.waitForTimeout(40);
@@ -76,7 +142,7 @@ async function intentarAgarrar(id) {
 	// 2) Doble clic crea la unión donde se ha señalado (es como se ordena un cable ahora).
 	// Se vuelve a apuntar: seleccionar el cable redibuja la escena y el punto de antes puede
 	// haber quedado obsoleto, sobre todo con la cámara girada.
-	const p2 = (await qa('puntoParaAgarrar', id, 31, LIBRE)) ?? p;
+	const p2 = (await puntoDeAgarre(id)) ?? p;
 	await page.mouse.dblclick(p2.x, p2.y); await page.waitForTimeout(350);
 	const idx = ((await proyecto()).conductores.find((c) => c.id === id)?.trazado ?? []).length - 1;
 	if (idx < 0) return { movido: false, sinUnion: true };
@@ -115,13 +181,13 @@ await page.goto(url, { waitUntil: 'networkidle' }); await page.waitForTimeout(60
 await jsClick('btn-cerrar-ayuda'); await page.waitForTimeout(120);
 await tableroLimpio();
 
-console.log('\n--- 1. Agarrar un cable «directo» (sin uniones) a la primera ---');
+paso('1. Agarrar un cable «directo» (sin uniones) a la primera');
 const id0 = (await proyecto()).conductores[0].id;
 must('un cable recién creado no tiene uniones', (await trazadoDe(id0)) === 'null');
 const r0 = await intentarAgarrar(id0);
 must('se agarra y se ordena sin tener que preparar nada antes', r0.movido, JSON.stringify(r0));
 
-console.log('\n--- 2. Un simple clic NO deja uniones sueltas ---');
+paso('2. Un simple clic NO deja uniones sueltas');
 const id1 = (await proyecto()).conductores[3].id;
 const antes1 = await trazadoDe(id1);
 const p1 = (await qa('puntosDeCable', id1)).filter(enZona)[1];
@@ -129,7 +195,7 @@ if (p1) { await page.mouse.click(p1.x, p1.y); await page.waitForTimeout(250); }
 must('clic sin arrastrar solo selecciona (no crea unión)', (await trazadoDe(id1)) === antes1);
 must('y el cable queda seleccionado', /Cable/.test(await page.textContent('#panel-der')));
 
-console.log('\n--- 3. Con la cámara girada (donde antes fallaba por la perspectiva) ---');
+paso('3. Con la cámara girada (donde antes fallaba por la perspectiva)');
 for (const [dx, dy, nombre] of [[140, 0, 'girado a la derecha'], [-260, 90, 'girado a la izquierda y arriba']]) {
 	await tableroLimpio();       // tablero limpio para cada ángulo
 	await girarCamara(dx, dy);
@@ -146,7 +212,7 @@ for (const [dx, dy, nombre] of [[140, 0, 'girado a la derecha'], [-260, 90, 'gir
 		`${movidos}/${probados}${fallan.length ? ' · fallan: ' + fallan.join(',') : ''}`);
 }
 
-console.log('\n--- 4. Barrido: TODOS los cables visibles deben poder agarrarse ---');
+paso('4. Barrido: TODOS los cables visibles deben poder agarrarse');
 await tableroLimpio();
 const todos = (await proyecto()).conductores;
 let probados = 0; let movidos = 0; const fallidos = [];
@@ -159,7 +225,7 @@ for (const c of todos) {
 must('todos los cables visibles se pueden agarrar', movidos === probados,
 	`${movidos}/${probados}${fallidos.length ? ' · fallan: ' + fallidos.join(',') : ''}`);
 
-console.log('\n--- 5. Coherencia ---');
+paso('5. Coherencia');
 must('sin cables fantasma', (await qa('cablesDibujados')) === (await proyecto()).conductores.length);
 must('sin errores de JavaScript', errs.length === 0, errs.join(' | '));
 
