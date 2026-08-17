@@ -979,7 +979,7 @@ function releTermicoModelo(g: THREE.Group, w: number, h: number, color: number, 
 	return prof;
 }
 
-function releAux(g: THREE.Group, w: number, h: number, color: number): number {
+function releAux(g: THREE.Group, w: number, h: number, color: number, conDial: boolean): number {
 	const prof = 70;
 	/*
 	 * Zócalo + relé enchufable translúcido con su clip.
@@ -1001,17 +1001,25 @@ function releAux(g: THREE.Group, w: number, h: number, color: number): number {
 	 * DIAL DE TIEMPO con su escala, en la cara. Un temporizador se distingue de un relé de
 	 * maniobra precisamente por esto: tiene algo que ajustar y una escala para leerlo. Sin el
 	 * dial, KT se veía exactamente igual que cualquier relé enchufable.
+	 *
+	 * Pero SOLO si de verdad temporiza. Puesto a todos los relés enchufables, un relé de
+	 * interposición como el K1 del climatizador salía con una escala de tiempo que no tiene, y
+	 * eso es peor que no tener dial: es enseñar un mando que en el aparato real no existe.
 	 */
-	const rDial = Math.min(w * 0.22, altoRele * 0.24);
-	const yDial = altoRele * 0.18;
-	g.add(cilindro(rDial * 1.35, 1.8, M.baquelita(0x1b1f22), 0, yDial, prof - 0.6));
-	g.add(cilindro(rDial, 2.2, M.plastico(0xe8e4d8, 0.5), 0, yDial, prof + 0.8));
-	for (let i = 0; i < 6; i++) {
-		const a = -Math.PI * 0.7 + (i / 5) * Math.PI * 1.4;
-		g.add(caja(0.5, 1.4, 0.7, M.baquelita(0x2a2e31),
-			Math.cos(a) * rDial * 1.2, yDial + Math.sin(a) * rDial * 1.2, prof + 0.2));
+	if (conDial) {
+		const rDial = Math.min(w * 0.22, altoRele * 0.24);
+		const yDial = altoRele * 0.18;
+		g.add(cilindro(rDial * 1.35, 1.8, M.baquelita(0x1b1f22), 0, yDial, prof - 0.6));
+		g.add(cilindro(rDial, 2.2, M.plastico(0xe8e4d8, 0.5), 0, yDial, prof + 0.8));
+		// Las marcas van CLARAS sobre el aro oscuro: en negro sobre negro la escala está dibujada
+		// pero no se ve ni una marca, que para una escala es lo mismo que no tenerla.
+		for (let i = 0; i < 6; i++) {
+			const a = -Math.PI * 0.7 + (i / 5) * Math.PI * 1.4;
+			g.add(caja(0.5, 1.4, 0.8, M.plastico(0xc7c3b8, 0.55),
+				Math.cos(a) * rDial * 1.2, yDial + Math.sin(a) * rDial * 1.2, prof + 0.4));
+		}
+		g.add(caja(0.8, rDial * 0.75, 0.9, M.plastico(0xc0392b, 0.4), 0, yDial + rDial * 0.35, prof + 1.9));
 	}
-	g.add(caja(0.8, rDial * 0.75, 0.9, M.plastico(0xc0392b, 0.4), 0, yDial + rDial * 0.35, prof + 1.9));
 	// Banderita de estado y clip de retención.
 	g.add(caja(w * 0.3, 3, 2, M.plastico(0xe0653a, 0.4), 0, -altoRele * 0.34, prof - 1));
 	g.add(caja(2, altoRele * 0.9, prof - Z_BORNE - 4, M.metal(0xcfd4d8), -w * 0.44, 0, (Z_BORNE + prof) / 2));
@@ -1475,7 +1483,7 @@ export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: TH
 			// térmico de sobrecarga es gris antracita: con el azul del relé se quedaba de juguete.
 			profundidad = d.rangoRegulacionA
 				? releTermicoModelo(g, w, h, d.colorCuerpo ? color : 0x585f66, ref)
-				: w <= 30 ? releAux(g, w, h, COLOR_TIPO.rele) : contactor(g, w, h, 0x4a545c, ref);
+				: w <= 30 ? releAux(g, w, h, COLOR_TIPO.rele, !!d.temporizacion) : contactor(g, w, h, 0x4a545c, ref);
 			break;
 		case 'plc':
 			profundidad = plc(g, w, h, color, ref);
