@@ -772,6 +772,65 @@ function guardamotorModelo(g: THREE.Group, w: number, h: number, color: number, 
 	return prof;
 }
 
+/**
+ * EL RELÉ TÉRMICO, que no se parece en nada a un relé enchufable.
+ *
+ * Los dos llegaban aquí como `tipo: 'rele'` y salían con el mismo cuerpo translúcido y su bobina
+ * de cobre dentro, así que un térmico de sobrecarga se veía como un relé de maniobra. Lo que los
+ * distingue en el modelo —sin mirar identificadores— es que un térmico declara su RANGO DE
+ * REGULACIÓN: es un aparato que se tara, y eso es justo lo que se le ve por fuera.
+ *
+ * De un térmico real se reconocen cuatro cosas: el cuerpo bajo y ancho que se cuelga debajo del
+ * contactor, la rueda de reglaje con su escala de amperios, el botón de rearme y el de prueba, y
+ * la ventanita del testigo de disparo.
+ */
+function releTermicoModelo(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
+	const prof = 76;
+	const zNariz = prof - 8;
+	const cuerpo = M.tecnico(color);
+	cuerpoDeCarril(g, w, h, Z_BORNE, cuerpo, 1.6, 0.6);
+	const altoNariz = h * 0.5;
+	g.add(cajaCanto(w * 0.99, altoNariz, zNariz - Z_BORNE, cuerpo, 0, 0, (Z_BORNE + zNariz) / 2, 1.6, 0.7));
+	// Frontal embutido, más claro: es donde va impresa la escala.
+	panelEmbutido(g, w * 0.94, altoNariz * 0.9, zNariz, M.plastico(0xd8d5cc, 0.6), 1.3, 0, 0, 1);
+
+	/*
+	 * LA RUEDA DE REGLAJE con su corona graduada. Es LA pieza del térmico: la que dice a cuántos
+	 * amperios está tarado, y la que un electricista busca con la vista al abrir el cuadro.
+	 */
+	const rMando = Math.min(w * 0.26, altoNariz * 0.3);
+	const yMando = altoNariz * 0.12;
+	g.add(cilindro(rMando * 1.3, 2, M.baquelita(0x1a1e21), 0, yMando, zNariz - 0.4));
+	g.add(cilindro(rMando, 2.6, M.plastico(0xe6e2d6, 0.5), 0, yMando, zNariz + 1.2));
+	// Las marcas de la escala alrededor de la rueda, y el índice rojo que señala el valor.
+	for (let i = 0; i < 8; i++) {
+		const a = -Math.PI * 0.75 + (i / 7) * Math.PI * 1.5;
+		g.add(caja(0.6, 1.8, 0.8, M.baquelita(0x2a2e31),
+			Math.cos(a) * rMando * 1.15, yMando + Math.sin(a) * rMando * 1.15, zNariz + 0.6));
+	}
+	g.add(caja(0.9, rMando * 0.8, 1, M.plastico(0xc0392b, 0.4), 0, yMando + rMando * 0.4, zNariz + 2.4));
+
+	/*
+	 * REARME y PRUEBA: los dos pulsadores pequeños de la parte baja. El de rearme es azul o negro
+	 * y el de prueba rojo, y están a distinta altura porque uno se pulsa a menudo y el otro casi
+	 * nunca. Van rehundidos en su alojamiento: un botón posado sobre la cara se ve flotando.
+	 */
+	const yBotones = -altoNariz * 0.3;
+	for (const [dx, col, r] of [[-w * 0.22, 0x2b3a52, 2.2], [w * 0.22, 0xb03a2e, 1.8]] as const) {
+		g.add(cilindro(r * 1.5, 2.2, M.baquelita(0x15181a), dx, yBotones, zNariz - 0.5));
+		g.add(cilindro(r, 2.4, M.plastico(col, 0.45), dx, yBotones, zNariz + 1));
+	}
+	// Ventanilla del testigo de disparo, entre los dos botones.
+	const testigo = caja(Math.min(7, w * 0.24), 2.8, 1.2, M.plastico(0x2e7d32, 0.32), 0, yBotones, zNariz + 0.4);
+	testigo.userData.pieza = 'mirilla';
+	g.add(testigo);
+
+	const et = etiquetaImpresa(ref, Math.min(w * 0.7, 26), 4.5, '#d8d5cc', '#333');
+	et.position.set(0, -altoNariz * 0.44, zNariz + 0.5);
+	g.add(et);
+	return prof;
+}
+
 function releAux(g: THREE.Group, w: number, h: number, color: number): number {
 	const prof = 70;
 	/*
@@ -790,6 +849,21 @@ function releAux(g: THREE.Group, w: number, h: number, color: number): number {
 	// Por dentro se ve la bobina de cobre y el yugo: es lo que hace creíble el relé transparente.
 	g.add(cilindro(Math.min(w * 0.2, altoRele * 0.3), prof - Z_BORNE - 8, M.cobre(), 0, 0, (Z_BORNE + prof) / 2));
 	g.add(caja(w * 0.5, 2.5, prof - Z_BORNE - 10, M.metal(0x9aa1a8), 0, altoRele * 0.3, (Z_BORNE + prof) / 2));
+	/*
+	 * DIAL DE TIEMPO con su escala, en la cara. Un temporizador se distingue de un relé de
+	 * maniobra precisamente por esto: tiene algo que ajustar y una escala para leerlo. Sin el
+	 * dial, KT se veía exactamente igual que cualquier relé enchufable.
+	 */
+	const rDial = Math.min(w * 0.22, altoRele * 0.24);
+	const yDial = altoRele * 0.18;
+	g.add(cilindro(rDial * 1.35, 1.8, M.baquelita(0x1b1f22), 0, yDial, prof - 0.6));
+	g.add(cilindro(rDial, 2.2, M.plastico(0xe8e4d8, 0.5), 0, yDial, prof + 0.8));
+	for (let i = 0; i < 6; i++) {
+		const a = -Math.PI * 0.7 + (i / 5) * Math.PI * 1.4;
+		g.add(caja(0.5, 1.4, 0.7, M.baquelita(0x2a2e31),
+			Math.cos(a) * rDial * 1.2, yDial + Math.sin(a) * rDial * 1.2, prof + 0.2));
+	}
+	g.add(caja(0.8, rDial * 0.75, 0.9, M.plastico(0xc0392b, 0.4), 0, yDial + rDial * 0.35, prof + 1.9));
 	// Banderita de estado y clip de retención.
 	g.add(caja(w * 0.3, 3, 2, M.plastico(0xe0653a, 0.4), 0, -altoRele * 0.34, prof - 1));
 	g.add(caja(2, altoRele * 0.9, prof - Z_BORNE - 4, M.metal(0xcfd4d8), -w * 0.44, 0, (Z_BORNE + prof) / 2));
@@ -1140,7 +1214,11 @@ export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: TH
 			profundidad = contactor(g, w, h, color, ref);
 			break;
 		case 'rele':
-			profundidad = w <= 30 ? releAux(g, w, h, COLOR_TIPO.rele) : contactor(g, w, h, 0x4a545c, ref);
+			// Un aparato que declara rango de regulación es un térmico de sobrecarga: se tara, y
+			// eso se le ve por fuera. Lo demás que llega como relé son relés y temporizadores.
+			profundidad = d.rangoRegulacionA
+				? releTermicoModelo(g, w, h, color, ref)
+				: w <= 30 ? releAux(g, w, h, COLOR_TIPO.rele) : contactor(g, w, h, 0x4a545c, ref);
 			break;
 		case 'plc':
 			profundidad = plc(g, w, h, color, ref);
