@@ -52,6 +52,57 @@ const VACIO = (): Piezas => ({
 	reposo: new Map(),
 });
 
+const HSL = { h: 0, s: 0, l: 0 };
+
+/**
+ * CÓMO SE ENCIENDE UN CONDUCTOR SIN DEJAR DE SER DE SU COLOR.
+ *
+ * Energizar es un estado AÑADIDO, no un cambio de color: un cable gris con tensión sigue siendo
+ * gris, y uno marrón sigue siendo marrón. Durante mucho tiempo no fue así porque había DOS sitios
+ * pintando lo mismo —este módulo y `pintarSimulacion`— y el segundo machacaba el emisivo con un
+ * ámbar fijo para todos. El síntoma era que cualquier conductor vivo viraba al amarillo: el negro
+ * pasaba de tono 220° a 42°. La causa no era la intensidad, era el COLOR del emisivo.
+ *
+ * Ahora el emisivo sale del propio conductor: mismo tono y misma saturación, y solo se le sube la
+ * luz lo justo para que un conductor oscuro tenga algo que emitir. Se acota por arriba para que un
+ * gris o un blanco no se vayan al blanco puro, que es la otra forma de perder la identidad.
+ *
+ * La FUERZA compensa lo contrario: sobre un negro casi cualquier cosa se nota, y sobre un claro
+ * casi nada. Un conductor oscuro recibe más y uno claro menos, para que los dos den el mismo salto
+ * PERCIBIDO sin que ninguno queme. Un cable energizado no es una tira de LED.
+ *
+ * Se calcula una vez por cable y se recuerda; si el material cambia de color (colorear por
+ * voltaje), el propio color guardado invalida la cuenta.
+ */
+export function emisionDeCable(mat: THREE.MeshStandardMaterial, malla: THREE.Object3D): number {
+	const base = mat.color.getHex();
+	const guardado = malla.userData.emision as { base: number; color: number; fuerza: number } | undefined;
+	if (guardado?.base === base) {
+		mat.emissive.setHex(guardado.color);
+		return guardado.fuerza;
+	}
+	mat.color.getHSL(HSL);
+	// El emisivo es el color del conductor tal cual. Solo se le pone un SUELO, porque un negro casi
+	// puro multiplicado por cualquier intensidad sigue siendo negro y no habría forma de ver que
+	// tiene tensión; y un TECHO, para que un blanco no emita blanco puro y se coma su propio matiz.
+	const color = new THREE.Color().setHSL(HSL.h, HSL.s, Math.min(0.72, Math.max(0.30, HSL.l)));
+	/*
+	 * Y LA FUERZA SUBE CON LO CLARO QUE SEA EL CONDUCTOR, que es justo lo contrario de lo que
+	 * parece a primera vista.
+	 *
+	 * El primer intento le daba más a los oscuros, razonando que un negro necesita más ayuda. Medido
+	 * salía al revés: el negro pasaba de luz 6 % a 32 % —ya no era negro, era gris pizarra— y el
+	 * gris subía 3 puntos, que no se ve. La razón es que lo que se compara no es el material sino lo
+	 * que sale por pantalla, y un conductor oscuro parte de casi cero: cualquier añadido lo
+	 * multiplica. Sobre uno claro, ya iluminado y comprimido por el tone mapping, ese mismo añadido
+	 * no se nota. Así los dos dan un salto PARECIDO al ojo sin que ninguno cambie de color.
+	 */
+	const fuerza = 0.38 + 2.6 * HSL.l;
+	malla.userData.emision = { base, color: color.getHex(), fuerza };
+	mat.emissive.copy(color);
+	return fuerza;
+}
+
 /** Localiza (y recuerda) las piezas móviles que cuelgan de un grupo. */
 function piezasDe(grupo: THREE.Object3D): Piezas {
 	const guardado = grupo.userData.piezasSim as Piezas | undefined;
@@ -134,7 +185,8 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 			const base = 0.22 + Math.min(0.28, Math.log10(1 + amperios * 4) * 0.2);
 			// La fase sale del id, así que cada cable late a su aire y no parpadean todos a la vez.
 			const fase = (id.charCodeAt(0) + id.length * 7) % 10;
-			mat.emissiveIntensity = base + 0.05 * Math.sin(reloj * 2.6 + fase);
+			const fuerza = emisionDeCable(mat, o);
+			mat.emissiveIntensity = (base + 0.05 * Math.sin(reloj * 2.6 + fase)) * fuerza;
 		});
 	}
 

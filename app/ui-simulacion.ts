@@ -16,6 +16,7 @@ import { MemoriaLogica, memoriaLogicaVacia } from '../src/motores/logica.js';
 import {
 	EstadoAparato, EstadoTablero, MemoriaTiempos, ResultadoSimulacion, formatearA, memoriaVacia, simular,
 } from '../src/motores/simulacion.js';
+import { emisionDeCable } from './animacion-sim.js';
 import { Escenario } from './escena3d.js';
 import { avisar, escaparHtml } from './dialogos.js';
 
@@ -213,30 +214,37 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		}, 200);
 	}
 
-	/** Enciende lo que está vivo: cables con tensión y aparatos funcionando. */
+	/**
+	 * Enciende los cables que están vivos.
+	 *
+	 * QUIÉN PINTA QUÉ, que es lo que estaba mal. Los APARATOS los anima `animarSimulacion`, pieza a
+	 * pieza: la armadura del contactor baja, la palanca sube, la mirilla pasa a rojo, el piloto se
+	 * enciende con SU color. Aquí se pintaban además TODAS las mallas de cada aparato activo con un
+	 * ámbar plano, encima de aquello. El resultado era que un contactor metido se veía como un
+	 * objeto distinto —carcasa amarilla incluida— en vez de como un contactor con la bobina
+	 * excitada, y el plástico negro salía amarillo. Solo debe encenderse lo que en el aparato de
+	 * verdad comunica estado, así que ese barrido se ha quitado: ya había quien lo hacía bien.
+	 *
+	 * De los cables se enciende SOLO el tubo visible. Del cable cuelgan también el tubo grueso de
+	 * agarre (invisible) y las punteras de las dos puntas, y una puntera de plástico encendida no es
+	 * un cable con tensión.
+	 */
 	function pintarSimulacion(): void {
 		const r = ultimaSim;
 		ctx.escenario().cables.traverse((o) => {
 			if (!(o instanceof THREE.Mesh) || !(o.material instanceof THREE.MeshStandardMaterial)) return;
+			if (!o.userData.tuboVisible) return;
 			const id = o.userData.conductorId as string | undefined;
 			if (!id) return;
-			const vivo = energizado && r?.conductoresVivos.has(id);
-			o.material.emissive.setHex(vivo ? 0xffc83d : 0x000000);
-			o.material.emissiveIntensity = vivo ? 0.85 : 0;
+			if (!(energizado && r?.conductoresVivos.has(id))) {
+				o.material.emissive.setHex(0x000000);
+				o.material.emissiveIntensity = 0;
+				return;
+			}
+			// El color con el que se enciende sale del PROPIO conductor. Esto deja el valor de
+			// partida; quién lo modula según la corriente es `animarSimulacion`, con la misma cuenta.
+			o.material.emissiveIntensity = 0.3 * emisionDeCable(o.material, o);
 		});
-		for (const grupo of ctx.escenario().dispositivos.children) {
-			const id = grupo.userData.dispositivoId as string | undefined;
-			if (!id) continue;
-			const activo = energizado && r?.activos.has(id);
-			grupo.traverse((o) => {
-				if (!(o instanceof THREE.Mesh) || !(o.material instanceof THREE.MeshStandardMaterial)) return;
-				// Se guarda el brillo de fábrica para poder devolverlo al desenergizar: hay aparatos que
-				// ya venían con emisivo propio (la pantalla de un controlador, un LED).
-				if (o.userData.emisivoOriginal === undefined) o.userData.emisivoOriginal = o.material.emissiveIntensity;
-				o.material.emissive.setHex(activo ? 0xffd54f : 0x000000);
-				o.material.emissiveIntensity = activo ? 0.5 : (o.userData.emisivoOriginal as number);
-			});
-		}
 		pintarPanelSimulacion();
 	}
 
