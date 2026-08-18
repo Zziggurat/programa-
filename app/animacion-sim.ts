@@ -122,10 +122,19 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 			const amperios = corrientes?.get(id) ?? 0;
 			// Un hilo de maniobra lleva miliamperios y uno de potencia varios amperios: la escala es
 			// logarítmica para que el de mando se vea sin que el de potencia deslumbre.
-			const base = 0.5 + Math.min(0.6, Math.log10(1 + amperios * 4) * 0.42);
+			/*
+			 * LA BANDA SE MIDE EN LO QUE AGUANTA EL COLOR, no en lo brillante que quede.
+			 *
+			 * Iba de 0,5 a 1,1. Como ahora el emissive es el color del PROPIO conductor, esa banda
+			 * quemaba a los claros: un hilo gris de mando salía blanco amarillento al energizarse y
+			 * dejaba de distinguirse de sus vecinos justo cuando hay que seguirlo con la vista. Con
+			 * la mitad de recorrido, un cable oscuro sigue dando un salto grande —parte de casi
+			 * nada— y uno claro se aviva sin perder su color.
+			 */
+			const base = 0.22 + Math.min(0.28, Math.log10(1 + amperios * 4) * 0.2);
 			// La fase sale del id, así que cada cable late a su aire y no parpadean todos a la vez.
 			const fase = (id.charCodeAt(0) + id.length * 7) % 10;
-			mat.emissiveIntensity = base + 0.09 * Math.sin(reloj * 2.6 + fase);
+			mat.emissiveIntensity = base + 0.05 * Math.sin(reloj * 2.6 + fase);
 		});
 	}
 

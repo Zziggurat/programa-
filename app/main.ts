@@ -2414,13 +2414,62 @@ function grupoDe(id: string): THREE.Group | undefined {
 	return escenario.dispositivos.children.find((g) => g.userData.dispositivoId === id) as THREE.Group | undefined;
 }
 
+/*
+ * ------------------------------ CÓMO SE MARCA LO SELECCIONADO ------------------------------
+ *
+ * Se bañaba el aparato ENTERO en emisión azul a 0,4. El resultado es que un contactor negro con
+ * su serigrafía, sus tornillos y sus bornes se convertía en una mancha azul uniforme: al
+ * seleccionarlo se perdía de vista exactamente la pieza que se acababa de elegir, que es lo
+ * contrario de lo que tiene que hacer una selección. Y en un programa técnico eso además no se
+ * lee como «seleccionado», se lee como «recoloreado».
+ *
+ * Ahora hay dos señales, y ninguna tapa el objeto: un realce de emisión MUY leve —lo justo para
+ * que la pieza se despegue del fondo— y un MARCO de aristas alrededor de su volumen, que es como
+ * marca la selección cualquier programa de CAD. El marco dice dónde empieza y acaba el aparato
+ * sin taparle ni un tornillo.
+ */
+let marcoSeleccion: THREE.LineSegments | undefined;
+
 function limpiarResaltado(): void {
 	for (const m of resaltados) m.emissive.setHex(0x000000);
 	resaltados = [];
+	if (marcoSeleccion) {
+		escena.remove(marcoSeleccion);
+		marcoSeleccion.geometry.dispose();
+		marcoSeleccion = undefined;
+	}
 }
 
-function resaltarObjeto(raiz: THREE.Object3D | undefined, color = 0x1d4ed8, intensidad = 0.4): void {
-	raiz?.traverse((o) => {
+/** El marco de aristas del volumen seleccionado. No intercepta el ratón. */
+function marcarVolumen(raiz: THREE.Object3D, color: number): void {
+	const caja = new THREE.Box3().setFromObject(raiz);
+	if (caja.isEmpty()) return;
+	const tam = caja.getSize(new THREE.Vector3());
+	const centro = caja.getCenter(new THREE.Vector3());
+	// Un pelo más grande que el objeto: pegado al milímetro, el marco se metería dentro de las
+	// caras y aparecería a trozos según el ángulo.
+	const geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(tam.x + 3, tam.y + 3, tam.z + 3));
+	marcoSeleccion = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+		color, transparent: true, opacity: 0.95, depthTest: false,
+	}));
+	marcoSeleccion.position.copy(centro);
+	marcoSeleccion.renderOrder = 998;
+	marcoSeleccion.raycast = () => {};
+	escena.add(marcoSeleccion);
+}
+
+function resaltarObjeto(raiz: THREE.Object3D | undefined, color = 0x1d4ed8, intensidad = 0.06): void {
+	/*
+	 * La emisión se queda en 0,06 y no más. Sobre un contactor casi negro no hay color base con el
+	 * que competir, así que CUALQUIER emisión manda: a 0,14 el aparato seguía saliendo azul entero.
+	 * Quien marca la selección es el marco; la emisión solo despega la pieza del fondo lo justo
+	 * para que se vea que está viva.
+	 */
+	if (!raiz) return;
+	raiz.traverse((o) => {
+		// La serigrafía no se realza: es tinta impresa, y encenderla convierte los números en
+		// manchas de color justo cuando el usuario se ha acercado a leerlos.
+		if (o.userData.esMarca) return;
 		if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
 			o.material = o.material.clone();
 			o.material.emissive.setHex(color);
@@ -2428,6 +2477,7 @@ function resaltarObjeto(raiz: THREE.Object3D | undefined, color = 0x1d4ed8, inte
 			resaltados.push(o.material);
 		}
 	});
+	marcarVolumen(raiz, color === 0xff3b3b ? 0xff7a7a : 0x8fd4ff);
 }
 
 function resaltarPorUserData(clave: 'canaletaId' | 'rielId', id: string): void {
@@ -2435,7 +2485,7 @@ function resaltarPorUserData(clave: 'canaletaId' | 'rielId', id: string): void {
 		if (o.userData[clave] === id && o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
 			o.material = o.material.clone();
 			o.material.emissive.setHex(0x1d4ed8);
-			o.material.emissiveIntensity = 0.55;
+			o.material.emissiveIntensity = 0.2;
 			resaltados.push(o.material);
 		}
 	});

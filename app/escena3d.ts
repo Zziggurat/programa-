@@ -778,11 +778,22 @@ function badgeVoltaje(voltios: number): THREE.CanvasTexture {
 	canvas.width = 128;
 	canvas.height = 64;
 	const ctx = canvas.getContext('2d')!;
-	ctx.fillStyle = hex(colorVoltaje(voltios));
+	/*
+	 * LA CHAPA DE TENSIÓN ES INFORMACIÓN DE ESTADO, no el protagonista.
+	 *
+	 * Con el color a plena saturación era de lo primero que miraba el ojo en la vista general,
+	 * por delante del aparato que rotula. Se mantiene el CÓDIGO —cada nivel su color, que es lo
+	 * que sirve para leer un tablero de un vistazo— pero apagado hacia el gris y con la chapa
+	 * algo translúcida, para que se lea al buscarla y no salte encima cuando no se busca.
+	 */
+	const c = new THREE.Color(colorVoltaje(voltios));
+	const gris = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+	c.lerp(new THREE.Color(gris, gris, gris), 0.34).multiplyScalar(0.86);
+	ctx.fillStyle = `#${c.getHexString()}`;
 	ctx.beginPath();
 	ctx.roundRect(4, 4, 120, 56, 12);
 	ctx.fill();
-	ctx.fillStyle = voltios >= 110 ? '#fff' : '#0d1520';
+	ctx.fillStyle = voltios >= 110 ? '#f2f4f6' : '#0d1520';
 	ctx.font = 'bold 34px system-ui, sans-serif';
 	ctx.textAlign = 'center';
 	ctx.textBaseline = 'middle';
@@ -866,7 +877,27 @@ function anadirTuboCable(
 		// Doce lados en vez de siete: a la distancia a la que se mira un borne, un tubo de siete
 		// caras se ve poligonal y delata que es un modelo.
 		new THREE.TubeGeometry(curva, segmentos, radio, 12, false),
-		new THREE.MeshStandardMaterial({ color, roughness: 0.32 + grano, metalness: 0.04 }),
+		/*
+		 * EL EMISSIVE VA EN EL COLOR DEL PROPIO CONDUCTOR, y esto arregla un fallo que no se veía
+		 * leyendo el código de la animación: al energizar, `animarSimulacion` sube la INTENSIDAD
+		 * del emissive de cada cable vivo según los amperios que lleva… pero el material nunca
+		 * declaraba un color emissive, así que se quedaba en negro. Y una intensidad, por alta que
+		 * sea, multiplica al negro y da negro: los cables energizados no encendían nada.
+		 *
+		 * Se enciende en SU color a propósito. Un cable marrón que al energizarse brillara en rojo
+		 * o en amarillo dejaría de ser identificable justo cuando más falta hace saber cuál es
+		 * cuál: la identificación por color no se negocia. Encendido, un marrón es un marrón vivo.
+		 */
+		new THREE.MeshStandardMaterial({
+			color,
+			roughness: 0.32 + grano,
+			metalness: 0.04,
+			// La emisión es el color del conductor REBAJADO. A plena potencia, un gris claro sumaba
+			// su propio valor sobre sí mismo y el mapeado de tonos lo empujaba al hombro cálido: el
+			// hilo salía color crema y dejaba de ser gris. Al 55 % se aviva sin salirse de su color.
+			emissive: new THREE.Color(color).multiplyScalar(0.55),
+			emissiveIntensity: 0,
+		}),
 	);
 	tubo.userData.conductorId = conductorId;
 	tubo.userData.tuboVisible = true; // el que se ve: manda al seleccionar con el ratón
