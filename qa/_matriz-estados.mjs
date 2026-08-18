@@ -175,6 +175,26 @@ if (s0) {
 	await p.mouse.move(900, 120); await p.waitForTimeout(500);   // apartar el puntero para que el hover no contamine la foto
 	await p.screenshot({ path: join(SALIDA, `cable-${s0.color.replace(/[/]/g, '-')}-5-seleccionado-energizado.png`), clip: recorte(s0.pt) });
 }
+/*
+ * EL TESTIGO DE UNA PROTECCIÓN, que es el indicador real que hay en estos tableros.
+ *
+ * Diego pedía la pareja «piloto apagado / encendido», pero ninguno de los cinco tableros de
+ * ejemplo lleva un piloto: existen en el catálogo y nada más. El equivalente que sí hay montado es
+ * la mirilla de una protección, y sirve para lo mismo que había que comprobar: al cambiar de
+ * estado se enciende LA MIRILLA, no el aparato entero.
+ */
+const proteccion = disp.find((d) => ['disyuntor', 'diferencial', 'guardamotor', 'rele'].includes(d.tipo));
+if (proteccion) {
+	await sobre(proteccion.id, 3.4);
+	await p.screenshot({ path: join(SALIDA, 'proteccion-1-normal.png') });
+	await qa('accionar', proteccion.id).catch(() => {});
+	await p.waitForTimeout(1200);
+	await sobre(proteccion.id, 3.4);
+	await p.screenshot({ path: join(SALIDA, 'proteccion-2-disparada.png') });
+	console.log(`testigo fotografiado en ${proteccion.id} (${proteccion.tipo})`);
+} else {
+	console.log('este tablero no lleva ninguna protección con mirilla');
+}
 console.log('cables fotografiados:', sitios.map((s) => `${s.color}=${s.id}`).join(', '));
 console.log('vivos:', JSON.stringify(await qa('simulacion')));
 console.log(er.length ? `ERRORES: ${er.slice(0, 2).join(' | ')}` : 'sin errores de JavaScript');
