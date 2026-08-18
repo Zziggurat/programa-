@@ -445,6 +445,7 @@ function construirCaja(g: Gabinete, realista = false): THREE.Group {
 	for (const sx of [-1, 1]) {
 		for (const sy of [-1, 1]) {
 			const e = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 8, 12), esparrago);
+			e.castShadow = true;
 			e.rotation.x = Math.PI / 2;
 			e.position.set(sx * (g.ancho / 2 - 22), sy * (g.alto / 2 - 22), -8);
 			grupo.add(e);
@@ -657,6 +658,16 @@ export function construirCanaleta(
 			const m = new THREE.Mesh(caja, mat);
 			const centro = desde + largo / 2 - ejeCentro;
 			m.position.set(esH ? centro : 0, esH ? 0 : centro, z);
+			/*
+			 * LAS CANALETAS NO PROYECTABAN NI RECIBÍAN SOMBRA. Ninguna.
+			 *
+			 * Es la pieza más grande del tablero después de la placa, va montada A RAS de ella y no
+			 * dejaba ni una marca: por eso los ductos se veían pegados encima del fondo como una
+			 * calcomanía en vez de apoyados. Y al no recibir, la tapa tampoco se oscurecía bajo los
+			 * cables que le pasan por encima, con lo que no había forma de saber qué está delante.
+			 */
+			m.castShadow = true;
+			m.receiveShadow = true;
 			grupo.add(m);
 			if (esTapa) tapas.push(m);
 		});
@@ -689,7 +700,14 @@ export function construirCanaleta(
 				centro, ESPESOR + ZOCALO + alturaDiente / 2,
 			);
 		}
-		if (cajas.length) grupo.add(new THREE.Mesh(fusionarCajas(cajas), pvc));
+		if (cajas.length) {
+			const pared = new THREE.Mesh(fusionarCajas(cajas), pvc);
+			// Los dientes son lo que MÁS gana: cada uno tapa al de al lado desde la mayoría de los
+			// ángulos, así que con sombra propia la pared deja de ser un peine plano.
+			pared.castShadow = true;
+			pared.receiveShadow = true;
+			grupo.add(pared);
+		}
 	};
 	pared(1);
 	pared(-1);
@@ -838,6 +856,16 @@ function anadirTuboCable(
 	);
 	tubo.userData.conductorId = conductorId;
 	tubo.userData.tuboVisible = true; // el que se ve: manda al seleccionar con el ratón
+	/*
+	 * EL CABLE TAMPOCO PROYECTABA SOMBRA, y es lo que más dice de la profundidad de un tablero.
+	 *
+	 * Cincuenta hilos cruzando por delante de la placa sin dejar ni una marca es lo que hacía que
+	 * el mazo pareciera dibujado ENCIMA de la foto en vez de tendido por delante. Con su sombra,
+	 * la distancia entre cada cable y lo que tiene detrás se lee sola, sin tener que girar la
+	 * vista. Recibe además, porque un cable que pasa por debajo de otro tiene que enterarse.
+	 */
+	tubo.castShadow = true;
+	tubo.receiveShadow = true;
 	grupo.add(tubo);
 	/*
 	 * PUNTERAS EN LAS DOS PUNTAS.

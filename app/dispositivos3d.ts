@@ -104,7 +104,20 @@ function tornillo(
 	g: THREE.Group, x: number, y: number, z: number, radio = 1.6, cruz = false,
 ): void {
 	const cabeza = M.metal(0xc9cfd4);
-	const sombra = M.baquelita(0x0e1113);
+	/*
+	 * EL POCILLO NO ES NEGRO: ES EL MISMO PLÁSTICO, A LA SOMBRA.
+	 *
+	 * Estaba pintado de 0x0e1113 —negro de tinta— porque en la Fase 1 no había luz capaz de
+	 * oscurecer un hueco de tres milímetros, así que la oscuridad había que pintarla. El precio es
+	 * que un pocillo así no se lee como una cavidad: se lee como un agujero recortado, sin fondo y
+	 * sin el tornillo dentro, que es justo lo que se veía al acercarse a una regleta.
+	 *
+	 * Ahora que la luz rasante y las sombras hacen ese trabajo, el alojamiento vuelve a ser el
+	 * material que de verdad es y la profundidad la pone la iluminación. La RANURA de la cabeza sí
+	 * sigue oscura: eso no es una cavidad ancha, es un corte estrecho donde de verdad no entra luz.
+	 */
+	const pocillo = M.tecnico(0x4c5359);
+	const ranura = M.baquelita(0x14171a);
 	/*
 	 * LA CABEZA VA POR DEBAJO DE LA CARA, y antes iba por encima.
 	 *
@@ -118,11 +131,11 @@ function tornillo(
 	 * POR DENTRO y la huella se hunde en ella. Así la boca del alojamiento devuelve su sombra
 	 * anular y el tornillo se lee al fondo, que es como se ve uno de verdad.
 	 */
-	g.add(cilindro(radio * 1.5, 3, sombra, x, y, z - 1.5));
+	g.add(cilindro(radio * 1.5, 3, pocillo, x, y, z - 1.5));
 	g.add(cilindro(radio, 1.6, cabeza, x, y, z - 1.2));
 	// La huella, hundida en la cabeza: arranca por debajo de su cara y sube hasta la boca.
-	g.add(caja(radio * 1.7, 0.6, 0.6, sombra, x, y, z - 0.3));
-	if (cruz) g.add(caja(0.6, radio * 1.7, 0.6, sombra, x, y, z - 0.3));
+	g.add(caja(radio * 1.7, 0.6, 0.6, ranura, x, y, z - 0.3));
+	if (cruz) g.add(caja(0.6, radio * 1.7, 0.6, ranura, x, y, z - 0.3));
 }
 
 function caja(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
@@ -191,7 +204,8 @@ function cilindro(r: number, largo: number, mat: THREE.Material, x = 0, y = 0, z
  */
 function borneTornillo(g: THREE.Group, x: number, y: number, ancho: number): void {
 	const z = Z_BORNE;   // no es un parámetro a propósito: nadie puede ponerle otra profundidad
-	const hueco = M.baquelita(0x101315);
+	// Mismo criterio que en el tornillo: el alojamiento es plástico en penumbra, no pintura negra.
+	const hueco = M.tecnico(0x474d53);
 	const jaula = M.metal(0x8d949a);
 	const a = Math.min(ancho, 9);
 	// Alojamiento: un pocillo rehundido 3,4 mm, con su boca en la superficie.
@@ -806,7 +820,7 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		 * `dibujarBornesReales()` en el punto exacto donde se engancha el cable, para que sea el
 		 * mismo tornillo que se ve.
 		 */
-		g.add(caja(paso * 0.62, 7, 3.4, M.baquelita(0x14171a), x, -h * 0.28, prof - 1.7));
+		g.add(caja(paso * 0.62, 7, 3.4, M.tecnico(0x474d53), x, -h * 0.28, prof - 1.7));
 		g.add(caja(paso * 0.44, 5, 1.4, M.metal(0x8d949a), x, -h * 0.28, prof - 3.1));
 		tornillo(g, x, -h * 0.28, prof, Math.min(1.9, paso * 0.26));
 		/*
@@ -814,7 +828,8 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		 * tiene toda borna y por el que se mete el hilo. Es un detalle de dos milímetros que se
 		 * nota mucho de cerca, porque es lo que explica cómo se conecta la pieza.
 		 */
-		g.add(cilindro(Math.min(1.6, paso * 0.22), 2.2, M.baquelita(0x0d1012), x, -h * 0.4, prof - 1.1));
+		// La boca del conductor sí es un taladro estrecho y profundo: ahí la penumbra es real.
+		g.add(cilindro(Math.min(1.6, paso * 0.22), 2.2, M.baquelita(0x1a1e21), x, -h * 0.4, prof - 1.1));
 		// Ventana de identificación: la tira donde va el número de borna, embutida en la cara.
 		g.add(caja(paso - 2.4, h * 0.11, 1.1, M.baquelita(0xe9ecee), x, h * 0.02, prof - 0.2));
 	}

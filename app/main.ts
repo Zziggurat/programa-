@@ -680,7 +680,13 @@ const contenedor = document.getElementById('escena')!;
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.12;
+/*
+ * EXPOSICIÓN. Medida, no a ojo: con 1,12 los encuadres cercanos daban una mediana de 196 sobre
+ * 255 en el macro de un borne y 173 en la regleta. Eso no es «claro», es TODO amontonado contra
+ * el blanco: una cara así no tiene superficie, tiene papel, y ningún bisel de medio milímetro
+ * puede leerse sobre ella porque no queda recorrido hacia arriba para que la luz lo marque.
+ */
+renderer.toneMappingExposure = 1.02;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 contenedor.appendChild(renderer.domElement);
@@ -756,11 +762,33 @@ function permitirOrbita(permitir: boolean): void {
 
 const pmrem = new THREE.PMREMGenerator(renderer);
 escena.environment = pmrem.fromScene(new RoomEnvironment(), 0.045).texture;
-escena.environmentIntensity = 0.55;
+/*
+ * EL ENTORNO ERA EL PRINCIPAL CULPABLE DE LA PLANITUD.
+ *
+ * `RoomEnvironment` reparte luz desde TODAS las direcciones a la vez. A 0,55 era la fuente
+ * dominante de la escena, y una fuente omnidireccional no puede producir sombra ni marcar un
+ * canto: da color y quita relieve. Sigue haciendo falta —es lo que hace que un metal refleje
+ * algo en vez de un vacío negro— pero como acompañamiento, no como luz principal.
+ */
+escena.environmentIntensity = 0.34;
 
-escena.add(new THREE.HemisphereLight(0xf2f5f8, 0x33383e, 0.55));
-const sol = new THREE.DirectionalLight(0xffffff, 1.9);
-sol.position.set(500, 750, 900);
+// El hemisférico hace lo mismo que el entorno: rellenar desde todas partes. Con los dos a la vez
+// no quedaba una sola cara del tablero en penumbra, y sin penumbra no hay volumen.
+escena.add(new THREE.HemisphereLight(0xeef3f8, 0x2b3036, 0.3));
+/*
+ * LA LUZ PRINCIPAL, ahora RASANTE en vez de frontal.
+ *
+ * Estaba en (500, 750, 900): la componente que más pesaba era la Z, o sea que venía casi de
+ * frente, desde detrás de la cámara. Una luz frontal ilumina por igual el fondo de un pocillo y
+ * el borde que lo rodea, así que aplasta exactamente lo que la Fase 1 se dedicó a construir:
+ * biseles, hombros, rehundidos y tabiques. Es la razón de que un frontal con seis planos
+ * distintos se viera como una mancha de color.
+ *
+ * Ahora domina la altura y el lado, y la componente frontal es la menor de las tres: la luz
+ * CRUZA las caras en vez de mirarlas de frente, y cada escalón devuelve su línea de sombra.
+ */
+const sol = new THREE.DirectionalLight(0xfff6ea, 2.7);
+sol.position.set(700, 940, 620);
 sol.castShadow = true;
 sol.shadow.mapSize.set(2048, 2048);
 sol.shadow.camera.near = 10;
@@ -775,8 +803,15 @@ sol.shadow.camera.bottom = -1200;
  * muestra a lo largo de la normal de la superficie: quita el rayado sin abrir hueco en el
  * contacto. Con las cotas de este modelo —milímetros— 0,7 es lo justo.
  */
-sol.shadow.bias = -0.00006;
-sol.shadow.normalBias = 0.7;
+sol.shadow.bias = -0.00004;
+/*
+ * `normalBias` a 0,7 mm era demasiado para lo que hay que resolver ahora. Separa la muestra a lo
+ * largo de la normal, así que se come los contactos MÁS PEQUEÑOS que ese desplazamiento: el
+ * escalón de un tornillo dentro de su pocillo, el diente de una canaleta contra su pared, la
+ * pinza de un aparato apoyada en el labio del carril. Con el tronco de sombras ajustado al
+ * gabinete el rayado no vuelve, y a 0,22 mm esos contactos existen.
+ */
+sol.shadow.normalBias = 0.22;
 escena.add(sol);
 escena.add(sol.target);
 const contraluz = new THREE.DirectionalLight(0x88aaff, 0.3);
@@ -787,8 +822,8 @@ escena.add(contraluz);
  * canal del carril, las ranuras de ventilación— quedaban en negro cerrado, y un agujero negro no
  * se lee como un hueco, se lee como una mancha. Con esto tienen fondo.
  */
-const relleno = new THREE.DirectionalLight(0xdce6f2, 0.28);
-relleno.position.set(-120, -260, 900);
+const relleno = new THREE.DirectionalLight(0xd6e2f0, 0.42);
+relleno.position.set(-260, -340, 900);
 escena.add(relleno);
 
 const suelo = new THREE.GridHelper(4000, 80, 0x2c3238, 0x22272c);
@@ -958,11 +993,23 @@ function ajustarSombras(): void {
 	const g = proyecto.gabinete;
 	if (!g) return;
 	const caja = cajaDe(g);
-	const radio = Math.max(caja.ancho, caja.alto) / 2 + 60;
-	sol.shadow.camera.left = -radio;
-	sol.shadow.camera.right = radio;
-	sol.shadow.camera.top = radio;
-	sol.shadow.camera.bottom = -radio;
+	/*
+	 * EL TRONCO ERA CUADRADO Y EL TABLERO NO LO ES.
+	 *
+	 * Se cogía `max(ancho, alto)` para los cuatro lados, así que en un tablero de 600 × 850 el mapa
+	 * cubría 850 × 850: la quinta parte de sus píxeles caía sobre aire a los dos costados. Cada
+	 * píxel de sombra desperdiciado ahí es un píxel que le falta al contacto de un tornillo.
+	 *
+	 * Con los dos semiejes por separado el mismo mapa se reparte solo sobre lo que hay, y el
+	 * contacto sale más fino sin costar un milisegundo más —medido—. El margen es para que la
+	 * sombra de lo que sobresale del gabinete no se corte de golpe en el borde.
+	 */
+	const mx = caja.ancho / 2 + 60;
+	const my = caja.alto / 2 + 60;
+	sol.shadow.camera.left = -mx;
+	sol.shadow.camera.right = mx;
+	sol.shadow.camera.top = my;
+	sol.shadow.camera.bottom = -my;
 	sol.shadow.camera.near = 100;
 	sol.shadow.camera.far = 3000;
 	sol.shadow.camera.updateProjectionMatrix();
