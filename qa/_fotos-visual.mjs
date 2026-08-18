@@ -129,6 +129,13 @@ if (primero('pulsador', 'selector', 'piloto')) {
 	await cerca(primero('pulsador', 'selector', 'piloto'), 1.3, 0.4, 0.3);
 	await foto('11-mando-de-puerta');
 }
+/*
+ * LATERAL. Es el encuadre que dice de un vistazo lo que un frontal no puede: cuánto sobresale
+ * cada aparato, a qué altura corre cada cable y cómo se escalonan placa, carril y canaleta.
+ */
+await general(1.15, 0.06, 1.0); await foto('12-lateral');
+// MACRO del pocillo de un borne: aquí es donde se ve si el tornillo está DENTRO de su hueco.
+if (await cerca(primero('bornero') ?? ids[0].id, 0.32, 0.3, 0.25)) await foto('13-macro-borne');
 await tapas(true); await general(0.5, 0.3); await foto('10-conjunto-con-tapa');
 
 console.log(errores.length ? `ERRORES: ${errores.slice(0, 3).join(' | ')}` : 'sin errores de JavaScript');

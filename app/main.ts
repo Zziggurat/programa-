@@ -5699,6 +5699,56 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			const c = caja.getCenter(new THREE.Vector3());
 			return { x: c.x, y: c.y, z: c.z, radio: caja.getSize(new THREE.Vector3()).length() / 2 };
 		},
+		/**
+		 * HISTOGRAMA DE LO QUE SE ESTÁ VIENDO, para poder discutir la iluminación con números.
+		 *
+		 * Ajustar exposición y luces «a ojo» sobre capturas es como igualar un sonido girando el
+		 * mando sin mirar el vúmetro: se acaba compensando una cosa con otra. Aquí se lee el
+		 * framebuffer y se cuenta cuánto hay pegado al negro y cuánto pegado al blanco, que son
+		 * los dos sitios donde se pierde información y no se recupera.
+		 *
+		 * `negrosMuertos` son los píxeles del lienzo 3D por debajo de 12/255 en los tres canales:
+		 * un pocillo ahí dentro no es una cavidad, es un agujero. `blancosMuertos`, los que pasan
+		 * de 246: una placa ahí no tiene superficie, tiene papel. `mediana` dice si el conjunto
+		 * está globalmente claro u oscuro, y `contraste` es la desviación típica de la luminancia.
+		 */
+		histograma: () => {
+			const c = renderer.domElement;
+			const lienzo = document.createElement('canvas');
+			lienzo.width = Math.min(c.width, 800);
+			lienzo.height = Math.min(c.height, 500);
+			const ctx = lienzo.getContext('2d')!;
+			ctx.drawImage(c, 0, 0, lienzo.width, lienzo.height);
+			const d = ctx.getImageData(0, 0, lienzo.width, lienzo.height).data;
+			const cuenta = new Array(256).fill(0);
+			let negros = 0;
+			let blancos = 0;
+			let n = 0;
+			for (let i = 0; i < d.length; i += 4) {
+				const r = d[i];
+				const g2 = d[i + 1];
+				const b2 = d[i + 2];
+				const lum = Math.round(0.2126 * r + 0.7152 * g2 + 0.0722 * b2);
+				cuenta[lum]++;
+				if (r < 12 && g2 < 12 && b2 < 12) negros++;
+				if (r > 246 && g2 > 246 && b2 > 246) blancos++;
+				n++;
+			}
+			let acc = 0;
+			let mediana = 0;
+			for (let v = 0; v < 256; v++) { acc += cuenta[v]; if (acc >= n / 2) { mediana = v; break; } }
+			let media = 0;
+			for (let v = 0; v < 256; v++) media += (v * cuenta[v]) / n;
+			let varianza = 0;
+			for (let v = 0; v < 256; v++) varianza += (cuenta[v] / n) * (v - media) ** 2;
+			return {
+				negrosMuertos: Math.round((negros / n) * 10000) / 100,
+				blancosMuertos: Math.round((blancos / n) * 10000) / 100,
+				mediana,
+				media: Math.round(media * 10) / 10,
+				contraste: Math.round(Math.sqrt(varianza) * 10) / 10,
+			};
+		},
 		/** Estado de la vista 2D: si está puesta, y si la cámara viva es de verdad ortográfica. */
 		vista2D: () => ({
 			activa: vista2D,
