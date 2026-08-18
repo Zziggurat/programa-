@@ -94,7 +94,10 @@ test('ningún modelo 3D pinta sus bornes a una profundidad propia', () => {
 	 */
 	assert.doesNotMatch(modelos, /function filaBornes/,
 		'volver a tener una fila de bornes «a ojo» es volver a poder desalinearla del cable');
-	assert.match(modelos, /dibujarBornesReales\(g, d, w, h\)/,
+	// Lo que se vigila es que se le pase el APARATO, no la aridad exacta de la llamada: el
+	// argumento de tinta se añadió al serigrafiar la numeración y no cambia de dónde salen los
+	// bornes. Atar la prueba al texto literal la convertía en un guardián de la firma.
+	assert.match(modelos, /dibujarBornesReales\(g, d, w, h[,)]/,
 		'los bornes se dibujan a partir de los que el aparato tiene de verdad');
 	// Y el único sitio que fija la profundidad del tornillo es la constante compartida.
 	const conZ = modelos.match(/borneTornillo\([^)]*\)/g) ?? [];
