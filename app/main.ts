@@ -709,7 +709,14 @@ const camara = new THREE.PerspectiveCamera(42, 1, 25, 8000);
 const controles = new OrbitControls(camara, renderer.domElement);
 controles.enableDamping = true;
 controles.dampingFactor = 0.08;
-controles.minDistance = 220;
+/*
+ * 130 mm en vez de 220. El plano cercano está a 25 mm, así que no era él quien impedía acercarse:
+ * era este tope. Con 220 mm no se puede poner la vista donde de verdad hace falta para leer la
+ * numeración de un borne o ver un tornillo dentro de su pocillo —justo el detalle que las fases
+ * anteriores se dedicaron a construir—. A 130 sigue habiendo cinco veces el plano cercano de
+ * margen, así que ningún aparato se corta al aproximarse.
+ */
+controles.minDistance = 130;
 controles.maxDistance = 6000;
 // La cámara se mantiene SIEMPRE por delante del tablero, como en un configurador profesional:
 // se puede girar de lado a lado y mirar desde arriba o abajo, pero nunca pasar por detrás

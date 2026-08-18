@@ -845,7 +845,11 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		const x = (i + 0.5) * paso - w / 2;
 		// Bloque individual: gris (o verde/amarillo si es tierra). La poliamida de una borna es
 		// mate: con el plástico satinado de una carcasa parecían todos la misma pieza.
-		const cuerpo = esPE ? M.baquelita(0x3f9142) : M.baquelita(0xaeb4b9);
+		// El verde y el amarillo de protección tienen que ser inequívocos, que para eso están
+		// normalizados, pero no fosforescentes: a plena saturación la borna de tierra era el objeto
+		// más llamativo del tablero, por delante de la aparamenta. Se bajan a un tono de poliamida
+		// teñida, que es lo que son, sin tocar el código de color.
+		const cuerpo = esPE ? M.baquelita(0x3d8341) : M.baquelita(0xaeb4b9);
 		cuerpoDeCarril(g, paso - 1.2, h, prof, cuerpo, 0.9, 0.4, x);
 		/*
 		 * La franja amarilla, en la CARA de la borna.
@@ -854,7 +858,7 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		 * milímetro metido en la placa de montaje— hasta prof+1, y por el camino atravesaba el
 		 * carril de punta a punta. Una franja pintada no tiene fondo: va en la cara.
 		 */
-		if (esPE) g.add(caja(paso - 1.8, h * 0.34, 1.4, M.baquelita(0xe4c437), x, 0, prof + 0.3));
+		if (esPE) g.add(caja(paso - 1.8, h * 0.34, 1.4, M.baquelita(0xd6bb3c), x, 0, prof + 0.3));
 		/*
 		 * LA PARED ENTRE MÓDULOS. Una regleta no es un bloque estriado: son bornas sueltas
 		 * apretadas una contra otra, y lo que se ve entre ellas es el canto de cada carcasa. Sin

@@ -21,15 +21,24 @@ import {
 } from './canaletas-red.js';
 import { ALTURA_CARRIL, bornesGenericos, construirAparato3D, Z_BORNE } from './dispositivos3d.js';
 
+/*
+ * LOS COLORES DE CONDUCTOR, EN TONO DE PVC Y NO DE PALETA DE PANTALLA.
+ *
+ * El código no se toca —cada color sigue significando lo mismo y se identifica igual de bien—,
+ * pero el rojo, el azul y el verde estaban en tonos puros de paleta de interfaz. Al lado del
+ * marrón, el negro y el gris, que sí eran tonos de material, cantaban: en el tablero del
+ * controlador los hilos rojos parecían de otro programa. Un conductor de PVC rojo es un rojo
+ * profundo, no un rojo primario, y esa es toda la diferencia entre «industrial» y «digital».
+ */
 export const COLOR_CABLE: Record<string, number> = {
 	'negro': 0x20242a,
-	'azul': 0x1565c0,
-	'rojo': 0xc62828,
+	'azul': 0x1e5fa8,
+	'rojo': 0xa8322e,
 	'blanco': 0xe8eaed,
 	'gris': 0x9aa0a6,
 	'marrón': 0x6d4c41,
 	'marron': 0x6d4c41,
-	'verde/amarillo': 0x7cb342,
+	'verde/amarillo': 0x74a23c,
 };
 
 /**
