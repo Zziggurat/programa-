@@ -87,13 +87,22 @@ const aHsl = (r, g, b) => {
 	const h = mx === R ? ((G - B) / d + (G < B ? 6 : 0)) : mx === G ? (B - R) / d + 2 : (R - G) / d + 4;
 	return { tono: Math.round(h * 60), saturacion: Math.round(sat * 100), luz: Math.round(l * 100) };
 };
-const lienzo = await p.evaluate(() => { const r = document.querySelector('canvas').getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
-const dentro = (pt) => pt.x > lienzo.x + 4 && pt.x < lienzo.x + lienzo.w - 4 && pt.y > lienzo.y + 4 && pt.y < lienzo.y + lienzo.h - 4;
+/*
+ * DÓNDE SE PUEDE FOTOGRAFIAR: encima del lienzo Y con nada de la interfaz delante.
+ *
+ * El lienzo 3D ocupa TODA la ventana y los paneles laterales flotan por encima. Así que «el punto
+ * cae dentro del lienzo» no quiere decir nada: los primeros recortes salieron fotografiando la
+ * lista de cables del panel izquierdo, que está justo encima del canvas. Lo que de verdad hace
+ * falta es preguntar qué elemento hay en ese píxel, y `elementFromPoint` lo contesta sin que haya
+ * que adivinar el ancho de ningún panel.
+ */
+const descubierto = async (pt) => p.evaluate(([x, y]) => document.elementFromPoint(x, y)?.tagName === 'CANVAS', [pt.x, pt.y]);
 
 /** Puntos del cable que están en pantalla Y son de verdad ese cable. */
 const puntosBuenos = async (id) => {
 	const out = [];
-	for (const pt of (await qa('puntosVisiblesDeCable', id, 30)).filter(dentro)) {
+	for (const pt of await qa('puntosVisiblesDeCable', id, 30)) {
+		if (!(await descubierto(pt))) continue;
 		if ((await qa('cableEnPixel', pt.x, pt.y)) === id) out.push(pt);
 		if (out.length >= MUESTRAS_POR_CABLE) break;
 	}
@@ -118,7 +127,22 @@ for (const [color, id] of porColor) {
 	const puntos = await puntosBuenos(id);
 	if (puntos.length < 3) { console.log(`${color.padEnd(16)} ${id}: solo ${puntos.length} puntos válidos, no se mide`); continue; }
 	const apagado = await medir(id, puntos);
-	if (apagado) muestras.push({ color, id, puntos, apagado });
+	if (!apagado) continue;
+	/*
+	 * SELECCIONADO, sin tensión todavía: ¿a emisivo 0,03 un conductor marrón sigue siendo marrón?
+	 *
+	 * Solo se da por buena la medida si la app confirma que lo seleccionado es ESTE conductor. Un
+	 * clic sobre una maraña de cables puede caer en el vecino, y sin comprobarlo salían números que
+	 * parecían medir la selección y en realidad medían un cable que nadie había tocado: el marrón
+	 * «seleccionado» daba tono 40 y el gris no se movía ni un punto.
+	 */
+	await p.mouse.click(puntos[0].x, puntos[0].y); await p.waitForTimeout(600);
+	await p.mouse.move(900, 120); await p.waitForTimeout(300);
+	const marcado = await qa('seleccion');
+	const elegido = marcado?.id === id ? await medir(id, puntos) : undefined;
+	if (!elegido) console.log(`${color.padEnd(16)} ${id}: el clic seleccionó ${JSON.stringify(marcado)}, no se mide la selección`);
+	await p.keyboard.press('Escape'); await p.waitForTimeout(400);
+	muestras.push({ color, id, puntos, apagado, elegido });
 }
 await p.screenshot({ path: join(SALIDA, 'a-apagado.png') });
 
@@ -149,7 +173,8 @@ for (const m of muestras) {
 	const a = m.apagado;
 	const dt = enc.tono - a.tono, ds = enc.saturacion - a.saturacion, dl = enc.luz - a.luz;
 	const fmt = (c) => `${String(c.r).padStart(3)},${String(c.g).padStart(3)},${String(c.b).padStart(3)} / ${String(c.tono).padStart(3)} ${String(c.saturacion).padStart(2)} ${String(c.luz).padStart(2)}`;
-	console.log(`${m.color.padEnd(16)} ${m.id.padEnd(9)} ${fmt(a)}    ${fmt(enc)}   ${String(dt).padStart(5)} ${String(ds).padStart(4)} ${String(dl).padStart(4)}` + (sigue ? '' : `   << OJO: solo ${enc.validos} puntos válidos al energizar`) + (conVida.has(m.id) ? '' : '   (este conductor no tiene tensión en este tablero)'));
+	const sel = m.elegido ? `   sel: ${fmt(m.elegido)}` : '';
+	console.log(`${m.color.padEnd(16)} ${m.id.padEnd(9)} ${fmt(a)}    ${fmt(enc)}   ${String(dt).padStart(5)} ${String(ds).padStart(4)} ${String(dl).padStart(4)}${sel}` + (sigue ? '' : `   << OJO: solo ${enc.validos} puntos válidos al energizar`) + (conVida.has(m.id) ? '' : '   (este conductor no tiene tensión en este tablero)'));
 }
 console.log(`\naparatos activos: ${[...vivos].join(', ') || '(ninguno)'}`);
 console.log(er.length ? `ERRORES: ${er.slice(0, 2).join(' | ')}` : 'sin errores de JavaScript');
