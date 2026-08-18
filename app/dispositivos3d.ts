@@ -300,6 +300,12 @@ function dibujarBornesReales(g: THREE.Group, d: Dispositivo, w: number, h: numbe
 			const rot = marca(p.id, alto, tintaClara);
 			if (rot) {
 				rot.position.set(x, y + (arriba ? -1 : 1) * alto * 1.6, Z_BORNE + 0.12);
+				/*
+				 * Es MICROTEXTO: existe para quien se acerca a cablear, y desde la vista general no
+				 * se lee —son cifras de dos milímetros— pero sí se acumula. Cien marcas ilegibles no
+				 * informan de nada: convierten el tablero en una nube de manchas. Se apagan solas.
+				 */
+				rot.userData.lod = 'micro';
 				g.add(rot);
 			}
 		}
@@ -408,7 +414,7 @@ function cuerpoDeCarril(
 	g.add(caja(w * 0.5, 3, 1.6, M.metal(0x767d83), x, -18.5, zCanal - 0.8));
 }
 
-function modular(g: THREE.Group, w: number, h: number, color: number, ref: string, polos: number): number {
+function modular(g: THREE.Group, w: number, h: number, color: number, d: Dispositivo, polos: number): number {
 	/*
 	 * EL PERFIL DE VERDAD DE UN APARATO MODULAR, que es escalonado y no un ladrillo.
 	 *
@@ -527,9 +533,21 @@ function modular(g: THREE.Group, w: number, h: number, color: number, ref: strin
 	const io = etiquetaImpresa('I  ·  O', Math.min(w * 0.5, 16), 3, '#e7e4dc', '#4a4a46');
 	io.position.set(0, hueco * 0.5 + 1.9, zNariz + 2.2);
 	g.add(io);
-	const et = etiquetaImpresa(ref, Math.min(w * 0.9, 30), 4.5, '#e7e4dc', '#333');
-	et.position.set(0, altoNariz * 0.42, zNariz + 0.5);
-	g.add(et);
+	/*
+	 * LA MARCA DEL AUTOMÁTICO: «C16» arriba, grande, que es el dato que se busca al abrir un
+	 * cuadro, y la referencia debajo en cuerpo menor. Las dos salen de campos rellenos del
+	 * aparato; si no los tiene, no se imprime nada en su sitio.
+	 */
+	const ficha = fichaVisible(d);
+	const calibre = ficha.length > 1 ? ficha[1] : undefined;
+	if (calibre) {
+		const rot = marca(calibre, 4.6);
+		if (rot) { rot.position.set(0, altoNariz * 0.4, zNariz + 0.12); g.add(rot); }
+	}
+	if (ficha[0]) {
+		const rot = marca(ficha[0], 2.4);
+		if (rot) { rot.position.set(0, altoNariz * 0.4 - (calibre ? 4.4 : 0), zNariz + 0.12); rot.userData.lod = 'medio'; g.add(rot); }
+	}
 	// Mirilla de estado: verde con el aparato cerrado, roja al abrirlo o dispararlo. Va metida en
 	// su ventanita, no posada sobre la cara: por eso primero el marco oscuro y luego el cristal.
 	const anchoMir = Math.min(10, w * 0.4);
@@ -541,7 +559,7 @@ function modular(g: THREE.Group, w: number, h: number, color: number, ref: strin
 	return prof;
 }
 
-function contactor(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
+function contactor(g: THREE.Group, w: number, h: number, color: number, d: Dispositivo): number {
 	/*
 	 * EL CONTACTOR, que es la pieza que más identidad le da al tablero.
 	 *
@@ -665,13 +683,21 @@ function contactor(g: THREE.Group, w: number, h: number, color: number, ref: str
 	 * Ventana portaetiquetas en la NARIZ, no sobre la armadura: la armadura baja 2,2 mm al meter
 	 * el contactor, así que un rótulo pegado a ella se despegaría del aparato cada vez que entra.
 	 */
-	const yEt = -altoNariz * 0.22;
-	// Blanco puro y a toda altura, el portaetiquetas se comía el frontal: era lo primero que se veía
-	// del contactor. Es un rótulo, no la pieza principal, así que va más bajo y en gris de papel.
-	g.add(caja(w * 0.7, Math.min(6.5, altoNariz * 0.12), 1.4, M.baquelita(0x1a1e21), 0, yEt, zNariz - 0.7));
-	const et = etiquetaImpresa(ref, w * 0.66, Math.min(5, altoNariz * 0.1), '#cfccc4', '#2c2c2a');
-	et.position.set(0, yEt, zNariz + 0.2);
-	g.add(et);
+	/*
+	 * LA REFERENCIA VA SERIGRAFIADA, no en un cartelito.
+	 *
+	 * Era una placa blanca con su fondo: una etiqueta pegada encima, no una marca del aparato. Y
+	 * además costaba un lienzo y una textura por contactor. Ahora es tinta del atlas compartido
+	 * directamente sobre la carcasa, que es como lo lleva uno de verdad, y no cuesta nada.
+	 */
+	const yEt = -altoNariz * 0.24;
+	for (const [i, linea] of fichaVisible(d).entries()) {
+		const rot = marca(linea, i === 0 ? 3.4 : 2.6, true);
+		if (!rot) continue;
+		rot.position.set(0, yEt - i * 4.6, zNariz + 0.12);
+		rot.userData.lod = 'medio';
+		g.add(rot);
+	}
 	return prof;
 }
 
@@ -971,7 +997,7 @@ function guardamotorModelo(g: THREE.Group, w: number, h: number, color: number, 
  * contactor, la rueda de reglaje con su escala de amperios, el botón de rearme y el de prueba, y
  * la ventanita del testigo de disparo.
  */
-function releTermicoModelo(g: THREE.Group, w: number, h: number, color: number, ref: string): number {
+function releTermicoModelo(g: THREE.Group, w: number, h: number, color: number, d: Dispositivo): number {
 	const prof = 76;
 	const zNariz = prof - 8;
 	const cuerpo = M.tecnico(color);
@@ -1014,9 +1040,15 @@ function releTermicoModelo(g: THREE.Group, w: number, h: number, color: number, 
 	testigo.userData.pieza = 'mirilla';
 	g.add(testigo);
 
-	const et = etiquetaImpresa(ref, Math.min(w * 0.7, 26), 4.5, '#d8d5cc', '#333');
-	et.position.set(0, -altoNariz * 0.44, zNariz + 0.5);
-	g.add(et);
+	// El RANGO es lo que define a un térmico —a cuántos amperios se puede tarar— y sale de
+	// `rangoRegulacionA`, el mismo dato con el que este modelo se eligió en vez del de relé.
+	for (const [i, linea] of fichaVisible(d).reverse().entries()) {
+		const rot = marca(linea, i === 0 ? 3 : 2.2, false);
+		if (!rot) continue;
+		rot.position.set(0, -altoNariz * 0.42 - i * 3.8, zNariz + 0.12);
+		if (i > 0) rot.userData.lod = 'medio';
+		g.add(rot);
+	}
 	return prof;
 }
 
@@ -1478,6 +1510,33 @@ function imagenReferencia(g: THREE.Group, d: Dispositivo, w: number, h: number):
 	return prof;
 }
 
+/**
+ * LO QUE UN APARATO PUEDE ENSEÑAR ESCRITO, y solo eso.
+ *
+ * Cada línea sale de un campo que el aparato tiene RELLENO. No hay ni un dato de relleno: si un
+ * automático no declara curva, no se le imprime ninguna; si un contactor no tiene referencia, su
+ * frontal se queda sin ella. Un simulador que enseña un calibre inventado es peor que uno que no
+ * enseña nada, porque el que lo lee no tiene forma de saber cuál de los dos números es de verdad.
+ *
+ * Devuelve como mucho dos líneas cortas: una placa industrial lleva pocos datos y grandes, no un
+ * párrafo.
+ */
+function fichaVisible(d: Dispositivo): string[] {
+	const lineas: string[] = [];
+	if (d.referencia) lineas.push(d.referencia);
+	const tecnica: string[] = [];
+	// «C16» es como se marca de verdad un automático: la curva pegada al calibre.
+	if (d.curvaDisparo && d.corrienteNominal) tecnica.push(`${d.curvaDisparo}${d.corrienteNominal}`);
+	else if (d.corrienteNominal) tecnica.push(`${d.corrienteNominal}A`);
+	else if (d.curvaDisparo) tecnica.push(d.curvaDisparo);
+	if (d.polos) tecnica.push(`${d.polos}P`);
+	if (d.sensibilidadMA) tecnica.push(`${d.sensibilidadMA}mA`);
+	if (d.rangoRegulacionA) tecnica.push(`${d.rangoRegulacionA[0]}-${d.rangoRegulacionA[1]}A`);
+	if (d.temporizacion?.segundos) tecnica.push(`${d.temporizacion.segundos}s`);
+	if (tecnica.length) lineas.push(tecnica.join(' '));
+	return lineas.slice(0, 2);
+}
+
 /** Construye el modelo 3D de un aparato ya colocado. Devuelve el grupo (origen en su centro). */
 export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: THREE.Group; profundidad: number } {
 	const g = new THREE.Group();
@@ -1509,13 +1568,13 @@ export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: TH
 	switch (d.tipo) {
 		case 'disyuntor':
 		case 'diferencial':
-			profundidad = modular(g, w, h, color, ref, Math.max(1, Math.round(w / 18)));
+			profundidad = modular(g, w, h, color, d, Math.max(1, Math.round(w / 18)));
 			break;
 		case 'guardamotor':
 			profundidad = guardamotorModelo(g, w, h, color, ref);
 			break;
 		case 'contactor':
-			profundidad = contactor(g, w, h, color, ref);
+			profundidad = contactor(g, w, h, color, d);
 			break;
 		case 'rele':
 			// Un aparato que declara rango de regulación es un térmico de sobrecarga: se tara, y
@@ -1523,8 +1582,8 @@ export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: TH
 			// El azul de fábrica del tipo es el del relé ENCHUFABLE, que es azul de verdad. Un
 			// térmico de sobrecarga es gris antracita: con el azul del relé se quedaba de juguete.
 			profundidad = d.rangoRegulacionA
-				? releTermicoModelo(g, w, h, d.colorCuerpo ? color : 0x585f66, ref)
-				: w <= 30 ? releAux(g, w, h, COLOR_TIPO.rele, !!d.temporizacion) : contactor(g, w, h, 0x4a545c, ref);
+				? releTermicoModelo(g, w, h, d.colorCuerpo ? color : 0x585f66, d)
+				: w <= 30 ? releAux(g, w, h, COLOR_TIPO.rele, !!d.temporizacion) : contactor(g, w, h, 0x4a545c, d);
 			break;
 		case 'plc':
 			profundidad = plc(g, w, h, color, ref);
