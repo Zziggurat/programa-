@@ -6057,6 +6057,53 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		realceSeleccion: (v: number) => { realceSel = v; if (sel) { limpiarResaltado(); pintarSeleccion(); } },
 		/** Pone el hover de aparato desde una prueba, sin depender de la posición del ratón. */
 		hoverDispositivo: (id: string | undefined) => resaltarHoverDispositivo(id),
+		/**
+		 * EL COLOR QUE DE VERDAD SALE POR PANTALLA en un punto del lienzo 3D.
+		 *
+		 * «Ese cable se ve amarillento» es una impresión, y con impresiones no se corrige un
+		 * pipeline de color: se compensa una cosa con otra hasta que parece bien desde un ángulo.
+		 * Esto lee el framebuffer y devuelve el píxel con su tono y su saturación, para poder
+		 * comparar el mismo conductor apagado y encendido con números.
+		 *
+		 * Se promedia un cuadradito de 3×3 porque un cable es un tubo: el píxel exacto puede caer
+		 * en la raya especular y decir «blanco» de un conductor negro.
+		 */
+		colorEnPixel: (x: number, y: number) => {
+			const c = renderer.domElement;
+			const r = c.getBoundingClientRect();
+			const px = Math.round(((x - r.left) / r.width) * c.width);
+			const py = Math.round(((y - r.top) / r.height) * c.height);
+			const lienzo = document.createElement('canvas');
+			lienzo.width = 3;
+			lienzo.height = 3;
+			const ctx = lienzo.getContext('2d')!;
+			ctx.drawImage(c, px - 1, py - 1, 3, 3, 0, 0, 3, 3);
+			const d = ctx.getImageData(0, 0, 3, 3).data;
+			let R = 0;
+			let G = 0;
+			let B = 0;
+			for (let i = 0; i < 9; i++) { R += d[i * 4]; G += d[i * 4 + 1]; B += d[i * 4 + 2]; }
+			R = Math.round(R / 9); G = Math.round(G / 9); B = Math.round(B / 9);
+			const col = new THREE.Color(R / 255, G / 255, B / 255);
+			const hsl = { h: 0, s: 0, l: 0 };
+			col.getHSL(hsl);
+			return { r: R, g: G, b: B, tono: Math.round(hsl.h * 360), saturacion: Math.round(hsl.s * 100), luz: Math.round(hsl.l * 100) };
+		},
+		/** Los valores REALES de emisión de cada cable en ejecución. Para dejar de suponerlos. */
+		emisionCables: () => {
+			const out: { id: string; color: string; emissive: string; intensidad: number }[] = [];
+			escenario.cables.traverse((o) => {
+				if (!(o instanceof THREE.Mesh) || !o.userData.tuboVisible) return;
+				const m = o.material as THREE.MeshStandardMaterial;
+				out.push({
+					id: o.userData.conductorId as string,
+					color: m.color.getHexString(),
+					emissive: m.emissive.getHexString(),
+					intensidad: Math.round(m.emissiveIntensity * 1000) / 1000,
+				});
+			});
+			return out;
+		},
 		/** Estado de la vista 2D: si está puesta, y si la cámara viva es de verdad ortográfica. */
 		vista2D: () => ({
 			activa: vista2D,
