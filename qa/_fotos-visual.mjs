@@ -129,6 +129,8 @@ if (primero('pulsador', 'selector', 'piloto')) {
 	await cerca(primero('pulsador', 'selector', 'piloto'), 1.3, 0.4, 0.3);
 	await foto('11-mando-de-puerta');
 }
+// MACRO del ala de bornes de un contactor: aqui se leen 1/L1, 3/L2, A1, A2 si estan impresos.
+if (await cerca(primero('contactor') ?? ids[0].id, 0.34, 0.22, 0.42)) await foto('14-macro-contactor');
 /*
  * LATERAL. Es el encuadre que dice de un vistazo lo que un frontal no puede: cuánto sobresale
  * cada aparato, a qué altura corre cada cable y cómo se escalonan placa, carril y canaleta.

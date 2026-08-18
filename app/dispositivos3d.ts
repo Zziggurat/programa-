@@ -8,6 +8,7 @@
  * individuales en los borneros, etc.
  */
 import * as THREE from 'three';
+import { marca } from './marcas3d.js';
 import { BloqueTerminales, Colocacion, Dispositivo } from '../src/modelo/tipos.js';
 import { MARGEN_BORNERA, pasoDelBloque, PosicionTerminal, posicionesDeTerminales } from '../src/motores/terminales.js';
 
@@ -264,7 +265,7 @@ export function bornesGenericos(d: Dispositivo, w: number, h: number): PuntoBorn
  * se va a enganchar. Devuelve cuántos ha puesto en cada fila, para que el modelo sepa dónde
  * dejarle sitio.
  */
-function dibujarBornesReales(g: THREE.Group, d: Dispositivo, w: number, h: number): void {
+function dibujarBornesReales(g: THREE.Group, d: Dispositivo, w: number, h: number, tintaClara = false): void {
 	const puntos = bornesGenericos(d, w, h);
 	if (puntos.length === 0) return;
 	// El ancho de cada alojamiento sale del hueco disponible entre bornes vecinos de la misma fila.
@@ -276,7 +277,32 @@ function dibujarBornesReales(g: THREE.Group, d: Dispositivo, w: number, h: numbe
 	}
 	for (const fila of porFila.values()) {
 		const ancho = Math.min(9, Math.max(3, (w / fila.length) - 1.5));
-		for (const p of fila) borneTornillo(g, p.dx - w / 2, h / 2 - p.dy, ancho);
+		const arriba = fila[0].dy < h / 2;
+		for (const p of fila) {
+			const x = p.dx - w / 2;
+			const y = h / 2 - p.dy;
+			borneTornillo(g, x, y, ancho);
+			/*
+			 * LA NUMERACIÓN DEL BORNE, serigrafiada junto a él.
+			 *
+			 * El identificador NO se inventa: es `borne.id`, el mismo con el que el cable dice a
+			 * dónde va y con el que la simulación resuelve el circuito. Por eso en un contactor sale
+			 * «1/L1» y en un térmico «95»: es lo que el aparato declara tener. Si alguna vez el
+			 * dibujo y el modelo dejaran de coincidir, se vería aquí a simple vista.
+			 *
+			 * Va HACIA DENTRO del aparato, no hacia su canto. Puesto hacia fuera quedaba enterrado
+			 * dentro del reborde que remata el ala de bornes —geometría que existe desde la Fase 1—
+			 * y no se veía ni una cifra. Hacia el centro hay explanada lisa, y además es donde la
+			 * lleva impresa un aparato de verdad: entre el tornillo y la nariz, para que el cable
+			 * conectado no la tape.
+			 */
+			const alto = Math.min(2.4, Math.max(1.5, ancho * 0.3));
+			const rot = marca(p.id, alto, tintaClara);
+			if (rot) {
+				rot.position.set(x, y + (arriba ? -1 : 1) * alto * 1.6, Z_BORNE + 0.12);
+				g.add(rot);
+			}
+		}
 	}
 }
 
@@ -1540,14 +1566,26 @@ export function construirAparato3D(d: Dispositivo, col: Colocacion): { grupo: TH
 	 * tornillos, y ninguno estaba donde salía el cable. Ahora sale un tornillo por borne real, en
 	 * su punto exacto, con el mismo reparto que usa `anclajeBorne()`.
 	 */
-	dibujarBornesReales(g, d, w, h);
+	/*
+	 * La TINTA se elige por lo oscuro que sea el cuerpo, no aparato por aparato: una serigrafía se
+	 * imprime en el color que contrasta con la carcasa, y así cualquier aparato nuevo —o uno al que
+	 * el usuario le cambie el color desde el editor— sale legible sin tocar nada.
+	 */
+	const c = new THREE.Color(color);
+	dibujarBornesReales(g, d, w, h, 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b < 0.36);
 
 	g.traverse((o) => {
 		o.userData.dispositivoId = d.id;
-		if (o instanceof THREE.Mesh) {
-			o.castShadow = true;
-			o.receiveShadow = true;
-		}
+		if (!(o instanceof THREE.Mesh)) return;
+		/*
+		 * UNA SERIGRAFÍA NO TIENE ESPESOR, así que no proyecta ni recibe sombra. Con las banderas
+		 * puestas, un rótulo situado a una décima de milímetro de la cara que rotula se hacía
+		 * sombra a sí mismo y salía en gris sucio sobre la carcasa —o directamente no se leía—.
+		 * Es tinta sobre plástico: se ilumina con la cara, no aparte de ella.
+		 */
+		if (o.userData.esMarca) { o.castShadow = false; o.receiveShadow = false; return; }
+		o.castShadow = true;
+		o.receiveShadow = true;
 	});
 	return { grupo: g, profundidad };
 }

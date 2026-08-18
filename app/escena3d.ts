@@ -801,20 +801,34 @@ export function construirDispositivo(
 	const { grupo, profundidad } = construirAparato3D(d, col);
 	grupo.userData.dispositivoId = d.id;
 
-	// Etiqueta con la designación sobre el aparato.
+	/*
+	 * EL RÓTULO DEL TABLERO (-KM1, -Q1, -X1) y la chapa de tensión.
+	 *
+	 * Son útiles y no se quitan, pero eran los dos objetos más grandes de la escena. Un sprite
+	 * conserva su tamaño en MILÍMETROS DE MUNDO, así que al acercarse a un contactor su rótulo
+	 * crece en pantalla igual que el aparato: a la distancia a la que se van a mirar los bornes,
+	 * «-KM1» ocupaba media pantalla y tapaba justo lo que se quería inspeccionar.
+	 *
+	 * La escala se corrige por fotograma en `ajustarRotulos()`, con la distancia de la cámara. Aquí
+	 * solo se guarda el tamaño base y el papel de cada uno: el identificador manda sobre la
+	 * tensión, que es información de estado y va detrás.
+	 */
 	if (d.designacion) {
-		const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: textura(d.designacion), depthTest: false }));
-		sprite.scale.set(44, 16.5, 1);
+		const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+			map: textura(d.designacion), depthTest: false, transparent: true,
+		}));
+		sprite.userData.rotulo = { base: 44, proporcion: 16.5 / 44, altura: col.alto / 2 + 13, rango: 'identificador' };
 		sprite.position.set(0, col.alto / 2 + 13, profundidad);
 		etiquetas.push(sprite);
 		grupo.add(sprite);
 	}
 
-	// Chapa de tensión de trabajo (color por nivel), como el rotulado de un tablero real.
 	if (d.tensionNominal !== undefined && !d.imagen) {
-		const badge = new THREE.Sprite(new THREE.SpriteMaterial({ map: badgeVoltaje(d.tensionNominal), depthTest: false }));
-		badge.scale.set(24, 12, 1);
-		badge.position.set(0, col.alto / 2 + 26, profundidad);
+		const badge = new THREE.Sprite(new THREE.SpriteMaterial({
+			map: badgeVoltaje(d.tensionNominal), depthTest: false, transparent: true,
+		}));
+		badge.userData.rotulo = { base: 22, proporcion: 0.5, altura: col.alto / 2 + 24, rango: 'estado' };
+		badge.position.set(0, col.alto / 2 + 24, profundidad);
 		etiquetas.push(badge);
 		grupo.add(badge);
 	}

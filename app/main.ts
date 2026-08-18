@@ -5135,8 +5135,72 @@ renderer.setAnimationLoop(() => {
 		cables: escenario.cables,
 	});
 	(vista2D ? controlesOrto : controles).update();
+	ajustarRotulos();
 	pintar();
 });
+
+/*
+ * ---------------- NIVEL DE DETALLE DE LA INFORMACIÓN ESCRITA ----------------
+ *
+ * Un tablero real no enseña lo mismo desde la puerta que con la nariz pegada a un borne, y este
+ * programa tiene que hacer lo mismo por dos razones distintas.
+ *
+ * La primera es de LECTURA. Desde la vista general lo único que importa es qué aparato es cuál:
+ * «-KM1». La numeración de bornes a esa distancia no se lee —son cifras de dos milímetros— pero
+ * sí se acumula, y cien marcas ilegibles no informan de nada: ensucian. Al revés pasa lo mismo:
+ * con la cámara encima de un contactor, un cartel de «-KM1» del tamaño de media pantalla tapa
+ * justo lo que se ha ido a mirar.
+ *
+ * La segunda es de COSTE. Los sprites de rótulo no se tocan por fotograma más que en su escala, y
+ * el microtexto se apaga por grupos con `visible`, que no cuesta nada: la tarjeta ni siquiera los
+ * ve. No hay un solo elemento del DOM implicado.
+ *
+ * El reparto por distancia de la cámara al aparato:
+ *
+ *   lejos (> 900 mm)      identificador del tablero, y nada más
+ *   media (350..900 mm)   además la referencia y las marcas de ajuste
+ *   cerca (< 350 mm)      además la numeración de cada borne
+ *
+ * Y el identificador, a la vez, se encoge conforme uno se acerca en vez de crecer con la escena.
+ */
+const LEJOS = 900;
+const CERCA = 350;
+const posicionMundo = new THREE.Vector3();
+
+function ajustarRotulos(): void {
+	const camaraActual = camaraViva();
+	const ojo = camaraActual.position;
+	for (const grupo of escenario.dispositivos.children) {
+		grupo.getWorldPosition(posicionMundo);
+		const dist = ojo.distanceTo(posicionMundo);
+		for (const hijo of grupo.children) {
+			const lod = hijo.userData.lod as string | undefined;
+			if (lod === 'micro') hijo.visible = dist < CERCA;
+			else if (lod === 'medio') hijo.visible = dist < LEJOS;
+			const rot = hijo.userData.rotulo as
+				{ base: number; proporcion: number; altura: number; rango: string } | undefined;
+			if (!rot || !(hijo instanceof THREE.Sprite)) continue;
+			/*
+			 * TAMAÑO CONSTANTE EN PANTALLA, con tope. La altura aparente de un sprite es
+			 * proporcional a su escala partida por la distancia, así que para que ocupe siempre lo
+			 * mismo hay que escalarlo CON la distancia. Los dos topes evitan los dos extremos:
+			 * que se haga gigante encima del aparato y que se convierta en un punto desde lejos.
+			 */
+			const escala = Math.min(rot.base * 1.35, Math.max(rot.base * 0.42, dist * rot.base * 0.0011));
+			hijo.scale.set(escala, escala * rot.proporcion, 1);
+			// Y la altura a la que cuelga acompaña al tamaño, para que no se despegue del aparato.
+			hijo.position.y = rot.altura + (escala - rot.base) * 0.35;
+			/*
+			 * De cerca se desvanece. Si la cámara está encima de KM1, el usuario ya sabe que es
+			 * KM1: el cartel solo estorba. La chapa de tensión se va antes que el identificador,
+			 * porque es información de estado y va por detrás en la jerarquía.
+			 */
+			const desdeCuando = rot.rango === 'estado' ? CERCA * 1.5 : CERCA;
+			const mat = hijo.material as THREE.SpriteMaterial;
+			mat.opacity = dist > desdeCuando ? 1 : Math.max(0.16, dist / desdeCuando);
+		}
+	}
+}
 
 /*
  * Sonda de pruebas automáticas: solo se activa abriendo la página con «?qa=1», así las
@@ -5835,6 +5899,16 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				contraste: Math.round(Math.sqrt(varianza) * 10) / 10,
 			};
 		},
+		/**
+		 * Las marcas serigrafiadas que hay en la escena, por aparato. Sirve para comprobar que el
+		 * dibujo y el modelo dicen lo mismo: si un aparato declara diez bornes tienen que salir
+		 * diez números, y con los identificadores que el aparato declara, no con otros.
+		 */
+		marcas: () => escenario.dispositivos.children.map((g) => {
+			const textos: string[] = [];
+			g.traverse((o) => { if (o.userData.esMarca) textos.push(o.userData.textoMarca as string); });
+			return { dispositivo: g.userData.dispositivoId as string, marcas: textos };
+		}),
 		/** Estado de la vista 2D: si está puesta, y si la cámara viva es de verdad ortográfica. */
 		vista2D: () => ({
 			activa: vista2D,
