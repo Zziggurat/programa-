@@ -2436,6 +2436,8 @@ function grupoDe(id: string): THREE.Group | undefined {
  * sin taparle ni un tornillo.
  */
 let marcoSeleccion: THREE.LineSegments | undefined;
+let marcoHover: THREE.LineSegments | undefined;
+let hoverDispositivo: string | undefined;
 
 function limpiarResaltado(): void {
 	for (const m of resaltados) m.emissive.setHex(0x000000);
@@ -2445,27 +2447,80 @@ function limpiarResaltado(): void {
 		marcoSeleccion.geometry.dispose();
 		marcoSeleccion = undefined;
 	}
+	// Y el del hover, que si no se queda flotando sobre un aparato que ya no existe al reconstruir.
+	hoverDispositivo = undefined;
+	if (marcoHover) {
+		escena.remove(marcoHover);
+		marcoHover.geometry.dispose();
+		marcoHover = undefined;
+	}
 }
 
-/** El marco de aristas del volumen seleccionado. No intercepta el ratón. */
-function marcarVolumen(raiz: THREE.Object3D, color: number): void {
+/**
+ * Un marco de aristas alrededor del volumen de un objeto. No intercepta el ratón NUNCA: un helper
+ * visual que se cuela en el raycast convierte «marcar dónde está el aparato» en «no poder pinchar
+ * lo que hay detrás», que es peor que no marcarlo.
+ */
+function marcoDe(raiz: THREE.Object3D, color: number, opacidad: number, holgura: number): THREE.LineSegments | undefined {
 	const caja = new THREE.Box3().setFromObject(raiz);
-	if (caja.isEmpty()) return;
+	if (caja.isEmpty()) return undefined;
 	const tam = caja.getSize(new THREE.Vector3());
 	const centro = caja.getCenter(new THREE.Vector3());
 	// Un pelo más grande que el objeto: pegado al milímetro, el marco se metería dentro de las
 	// caras y aparecería a trozos según el ángulo.
-	const geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(tam.x + 3, tam.y + 3, tam.z + 3));
-	marcoSeleccion = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
-		color, transparent: true, opacity: 0.95, depthTest: false,
+	const geo = new THREE.EdgesGeometry(
+		new THREE.BoxGeometry(tam.x + holgura, tam.y + holgura, tam.z + holgura),
+	);
+	const m = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+		color, transparent: true, opacity: opacidad, depthTest: false,
 	}));
-	marcoSeleccion.position.copy(centro);
-	marcoSeleccion.renderOrder = 998;
-	marcoSeleccion.raycast = () => {};
-	escena.add(marcoSeleccion);
+	m.position.copy(centro);
+	m.renderOrder = 998;
+	m.raycast = () => {};
+	escena.add(m);
+	return m;
 }
 
-function resaltarObjeto(raiz: THREE.Object3D | undefined, color = 0x1d4ed8, intensidad = 0.06): void {
+function marcarVolumen(raiz: THREE.Object3D, color: number): void {
+	marcoSeleccion = marcoDe(raiz, color, 0.95, 3);
+}
+
+/**
+ * HOVER DE APARATO: solo el marco, y más tenue que el de selección.
+ *
+ * Los cables y los bornes ya respondían al puntero; los aparatos no, así que al pasar por encima
+ * de un contactor no había forma de saber que era clicable hasta pulsarlo. Se resuelve con el
+ * mismo lenguaje que la selección —marco de aristas, como en un CAD— y sin tocar ni un material:
+ * el hover no puede alterar el aspecto del aparato, porque es una respuesta al puntero, no un
+ * estado del tablero. Así los cuatro estados no se pisan: el hover pone un contorno tenue, la
+ * selección uno firme más un realce mínimo, y la energización enciende los conductores.
+ */
+function resaltarHoverDispositivo(id: string | undefined): void {
+	if (id === hoverDispositivo) return;
+	hoverDispositivo = id;
+	if (marcoHover) {
+		escena.remove(marcoHover);
+		marcoHover.geometry.dispose();
+		marcoHover = undefined;
+	}
+	// El que ya está seleccionado no necesita hover: tiene su propio marco, y dos marcos
+	// superpuestos solo dicen que hay dos marcos.
+	if (!id || (sel?.tipo === 'dispositivo' && sel.id === id)) return;
+	const g = grupoDe(id);
+	if (g) marcoHover = marcoDe(g, 0xbcd8ee, 0.5, 2);
+}
+
+/*
+ * 0,03, elegido comparando 0 / 0,03 / 0,06 en el mismo encuadre.
+ *
+ * A 0,06 el contactor salía visiblemente azul frente a sus vecinos: se localizaba, pero dejaba de
+ * ser el mismo material. A 0 el aparato queda idéntico a KM2 y KM3 y solo lo marca el contorno,
+ * que en una escena cargada obliga a buscarlo. A 0,03 el material se mantiene —sigue leyéndose
+ * como el mismo plástico negro— y aun así el ojo va solo hasta él.
+ */
+let realceSel = 0.03;
+
+function resaltarObjeto(raiz: THREE.Object3D | undefined, color = 0x1d4ed8, intensidad = realceSel): void {
 	/*
 	 * La emisión se queda en 0,06 y no más. Sobre un contactor casi negro no hay color base con el
 	 * que competir, así que CUALQUIER emisión manda: a 0,14 el aparato seguía saliendo azul entero.
@@ -3600,6 +3655,13 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			resaltarHoverBorne(b);
 			mostrarTipBorne(b, ev);
 			resaltarHoverCable(b ? undefined : cableBajoElPuntero(ev));
+			/*
+			 * El aparato bajo el puntero sale de `elementoBajoElPuntero`, que es EXACTAMENTE la
+			 * misma función que decide qué se selecciona al pulsar. No hay un segundo criterio: si
+			 * se marcara con uno propio, el hover podría iluminar un aparato y el clic elegir otro.
+			 */
+			const bajo = b || cableandoDesde ? undefined : elementoBajoElPuntero(ev);
+			resaltarHoverDispositivo(bajo?.tipo === 'dispositivo' ? bajo.id : undefined);
 			if (cableandoDesde) {
 				const p = puntoCable(ev);
 				if (p) actualizarGomaCable(p.x, p.y);
@@ -5227,9 +5289,11 @@ const posicionMundo = new THREE.Vector3();
 function ajustarRotulos(): void {
 	const camaraActual = camaraViva();
 	const ojo = camaraActual.position;
+	const idSel = sel?.tipo === 'dispositivo' ? sel.id : undefined;
 	for (const grupo of escenario.dispositivos.children) {
 		grupo.getWorldPosition(posicionMundo);
 		const dist = ojo.distanceTo(posicionMundo);
+		const seleccionado = grupo.userData.dispositivoId === idSel;
 		for (const hijo of grupo.children) {
 			const lod = hijo.userData.lod as string | undefined;
 			if (lod === 'micro') hijo.visible = dist < CERCA;
@@ -5254,7 +5318,21 @@ function ajustarRotulos(): void {
 			 */
 			const desdeCuando = rot.rango === 'estado' ? CERCA * 1.5 : CERCA;
 			const mat = hijo.material as THREE.SpriteMaterial;
-			mat.opacity = dist > desdeCuando ? 1 : Math.max(0.16, dist / desdeCuando);
+			let opacidad = dist > desdeCuando ? 1 : Math.max(0.16, dist / desdeCuando);
+			/*
+			 * MUY DE CERCA EL RÓTULO SOBRA, y además estorba: por debajo de 200 mm la cámara está
+			 * mirando la fila de bornes, que es justo lo que el cartel tapa. Quien ha llegado hasta
+			 * ahí ya sabe qué aparato es. Se apaga del todo, con un tramo de transición para que no
+			 * desaparezca de golpe.
+			 */
+			if (dist < 200) opacidad *= Math.max(0, (dist - 130) / 70);
+			/*
+			 * Y el del aparato SELECCIONADO se retira: el panel lateral ya está enseñando su
+			 * referencia, su tensión, su posición y sus cables. Dos sitios diciendo lo mismo, y uno
+			 * de ellos encima del propio aparato, es competir consigo mismo.
+			 */
+			if (seleccionado) opacidad *= 0.35;
+			mat.opacity = opacidad;
 		}
 	}
 }
@@ -5966,6 +6044,10 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			g.traverse((o) => { if (o.userData.esMarca) textos.push(o.userData.textoMarca as string); });
 			return { dispositivo: g.userData.dispositivoId as string, marcas: textos };
 		}),
+		/** Fuerza la intensidad del realce de selección, para compararlas en el mismo encuadre. */
+		realceSeleccion: (v: number) => { realceSel = v; if (sel) { limpiarResaltado(); pintarSeleccion(); } },
+		/** Pone el hover de aparato desde una prueba, sin depender de la posición del ratón. */
+		hoverDispositivo: (id: string | undefined) => resaltarHoverDispositivo(id),
 		/** Estado de la vista 2D: si está puesta, y si la cámara viva es de verdad ortográfica. */
 		vista2D: () => ({
 			activa: vista2D,
