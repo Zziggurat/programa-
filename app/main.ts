@@ -826,6 +826,45 @@ const relleno = new THREE.DirectionalLight(0xd6e2f0, 0.42);
 relleno.position.set(-260, -340, 900);
 escena.add(relleno);
 
+/*
+ * ------------------- POR QUÉ AQUÍ NO HAY OCLUSIÓN AMBIENTAL -------------------
+ *
+ * Se probó GTAO con compositor completo y se descartó MIDIENDO, no por impresión. Dos hallazgos,
+ * y el segundo es el que decide:
+ *
+ * 1. El compositor rompía el color por su cuenta. Con el pase de oclusión QUITADO —solo
+ *    RenderPass y OutputPass— la imagen salía exactamente igual de estropeada que con él: el
+ *    fondo aplastado a negro puro (41 % del lienzo por debajo de 12/255, contra 0 % sin
+ *    compositor) y toda la escena lavada. Es la firma de una conversión de espacio de color
+ *    aplicada dos veces, y arreglarla obliga a tocar cómo se pinta TODO —incluida la foto del
+ *    dossier y el alzado 2D—.
+ *
+ * 2. Y aun así no habría servido, porque la oclusión no aportaba nada medible. Compositor sin
+ *    GTAO daba mediana 62 y contraste 81,5; con GTAO, 61 y 81,2. Eso es ruido. La razón es de
+ *    escala: el radio de oclusión útil aquí son unos milímetros —el pocillo de un tornillo, la
+ *    junta entre dos bornas—, y a la distancia a la que se mira un tablero entero esos
+ *    milímetros ocupan una fracción de píxel, así que GTAO muestrea dentro de sí mismo y no
+ *    encuentra nada que ocluir. Subir el radio hasta que se note produce el halo oscuro
+ *    alrededor de cada aparato, que es el defecto que había que evitar.
+ *
+ * Lo que esta fase quería de la oclusión —que el tornillo se vea DENTRO de su pocillo— se ha
+ * conseguido por otro camino y sin coste: quitando el negro pintado de los alojamientos, para
+ * que la penumbra la ponga la luz, y bajando `normalBias` para que el mapa de sombras resuelva
+ * contactos de un milímetro.
+ */
+
+/**
+ * EL ÚNICO SITIO DESDE EL QUE SE PINTA.
+ *
+ * Había tres llamadas sueltas a `renderer.render`: el bucle, la foto del dossier y el calentado
+ * de las pruebas. Se dejan centralizadas aquí, que es lo que hizo falta al probar el compositor:
+ * cualquier cosa que se ponga entre la escena y el lienzo tiene que valer para las tres, y con
+ * llamadas sueltas la foto del dossier salía por un camino distinto del de la pantalla.
+ */
+function pintar(): void {
+	renderer.render(escena, camaraViva());
+}
+
 const suelo = new THREE.GridHelper(4000, 80, 0x2c3238, 0x22272c);
 escena.add(suelo);
 
@@ -4179,7 +4218,7 @@ function programaDeControlador(d: Dispositivo): string {
 function fotoDelTablero(en2D: boolean): string {
 	const antes = vista2D;
 	if (antes !== en2D) aplicarVista2D(en2D);
-	renderer.render(escena, camaraViva());
+	pintar();
     const datos = renderer.domElement.toDataURL('image/png');
 	if (antes !== en2D) aplicarVista2D(antes);
 	return datos;
@@ -5096,7 +5135,7 @@ renderer.setAnimationLoop(() => {
 		cables: escenario.cables,
 	});
 	(vista2D ? controlesOrto : controles).update();
-	renderer.render(escena, camaraViva());
+	pintar();
 });
 
 /*
@@ -5140,11 +5179,11 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 * Cronometrando el `render` se mide el programa y no el andamiaje.
 		 */
 		medirDibujado: (n = 30) => {
-			renderer.render(escena, camaraViva());   // el primero calienta: sube texturas a la GPU
+			pintar();   // el primero calienta: sube texturas a la GPU
 			const t: number[] = [];
 			for (let i = 0; i < n; i++) {
 				const desde = performance.now();
-				renderer.render(escena, camaraViva());
+				pintar();
 				t.push(performance.now() - desde);
 			}
 			t.sort((a, b) => a - b);
