@@ -77,6 +77,13 @@ await p.waitForTimeout(2500);
 await p.screenshot({ path: join(SALIDA, '4-energizado.png') });
 await general(0.5, 0.3);
 await p.screenshot({ path: join(SALIDA, '5-energizado-general.png') });
+// COMBINADOS: ningún estado puede borrar la información de otro.
+await medio();
+await qa('hoverDispositivo', km); await p.waitForTimeout(600);
+await p.screenshot({ path: join(SALIDA, '6-hover-mas-energizado.png') });
+await qa('hoverDispositivo', undefined);
+await qa('elegir', km); await p.waitForTimeout(600);
+await p.screenshot({ path: join(SALIDA, '7-seleccionado-mas-energizado.png') });
 console.log('tensiones vivas:', JSON.stringify(await qa('tensionesVivas').catch(() => 'sin sonda')));
 
 console.log(er.length ? `ERRORES: ${er.slice(0, 2).join(' | ')}` : 'sin errores de JavaScript');

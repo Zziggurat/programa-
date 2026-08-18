@@ -3654,13 +3654,22 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			const b = borneBajoElPuntero(ev);
 			resaltarHoverBorne(b);
 			mostrarTipBorne(b, ev);
-			resaltarHoverCable(b ? undefined : cableBajoElPuntero(ev));
 			/*
+			 * CADA COSA SE BUSCA UNA VEZ.
+			 *
+			 * Aquí se lanzaba `cableBajoElPuntero` dos veces por cada movimiento del ratón —una
+			 * para el resaltado y otra para decidir el cursor— y al añadir el hover de aparato iban
+			 * a ser tres trazados de rayo por movimiento sobre una escena con cincuenta cables. El
+			 * resultado se guarda y se reutiliza: el hover de aparato sale más barato que antes de
+			 * existir, porque de paso quita el trazado duplicado que ya había.
+			 *
 			 * El aparato bajo el puntero sale de `elementoBajoElPuntero`, que es EXACTAMENTE la
-			 * misma función que decide qué se selecciona al pulsar. No hay un segundo criterio: si
-			 * se marcara con uno propio, el hover podría iluminar un aparato y el clic elegir otro.
+			 * misma función que decide qué se selecciona al pulsar. No hay un segundo criterio: con
+			 * uno propio, el hover podría iluminar un aparato y el clic elegir otro.
 			 */
-			const bajo = b || cableandoDesde ? undefined : elementoBajoElPuntero(ev);
+			const cid = b ? undefined : cableBajoElPuntero(ev);
+			resaltarHoverCable(cid);
+			const bajo = b || cid || cableandoDesde ? undefined : elementoBajoElPuntero(ev);
 			resaltarHoverDispositivo(bajo?.tipo === 'dispositivo' ? bajo.id : undefined);
 			if (cableandoDesde) {
 				const p = puntoCable(ev);
@@ -3671,7 +3680,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 					if (arrastreDeCableado.recorrido > 5) arrastreDeCableado.movido = true;
 				}
 			}
-			renderer.domElement.style.cursor = b || cableandoDesde ? 'crosshair' : (cableBajoElPuntero(ev) ? 'grab' : '');
+			renderer.domElement.style.cursor = b || cableandoDesde ? 'crosshair' : (cid ? 'grab' : '');
 		}
 		return;
 	}
