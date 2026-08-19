@@ -1337,6 +1337,28 @@ export function rutasDeCables(proyecto: Proyecto): RutaCable[] {
 	return rutas;
 }
 
+/**
+ * EL RECORRIDO CON EL QUE SE DIBUJÓ CADA CABLE, tal cual, para que lo consulte el ratón.
+ *
+ * Aquí se corta de raíz el desacuerdo entre lo que se ve y lo que se toca. El editor necesita
+ * saber por dónde pasa un cable EN 3D para tres cosas distintas —poner el tirador encima, insertar
+ * una unión en la trayectoria de verdad y decidir si el puntero está sobre él—, y hasta ahora cada
+ * una lo suponía por su cuenta: el tirador a una profundidad fija, la unión proyectando el clic
+ * sobre un plano, y la selección con un tubo invisible. Tres suposiciones, tres sitios donde el
+ * cable «no está donde parece».
+ *
+ * Esto no calcula nada: devuelve lo último que se dibujó. Si no hay reparto todavía, no hay
+ * respuesta, y quien pregunte que se apañe con lo que tenga.
+ */
+export function rutaVigente(conductorId: string): RutaCable | undefined {
+	return ultimoReparto?.rutas.find((r) => r.conductorId === conductorId);
+}
+
+/** Todos los recorridos vigentes (los que están dibujados ahora mismo). */
+export function rutasVigentes(): RutaCable[] {
+	return ultimoReparto?.rutas ?? [];
+}
+
 /** Un camino candidato: los puntos por los que pasaría el cable y cuánto va expuesto. */
 interface Candidato {
 	nodos: Punto3[];
@@ -1856,6 +1878,8 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		sueloMin: (x: number, y: number, z: number) => number;
 		/** Canaletas que el usuario eligió a mano: para este cable no son obstáculo. */
 		aMano: Set<string>;
+		/** El peinado trae profundidad en todos sus puntos: se dibuja tal cual, sin corregir. */
+		literal: boolean;
 		sueloDe: (suyos: Set<string>) => (x: number, y: number, z: number) => number;
 		suyosDe: (c: Candidato) => Set<string>;
 		de: Anclaje;
@@ -1975,7 +1999,33 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 			? canaletasQueContienen(red, conductor.trazado)
 			: new Set<string>();
 
-		const aMano = (): Candidato[] => Array.from({ length: CAPAS_CABLE }, (_, capa) => {
+		/*
+		 * PEINADO CON PROFUNDIDAD = LITERAL. El repartidor no vota.
+		 *
+		 * Si todos los puntos del usuario traen su `z`, no hay nada que decidir: ese es el
+		 * recorrido, y punto. Sin capas alternativas que probar, sin buscar sitio en los ductos y
+		 * —sobre todo— sin `sueloMin`, que es el que levantaba el cable por encima de las canaletas
+		 * ajenas. Medido antes de esto: un punto colocado a z=30 dentro de un ducto acababa
+		 * dibujado a z=59, y uno puesto sobre un aparato acababa a 155 mm de donde se dejó.
+		 *
+		 * Es la regla que pidió Diego y es la que hace predecible el editor: lo que colocas es lo
+		 * que se dibuja. Que ahí no quepa o que atraviese algo es cosa de la advertencia, no del
+		 * dibujo.
+		 */
+		const literal = !!conductor.trazado?.length && conductor.trazado.every((q) => q.z !== undefined);
+
+		const aMano = (): Candidato[] => (literal ? [{
+			nodos: [
+				{ x: p.de.x, y: p.de.y, z: p.de.z },
+				{ x: p.salidaA.x, y: p.salidaA.y, z: p.de.z },
+				...conductor.trazado!.map((q) => ({ x: q.x, y: q.y, z: q.z! })),
+				{ x: p.salidaB.x, y: p.salidaB.y, z: p.a.z },
+				{ x: p.a.x, y: p.a.y, z: p.a.z },
+			] as Punto3[],
+			expuesto: 0,
+			ductos: 0,
+			reserva: [],
+		}] : Array.from({ length: CAPAS_CABLE }, (_, capa) => {
 			const zc = Z_EXPUESTO + capa * SEPARACION_CAPAS;
 			return {
 				nodos: [
@@ -1989,7 +2039,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 				ductos: 0,
 				reserva: [],
 			};
-		});
+		}));
 
 		/*
 		 * BÚSQUEDA POR PRESUPUESTO, CON ACEPTACIÓN TEMPRANA.
@@ -2031,7 +2081,9 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 				 */
 				const puntos = tenderCable(
 					cand.nodos, codo,
-					cand.ductos ? sueloDe(suyosDe(cand)) : (ductosAMano.size ? sueloDe(ductosAMano) : sueloMin),
+					literal ? undefined
+						: cand.ductos ? sueloDe(suyosDe(cand))
+							: (ductosAMano.size ? sueloDe(ductosAMano) : sueloMin),
 				);
 				const trazo: Trazo = { id: conductor.id, radio, puntos, bornes, extremos: [p.de, p.a] };
 				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, rendirse(cand, mejorNota));
@@ -2051,7 +2103,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 					mejor = {
 						conductorId: conductor.id, trazo, nodos: cand.nodos, reserva: cand.reserva,
 						z: puntos[Math.floor(puntos.length / 2)].z,
-						clave: '', generar, radio, codo, sueloMin, sueloDe, suyosDe, aMano: ductosAMano, de: p.de, a: p.a,
+						clave: '', generar, radio, codo, sueloMin, sueloDe, suyosDe, aMano: ductosAMano, literal, de: p.de, a: p.a,
 					};
 				}
 				// Suficientemente bueno: no choca con nadie. Los candidatos vienen ordenados de
@@ -2096,7 +2148,8 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 			if (presupuesto-- <= 0) break;
 			const suyos = cand.ductos ? puesto.suyosDe(cand) : puesto.aMano;
 			const puntos = tenderCable(
-				cand.nodos, puesto.codo, suyos.size ? puesto.sueloDe(suyos) : puesto.sueloMin,
+				cand.nodos, puesto.codo,
+				puesto.literal ? undefined : (suyos.size ? puesto.sueloDe(suyos) : puesto.sueloMin),
 			);
 			const trazo: Trazo = {
 				id: puesto.conductorId, radio: puesto.radio, puntos,

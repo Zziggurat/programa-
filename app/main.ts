@@ -32,11 +32,15 @@ import {
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	diagnosticoCables, largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable,
 	construirUnCable, contadores, radioDeCable, reiniciarContadores, rutaProvisional,
+	RutaCable, rutasVigentes, rutaVigente,
 	vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
 import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, RedCanaletas } from './canaletas-red.js';
-import { Bloqueo, Eje, normalDeArrastre, respetarBloqueo } from './edicion-cables.js';
+import {
+	Bloqueo, distanciaASegmento, Eje, indiceDeInsercion, normalDeArrastre, P3,
+	proyectarEnPolilinea, respetarBloqueo,
+} from './edicion-cables.js';
 import { colorDeTipo } from './dispositivos3d.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
@@ -55,7 +59,7 @@ import { animarSimulacion } from './animacion-sim.js';
 import { dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
 import { idUnico } from '../src/modelo/ids.js';
 import {
-	dentroDelArea, distPuntoSegmento, fueraDeLaHuella, Huella, longitudSolapada, orthogonalize,
+	dentroDelArea, fueraDeLaHuella, Huella, longitudSolapada, orthogonalize,
 	redondearEsquinas,
 } from './geometria-cables.js';
 
@@ -962,6 +966,7 @@ function encuadrar(): void {
 
 function reconstruirCables(): void {
 	vaciar(escenario.cables);
+	rutaPrevia = undefined; // manda otra vez el reparto completo
 	// Coloreado por voltaje: cada cable toma el color del nivel de tensión de su potencial.
 	let voltajeMap: Map<string, number | undefined> | undefined;
 	if (coloreaVoltaje) {
@@ -2802,31 +2807,172 @@ function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 	return cable ? { tipo: 'cable', id: cable } : undefined; // los cables tienen la prioridad más baja
 }
 
-/** Conductor cuyo tubo está bajo el puntero (para el resaltado al pasar el ratón). */
-function cableBajoElPuntero(ev: MouseEvent): string | undefined {
-	const r = renderer.domElement.getBoundingClientRect();
-	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camaraViva());
-	// Recursivo: los tubos cuelgan dentro de un grupo hijo de escenario.cables.
-	const impactos = raycaster.intersectObjects(escenario.cables.children, true);
-	// PRIMERO el cable que de verdad se ve bajo el puntero; el tubo grueso de agarre (invisible)
-	// solo entra en juego si no hay ninguno, para no seleccionar un vecino que no estás señalando.
-	const visible = impactos.find((i) => i.object.userData.tuboVisible)?.object.userData.conductorId;
-	if (visible) return visible as string;
-	return impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId as string | undefined;
+/* ==================================================================================
+ * SEÑALAR UN CABLE: LA TOLERANCIA SE MIDE EN PÍXELES, NO EN MILÍMETROS
+ *
+ * «Estoy haciendo clic exactamente sobre el cable y el editor no lo encuentra» tenía una causa
+ * concreta y medible: el agarre era un tubo invisible de radio fijo en MILÍMETROS alrededor del
+ * cable. Un tubo de 9 mm de radio a 300 mm de la cámara ocupa decenas de píxeles; el mismo tubo
+ * al fondo del tablero, o visto de canto, ocupa uno o dos. La zona de agarre se encogía justo
+ * cuando más falta hacía, y encima dependía de que el rayo del ratón cortara una malla, así que
+ * un cable tapado por una canaleta era imposible de coger aunque se estuviera viendo.
+ *
+ * Aquí se hace al revés: se proyecta el RECORRIDO REAL del cable a la pantalla y se mide la
+ * distancia del puntero a esa polilínea en píxeles. La tolerancia es la misma para todos los
+ * cables, cerca o lejos, de frente o de canto, y no depende de ninguna geometría de agarre —que
+ * de paso deja de hacer falta—. Y como sale de la polilínea, se sabe además EN QUÉ PUNTO 3D del
+ * cable ha caído el puntero, que es lo que hacía falta para insertar uniones donde toca.
+ * ================================================================================== */
+
+/** Radio de agarre, en píxeles de pantalla. Un dedo de ratón, no un tubo de milímetros. */
+const TOLERANCIA_PX = 12;
+
+/** Un cable señalado por el puntero, con todo lo que hace falta para decidir quién se lleva el clic. */
+interface CableSenalado {
+	id: string;
+	/** El punto del recorrido que queda bajo el puntero, en milímetros de modelo. */
+	punto: P3;
+	/** Posición continua dentro de la polilínea (índice + fracción del segmento). */
+	avance: number;
+	/** Distancia del puntero al eje del cable, en píxeles. */
+	pixeles: number;
+	/** Radio aparente del cable ahí, en píxeles: si `pixeles <= radio`, el puntero está SOBRE el tubo. */
+	radio: number;
+	/** Distancia del punto a la cámara: sirve para saber quién está delante. */
+	profundidad: number;
 }
 
-/** ¿El cable bajo el puntero está MÁS CERCA de la cámara que el aparato que hay detrás?
- *  Sirve para poder agarrar un cable que cruza por delante de un aparato. */
-function cableEstaDelante(ev: MouseEvent): boolean {
+/** Puntero en píxeles del lienzo, y de paso deja `puntero` listo para los trazados de rayo. */
+function punteroEnPixeles(ev: MouseEvent): { x: number; y: number; ancho: number; alto: number } {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+	return { x: ev.clientX - r.left, y: ev.clientY - r.top, ancho: r.width, alto: r.height };
+}
+
+const _v = new THREE.Vector3();
+const _vp = new THREE.Matrix4();
+
+/**
+ * Proyecta un punto de ESCENA a píxeles del lienzo.
+ *
+ * La división de perspectiva se hace a mano para quedarse con la `w`: un punto con `w <= 0` está
+ * DETRÁS de la cámara y su proyección sale reflejada. Dejarlo pasar convierte un cable que entra y
+ * sale del encuadre en un segmento que cruza toda la pantalla y se lleva clics que no son suyos.
+ */
+function aPixeles(x: number, y: number, z: number, ancho: number, alto: number): { x: number; y: number; w: number } {
+	const e = _vp.elements;
+	const w = e[3] * x + e[7] * y + e[11] * z + e[15];
+	if (w === 0) return { x: 0, y: 0, w: 0 };
+	const nx = (e[0] * x + e[4] * y + e[8] * z + e[12]) / w;
+	const ny = (e[1] * x + e[5] * y + e[9] * z + e[13]) / w;
+	return { x: (nx * 0.5 + 0.5) * ancho, y: (-ny * 0.5 + 0.5) * alto, w };
+}
+
+/** Deja lista la matriz vista·proyección de la cámara viva (una vez por búsqueda, no por punto). */
+function prepararProyeccion(): THREE.Camera {
+	const camara = camaraViva();
+	camara.updateMatrixWorld();
+	_vp.multiplyMatrices(camara.projectionMatrix, camara.matrixWorldInverse);
+	return camara;
+}
+
+/**
+ * TODOS los cables cuyo recorrido pasa a menos de `tolerancia` píxeles del puntero, el más
+ * cercano primero. Devolver la lista entera —y no solo el ganador— es lo que permite desempatar
+ * cuando hay varios amontonados bajo el mismo punto de la pantalla.
+ */
+function cablesSenalados(ev: MouseEvent, tolerancia = TOLERANCIA_PX): CableSenalado[] {
+	const rutas = rutaPrevia
+		? rutasVigentes().map((r) => (r.conductorId === rutaPrevia!.conductorId ? rutaPrevia! : r))
+		: rutasVigentes();
+	if (!rutas.length) return [];
+	const px = punteroEnPixeles(ev);
+	const camara = prepararProyeccion();
+	const g = proyecto.gabinete;
+	if (!g) return [];
+	const ojo = camara.position;
+	const salida: CableSenalado[] = [];
+	// Buffer reutilizado: proyectar cincuenta recorridos no puede crear cincuenta mil objetos.
+	let sx: Float64Array = new Float64Array(0);
+	let sy: Float64Array = new Float64Array(0);
+	let sw: Float64Array = new Float64Array(0);
+	for (const ruta of rutas) {
+		const n = ruta.puntos.length;
+		if (n < 2) continue;
+		if (sx.length < n) { sx = new Float64Array(n * 2); sy = new Float64Array(n * 2); sw = new Float64Array(n * 2); }
+		for (let i = 0; i < n; i++) {
+			const q = ruta.puntos[i];
+			const p = aPixeles(q.x - g.ancho / 2, g.alto / 2 - q.y, q.z, px.ancho, px.alto);
+			sx[i] = p.x; sy[i] = p.y; sw[i] = p.w;
+		}
+		let mejor = Infinity;
+		let seg = 0;
+		let t = 0;
+		for (let i = 0; i < n - 1; i++) {
+			if (sw[i] <= 0 || sw[i + 1] <= 0) continue; // tramo que pasa por detrás de la cámara
+			const d = distanciaASegmento(px.x, px.y, sx[i], sy[i], sx[i + 1], sy[i + 1]);
+			if (d >= mejor) continue;
+			mejor = d;
+			seg = i;
+			const dx = sx[i + 1] - sx[i], dy = sy[i + 1] - sy[i];
+			const l2 = dx * dx + dy * dy;
+			t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((px.x - sx[i]) * dx + (px.y - sy[i]) * dy) / l2));
+		}
+		if (mejor > tolerancia) continue;
+		const a = ruta.puntos[seg], b = ruta.puntos[seg + 1];
+		const punto: P3 = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
+		// Radio aparente: cuántos píxeles mide el grosor del cable justo ahí.
+		const c0 = aPixeles(punto.x - g.ancho / 2, g.alto / 2 - punto.y, punto.z, px.ancho, px.alto);
+		const c1 = aPixeles(punto.x - g.ancho / 2 + ruta.radio, g.alto / 2 - punto.y, punto.z, px.ancho, px.alto);
+		const c2 = aPixeles(punto.x - g.ancho / 2, g.alto / 2 - punto.y, punto.z + ruta.radio, px.ancho, px.alto);
+		const radio = Math.max(Math.hypot(c1.x - c0.x, c1.y - c0.y), Math.hypot(c2.x - c0.x, c2.y - c0.y));
+		salida.push({
+			id: ruta.conductorId, punto, avance: seg + t, pixeles: mejor, radio,
+			profundidad: ojo.distanceTo(_v.set(punto.x - g.ancho / 2, g.alto / 2 - punto.y, punto.z)),
+		});
+	}
+	/*
+	 * VARIOS CABLES BAJO EL MISMO PUNTO. Manda el que esté SOBRE el puntero de verdad (dentro de
+	 * su propio grosor) y, entre los que lo estén, el que se vea delante: es el que el usuario
+	 * tiene delante de los ojos. Solo cuando ninguno está encima se ordena por cercanía, que es el
+	 * caso de «apunté cerca» y ahí lo razonable es el más próximo al cursor.
+	 */
+	salida.sort((a, b) => {
+		const ea = a.pixeles <= a.radio ? 0 : 1;
+		const eb = b.pixeles <= b.radio ? 0 : 1;
+		if (ea !== eb) return ea - eb;
+		if (ea === 0) return a.profundidad - b.profundidad;
+		return a.pixeles - b.pixeles;
+	});
+	return salida;
+}
+
+/** El cable señalado por el puntero, con su punto 3D. */
+function cableSenalado(ev: MouseEvent, tolerancia = TOLERANCIA_PX): CableSenalado | undefined {
+	return cablesSenalados(ev, tolerancia)[0];
+}
+
+/** Conductor cuyo recorrido está bajo el puntero (para el resaltado al pasar el ratón). */
+function cableBajoElPuntero(ev: MouseEvent): string | undefined {
+	return cableSenalado(ev)?.id;
+}
+
+/**
+ * ¿El cable señalado se lleva el clic, o lo tapa un aparato?
+ *
+ * Las canaletas, los rieles y la placa NO entran en esta cuenta a propósito: un cable que se ve
+ * pasar por delante de una canaleta se tiene que poder coger, y estando dentro de ella también,
+ * porque es donde va. Los aparatos sí, porque un cable que pasa POR DETRÁS de un contactor no se
+ * está viendo, y el clic es para el contactor.
+ */
+function cableEstaDelante(ev: MouseEvent, golpe?: CableSenalado): boolean {
+	const c = golpe ?? cableSenalado(ev);
+	if (!c) return false;
+	punteroEnPixeles(ev);
 	raycaster.setFromCamera(puntero, camaraViva());
-	const dCable = raycaster.intersectObjects(escenario.cables.children, true)
-		.find((i) => i.object.userData.conductorId)?.distance ?? Infinity;
 	const dAparato = raycaster.intersectObjects(escenario.dispositivos.children, true)
 		.find((i) => i.object.userData.dispositivoId)?.distance ?? Infinity;
-	return dCable <= dAparato;
+	return c.profundidad <= dAparato + 2;
 }
 
 /* --------------- Cableado por clic en los bornes (como un tablero real) --------------- */
@@ -3106,15 +3252,25 @@ function construirHandles(): void {
 		escenario.handles.add(etiquetaSprite(`◍ ${etiquetaDe(c.a.dispositivoId)}:${c.a.borneId}`, pb.clone().add(new THREE.Vector3(0, 14, 0)), '#ff8c1a'));
 		// Un tirador azul por cada punto de quiebre (waypoint): arrástralo para mover ese punto.
 		// Si el cable aún no tiene puntos, se ofrece uno en el medio para empezar a darle forma.
+		/*
+		 * CADA TIRADOR, EXACTAMENTE ENCIMA DE SU PUNTO DEL CABLE.
+		 *
+		 * Antes se ponían todos a una profundidad fija; ver `puntoDibujado` para por qué eso los
+		 * separaba del cable en cuanto la cámara dejaba de estar de frente.
+		 */
 		const wps = c.trazado ?? [];
 		if (wps.length === 0) {
-			const dist = Math.hypot(a.x - b.x, a.y - b.y);
-			const comba = Math.min(dist * 0.28, 150);
-			const mid = { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2 + comba) };
-			esfera(escenario.aEscena(mid.x, mid.y, Z_HANDLE_CABLE), { rol: 'esquina', sel, indice: -1 }, 0x2ea3ff);
+			// Sin puntos todavía: se ofrece uno EN MITAD DEL CABLE, no colgando al aire. Tirando de
+			// él se crea la primera unión justo ahí, que es donde el usuario la está viendo.
+			const ruta = rutaEnPantalla(c.id);
+			const medio = ruta?.puntos.length
+				? ruta.puntos[Math.floor(ruta.puntos.length / 2)]
+				: { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2), z: Z_HANDLE_CABLE };
+			esfera(escenario.aEscena(medio.x, medio.y, medio.z), { rol: 'esquina', sel, indice: -1 }, 0x2ea3ff);
 		} else {
 			for (let i = 0; i < wps.length; i++) {
-				esfera(escenario.aEscena(wps[i].x, wps[i].y, Z_HANDLE_CABLE), { rol: 'esquina', sel, indice: i }, 0x2ea3ff);
+				const q = puntoDibujado(c, i) ?? { x: wps[i].x, y: wps[i].y, z: Z_HANDLE_CABLE };
+				esfera(escenario.aEscena(q.x, q.y, q.z), { rol: 'esquina', sel, indice: i }, 0x2ea3ff);
 			}
 		}
 		return;
@@ -3240,14 +3396,44 @@ function puntoCable3D(
 /* --------------------- Puntos de quiebre de los cables (estilo Tinkercad) --------------------- */
 
 /**
- * Nodos completos del recorrido de un cable en coordenadas de modelo: borne → puntos → borne.
- * Usa las MISMAS puntas en abanico que el dibujo 3D; si no, el cable que se ve y el cable con
- * el que trabaja el ratón no coincidirían y la selección quedaría descalibrada.
+ * EL RECORRIDO QUE SE ESTÁ VIENDO AHORA MISMO, sea el del reparto o el de la vista previa.
+ *
+ * Una sola respuesta a «¿por dónde pasa este cable?». Los tiradores, las uniones nuevas y el
+ * puntero preguntan aquí, así que no pueden discrepar entre ellos ni con lo que se ve.
  */
-function nodosCable(c: Conductor): { x: number; y: number }[] {
-	const p = salidasDeCable(proyecto, c);
-	if (!p) return [];
-	return [p.salidaA, ...(c.trazado ?? []), p.salidaB];
+function rutaEnPantalla(conductorId: string): RutaCable | undefined {
+	if (rutaPrevia?.conductorId === conductorId) return rutaPrevia;
+	return rutaVigente(conductorId);
+}
+
+/**
+ * DÓNDE ESTÁ DIBUJADO, EN 3D, UN PUNTO DEL PEINADO.
+ *
+ * Un punto de peinado no es un punto del dibujo: el usuario guarda `x,y` y puede que `z`, y el
+ * cable que se ve pasa por ahí redondeando la esquina y, si el punto no trae profundidad, a la
+ * altura que le haya tocado. Ésta es la traducción de lo uno a lo otro, y es la que faltaba: sin
+ * ella el tirador se ponía a una profundidad FIJA (55 mm) mientras el cable corría a 66, a 95 o
+ * metido en una canaleta a 30. De frente la diferencia no se nota; en cuanto la cámara se
+ * inclinaba, la bolita se separaba del cable justo lo que dice la perspectiva. Ése era el bug de
+ * «los puntos aparecen alejados del cable según el ángulo».
+ */
+function puntoDibujado(c: Conductor, idx: number): P3 | undefined {
+	const wp = c.trazado?.[idx];
+	if (!wp) return undefined;
+	const ruta = rutaEnPantalla(c.id);
+	const en = ruta && proyectarEnPolilinea(ruta.puntos, wp);
+	return en ? en.punto : { x: wp.x, y: wp.y, z: wp.z ?? Z_FRENTE };
+}
+
+/**
+ * La profundidad a la que corre AHORA MISMO ese punto del peinado.
+ *
+ * En cuanto el usuario arrastra un punto, se le fija la suya: a partir de ese momento la
+ * profundidad la pone él y no el repartidor. Congelar la que ya tenía dibujada —y no una por
+ * defecto— es lo que hace que el cable no pegue un salto al empezar a moverlo.
+ */
+function zDibujada(c: Conductor, idx: number): number {
+	return Math.round(puntoDibujado(c, idx)?.z ?? Z_FRENTE);
 }
 
 /**
@@ -3259,20 +3445,49 @@ function longitudCableMm(c: Conductor): number {
 	return largoDibujadoMm(proyecto, c);
 }
 
-/** Inserta un punto de quiebre en el tramo del cable más cercano a (x,y). Devuelve su índice. */
-function insertarWaypoint(c: Conductor, x: number, y: number): number {
+/**
+ * INSERTA UNA UNIÓN EN LA TRAYECTORIA DE VERDAD.
+ *
+ * Antes esto recibía un `x,y` sacado de proyectar el clic sobre un plano horizontal a 52 mm y
+ * buscaba el tramo más cercano EN PLANTA. Con la cámara inclinada esa proyección cae donde el
+ * plano corta el rayo, que no es donde está el cable; con el cable metido en una canaleta a 30 mm
+ * de profundidad, el error eran centímetros; y en planta dos tramos que se cruzan están a
+ * distancia cero, así que el punto entraba en el tramo equivocado y el cable daba un tirón.
+ *
+ * Ahora entra un punto que YA está sobre el recorrido —lo da `cablesSenalados`, midiendo en
+ * píxeles contra la polilínea dibujada— y su posición a lo largo de él. El punto se guarda con su
+ * profundidad, así que la unión nace exactamente donde el usuario la ha visto nacer.
+ */
+function insertarWaypoint(c: Conductor, p: P3, avance: number): number {
 	const wps = c.trazado ? c.trazado.slice() : [];
-	const nodos = nodosCable(c);
-	let mejor = 0;
-	let md = Infinity;
-	for (let i = 0; i < nodos.length - 1; i++) {
-		const d = distPuntoSegmento(x, y, nodos[i], nodos[i + 1]);
-		if (d < md) { md = d; mejor = i; }
-	}
-	const idx = Math.min(mejor, wps.length);
-	wps.splice(idx, 0, { x: Math.round(x), y: Math.round(y) });
+	const ruta = rutaEnPantalla(c.id);
+	const idx = ruta ? indiceDeInsercion(ruta.puntos, wps, avance) : wps.length;
+	wps.splice(idx, 0, { x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.z) });
 	c.trazado = wps;
+	// Los demás puntos del peinado también fijan su profundidad: a partir de ahora este cable lo
+	// manda el usuario entero, y el repartidor deja de elegirle capa (ver la regla `literal`).
+	fijarProfundidades(c);
 	return idx;
+}
+
+/**
+ * CONGELA LA PROFUNDIDAD DE TODO EL PEINADO EN LA QUE SE ESTÁ VIENDO.
+ *
+ * En cuanto el usuario toca un cable, ese cable pasa a ser suyo: se le da `z` a todos sus puntos
+ * con la que tienen dibujada ahora mismo. Dos motivos, y los dos son de fondo:
+ *
+ *  · Con todos los puntos en 3D el recorrido es LITERAL —se dibuja tal cual se guarda— y el
+ *    repartidor deja de reescribirlo. Medido antes de esto: lo que el usuario colocaba y lo que
+ *    se dibujaba llegaban a discrepar 155 mm.
+ *  · Congelar lo que se ve, y no una profundidad por defecto, es lo que evita que el cable pegue
+ *    un salto en el instante en que se empieza a editarlo.
+ */
+function fijarProfundidades(c: Conductor): void {
+	const wps = c.trazado;
+	if (!wps) return;
+	for (let i = 0; i < wps.length; i++) {
+		if (wps[i].z === undefined) wps[i] = { ...wps[i], z: zDibujada(c, i) };
+	}
 }
 
 /** Mueve el punto de quiebre `idx` a (x,y), alineándolo en vertical/horizontal con sus vecinos
@@ -3307,35 +3522,36 @@ function huellasQueEsquivarLosCables(): Huella[] {
 		.map((c) => ({ x: c.x, y: c.y, ancho: c.ancho, alto: c.alto }));
 }
 
-/** Punto de cable ya recortado al área, fuera de los aparatos y redondeado al milímetro. */
-function puntoDeCableValido(x: number, y: number): { x: number; y: number } {
-	const dentro = dentroDelArea({ x, y }, areaDeCableado());
-	const libre = fueraDeLaHuella(dentro, huellasQueEsquivarLosCables());
-	return { x: Math.round(libre.x), y: Math.round(libre.y) };
-}
-
 /**
  * Repasa los peinados hechos a mano y saca de encima de los aparatos los puntos que hayan
  * quedado ahí. Se llama al SOLTAR un aparato o un riel: son los movimientos que pueden dejar
  * un cable cruzando por encima de algo sin que nadie haya tocado el cable.
  */
-/** Si el saneado tuvo que mover algo, se dice: nadie debe encontrarse cambios sin explicación. */
+/** Si al mover el aparato han quedado puntos de cable debajo, se dice. No se tocan. */
 function avisarSiSeMovioAlgunCable(cuantos: number): void {
 	if (!cuantos) return;
-	avisar(`${cuantos} punto${cuantos > 1 ? 's' : ''} de cable se apartó del aparato para no cruzarlo por encima`, 'info');
+	avisar(`${cuantos} punto${cuantos > 1 ? 's' : ''} de cable queda${cuantos > 1 ? 'n' : ''} por encima de un aparato — revísalo`, 'info');
 }
 
-function sanearTrazados(): number {
-	let arreglados = 0;
+/**
+ * CUENTA los puntos de peinado que han quedado encima de un aparato. NO los mueve.
+ *
+ * Antes los apartaba, y era la última puerta por la que el programa reorganizaba a mano lo que
+ * había hecho el usuario: bastaba mover un contactor un centímetro para que media docena de
+ * puntos de cable, colocados uno a uno, saltaran a otro sitio. Se avisa y se deja; corregirlo es
+ * un arrastre, y el usuario sabe cuál.
+ */
+function contarTrazadosInvadidos(): number {
+	const huellas = huellasQueEsquivarLosCables();
+	let cuantos = 0;
 	for (const c of proyecto.conductores) {
 		if (!c.trazado?.length) continue;
-		for (let i = 0; i < c.trazado.length; i++) {
-			const antes = c.trazado[i];
-			const ahora = puntoDeCableValido(antes.x, antes.y);
-			if (ahora.x !== antes.x || ahora.y !== antes.y) { c.trazado[i] = ahora; arreglados++; }
+		for (const p of c.trazado) {
+			const libre = fueraDeLaHuella({ x: p.x, y: p.y }, huellas);
+			if (Math.round(libre.x) !== p.x || Math.round(libre.y) !== p.y) cuantos++;
 		}
 	}
-	return arreglados;
+	return cuantos;
 }
 
 /*
@@ -3375,9 +3591,19 @@ function medirEtapa<T>(etapa: string, fn: () => T): T {
  * Aquí se cambia solo la malla de ese cable. Los otros cincuenta y uno no se tocan: ni se
  * destruyen ni se vuelven a subir a la tarjeta.
  */
+/**
+ * El recorrido de la vista previa, mientras dura el arrastre.
+ *
+ * Durante el arrastre el cable que se ve NO es el del último reparto: es éste. Todo lo que
+ * pregunte «por dónde pasa este cable» tiene que ver el mismo, o el tirador se quedaría en la
+ * posición anterior mientras el tubo ya se ha movido.
+ */
+let rutaPrevia: RutaCable | undefined;
+
 function previsualizarCable(conductorId: string): void {
 	const ruta = rutaProvisional(proyecto, conductorId);
 	if (!ruta) return;
+	rutaPrevia = ruta;
 	const conductor = proyecto.conductores.find((c) => c.id === conductorId);
 	if (!conductor) return;
 	// Fuera la malla vieja de ESTE cable, y solo la suya.
@@ -3478,9 +3704,7 @@ function validezDelPunto(p: { x: number; y: number; z?: number }, radio: number)
 	return { ok: true };
 }
 
-/** El último sitio válido por el que pasó el punto, para poder volver si se suelta en uno malo. */
-let ultimoValido: { x: number; y: number; z?: number } | undefined;
-/** Si la posición de ahora mismo es inválida, y por qué. */
+/** Si la posición de ahora mismo tiene un problema, cuál: se pinta el cable en rojo y se cuenta. */
 let motivoInvalido: string | undefined;
 
 /**
@@ -3503,17 +3727,21 @@ function arrastrarUnion(
 	const enZ = ejeArrastre?.eje === 'z';
 	const pc = medirEtapa('1 pantalla→mundo', () => puntoCable3D(ev, desde, ev.shiftKey || enZ));
 	if (!pc) return;
-	// Un punto que nunca se ha editado en profundidad sigue sin `z`, y lo sigue colocando el
-	// repartidor. Con X o Y bloqueadas la profundidad tampoco se toca.
+	// Tocar un cable lo hace tuyo: sus puntos fijan la profundidad que tienen dibujada y a partir
+	// de ahí el repartidor deja de elegirles capa. Es lo que hace que el punto se quede donde se
+	// suelta en vez de aparecer reescrito.
+	fijarProfundidades(c);
+	// Con X o Y bloqueadas la profundidad no se toca; el resto del tiempo, solo cambia cuando se
+	// está arrastrando sobre el plano vertical, que es cuando el usuario la está pidiendo.
 	const zNueva = ejeArrastre && ejeArrastre.eje !== 'z' ? undefined
 		: (pc.modo === 'profundidad' ? pc.z : undefined);
-	medirEtapa('2 mover punto', () => moverWaypoint(c, indice, pc.x, pc.y, zNueva, ejeArrastre, true));
+	// Alt suelta las ayudas: colocación literal, sin alinear con el vecino ni encajar en canaleta.
+	medirEtapa('2 mover punto', () => moverWaypoint(c, indice, pc.x, pc.y, zNueva, ejeArrastre, !ev.altKey));
 	medirEtapa('2b validez', () => {
 		const wp = c.trazado?.[indice];
 		if (!wp) return;
 		const v = validezDelPunto(wp, radioDeCable(c.seccion));
 		motivoInvalido = v.ok ? undefined : v.motivo;
-		if (v.ok) ultimoValido = { ...wp };
 	});
 	medirEtapa('3 previsualizar el cable', () => previsualizarCable(c.id));
 	medirEtapa('4 handles', () => construirHandles());
@@ -3521,7 +3749,11 @@ function arrastrarUnion(
 }
 
 /** Lo último que se supo del punto que se está arrastrando: para poder contarlo en pantalla. */
-let pistaArrastre: { z: number; modo: ModoArrastre; canaleta?: string; ranura?: boolean; eje?: Eje } | undefined;
+let pistaArrastre: {
+	z: number; modo: ModoArrastre; canaleta?: string; ranura?: boolean; eje?: Eje;
+	/** Verdadero cuando una ayuda ha alineado el punto con su vecino: se dice, no se hace en silencio. */
+	alineado?: boolean;
+} | undefined;
 
 /**
  * Lo que se está haciendo con el punto, dicho en la barra que ya existe.
@@ -3540,81 +3772,88 @@ function mostrarPistaArrastre(): void {
 		: (pistaArrastre.modo === 'profundidad' ? 'moviendo en PROFUNDIDAD' : 'moviendo sobre la placa');
 	const suelta = pistaArrastre.eje ? ' · pulsa la misma tecla para soltar el eje' : ' · X/Y/Z bloquean un eje';
 	const aviso = motivoInvalido ? ` · ⚠ ${motivoInvalido}` : '';
-	$('ayuda').textContent = `↕ ${como} · Z: ${pistaArrastre.z} mm${dentro}${aviso}${suelta}`;
+	// Una ayuda que mueve el punto se DICE. Lo que no se puede es corregir en silencio.
+	const ayuda = pistaArrastre.alineado ? ' · alineado con el vecino (Alt lo desactiva)' : '';
+	$('ayuda').textContent = `↕ ${como} · Z: ${pistaArrastre.z} mm${dentro}${ayuda}${aviso}${suelta}`;
 }
 
 /**
- * Mueve un punto del peinado, ahora también en profundidad, y lo encaja en la canaleta si toca.
+ * MUEVE UN PUNTO DEL PEINADO. EL PUNTO VA DONDE EL USUARIO LO PONE.
  *
- * La `z` es opcional a propósito: un punto que nunca se ha tocado en profundidad se queda sin
- * ella y sigue dependiendo de la capa que le busque el repartidor, igual que antes. En cuanto se
- * arrastra en modo profundidad, el punto pasa a tener z propia y a partir de ahí manda el usuario.
+ * Esta función es el sitio donde el programa dejó de estar de acuerdo con quien lo usaba, y por
+ * eso su regla ahora está escrita entera:
+ *
+ *   1. Lo ÚNICO que se impone es el área de cableado, porque fuera de la placa y de la línea de
+ *      prensaestopas no hay tablero donde poner un cable. No es una opinión sobre el trazado: es
+ *      el borde del mundo.
+ *   2. Las ayudas —alinearse con el punto vecino, encajar en el volumen libre de una canaleta—
+ *      son AYUDAS: mueven poco, se ven en la barra de estado mientras pasan, y con Alt no pasan.
+ *   3. Lo que estorbe —un aparato, otro cable, una pared— se AVISA en rojo y no se toca la
+ *      posición. Antes se expulsaba el punto fuera del bloque entero de aparatos: eso es lo que
+ *      se sentía como una pared invisible, y era además lo que hacía casi imposible meter un
+ *      cable en una canaleta encajada entre dos filas de riel.
+ *   4. Un punto movido a mano sale de aquí SIEMPRE con su profundidad. Mientras un punto no
+ *      tenía `z` el repartidor le elegía capa por su cuenta, y eso reescribía el recorrido que
+ *      el usuario acababa de dibujar —medido: hasta 155 mm entre lo colocado y lo dibujado—.
+ *   5. Un eje bloqueado es exacto: `respetarBloqueo` se aplica al final, después de todo lo
+ *      demás, para que ninguna ayuda pueda deshacerlo.
  */
 function moverWaypoint(
-	c: Conductor, idx: number, x: number, y: number, z?: number, bloqueo?: Bloqueo, preview = false,
+	c: Conductor, idx: number, x: number, y: number, z?: number, bloqueo?: Bloqueo, asistir = true,
 ): void {
 	const wps = c.trazado;
 	if (!wps || !wps[idx]) return;
 	const p = salidasDeCable(proyecto, c);
 	const prev = idx > 0 ? wps[idx - 1] : p?.salidaA;
 	const next = idx < wps.length - 1 ? wps[idx + 1] : p?.salidaB;
-	// Primero se encierra en el área y luego se alinea: así el recorte nunca desalinea un tramo
-	// que el usuario acaba de dejar recto.
-	/*
-	 * DURANTE EL ARRASTRE NO SE EXPULSA EL PUNTO. Esa era la «pared invisible».
-	 *
-	 * `puntoDeCableValido` saca el punto de encima de los aparatos, y lo hace del BLOQUE entero,
-	 * no de uno suelto: acercarse a una fila de riel teletransportaba el punto al otro lado de la
-	 * fila. Con el ratón apretado eso se siente como pelearse con el programa, y de paso hacía casi
-	 * imposible meter un cable en una canaleta que estuviera entre dos filas.
-	 *
-	 * Mientras se arrastra, el punto va donde va y se avisa en rojo si el sitio no vale. Quien
-	 * decide es el usuario al soltar. Lo único que se sigue haciendo es recortarlo al área de
-	 * cableado, porque fuera de la placa no hay tablero.
-	 */
-	const dentro = preview ? dentroDelArea({ x, y }, areaDeCableado()) : puntoDeCableValido(x, y);
+
+	// (1) El borde del mundo, y nada más.
+	const dentro = dentroDelArea({ x, y }, areaDeCableado());
 	let nx = Math.round(dentro.x);
 	let ny = Math.round(dentro.y);
-	// Alinear en vertical/horizontal con el vecino más cercano en cada eje.
-	if (prev && Math.abs(nx - prev.x) < SNAP_ORTO) nx = prev.x;
-	else if (next && Math.abs(nx - next.x) < SNAP_ORTO) nx = next.x;
-	if (prev && Math.abs(ny - prev.y) < SNAP_ORTO) ny = prev.y;
-	else if (next && Math.abs(ny - next.y) < SNAP_ORTO) ny = next.y;
 
-	// Sin profundidad nueva: el punto se queda como estaba en z (con la suya o sin ninguna).
-	if (z === undefined) {
-		wps[idx] = respetarBloqueo({ ...wps[idx], x: nx, y: ny }, bloqueo);
-		pistaArrastre = { z: wps[idx].z ?? Z_FRENTE, modo: 'placa', eje: bloqueo?.eje };
-		return;
+	// (2) Ayuda: alinear en vertical/horizontal con el vecino más cercano en cada eje.
+	let alineado = false;
+	if (asistir) {
+		if (prev && Math.abs(nx - prev.x) < SNAP_ORTO) { nx = prev.x; alineado = true; }
+		else if (next && Math.abs(nx - next.x) < SNAP_ORTO) { nx = next.x; alineado = true; }
+		if (prev && Math.abs(ny - prev.y) < SNAP_ORTO) { ny = prev.y; alineado = true; }
+		else if (next && Math.abs(ny - next.y) < SNAP_ORTO) { ny = next.y; alineado = true; }
 	}
 
+	// (4) La profundidad: la nueva si el arrastre la trae, y si no la que el punto ya tenía o la
+	// que se le ve dibujada. De aquí no sale nunca un punto sin `z`.
+	const zPedida = z ?? wps[idx].z ?? zDibujada(c, idx);
+
 	/*
-	 * ENCAJE EN LA CANALETA: que estar dentro signifique estar dentro.
+	 * (2 bis) Ayuda: ENCAJE EN LA CANALETA, para que estar dentro signifique estar dentro.
 	 *
 	 * No se esconde el cable ni se le pinta de otro color cuando pasa por un ducto: se le mete en
 	 * el volumen que queda entre las dos paredes y por debajo de la tapa, descontando su propio
 	 * radio. Así, al quitar la tapa el cable está ahí, y al ponerla queda tapado porque lo tapa la
 	 * tapa, no porque nadie lo haya ocultado.
 	 */
-	const red = new RedCanaletas(proyecto.gabinete?.canaletas ?? []);
 	const radio = radioDeCable(c.seccion);
-	const encaje = encajarEnCanaleta(red, { x: nx, y: ny, z }, radio);
+	const encaje = asistir
+		? encajarEnCanaleta(new RedCanaletas(proyecto.gabinete?.canaletas ?? []), { x: nx, y: ny, z: zPedida }, radio)
+		: undefined;
 	if (encaje) {
 		wps[idx] = respetarBloqueo({
 			x: Math.round(encaje.punto.x),
 			y: Math.round(encaje.punto.y),
 			z: Math.round(encaje.punto.z),
-		}, bloqueo);
+		}, bloqueo) as { x: number; y: number; z: number };
 		pistaArrastre = {
-			z: wps[idx].z!, modo: 'profundidad', canaleta: encaje.canaleta,
-			ranura: encaje.ranura !== undefined, eje: bloqueo?.eje,
+			z: wps[idx].z!, modo: z === undefined ? 'placa' : 'profundidad', canaleta: encaje.canaleta,
+			ranura: encaje.ranura !== undefined, eje: bloqueo?.eje, alineado,
 		};
 		return;
 	}
-	// Fuera de toda canaleta: la profundidad se queda entre la placa y el frente, sin salirse.
-	const zSano = Math.max(radio, Math.min(Z_FRENTE + 24, z));
-	wps[idx] = respetarBloqueo({ x: nx, y: ny, z: Math.round(zSano) }, bloqueo);
-	pistaArrastre = { z: wps[idx].z!, modo: 'profundidad', eje: bloqueo?.eje };
+	// Fuera de toda canaleta: la profundidad se queda entre la placa y el frente del mazo, sin
+	// atravesar la placa por detrás ni salir volando por delante.
+	const zSana = Math.max(radio, Math.min(Z_FRENTE + 24, zPedida));
+	wps[idx] = respetarBloqueo({ x: nx, y: ny, z: Math.round(zSana) }, bloqueo) as { x: number; y: number; z: number };
+	pistaArrastre = { z: wps[idx].z!, modo: z === undefined ? 'placa' : 'profundidad', eje: bloqueo?.eje, alineado };
 }
 
 /* ------------- Riel y sus aparatos: se mueven juntos y se revierte si chocan ------------- */
@@ -3703,15 +3942,32 @@ function xLibreCercano(xDeseado: number, y: number, ancho: number, alto: number,
 	return undefined;
 }
 
-/** Handle bajo el puntero (tiene prioridad sobre cualquier otra cosa). */
+/** Radio de agarre de un tirador, en píxeles. Se ve pequeño y se coge cómodo: son dos cosas distintas. */
+const AGARRE_HANDLE_PX = 16;
+
+/**
+ * Tirador bajo el puntero (tiene prioridad sobre cualquier otra cosa).
+ *
+ * También en píxeles, y por el mismo motivo que los cables: una bolita de 9 mm de radio vista de
+ * lejos son dos píxeles, y para acertarle hacía falta puntería. Se sigue dibujando igual de
+ * pequeña —no se toca el aspecto— pero la zona sensible es siempre la misma en pantalla.
+ */
 function handleBajoElPuntero(ev: MouseEvent): DatosHandle | undefined {
 	if (escenario.handles.children.length === 0) return undefined;
-	const r = renderer.domElement.getBoundingClientRect();
-	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-	raycaster.setFromCamera(puntero, camaraViva());
-	const impactos = raycaster.intersectObjects(escenario.handles.children, false);
-	// Los marcadores/etiquetas de extremo no tienen `handle`; se ignoran para no bloquear el tirador.
-	return impactos.find((i) => i.object.userData.handle)?.object.userData.handle as DatosHandle | undefined;
+	const px = punteroEnPixeles(ev);
+	prepararProyeccion();
+	let mejor: { datos: DatosHandle; d: number } | undefined;
+	for (const o of escenario.handles.children) {
+		// Los marcadores/etiquetas de extremo no tienen `handle`; se ignoran para no bloquear el tirador.
+		const datos = o.userData.handle as DatosHandle | undefined;
+		if (!datos) continue;
+		const c = aPixeles(o.position.x, o.position.y, o.position.z, px.ancho, px.alto);
+		if (c.w <= 0) continue;
+		const d = Math.hypot(c.x - px.x, c.y - px.y);
+		if (d > AGARRE_HANDLE_PX) continue;
+		if (!mejor || d < mejor.d) mejor = { datos, d };
+	}
+	return mejor?.datos;
 }
 
 /** Reconstruye en la escena solo el riel o canaleta indicado (para arrastre fluido). */
@@ -3913,13 +4169,23 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	// las uniones se crean con doble clic y solo así (ver `crearUnionBajoElPuntero`, que explica
 	// por qué). Los aparatos solo tienen prioridad si están DELANTE del cable.
 	if (modo === 'trabajo') {
-		const cid = cableBajoElPuntero(ev);
-		if (cid && (elem?.tipo !== 'dispositivo' || cableEstaDelante(ev))) {
+		const golpe = cableSenalado(ev);
+		const cid = golpe?.id;
+		if (golpe && cid && (elem?.tipo !== 'dispositivo' || cableEstaDelante(ev, golpe))) {
 			if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: cid });
 			const c = proyecto.conductores.find((x) => x.id === cid);
-			const p = puntoCable(ev);
-			if (c && p) {
-				const idx = (c.trazado ?? []).findIndex((w) => Math.hypot(w.x - p.x, w.y - p.y) < 26);
+			const p = golpe.punto;
+			if (c) {
+				/*
+				 * Se mide en 3D contra el punto tal como está DIBUJADO, no contra sus coordenadas
+				 * guardadas: una unión metida en una canaleta está a 30 mm de profundidad y el clic
+				 * aterriza ahí, no en el plano del frente. Midiéndolo en planta, como antes,
+				 * agarrar una unión hundida era cuestión de suerte.
+				 */
+				const idx = (c.trazado ?? []).findIndex((w, i) => {
+					const q = puntoDibujado(c, i) ?? { x: w.x, y: w.y, z: Z_FRENTE };
+					return Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) < 26;
+				});
 				// Se anota la intención de arrastre; el punto no se crea hasta que el ratón se mueve.
 				pendienteCable = { id: cid, indice: idx, x: p.x, y: p.y };
 				arrastrando = true;
@@ -4014,10 +4280,6 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			if (!capturar()) return;
 			arrastrandoCable = { id: pendienteCable.id, indice: pendienteCable.indice };
 			capturadoEsteArrastre = true;
-			// De donde sale el punto ya era un sitio bueno: si el arrastre acaba mal, aquí se vuelve.
-			const cIni = proyecto.conductores.find((x) => x.id === arrastrandoCable!.id);
-			const wpIni = cIni?.trazado?.[arrastrandoCable.indice];
-			ultimoValido = wpIni ? { ...wpIni } : undefined;
 			motivoInvalido = undefined;
 		} else {
 			// Sin unión donde se pinchó no hay nada que mover: se avisa una sola vez.
@@ -4064,9 +4326,17 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			// Mover el punto de quiebre del tirador (o crear el primero si el cable no tenía).
 			const c = proyecto.conductores.find((x) => x.id === sel!.id)!;
 			if (handleArrastrado.indice === undefined || handleArrastrado.indice < 0) {
-				c.trazado = [puntoDeCableValido(p.x, p.y)];
-				previsualizarCable(c.id);
-				construirHandles();
+				/*
+				 * El tirador de un cable sin peinado está EN MITAD DEL CABLE. Tirando de él nace ahí
+				 * la primera unión —donde el usuario la está viendo nacer, con su profundidad— y
+				 * desde ese mismo movimiento ya sigue al cursor como cualquier otra.
+				 */
+				const ruta = rutaEnPantalla(c.id);
+				if (!ruta?.puntos.length) return;
+				const medio = Math.floor(ruta.puntos.length / 2);
+				const i = insertarWaypoint(c, ruta.puntos[medio], medio);
+				handleArrastrado.indice = i;
+				arrastrarUnion(ev, c, i, { ...ruta.puntos[medio] });
 			} else {
 				const wp = c.trazado?.[handleArrastrado.indice];
 				if (wp) arrastrarUnion(ev, c, handleArrastrado.indice, { x: wp.x, y: wp.y, z: wp.z ?? Z_FRENTE });
@@ -4208,7 +4478,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		}
 		estadoRielArrastre = undefined;
 		for (const m of resaltados) m.emissive.setHex(0x1d4ed8);
-		avisarSiSeMovioAlgunCable(sanearTrazados());
+		avisarSiSeMovioAlgunCable(contarTrazadosInvadidos());
 		actualizarTodo();
 		pintarEstructura();
 		return;
@@ -4223,28 +4493,19 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 	const cableSoltado = eraCable ?? eraHandleDeCable;
 	if (cableSoltado) {
 		/*
-		 * SOLTAR EN UN SITIO QUE NO VALE DEVUELVE EL PUNTO AL ÚLTIMO QUE SÍ VALÍA.
+		 * EL PUNTO SE QUEDA DONDE SE HA SOLTADO. Si el sitio tiene un problema, se DICE.
 		 *
-		 * Ni pared invisible mientras se mueve, ni geometría imposible guardada en silencio. Durante
-		 * el arrastre se explora libremente y el cable avisa en rojo; al soltar se decide, y se dice
-		 * por qué, que es lo que permite corregir sin adivinar.
+		 * Aquí había una vuelta automática al último sitio válido. Sonaba prudente y en la mano es
+		 * lo contrario: uno coloca un punto donde lo quiere, suelta, y el programa lo manda a otro
+		 * lado por su cuenta. En un tablero de verdad un cable puede rozar, cruzar, ir apretado o
+		 * pasar por donde el instalador decide que pase; quien juzga eso es el instalador, no el
+		 * editor. Lo que sí hace el editor es no callarse: el aviso queda en la barra y el problema
+		 * sale en la revisión, para poder corregirlo sabiendo qué pasa.
 		 */
 		if (motivoInvalido) {
-			const c = proyecto.conductores.find((x) => x.id === cableSoltado.id);
-			const wp = c?.trazado?.[cableSoltado.indice];
-			if (c && wp && ultimoValido) {
-				c.trazado![cableSoltado.indice] = { ...ultimoValido };
-				avisar(`Ahí no cabe el cable: ${motivoInvalido}. El punto vuelve al último sitio válido.`, 'info');
-			} else if (c && wp) {
-				// Nunca hubo un sitio bueno en todo el arrastre: se quita el punto y el cable vuelve
-				// a su recorrido automático, que siempre es válido.
-				c.trazado!.splice(cableSoltado.indice, 1);
-				if (!c.trazado!.length) delete c.trazado;
-				avisar(`Ahí no cabe el cable: ${motivoInvalido}. Se quita la unión.`, 'info');
-			}
+			avisar(`Revisa ese punto: ${motivoInvalido}. Se queda donde lo has dejado.`, 'error');
 		}
 		motivoInvalido = undefined;
-		ultimoValido = undefined;
 		/*
 		 * AQUÍ ES DONDE SE PAGA LO CARO, y solo aquí.
 		 *
@@ -4282,7 +4543,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		for (const m of resaltados) m.emissive.setHex(0x1d4ed8); // restaurar color de selección
 	}
 	arrastreInicio = undefined;
-	avisarSiSeMovioAlgunCable(sanearTrazados());
+	avisarSiSeMovioAlgunCable(contarTrazadosInvadidos());
 
 	recalcular();
 	reconstruirCables();
@@ -4301,13 +4562,12 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
  * eso llenaba el tablero de puntos sin querer al intentar solo moverlo.
  */
 function crearUnionBajoElPuntero(ev: MouseEvent): boolean {
-	const cid = cableBajoElPuntero(ev);
-	const p = puntoCable(ev);
-	const c = cid ? proyecto.conductores.find((x) => x.id === cid) : undefined;
-	if (!c || !p) return false;
-	if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: c.id });
+	const golpe = cableSenalado(ev);
+	const c = golpe ? proyecto.conductores.find((x) => x.id === golpe.id) : undefined;
+	if (!c || !golpe) return false;
+	if (!(sel?.tipo === 'cable' && sel.id === golpe.id)) aplicarSeleccion({ tipo: 'cable', id: c.id });
 	if (!capturar()) return false;
-	insertarWaypoint(c, p.x, p.y);
+	insertarWaypoint(c, golpe.punto, golpe.avance);
 	reconstruirCables();
 	construirHandles();
 	pintarPaneles();
@@ -6378,11 +6638,14 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		/* ---- Peinado manual en 3D: crear, mover y leer puntos sin ratón ---- */
 
-		/** Crea un punto de quiebre en el tramo del cable más cercano a (x,y). Devuelve su índice. */
+		/** Crea un punto de quiebre sobre el recorrido del cable, a la altura de (x,y) en planta. */
 		crearPuntoCable: (conductorId: string, x: number, y: number) => {
 			const c = proyecto.conductores.find((k) => k.id === conductorId);
 			if (!c) return -1;
-			const i = insertarWaypoint(c, x, y);
+			const ruta = rutaEnPantalla(conductorId);
+			const en = ruta && proyectarEnPolilinea(ruta.puntos, { x, y });
+			if (!en) return -1;
+			const i = insertarWaypoint(c, en.punto, en.indice + en.t);
 			reconstruirCables();
 			construirHandles();
 			return i;
