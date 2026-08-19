@@ -156,8 +156,20 @@ function tornillo(
 	 * POR DENTRO y la huella se hunde en ella. Así la boca del alojamiento devuelve su sombra
 	 * anular y el tornillo se lee al fondo, que es como se ve uno de verdad.
 	 */
-	g.add(cilindro(radio * 1.5, 3, pocillo, x, y, z - 1.5));
-	g.add(cilindro(radio, 1.6, cabeza, x, y, z - 1.2));
+	/*
+	 * Y LA BOCA DEL POCILLO QUEDA POR DEBAJO DE LA CARA, no justo en ella.
+	 *
+	 * Acababa exactamente en `z`, que es donde acaba también la cara del aparato: dos superficies
+	 * de colores distintos peleándose por la misma profundidad. Como `tornillo()` la usa TODO el
+	 * catálogo —cada tornillo de cada aparato— era, junto con el pocillo del borne, el foco de
+	 * moteado más repetido de la escena.
+	 *
+	 * La cabeza baja otro tanto para no crear el mismo problema entre ella y el pocillo: estaba
+	 * cuatro décimas por dentro y, al hundir el pocillo tres décimas y media, se habrían quedado a
+	 * cinco centésimas la una de la otra, que es exactamente de donde se venía.
+	 */
+	g.add(cilindro(radio * 1.5, 3, pocillo, x, y, z - 1.85));
+	g.add(cilindro(radio, 1.6, cabeza, x, y, z - 1.5));
 	// La huella, hundida en la cabeza: arranca por debajo de su cara y sube hasta la boca.
 	g.add(caja(radio * 1.7, 0.6, 0.6, ranura, x, y, z - 0.3));
 	if (cruz) g.add(caja(0.6, radio * 1.7, 0.6, ranura, x, y, z - 0.3));
