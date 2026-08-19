@@ -38,6 +38,55 @@ Sin ese control, cualquier número de esta sección sería una opinión con form
 - **No es la precisión del buffer de profundidad.** `near = 25`, `far = 8000`, razón 320, con la
   cámara a 934 mm de una escena de 812 × 816 × 202 mm. Una fase anterior ya subió el `near` de 1 mm
   a 25 mm justo por este motivo y dejó escrito por qué.
+- **No es el mapa de rugosidad de la pintura.** Quitarlo, dejar de repetirlo y subirle la
+  anisotropía dan el mismo número.
+
+### Lo que sí era
+
+Dos superficies **exactamente coplanares**, en dos sitios distintos, y las dos con la misma forma
+de fallo: una pieza clara y una oscura terminando en el mismo plano. En unos píxeles gana una y en
+otros la otra, y cuál gana cambia al mover la cámara. Eso es exactamente «manchas negras sobre
+superficies claras».
+
+Se encontraron escondiendo las mallas del aparato de una en una y volviendo a medir, con un control
+previo que comprueba que la palanca manda (esconder el aparato entero tiene que dar cero; lo da).
+
+**1. La placa frontal, a ras de su carcasa.** `panelEmbutido` dejaba la cara del panel exactamente
+en la misma `z` donde acaba la cara del cuerpo. Le pasaba a los cuatro aparatos que la usan:
+disyuntor, guardamotor, relé térmico y contactor. En el relé, el cuerpo terminaba en z = 68,00 y la
+placa en 67,95: **cinco centésimas de milímetro**.
+
+**2. La ranura de la maneta, a ras de su resalte.** El collar claro que rodea la maneta terminaba en
+`zNariz + 2,0` y el fondo oscuro de la ranura, también.
+
+Los dos se arreglaron moviendo la pieza a donde de verdad está, no con `polygonOffset` global: la
+placa sobresale 0,4 mm de su carcasa —lo que sobresale una placa moldeada real— y el fondo de la
+ranura se hunde 0,35 mm, porque el fondo de un hueco está por detrás de la cara que lo rodea. A la
+distancia de trabajo el buffer distingue unas dos milésimas de milímetro, y en el tope de
+alejamiento sigue distinguiendo cuatro veces menos que ese desplazamiento.
+
+| zona | antes | tras la placa | tras la ranura |
+|---|---|---|---|
+| f2 (relé) | 11939 | 0 | 0 |
+| km1 (contactor) | 2454 | 0 | 0 |
+| q1 (disyuntor) | 3823 | 3431 | **147** |
+| **total** | **20301** | 3431 | **147** |
+
+### Lo que queda, y por qué se deja
+
+147 por millón es el 0,015 % de los píxeles, frente al 2 % del principio. Preguntándole al rayo qué
+hay en esos píxeles, todos caen en dos sitios: donde un cable cruza por delante del disyuntor, y
+donde cinco caras del propio disyuntor se apilan en veintiséis milímetros de rayo. O sea,
+**siluetas y geometría fina**, no dos caras compitiendo por la misma profundidad. Eso es cómo se
+comporta el antialiasing cuando la cámara se mueve medio píxel, y perseguirlo sería perseguir el
+suavizado de bordes.
+
+### Un aviso sobre la sonda `coplanares`
+
+Busca todos los pares de caras que se solapan y están a menos de un pelo, sin renderizar nada, y en
+los cinco tableros encuentra **2.066**. La inmensa mayoría **no parpadea**: una pieza pequeña
+apoyada sobre una cara tiene la caja alineada y no compite con nadie. Sirve para tener sospechosos,
+no culpables. Quien decide sigue siendo la medida.
 
 ---
 
