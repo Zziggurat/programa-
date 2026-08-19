@@ -510,9 +510,23 @@ function modular(g: THREE.Group, w: number, h: number, color: number, d: Disposi
 	 * uno tiene su ventana; lo que las une es la barra de acoplamiento, no el hueco. Además así se
 	 * cuentan los polos de un vistazo, que es como se identifica una protección en un cuadro.
 	 */
+	/*
+	 * Y LA RANURA VA HUNDIDA EN EL RESALTE, que para eso es un hueco.
+	 *
+	 * Estaba a `zNariz + 0.3` con 3,4 mm de fondo, o sea con la cara en `zNariz + 2.0`… que es
+	 * exactamente donde está la cara del resalte que la rodea (3,2 mm de fondo centrados en
+	 * `zNariz + 0.4`). Dos superficies coplanares, una clara y otra casi negra, peleándose por la
+	 * misma profundidad: en unos píxeles ganaba una y en otros la otra, y cuál ganaba cambiaba al
+	 * mover la cámara. Ese era el segundo foco de manchas negras, el del disyuntor.
+	 *
+	 * Bajarla 0,35 mm no es un parche para esconder el problema: una ventana de maneta es un hueco
+	 * en el frontal, y el fondo de un hueco está por detrás de la cara que lo rodea. Antes no lo
+	 * estaba.
+	 */
+	const HUNDIDO = 0.35;
 	for (let i = 0; i < polos; i++) {
 		const x = (i + 0.5) * (w / polos) - w / 2;
-		g.add(caja(Math.max(4, w / polos - 3.5), hueco, 3.4, M.baquelita(0x15181a), x, 0, zNariz + 0.3));
+		g.add(caja(Math.max(4, w / polos - 3.5), hueco, 3.4, M.baquelita(0x15181a), x, 0, zNariz + 0.3 - HUNDIDO));
 	}
 	/*
 	 * Palanca por polo (unidas), en gris oscuro. Se marcan como PIEZA porque con el tablero

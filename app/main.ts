@@ -6028,6 +6028,55 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			});
 			return out;
 		},
+		/**
+		 * BUSCA TODOS LOS PARES DE CARAS CASI COPLANARES DE UN APARATO.
+		 *
+		 * Bisecar aparato por aparato encuentra UNA culpable cada vez y cuesta veinte minutos. Esto
+		 * las encuentra todas de golpe y sin renderizar nada: dos cajas que se solapan en x/y y cuyas
+		 * caras frontales están a menos de un pelo la una de la otra son, por definición, dos
+		 * superficies peleándose por la misma profundidad. Da igual de qué aparato sean.
+		 *
+		 * Se mira solo la cara frontal porque es la que se ve: el tablero se mira de frente y en
+		 * diagonal, no desde detrás.
+		 */
+		coplanares: (dispositivoId: string, tolerancia = 0.25) => {
+			const g = escenario.dispositivos.children.find((o) => o.userData.dispositivoId === dispositivoId);
+			if (!g) return [];
+			const cajas: { i: number; frente: number; x0: number; x1: number; y0: number; y1: number; area: number; color: string }[] = [];
+			let i = 0;
+			g.traverse((o) => {
+				if (!(o instanceof THREE.Mesh)) return;
+				const n = i++;
+				if (o.userData.esMarca) return;   // la serigrafía ya lleva su propio polygonOffset
+				const caja = new THREE.Box3().setFromObject(o);
+				const mat = (Array.isArray(o.material) ? o.material[0] : o.material) as THREE.MeshStandardMaterial;
+				cajas.push({
+					i: n, frente: caja.max.z, x0: caja.min.x, x1: caja.max.x, y0: caja.min.y, y1: caja.max.y,
+					area: (caja.max.x - caja.min.x) * (caja.max.y - caja.min.y),
+					color: mat?.color ? `#${mat.color.getHexString()}` : '—',
+				});
+			});
+			const pares: { a: number; b: number; separacion: number; solape: number; colores: string }[] = [];
+			for (let m = 0; m < cajas.length; m++) {
+				for (let n = m + 1; n < cajas.length; n++) {
+					const A = cajas[m], B = cajas[n];
+					const sep = Math.abs(A.frente - B.frente);
+					if (sep > tolerancia) continue;
+					const ancho = Math.min(A.x1, B.x1) - Math.max(A.x0, B.x0);
+					const alto = Math.min(A.y1, B.y1) - Math.max(A.y0, B.y0);
+					if (ancho <= 0.5 || alto <= 0.5) continue;
+					const solape = ancho * alto;
+					// Un solape ridículo respecto a las dos piezas es un canto rozando otro, no dos
+					// caras compitiendo: eso no se ve parpadear.
+					if (solape < Math.min(A.area, B.area) * 0.05) continue;
+					pares.push({
+						a: A.i, b: B.i, separacion: +sep.toFixed(3), solape: Math.round(solape),
+						colores: `${A.color} / ${B.color}`,
+					});
+				}
+			}
+			return pares.sort((x, y) => y.solape - x.solape);
+		},
 		/** Enciende o apaga una de esas mallas por su índice. */
 		verMalla: (dispositivoId: string, indice: number, visible: boolean) => {
 			const g = escenario.dispositivos.children.find((o) => o.userData.dispositivoId === dispositivoId);
