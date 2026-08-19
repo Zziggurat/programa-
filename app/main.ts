@@ -5934,6 +5934,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				luces.push(L);
 			}
 			const pares: number[] = [];
+			const focos: [number, number][] = [];
 			for (let k = 1; k < luces.length; k++) {
 				const A = luces[k - 1], B = luces[k];
 				let n = 0;
@@ -5946,12 +5947,19 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 						if (Math.abs(A[i - 1] - v) > llano || Math.abs(A[i + 1] - v) > llano) continue;
 						if (Math.abs(A[i - w] - v) > llano || Math.abs(A[i + w] - v) > llano) continue;
 						n++;
+						if (focos.length < 400 && n % 7 === 0) focos.push([x, y]);
 					}
 				}
 				pares.push(n);
 			}
 			const total = pares.reduce((a, b) => a + b, 0);
-			return { pares, total, porMillon: Math.round((total / (pares.length * w * h)) * 1e6), pixeles: w * h };
+			return {
+				pares, total, porMillon: Math.round((total / (pares.length * w * h)) * 1e6), pixeles: w * h,
+				// DÓNDE parpadea, en coordenadas de pantalla. Contar cuántos píxeles saltan dice que
+				// hay un problema; saber en qué píxeles saltan permite preguntarle al rayo qué hay
+				// ahí, que es lo único que acaba nombrando al culpable.
+				donde: focos.slice(0, 40).map(([x, y]) => ({ x: x * 2, y: y * 2 })),
+			};
 		},
 		/*
 		 * INTERRUPTORES PARA AISLAR UN PARPADEO.
@@ -5997,15 +6005,25 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		mallasDe: (dispositivoId: string) => {
 			const g = escenario.dispositivos.children.find((o) => o.userData.dispositivoId === dispositivoId);
 			if (!g) return [];
-			const out: { i: number; pieza: string; marca: boolean; vertices: number }[] = [];
+			const out: Record<string, unknown>[] = [];
 			let i = 0;
 			g.traverse((o) => {
 				if (!(o instanceof THREE.Mesh)) return;
+				const caja = o.geometry.boundingBox ?? (o.geometry.computeBoundingBox(), o.geometry.boundingBox!);
+				const tam = caja.getSize(new THREE.Vector3());
+				const mat = (Array.isArray(o.material) ? o.material[0] : o.material) as THREE.MeshStandardMaterial;
 				out.push({
 					i: i++,
 					pieza: (o.userData.pieza as string) ?? o.name ?? '(sin nombre)',
 					marca: !!o.userData.esMarca,
 					vertices: o.geometry.attributes.position?.count ?? 0,
+					forma: o.geometry.type,
+					tam: { x: +tam.x.toFixed(1), y: +tam.y.toFixed(1), z: +tam.z.toFixed(1) },
+					pos: { x: +o.position.x.toFixed(1), y: +o.position.y.toFixed(1), z: +o.position.z.toFixed(1) },
+					color: mat?.color ? `#${mat.color.getHexString()}` : '—',
+					transparente: !!mat?.transparent,
+					lado: mat?.side,
+					escribeProfundidad: mat?.depthWrite,
 				});
 			});
 			return out;
@@ -6062,6 +6080,39 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			for (const t of escenario.tapas) t.visible = puestas;
 			pintar();
 			return escenario.tapas.length;
+		},
+		/**
+		 * Toca el mapa de rugosidad de la pintura: quitarlo, repetirlo menos o filtrarlo mejor.
+		 *
+		 * Es un ruido blanco de 64×64 repetido 26 veces sobre la placa, y sin anisotropía. Eso es
+		 * una frecuencia altísima en pantalla, y en oblicuo el filtrado no da abasto: la rugosidad
+		 * centellea y con ella el reflejo. Con estas tres palancas se puede saber si el moteado
+		 * viene de ahí sin adivinarlo.
+		 */
+		grano: (opciones: { mapa?: boolean; repeticion?: number; anisotropia?: number }) => {
+			let tocados = 0;
+			escena.traverse((o) => {
+				if (!(o instanceof THREE.Mesh)) return;
+				for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+					const mat = m as THREE.MeshStandardMaterial;
+					const guardado = o.userData.grano as THREE.Texture | undefined;
+					if (!mat?.roughnessMap && !guardado) continue;
+					if (opciones.mapa === false && mat.roughnessMap) {
+						o.userData.grano = mat.roughnessMap;
+						mat.roughnessMap = null;
+						mat.needsUpdate = true;
+					} else if (opciones.mapa === true && guardado) {
+						mat.roughnessMap = guardado;
+						mat.needsUpdate = true;
+					}
+					const tex = mat.roughnessMap ?? guardado;
+					if (tex && opciones.repeticion !== undefined) tex.repeat.set(opciones.repeticion, opciones.repeticion);
+					if (tex && opciones.anisotropia !== undefined) { tex.anisotropy = opciones.anisotropia; tex.needsUpdate = true; }
+					tocados++;
+				}
+			});
+			pintar();
+			return tocados;
 		},
 		/** Esconde (o devuelve) los planos de serigrafía del atlas, sin tocar nada más. */
 		marcas3d: (on: boolean) => {

@@ -85,12 +85,36 @@ const M = {
  * razón por la que se matan las aristas: no se trata de añadir polígonos, sino de darle a la
  * iluminación algo de lo que agarrarse.
  */
+/*
+ * CUÁNTO SOBRESALE UNA PLACA FRONTAL DE SU CARCASA. Y NO PUEDE SER CERO.
+ *
+ * Esta función colocaba la cara del panel EXACTAMENTE en `z`, que es también donde acaba la cara
+ * del cuerpo sobre el que se monta. Dos superficies coplanares compitiendo por la misma
+ * profundidad: en unos píxeles gana la placa clara y en otros el cuerpo oscuro, y cuál gana cambia
+ * al mover la cámara. De ahí las manchas negras sobre superficies claras que se veían al girar,
+ * acercarse o alejarse.
+ *
+ * Costó encontrarlo porque las dos sospechas naturales eran falsas, y las dos se descartaron
+ * midiendo: subir el sesgo del mapa de sombras de 0,22 a 3,00 mm no movía el moteado ni un punto
+ * (11939 → 11931 por millón), y esconder todos los planos de serigrafía tampoco (11939 → 12236).
+ * Lo que lo señaló fue esconder las mallas del aparato de una en una: la número 6 se lo llevaba
+ * entera consigo.
+ *
+ * 0,4 mm es el menor desplazamiento físicamente razonable: una placa frontal moldeada de un
+ * aparato real sobresale de su carcasa entre tres y seis décimas. No es un truco para tapar
+ * geometría mal puesta —eso sería `polygonOffset` global— sino la pieza puesta donde de verdad
+ * está. Y sobra para el buffer de profundidad: a la distancia de trabajo la resolución es de unas
+ * dos milésimas de milímetro, y hasta con la cámara en su tope de alejamiento sigue siendo cuatro
+ * veces mayor que lo que el buffer distingue.
+ */
+const RESALTE_PANEL = 0.4;
+
 function panelEmbutido(
 	g: THREE.Group, w: number, h: number, z: number, mat: THREE.Material,
 	hondo = 1.5, x = 0, y = 0, radio = 1.2,
 ): void {
 	// El marco: cuatro tiras que rodean el hueco, del mismo material que el cuerpo.
-	g.add(cajaCanto(w, h, hondo, mat, x, y, z - hondo / 2, radio, 0.35));
+	g.add(cajaCanto(w, h, hondo, mat, x, y, z - hondo / 2 + RESALTE_PANEL, radio, 0.35));
 }
 
 /**

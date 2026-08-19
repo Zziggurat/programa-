@@ -65,7 +65,7 @@ function abanico(centro, radio, giro0, alto0, pasos = 6, paso = 0.0004) {
  * tienen carcasa clara, que es donde Diego vio las manchas— más un par de contraste.
  */
 const zonas = [];
-for (const d of disp.slice(0, 6)) {
+for (const d of disp.slice(0, 4)) {
 	const c = await qa('bulto', d.id);
 	if (c) zonas.push({ id: d.id, tipo: d.tipo, centro: { x: c.x, y: c.y, z: c.z }, radio: Math.max(90, c.radio * 3.2) });
 }
@@ -88,14 +88,16 @@ for (const d of disp.slice(0, 6)) {
  * quieta el resultado tiene que ser CERO; si no lo es, el número no mide lo que dice medir.
  */
 const CONFIG = [
-	['sesgo 0,22 · marcas ON ', 0.22, true],
-	['sesgo 3,00 · marcas ON ', 3.0, true],
-	['sesgo 0,22 · marcas OFF', 0.22, false],
-	['sesgo 3,00 · marcas OFF', 3.0, false],
+	['tal cual                ', async () => { await qa('sesgoSombra', 0.22); await qa('marcas3d', true); await qa('grano', { mapa: true, repeticion: 26, anisotropia: 1 }); }],
+	['sin sombras (sesgo 3)   ', async () => { await qa('sesgoSombra', 3.0); }],
+	['sin serigrafia          ', async () => { await qa('sesgoSombra', 0.22); await qa('marcas3d', false); }],
+	['sin mapa de rugosidad   ', async () => { await qa('marcas3d', true); await qa('grano', { mapa: false }); }],
+	['grano con anisotropia 16', async () => { await qa('grano', { mapa: true, anisotropia: 16 }); }],
+	['grano sin repetir (1x)  ', async () => { await qa('grano', { mapa: true, repeticion: 1, anisotropia: 1 }); }],
 ];
 
 console.log('\nmoteado por millón de píxeles comparados (más alto = más parpadeo)\n');
-console.log('aparato        ' + ['camara quieta (control)', ...CONFIG.map((c) => c[0])].join('  '));
+console.log('zona           ' + ['quieta', ...CONFIG.map((c) => c[0])].join(' | '));
 const acumulado = new Map(CONFIG.map((c) => [c[0], 0]));
 const peores = [];
 for (const z of zonas) {
@@ -103,18 +105,17 @@ for (const z of zonas) {
 	const control = (await qa('medirMoteado', quieta)).porMillon;
 	const cams = abanico(z.centro, z.radio, 0.34, 0.20);
 	const fila = [control];
-	for (const [nombre, sesgo, marca] of CONFIG) {
-		await qa('sesgoSombra', sesgo);
-		await qa('marcas3d', marca);
-		await p.waitForTimeout(150);
+	for (const [nombre, poner] of CONFIG) {
+		await poner();
+		await p.waitForTimeout(200);
 		const r = await qa('medirMoteado', cams);
 		fila.push(r.porMillon);
 		acumulado.set(nombre, acumulado.get(nombre) + r.porMillon);
 	}
 	peores.push({ id: z.id, tipo: z.tipo, base: fila[0], fila });
-	console.log(`${(z.id + ' (' + z.tipo + ')').padEnd(14)} ` + fila.map((v) => String(v).padStart(24)).join('  '));
+	console.log(`${(z.id + ' (' + z.tipo + ')').padEnd(14)} ` + fila.map((v) => String(v).padStart(6)).join(' | '));
 }
-console.log('\nTOTAL          ' + CONFIG.map((c) => String(acumulado.get(c[0])).padStart(24)).join('  '));
+console.log('\nTOTAL              ' + CONFIG.map((c) => String(acumulado.get(c[0])).padStart(6)).join(' | '));
 
 // La zona que más parpadea, fotografiada desde dos ángulos casi iguales.
 peores.sort((a, b) => b.base - a.base);
@@ -122,7 +123,7 @@ const peor = peores[0];
 if (peor) {
 	console.log(`\nla zona que más parpadea: ${peor.id} (${peor.tipo}) con ${peor.base} por millón`);
 	const z = zonas.find((x) => x.id === peor.id);
-	await qa('sesgoSombra', 0.22); await qa('marcas3d', true);
+	await CONFIG[0][1]();
 	const cams = abanico(z.centro, z.radio, 0.34, 0.20, 4, 0.02);
 	for (let i = 0; i < cams.length; i++) {
 		await qa('verDesde', cams[i]); await p.waitForTimeout(350);
