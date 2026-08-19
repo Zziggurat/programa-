@@ -35,7 +35,7 @@ await p.locator('.tarjeta-ejemplo button').nth(2).click({ timeout: 120_000 }); a
 for (const [m, bt] of [['#modal-dialogo', 'dialogo-ok'], ['#modal-explicacion', 'btn-cerrar-explicacion']]) { if (await p.isVisible(m)) { await p.evaluate((i) => document.getElementById(i)?.click(), bt); await p.waitForTimeout(700); } }
 await p.evaluate(() => document.getElementById('modo-trabajo')?.click()); await p.waitForTimeout(600);
 // Es un ejemplo de solo lectura: hay que hacerlo propio para poder peinar cables.
-await p.evaluate(() => document.getElementById('btn-copia-editable')?.click()).catch(() => {});
+await p.evaluate(() => document.getElementById('btn-copiar-ejemplo')?.click()).catch(() => {});
 await p.waitForTimeout(600);
 
 const canaletas = await p.evaluate(() => window.qa.proyecto().gabinete.canaletas.map((c) => ({ ...c })));
