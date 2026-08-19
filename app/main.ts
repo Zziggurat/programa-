@@ -31,7 +31,7 @@ import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	diagnosticoCables, largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable,
-	radioDeCable, vaciar, VOLTAJE_COLOR,
+	contadores, radioDeCable, reiniciarContadores, vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
 import { encajarEnCanaleta, RedCanaletas } from './canaletas-red.js';
@@ -3336,6 +3336,27 @@ function sanearTrazados(): number {
 	return arreglados;
 }
 
+/*
+ * CRONÓMETRO POR ETAPAS DEL ARRASTRE.
+ *
+ * Diego pidió números antes de optimizar, y con razón: en este proyecto ya ha pasado dos veces que
+ * la causa «evidente» era falsa. Esto mide lo que de verdad cuesta cada tramo del camino que va
+ * desde que se mueve el ratón hasta que la pantalla enseña el cable en su sitio nuevo.
+ *
+ * Solo se enciende desde QA; apagado cuesta una comparación por etapa.
+ */
+const crono = { activo: false, etapas: new Map<string, { n: number; ms: number }>() };
+
+function medirEtapa<T>(etapa: string, fn: () => T): T {
+	if (!crono.activo) return fn();
+	const t0 = performance.now();
+	const r = fn();
+	const e = crono.etapas.get(etapa) ?? { n: 0, ms: 0 };
+	e.n++; e.ms += performance.now() - t0;
+	crono.etapas.set(etapa, e);
+	return r;
+}
+
 /** Lo último que se supo del punto que se está arrastrando: para poder contarlo en pantalla. */
 let pistaArrastre: { z: number; modo: ModoArrastre; canaleta?: string; ranura?: boolean } | undefined;
 
@@ -3838,14 +3859,14 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			 * profundidad empieza justo donde el usuario ve el cable, y no pega un salto.
 			 */
 			const desde = { x: wp.x, y: wp.y, z: wp.z ?? Z_FRENTE };
-			const pc = puntoCable3D(ev, desde, ev.shiftKey);
+			const pc = medirEtapa('1 pantalla→mundo', () => puntoCable3D(ev, desde, ev.shiftKey));
 			if (pc) {
 				// En el plano de la placa la profundidad no se toca: se pasa `undefined` para que un
 				// punto que nunca se ha editado en z siga sin tenerla y lo siga colocando el router.
-				moverWaypoint(c, arrastrandoCable.indice, pc.x, pc.y, pc.modo === 'profundidad' ? pc.z : undefined);
-				reconstruirCables();
-				construirHandles();
-				mostrarPistaArrastre();
+				medirEtapa('2 mover punto', () => moverWaypoint(c, arrastrandoCable!.indice, pc.x, pc.y, pc.modo === 'profundidad' ? pc.z : undefined));
+				medirEtapa('3 reconstruir cables', () => reconstruirCables());
+				medirEtapa('4 handles', () => construirHandles());
+				medirEtapa('5 pista', () => mostrarPistaArrastre());
 			}
 		}
 		return;
@@ -6039,21 +6060,24 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 * Se mira solo la cara frontal porque es la que se ve: el tablero se mira de frente y en
 		 * diagonal, no desde detrás.
 		 */
-		coplanares: (dispositivoId: string, tolerancia = 0.25) => {
+		coplanares: (dispositivoId: string, tolerancia = 0.25, contraste = 0.12) => {
 			const g = escenario.dispositivos.children.find((o) => o.userData.dispositivoId === dispositivoId);
 			if (!g) return [];
-			const cajas: { i: number; frente: number; x0: number; x1: number; y0: number; y1: number; area: number; color: string }[] = [];
+			const cajas: { i: number; frente: number; x0: number; x1: number; y0: number; y1: number; area: number; color: string; luz: number }[] = [];
 			let i = 0;
 			g.traverse((o) => {
 				if (!(o instanceof THREE.Mesh)) return;
 				const n = i++;
-				if (o.userData.esMarca) return;   // la serigrafía ya lleva su propio polygonOffset
+				// La serigrafía lleva su propio polygonOffset, pero se mide igual: descartarla de
+				// entrada fue lo que dejó fuera las regletas en la primera pasada.
 				const caja = new THREE.Box3().setFromObject(o);
 				const mat = (Array.isArray(o.material) ? o.material[0] : o.material) as THREE.MeshStandardMaterial;
+				const col = mat?.color ?? new THREE.Color(0x808080);
 				cajas.push({
 					i: n, frente: caja.max.z, x0: caja.min.x, x1: caja.max.x, y0: caja.min.y, y1: caja.max.y,
 					area: (caja.max.x - caja.min.x) * (caja.max.y - caja.min.y),
-					color: mat?.color ? `#${mat.color.getHexString()}` : '—',
+					color: `#${col.getHexString()}`,
+					luz: 0.2126 * col.r + 0.7152 * col.g + 0.0722 * col.b,
 				});
 			});
 			const pares: { a: number; b: number; separacion: number; solape: number; colores: string }[] = [];
@@ -6069,6 +6093,15 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 					// Un solape ridículo respecto a las dos piezas es un canto rozando otro, no dos
 					// caras compitiendo: eso no se ve parpadear.
 					if (solape < Math.min(A.area, B.area) * 0.05) continue;
+					/*
+					 * Y las dos caras tienen que ser de COLORES DISTINTOS para que el pleito se vea.
+					 * Dos piezas del mismo gris peleándose por la profundidad no producen moteado:
+					 * gane la que gane, sale el mismo píxel. Sin este filtro la sonda devolvía 2.066
+					 * pares en los cinco tableros y casi ninguno parpadeaba, o sea que no servía
+					 * para decidir nada.
+					 */
+					const dif = Math.abs(A.luz - B.luz);
+					if (dif < contraste) continue;
 					pares.push({
 						a: A.i, b: B.i, separacion: +sep.toFixed(3), solape: Math.round(solape),
 						colores: `${A.color} / ${B.color}`,
@@ -6163,6 +6196,20 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			pintar();
 			return tocados;
 		},
+		/* ---- Cronómetro del arrastre: medir antes de optimizar ---- */
+		cronometro: (encender: boolean) => {
+			crono.activo = encender;
+			crono.etapas.clear();
+			reiniciarContadores();
+			return encender;
+		},
+		cronometroLeer: () => ({
+			etapas: [...crono.etapas.entries()].map(([etapa, e]) => ({
+				etapa, veces: e.n, msTotal: Math.round(e.ms * 100) / 100,
+				msPorVez: Math.round((e.ms / e.n) * 1000) / 1000,
+			})).sort((a, b) => b.msTotal - a.msTotal),
+			contadores: { ...contadores, msFirmas: Math.round(contadores.msFirmas * 100) / 100 },
+		}),
 		/** Esconde (o devuelve) los planos de serigrafía del atlas, sin tocar nada más. */
 		marcas3d: (on: boolean) => {
 			let n = 0;

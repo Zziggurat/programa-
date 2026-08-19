@@ -870,6 +870,7 @@ function anadirTuboCable(
 	color: number,
 	conductorId: string,
 ): void {
+	contadores.tubos++;
 	/*
 	 * EL AISLANTE ES PVC, NO TIZA.
 	 *
@@ -1300,6 +1301,19 @@ const PASOS_LATERALES = [0, 1, -1];
  */
 let ultimoReparto: { firma: string; rutas: RutaCable[] } | undefined;
 
+/**
+ * CONTADORES PARA SABER QUÉ SE ESTÁ EJECUTANDO DE MÁS, sin adivinarlo.
+ *
+ * Antes de tocar el rendimiento del arrastre hay que poder contestar con un número a «¿cuántos
+ * cables se reconstruyen al mover uno?». Estos contadores lo dicen. Cuestan una suma.
+ */
+export const contadores = { repartos: 0, firmas: 0, msFirmas: 0, tubos: 0, cablesConstruidos: 0 };
+
+export function reiniciarContadores(): void {
+	contadores.repartos = 0; contadores.firmas = 0; contadores.msFirmas = 0;
+	contadores.tubos = 0; contadores.cablesConstruidos = 0;
+}
+
 function firmaDelRuteo(proyecto: Proyecto): string {
 	const g = proyecto.gabinete;
 	return JSON.stringify([
@@ -1312,8 +1326,12 @@ function firmaDelRuteo(proyecto: Proyecto): string {
 }
 
 export function rutasDeCables(proyecto: Proyecto): RutaCable[] {
+	const t0 = performance.now();
 	const firma = firmaDelRuteo(proyecto);
+	contadores.firmas++;
+	contadores.msFirmas += performance.now() - t0;
 	if (ultimoReparto?.firma === firma) return ultimoReparto.rutas;
+	contadores.repartos++;
 	const rutas = repartirCables(proyecto);
 	ultimoReparto = { firma, rutas };
 	return rutas;
@@ -2229,6 +2247,7 @@ export function construirCables(
 	// Los cables se dibujan en tramos horizontales/verticales (estilo Tinkercad), al FRENTE
 	// del tablero para no atravesar los aparatos.
 	for (const ruta of rutasDeCables(proyecto)) {
+		contadores.cablesConstruidos++;
 		const conductor = proyecto.conductores.find((c) => c.id === ruta.conductorId)!;
 		// Los puntos vienen YA RESUELTOS en la ruta: son los mismos con los que el repartidor
 		// comprobó que este cable cabía ahí y los mismos que miden las pruebas. No hay dos.

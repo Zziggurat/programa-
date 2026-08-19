@@ -233,8 +233,19 @@ function borneTornillo(g: THREE.Group, x: number, y: number, ancho: number): voi
 	const hueco = M.tecnico(0x474d53);
 	const jaula = M.metal(0x8d949a);
 	const a = Math.min(ancho, 9);
-	// Alojamiento: un pocillo rehundido 3,4 mm, con su boca en la superficie.
-	g.add(caja(a, Math.min(a, 8), 3.4, hueco, x, y, z - 1.7));
+	/*
+	 * Alojamiento: un pocillo rehundido 3,4 mm, con su boca JUSTO POR DEBAJO de la superficie.
+	 *
+	 * Estaba con la boca EN la superficie —cara en `z` exacto, que es donde acaba también la cara
+	 * del aparato— y eso son dos superficies de colores distintos peleándose por la misma
+	 * profundidad. Como esta función la usa casi todo el catálogo una vez POR BORNE, el mismo
+	 * fallo aparecía multiplicado por el número de bornes del tablero: era el foco de moteado más
+	 * repetido de la escena.
+	 *
+	 * Un pocillo con la boca al ras no es un pocillo. Las tres décimas y media que se hunde son
+	 * las mismas que en la placa frontal y en la ranura de la maneta, para que el criterio sea uno.
+	 */
+	g.add(caja(a, Math.min(a, 8), 3.4, hueco, x, y, z - 2.05));
 	// Jaula de apriete al fondo del pocillo: la pieza metálica que muerde el hilo.
 	g.add(caja(a * 0.72, Math.min(a, 8) * 0.62, 1.6, jaula, x, y, z - 2.4));
 	// Y el tornillo, con la MISMA primitiva que el resto del catálogo. Antes este modelo se
@@ -914,7 +925,17 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		 * `dibujarBornesReales()` en el punto exacto donde se engancha el cable, para que sea el
 		 * mismo tornillo que se ve.
 		 */
-		g.add(caja(paso * 0.62, 7, 3.4, M.tecnico(0x474d53), x, -h * 0.28, prof - 1.7));
+		/*
+		 * EL POCILLO VA HUNDIDO, que para eso es un pocillo.
+		 *
+		 * Estaba a `prof - 1.7` con 3,4 mm de fondo, o sea con la cara en `prof`… que es exactamente
+		 * donde acaba la cara del cuerpo de la borna. Una pieza oscura y una clara terminando en el
+		 * mismo plano: en unos píxeles gana una y en otros la otra, y cuál gana cambia al mover la
+		 * cámara. Y como esto se dibuja UNA VEZ POR BORNA, una regleta de veinte bornas tenía veinte
+		 * focos de moteado; medido, las regletas eran con diferencia lo que más parpadeaba del
+		 * tablero (1667 por millón en X2 frente a 345 del disyuntor).
+		 */
+		g.add(caja(paso * 0.62, 7, 3.4, M.tecnico(0x474d53), x, -h * 0.28, prof - 2.05));
 		g.add(caja(paso * 0.44, 5, 1.4, M.metal(0x8d949a), x, -h * 0.28, prof - 3.1));
 		tornillo(g, x, -h * 0.28, prof, Math.min(1.9, paso * 0.26));
 		/*
