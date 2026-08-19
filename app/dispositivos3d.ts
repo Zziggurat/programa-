@@ -168,11 +168,26 @@ function tornillo(
 	 * cuatro décimas por dentro y, al hundir el pocillo tres décimas y media, se habrían quedado a
 	 * cinco centésimas la una de la otra, que es exactamente de donde se venía.
 	 */
+	/*
+	 * Y LA HUELLA TAMBIÉN, que se había quedado atrás.
+	 *
+	 * El pocillo y la cabeza ya estaban por debajo de la cara, pero la HUELLA —el corte de la
+	 * cabeza— seguía muriendo exactamente en `z`, o sea otra vez en el plano de la cara del
+	 * aparato. Como `tornillo()` lo usa todo el catálogo, eso era un foco de moteado por cada
+	 * tornillo de cada aparato, y se veía en la medida: las regletas seguían siendo lo que más
+	 * parpadeaba (196 por millón en X0 frente a 0-12 de los aparatos sin regleta).
+	 *
+	 * Las tres piezas quedan escalonadas, cada una a más de dos décimas de la siguiente, y en el
+	 * orden en que están de verdad: boca del pocillo, huella asomando del corte, cabeza al fondo.
+	 *
+	 *   boca del pocillo   z − 0,35
+	 *   huella             z − 0,70
+	 *   cara de la cabeza  z − 0,90
+	 */
 	g.add(cilindro(radio * 1.5, 3, pocillo, x, y, z - 1.85));
-	g.add(cilindro(radio, 1.6, cabeza, x, y, z - 1.5));
-	// La huella, hundida en la cabeza: arranca por debajo de su cara y sube hasta la boca.
-	g.add(caja(radio * 1.7, 0.6, 0.6, ranura, x, y, z - 0.3));
-	if (cruz) g.add(caja(0.6, radio * 1.7, 0.6, ranura, x, y, z - 0.3));
+	g.add(cilindro(radio, 1.6, cabeza, x, y, z - 1.7));
+	g.add(caja(radio * 1.7, 0.6, 0.6, ranura, x, y, z - 1));
+	if (cruz) g.add(caja(0.6, radio * 1.7, 0.6, ranura, x, y, z - 1));
 }
 
 function caja(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0, z = 0): THREE.Mesh {
@@ -611,10 +626,21 @@ function modular(g: THREE.Group, w: number, h: number, color: number, d: Disposi
 	}
 	// Mirilla de estado: verde con el aparato cerrado, roja al abrirlo o dispararlo. Va metida en
 	// su ventanita, no posada sobre la cara: por eso primero el marco oscuro y luego el cristal.
+	/*
+	 * Y LA VENTANITA VA POR DENTRO, que para eso es una ventanita.
+	 *
+	 * El marco oscuro acababa en `zNariz + 0,4`, que es exactamente donde acaba el frontal embutido
+	 * del disyuntor: una pieza casi negra y una casi blanca terminando en el mismo plano, con 62
+	 * mm² de solape. Es el mismo fallo del pocillo del borne, en otra pieza. Escalonado:
+	 *
+	 *   cara del frontal   zNariz + 0,40
+	 *   marco de la mirilla zNariz + 0,05
+	 *   cristal            zNariz − 0,25
+	 */
 	const anchoMir = Math.min(10, w * 0.4);
 	const yMir = -hueco * 0.5 - 6.3;
-	g.add(caja(anchoMir + 2, 5.2, 1.6, M.baquelita(0x15181a), 0, yMir, zNariz - 0.4));
-	const mirilla = caja(anchoMir, 3.5, 1.2, M.plastico(0x2e7d32, 0.32), 0, yMir, zNariz + 0.4);
+	g.add(caja(anchoMir + 2, 5.2, 1.6, M.baquelita(0x15181a), 0, yMir, zNariz - 0.75));
+	const mirilla = caja(anchoMir, 3.5, 1.2, M.plastico(0x2e7d32, 0.32), 0, yMir, zNariz - 0.85);
 	mirilla.userData.pieza = 'mirilla';
 	g.add(mirilla);
 	return prof;
@@ -955,8 +981,15 @@ function bornero(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 		 * tiene toda borna y por el que se mete el hilo. Es un detalle de dos milímetros que se
 		 * nota mucho de cerca, porque es lo que explica cómo se conecta la pieza.
 		 */
-		// La boca del conductor sí es un taladro estrecho y profundo: ahí la penumbra es real.
-		g.add(cilindro(Math.min(1.6, paso * 0.22), 2.2, M.baquelita(0x1a1e21), x, -h * 0.4, prof - 1.1));
+			/*
+		 * La boca del conductor sí es un taladro estrecho y profundo: ahí la penumbra es real. Y
+		 * como todo taladro, su boca queda POR DEBAJO de la cara: estaba acabando exactamente en
+		 * `prof`, que es donde acaba la cara de la borna, y una pieza casi negra y una clara
+		 * terminando en el mismo plano se pelean píxel a píxel. Es el mismo fallo del pocillo, en
+		 * la pieza de al lado, y como también se dibuja una vez por borna, también se multiplicaba
+		 * por el número de bornas de la regleta.
+		 */
+		g.add(cilindro(Math.min(1.6, paso * 0.22), 2.2, M.baquelita(0x1a1e21), x, -h * 0.4, prof - 1.45));
 		// Ventana de identificación: la tira donde va el número de borna, embutida en la cara.
 		g.add(caja(paso - 2.4, h * 0.11, 1.1, M.baquelita(0xe9ecee), x, h * 0.02, prof - 0.2));
 	}
@@ -1088,7 +1121,12 @@ function releTermicoModelo(g: THREE.Group, w: number, h: number, color: number, 
 	 */
 	const rMando = Math.min(w * 0.26, altoNariz * 0.3);
 	const yMando = altoNariz * 0.12;
-	g.add(cilindro(rMando * 1.3, 2, M.baquelita(0x1a1e21), 0, yMando, zNariz - 0.4));
+	/*
+	 * El aro va dos décimas más adelantado de lo que estaba. Acababa a 0,2 mm de la cara del
+	 * frontal y con 698 mm² de solape —la pieza coplanar más grande que quedaba en el catálogo—;
+	 * a 0,4 mm hay margen de sobra y el aro sigue siendo el collar de la rueda, que es lo que es.
+	 */
+	g.add(cilindro(rMando * 1.3, 2, M.baquelita(0x1a1e21), 0, yMando, zNariz - 0.2));
 	g.add(cilindro(rMando, 2.6, M.plastico(0xe6e2d6, 0.5), 0, yMando, zNariz + 1.2));
 	// Las marcas de la escala alrededor de la rueda, y el índice rojo que señala el valor.
 	for (let i = 0; i < 8; i++) {
@@ -1107,7 +1145,8 @@ function releTermicoModelo(g: THREE.Group, w: number, h: number, color: number, 
 	 */
 	const yBotones = -altoNariz * 0.3;
 	for (const [dx, col, r] of [[-w * 0.22, 0x2b3a52, 2.2], [w * 0.22, 0xb03a2e, 1.8]] as const) {
-		g.add(cilindro(r * 1.5, 2.2, M.baquelita(0x15181a), dx, yBotones, zNariz - 0.5));
+		// Mismo caso que el aro: el alojamiento acababa a dos décimas de la cara del frontal.
+		g.add(cilindro(r * 1.5, 2.2, M.baquelita(0x15181a), dx, yBotones, zNariz - 0.3));
 		g.add(cilindro(r, 2.4, M.plastico(col, 0.45), dx, yBotones, zNariz + 1));
 	}
 	// Ventanilla del testigo de disparo, entre los dos botones.

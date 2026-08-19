@@ -6576,6 +6576,73 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 * Se mira solo la cara frontal porque es la que se ve: el tablero se mira de frente y en
 		 * diagonal, no desde detrás.
 		 */
+		/**
+		 * CARAS COPLANARES CONTRA **TODA LA ESCENA**, no solo dentro del mismo aparato.
+		 *
+		 * La sonda `coplanares` mira las piezas de un aparato entre sí, y con eso se encontraron
+		 * cuatro causas de moteado. Pero deja fuera el caso que queda: dos aparatos IGUALES que
+		 * motean distinto —x1 da 35 y x0 da 196— no pueden diferenciarse por su modelo, así que la
+		 * otra superficie tiene que ser de fuera: la placa, un carril, una canaleta o el aparato de
+		 * al lado. Esto lo busca donde está.
+		 */
+		vecinosCoplanares: (dispositivoId: string, tolerancia = 0.4) => {
+			const g = escenario.dispositivos.children.find((o) => o.userData.dispositivoId === dispositivoId);
+			if (!g) return [];
+			const mias: { caja: THREE.Box3; luz: number }[] = [];
+			g.traverse((o) => {
+				if (!(o instanceof THREE.Mesh)) return;
+				const mat = (Array.isArray(o.material) ? o.material[0] : o.material) as THREE.MeshStandardMaterial;
+				const c = mat?.color ?? new THREE.Color(0x808080);
+				mias.push({ caja: new THREE.Box3().setFromObject(o), luz: 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b });
+			});
+			const fuera: { quien: string; sep: number; solape: number; contraste: number }[] = [];
+			const mirar = (raiz: THREE.Object3D, etiqueta: (o: THREE.Object3D) => string): void => {
+				raiz.traverse((o) => {
+					if (!(o instanceof THREE.Mesh)) return;
+					let suyo = false;
+					for (let q: THREE.Object3D | null = o; q; q = q.parent) if (q === g) suyo = true;
+					if (suyo) return;
+					const caja = new THREE.Box3().setFromObject(o);
+					const mat = (Array.isArray(o.material) ? o.material[0] : o.material) as THREE.MeshStandardMaterial;
+					const c = mat?.color ?? new THREE.Color(0x808080);
+					const luz = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+					for (const m of mias) {
+						const sep = Math.abs(caja.max.z - m.caja.max.z);
+						if (sep > tolerancia) continue;
+						const ancho = Math.min(caja.max.x, m.caja.max.x) - Math.max(caja.min.x, m.caja.min.x);
+						const alto = Math.min(caja.max.y, m.caja.max.y) - Math.max(caja.min.y, m.caja.min.y);
+						if (ancho <= 0.5 || alto <= 0.5) continue;
+						const quien = etiqueta(o);
+						if (!quien) return;
+						fuera.push({
+							quien, sep: Math.round(sep * 1000) / 1000,
+							solape: Math.round(ancho * alto), contraste: Math.round(Math.abs(luz - m.luz) * 100) / 100,
+						});
+						return;
+					}
+				});
+			};
+			mirar(escenario.dispositivos, (o) => {
+				for (let q: THREE.Object3D | null = o; q; q = q.parent) {
+					if (q.userData.dispositivoId) return `aparato ${q.userData.dispositivoId}`;
+				}
+				return 'aparato ?';
+			});
+			// La estructura (placa, carriles, canaletas, caja) cuelga de la raíz, no de un grupo propio.
+			mirar(escenario.raiz, (o) => {
+				for (let q: THREE.Object3D | null = o; q; q = q.parent) {
+					if (q.userData.canaletaId) return `canaleta ${q.userData.canaletaId}`;
+					if (q.userData.rielId) return `carril ${q.userData.rielId}`;
+					// Los aparatos ya se han mirado arriba; los cables, tiradores y cotas no son
+					// superficie: se ignoran para no llamarlos «estructura».
+					if (q === escenario.dispositivos || q === escenario.cables || q === escenario.bornes
+						|| q === escenario.cotas || q === escenario.handles) return '';
+				}
+				return 'estructura (placa o caja)';
+			});
+			// Lo que ya salió por el barrido de aparatos no se repite.
+			return fuera.sort((a, b) => b.solape - a.solape).slice(0, 12);
+		},
 		coplanares: (dispositivoId: string, tolerancia = 0.25, contraste = 0.12) => {
 			const g = escenario.dispositivos.children.find((o) => o.userData.dispositivoId === dispositivoId);
 			if (!g) return [];
