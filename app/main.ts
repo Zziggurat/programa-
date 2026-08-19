@@ -31,9 +31,10 @@ import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	diagnosticoCables, largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable,
-	vaciar, VOLTAJE_COLOR,
+	radioDeCable, vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
+import { encajarEnCanaleta, RedCanaletas } from './canaletas-red.js';
 import { colorDeTipo } from './dispositivos3d.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
@@ -3178,6 +3179,62 @@ function puntoCable(ev: MouseEvent): { x: number; y: number } | undefined {
 	return puntoModeloEnZ(ev, Z_FRENTE);
 }
 
+/** Sobre qué plano se está moviendo un punto de cable ahora mismo. */
+type ModoArrastre = 'placa' | 'profundidad';
+
+/**
+ * EL PUNTO DEL RATÓN EN 3D, SOBRE EL PLANO QUE SE PUEDA USAR DESDE DONDE ESTÁ LA CÁMARA.
+ *
+ * Aquí estaba la razón de que editar un cable fuese «manejable de frente y no desde el lateral».
+ * El arrastre proyectaba SIEMPRE sobre un plano paralelo a la placa, a profundidad fija. Mirando
+ * el tablero de frente eso es lo correcto y es cómodo. Pero desde una cámara lateral ese plano se
+ * ve de canto: el rayo del ratón lo corta casi en paralelo, así que un pixel de movimiento
+ * desplazaba el punto decenas de milímetros, y la profundidad —lo único que se quiere tocar desde
+ * el lateral— no se podía cambiar en absoluto, porque el plano la tenía clavada.
+ *
+ * La regla ahora es una sola y vale para cualquier cámara: se arrastra sobre el plano que MÁS DE
+ * FRENTE le quede al ojo.
+ *
+ *   cámara mirando la placa   →  plano de la placa      →  se mueve en X/Y, la profundidad no se toca
+ *   cámara lateral o cenital  →  plano vertical         →  se mueve en profundidad y en un eje
+ *
+ * Con eso la vista lateral pasa de servir solo para mirar a ser la herramienta natural para decir
+ * «este tramo va más adentro», sin gizmos ni modos que aprender: te pones de lado y arrastras.
+ * Y para cuando se quiere profundidad sin mover la cámara, la tecla Mayúsculas fuerza el plano
+ * vertical desde cualquier vista.
+ */
+function puntoCable3D(
+	ev: MouseEvent, actual: { x: number; y: number; z: number }, forzarProfundidad: boolean,
+): { x: number; y: number; z: number; modo: ModoArrastre } | undefined {
+	const g = proyecto.gabinete;
+	if (!g) return undefined;
+	const r = renderer.domElement.getBoundingClientRect();
+	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+	const camara = camaraViva();
+	raycaster.setFromCamera(puntero, camara);
+	const mira = new THREE.Vector3();
+	camara.getWorldDirection(mira);
+	// El punto que se está moviendo, en coordenadas de escena: es por donde tiene que pasar el plano.
+	const aqui = new THREE.Vector3(actual.x - g.ancho / 2, g.alto / 2 - actual.y, actual.z);
+	/*
+	 * 0,55 ≈ 57° respecto a la placa. Por encima de eso la cámara todavía mira la placa lo bastante
+	 * de frente como para que arrastrar en X/Y sea preciso; por debajo, el plano empieza a verse de
+	 * canto y es cuando conviene cambiar. No es un número mágico: es dónde deja de ser cómodo.
+	 */
+	const deLado = forzarProfundidad || Math.abs(mira.z) < 0.55;
+	const normal = !deLado
+		? new THREE.Vector3(0, 0, 1)
+		: (Math.abs(mira.x) >= Math.abs(mira.y) ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0));
+	const impacto = new THREE.Vector3();
+	if (!raycaster.ray.intersectPlane(new THREE.Plane(normal, -normal.dot(aqui)), impacto)) return undefined;
+	return {
+		x: impacto.x + g.ancho / 2,
+		y: g.alto / 2 - impacto.y,
+		z: impacto.z,
+		modo: deLado ? 'profundidad' : 'placa',
+	};
+}
+
 /* --------------------- Puntos de quiebre de los cables (estilo Tinkercad) --------------------- */
 
 /**
@@ -3279,7 +3336,37 @@ function sanearTrazados(): number {
 	return arreglados;
 }
 
-function moverWaypoint(c: Conductor, idx: number, x: number, y: number): void {
+/** Lo último que se supo del punto que se está arrastrando: para poder contarlo en pantalla. */
+let pistaArrastre: { z: number; modo: ModoArrastre; canaleta?: string; ranura?: boolean } | undefined;
+
+/**
+ * Lo que se está haciendo con el punto, dicho en la barra que ya existe.
+ *
+ * Técnico y de paso: la profundidad en milímetros, y si el punto se ha enganchado a una canaleta,
+ * cuál. Nada de widgets flotantes ni indicadores de videojuego —esto es una barra de estado de
+ * herramienta— y solo mientras dura el arrastre, porque después no aporta nada.
+ */
+function mostrarPistaArrastre(): void {
+	if (!pistaArrastre) return;
+	const dentro = pistaArrastre.canaleta
+		? ` · dentro de la canaleta ${pistaArrastre.canaleta}${pistaArrastre.ranura ? ' (por una ranura)' : ''}`
+		: '';
+	const como = pistaArrastre.modo === 'profundidad'
+		? 'moviendo en PROFUNDIDAD'
+		: 'moviendo sobre la placa';
+	$('ayuda').textContent = `↕ ${como} · Z: ${pistaArrastre.z} mm${dentro}`;
+}
+
+/**
+ * Mueve un punto del peinado, ahora también en profundidad, y lo encaja en la canaleta si toca.
+ *
+ * La `z` es opcional a propósito: un punto que nunca se ha tocado en profundidad se queda sin
+ * ella y sigue dependiendo de la capa que le busque el repartidor, igual que antes. En cuanto se
+ * arrastra en modo profundidad, el punto pasa a tener z propia y a partir de ahí manda el usuario.
+ */
+function moverWaypoint(
+	c: Conductor, idx: number, x: number, y: number, z?: number,
+): void {
 	const wps = c.trazado;
 	if (!wps || !wps[idx]) return;
 	const p = salidasDeCable(proyecto, c);
@@ -3295,7 +3382,42 @@ function moverWaypoint(c: Conductor, idx: number, x: number, y: number): void {
 	else if (next && Math.abs(nx - next.x) < SNAP_ORTO) nx = next.x;
 	if (prev && Math.abs(ny - prev.y) < SNAP_ORTO) ny = prev.y;
 	else if (next && Math.abs(ny - next.y) < SNAP_ORTO) ny = next.y;
-	wps[idx] = { x: nx, y: ny };
+
+	// Sin profundidad nueva: el punto se queda como estaba en z (con la suya o sin ninguna).
+	if (z === undefined) {
+		wps[idx] = { ...wps[idx], x: nx, y: ny };
+		pistaArrastre = wps[idx].z !== undefined
+			? { z: wps[idx].z!, modo: 'placa' }
+			: undefined;
+		return;
+	}
+
+	/*
+	 * ENCAJE EN LA CANALETA: que estar dentro signifique estar dentro.
+	 *
+	 * No se esconde el cable ni se le pinta de otro color cuando pasa por un ducto: se le mete en
+	 * el volumen que queda entre las dos paredes y por debajo de la tapa, descontando su propio
+	 * radio. Así, al quitar la tapa el cable está ahí, y al ponerla queda tapado porque lo tapa la
+	 * tapa, no porque nadie lo haya ocultado.
+	 */
+	const red = new RedCanaletas(proyecto.gabinete?.canaletas ?? []);
+	const radio = radioDeCable(c.seccion);
+	const encaje = encajarEnCanaleta(red, { x: nx, y: ny, z }, radio);
+	if (encaje) {
+		wps[idx] = {
+			x: Math.round(encaje.punto.x),
+			y: Math.round(encaje.punto.y),
+			z: Math.round(encaje.punto.z),
+		};
+		pistaArrastre = {
+			z: wps[idx].z!, modo: 'profundidad', canaleta: encaje.canaleta, ranura: encaje.ranura !== undefined,
+		};
+		return;
+	}
+	// Fuera de toda canaleta: la profundidad se queda entre la placa y el frente, sin salirse.
+	const zSano = Math.max(radio, Math.min(Z_FRENTE + 24, z));
+	wps[idx] = { x: nx, y: ny, z: Math.round(zSano) };
+	pistaArrastre = { z: wps[idx].z!, modo: 'profundidad' };
 }
 
 /* ------------- Riel y sus aparatos: se mueven juntos y se revierte si chocan ------------- */
@@ -3707,12 +3829,24 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 
 	// --- Mover el punto de quiebre que se agarró directo por el tubo ---
 	if (arrastrandoCable) {
-		const pc = puntoCable(ev);
 		const c = proyecto.conductores.find((x) => x.id === arrastrandoCable!.id);
-		if (c && pc) {
-			moverWaypoint(c, arrastrandoCable.indice, pc.x, pc.y);
-			reconstruirCables();
-			construirHandles();
+		const wp = c?.trazado?.[arrastrandoCable.indice];
+		if (c && wp) {
+			/*
+			 * De dónde sale la profundidad de partida: la del propio punto si ya la tiene, y si no
+			 * la del frente, que es donde estaba dibujado hasta ahora. Así el primer arrastre en
+			 * profundidad empieza justo donde el usuario ve el cable, y no pega un salto.
+			 */
+			const desde = { x: wp.x, y: wp.y, z: wp.z ?? Z_FRENTE };
+			const pc = puntoCable3D(ev, desde, ev.shiftKey);
+			if (pc) {
+				// En el plano de la placa la profundidad no se toca: se pasa `undefined` para que un
+				// punto que nunca se ha editado en z siga sin tenerla y lo siga colocando el router.
+				moverWaypoint(c, arrastrandoCable.indice, pc.x, pc.y, pc.modo === 'profundidad' ? pc.z : undefined);
+				reconstruirCables();
+				construirHandles();
+				mostrarPistaArrastre();
+			}
 		}
 		return;
 	}
@@ -3855,6 +3989,8 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 	const eraCable = arrastrandoCable;
 	arrastrandoCable = undefined;
 	pendienteCable = undefined; // si no llegó a moverse, fue solo un clic de selección
+	// La barra vuelve a lo suyo: la profundidad solo interesa mientras se está moviendo el punto.
+	if (pistaArrastre) { pistaArrastre = undefined; $('ayuda').textContent = AYUDA[modo]; }
 	permitirOrbita(true);
 	renderer.domElement.style.cursor = '';
 	if (!capturadoEsteArrastre) { arrastreInicio = undefined; estadoRielArrastre = undefined; return; } // fue un clic
@@ -5767,6 +5903,187 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			return undefined;
 		},
 		/** Todo lo que hay bajo un píxel, en orden de cercanía (para diagnosticar un clic perdido). */
+		/*
+		 * MEDIR EL MOTEADO, en vez de discutir si «parpadea un poco».
+		 *
+		 * Se mueve la cámara MUY poco entre toma y toma —décimas de grado— y se compara cada
+		 * fotograma con el anterior. Con un giro así de pequeño una escena sana casi no cambia:
+		 * los bordes se desplazan un pixel y ya. Lo que delata un artefacto es un píxel que salta
+		 * de claro a oscuro (o al revés) EN MEDIO DE UNA ZONA LISA, porque eso no lo puede hacer la
+		 * geometría moviéndose: solo lo hace una superficie que gana y pierde una comparación de
+		 * profundidad, o una sombra que se muestrea a sí misma.
+		 *
+		 * Por eso no basta con contar píxeles que cambian: hay que exigir que el entorno del píxel
+		 * fuera liso en el fotograma de partida. Sin esa condición, el contorno de cada tornillo
+		 * cuenta como parpadeo y todas las configuraciones salen igual de mal.
+		 */
+		medirMoteado: (camaras: { x: number; y: number; z: number; tx: number; ty: number; tz: number }[], salto = 70, llano = 18) => {
+			const c = renderer.domElement;
+			const w = Math.floor(c.width / 2), h = Math.floor(c.height / 2);
+			const lienzo2 = document.createElement('canvas');
+			lienzo2.width = w; lienzo2.height = h;
+			const ctx = lienzo2.getContext('2d', { willReadFrequently: true })!;
+			const luces: Float32Array[] = [];
+			for (const cam of camaras) {
+				(window as unknown as { qa: { verDesde: (v: unknown) => void } }).qa.verDesde(cam);
+				pintar();
+				ctx.drawImage(c, 0, 0, c.width, c.height, 0, 0, w, h);
+				const d = ctx.getImageData(0, 0, w, h).data;
+				const L = new Float32Array(w * h);
+				for (let i = 0; i < w * h; i++) L[i] = 0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2];
+				luces.push(L);
+			}
+			const pares: number[] = [];
+			for (let k = 1; k < luces.length; k++) {
+				const A = luces[k - 1], B = luces[k];
+				let n = 0;
+				for (let y = 1; y < h - 1; y++) {
+					for (let x = 1; x < w - 1; x++) {
+						const i = y * w + x;
+						if (Math.abs(B[i] - A[i]) < salto) continue;
+						// ¿Era una zona lisa antes de moverse? Si no, es un borde, no un artefacto.
+						const v = A[i];
+						if (Math.abs(A[i - 1] - v) > llano || Math.abs(A[i + 1] - v) > llano) continue;
+						if (Math.abs(A[i - w] - v) > llano || Math.abs(A[i + w] - v) > llano) continue;
+						n++;
+					}
+				}
+				pares.push(n);
+			}
+			const total = pares.reduce((a, b) => a + b, 0);
+			return { pares, total, porMillon: Math.round((total / (pares.length * w * h)) * 1e6), pixeles: w * h };
+		},
+		/*
+		 * INTERRUPTORES PARA AISLAR UN PARPADEO.
+		 *
+		 * Un moteado negro/blanco que cambia al mover la cámara puede venir de dos sitios muy
+		 * distintos: dos superficies peleándose por la misma profundidad (z-fighting) o el mapa de
+		 * sombras muestreándose a sí mismo (shadow acne). A ojo se parecen. Apagando una cosa cada
+		 * vez y volviendo a medir, se distinguen sin discutir.
+		 */
+		sombras: (on: boolean) => {
+			renderer.shadowMap.enabled = on;
+			// Los materiales ya compilados llevan dentro si había sombras o no: sin esto, apagarlas
+			// no cambia nada de lo que ya se está dibujando y la prueba sale plana.
+			escena.traverse((o) => {
+				if (o instanceof THREE.Mesh && o.material) {
+					for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true;
+				}
+			});
+			pintar();
+		},
+		/**
+		 * Mueve el sesgo del mapa de sombras SIN recompilar nada.
+		 *
+		 * Sirve para contestar «¿esto es shadow acne?» sin apagar las sombras. Apagarlas obliga a
+		 * recompilar todos los shaders de la escena, y sobre SwiftShader eso no termina: el primer
+		 * intento de barrido se quedó quince minutos colgado. Separando la muestra a lo largo de la
+		 * normal se ve lo mismo y cuesta un uniform: si el moteado se desploma, el negro venía del
+		 * mapa de sombras muestreándose a sí mismo.
+		 */
+		sesgoSombra: (normalBias: number, bias?: number) => {
+			sol.shadow.normalBias = normalBias;
+			if (bias !== undefined) sol.shadow.bias = bias;
+			pintar();
+			return { normalBias: sol.shadow.normalBias, bias: sol.shadow.bias };
+		},
+		/**
+		 * Las mallas de un aparato, una a una, para poder apagarlas y ver cuál parpadea.
+		 *
+		 * Buscar dos superficies coplanares leyendo el código de un modelo de trescientas líneas es
+		 * perder la tarde. Apagarlas de una en una y volver a medir contesta en dos minutos, y
+		 * contesta con el nombre de la pieza.
+		 */
+		mallasDe: (dispositivoId: string) => {
+			const g = escenario.dispositivos.children.find((o) => o.userData.dispositivoId === dispositivoId);
+			if (!g) return [];
+			const out: { i: number; pieza: string; marca: boolean; vertices: number }[] = [];
+			let i = 0;
+			g.traverse((o) => {
+				if (!(o instanceof THREE.Mesh)) return;
+				out.push({
+					i: i++,
+					pieza: (o.userData.pieza as string) ?? o.name ?? '(sin nombre)',
+					marca: !!o.userData.esMarca,
+					vertices: o.geometry.attributes.position?.count ?? 0,
+				});
+			});
+			return out;
+		},
+		/** Enciende o apaga una de esas mallas por su índice. */
+		verMalla: (dispositivoId: string, indice: number, visible: boolean) => {
+			const g = escenario.dispositivos.children.find((o) => o.userData.dispositivoId === dispositivoId);
+			if (!g) return false;
+			let i = 0, hecho = false;
+			g.traverse((o) => {
+				if (!(o instanceof THREE.Mesh)) return;
+				if (i++ === indice) { o.visible = visible; hecho = true; }
+			});
+			pintar();
+			return hecho;
+		},
+		/* ---- Peinado manual en 3D: crear, mover y leer puntos sin ratón ---- */
+
+		/** Crea un punto de quiebre en el tramo del cable más cercano a (x,y). Devuelve su índice. */
+		crearPuntoCable: (conductorId: string, x: number, y: number) => {
+			const c = proyecto.conductores.find((k) => k.id === conductorId);
+			if (!c) return -1;
+			const i = insertarWaypoint(c, x, y);
+			reconstruirCables();
+			construirHandles();
+			return i;
+		},
+		/**
+		 * Mueve un punto del peinado, con profundidad si se le da.
+		 *
+		 * Es la misma función que usa el arrastre con el ratón, así que lo que comprueba una prueba
+		 * es lo que le pasa a Diego cuando arrastra: si aquí el punto acaba dentro de la canaleta,
+		 * es que ahí acaba de verdad.
+		 */
+		moverPuntoCable: (conductorId: string, indice: number, x: number, y: number, z?: number) => {
+			const c = proyecto.conductores.find((k) => k.id === conductorId);
+			if (!c?.trazado?.[indice]) return undefined;
+			moverWaypoint(c, indice, x, y, z);
+			reconstruirCables();
+			construirHandles();
+			return { punto: c.trazado[indice], pista: pistaArrastre };
+		},
+		/** Los puntos que el usuario ha fijado a mano, tal cual se guardan. */
+		trazadoDe: (conductorId: string) =>
+			proyecto.conductores.find((k) => k.id === conductorId)?.trazado?.map((q) => ({ ...q })),
+		/** El recorrido 3D que de verdad se dibuja, con la profundidad ya resuelta. */
+		rutaDe: (conductorId: string) =>
+			rutasDeCables(proyecto).find((r) => r.conductorId === conductorId)?.puntos.map((q) => ({
+				x: Math.round(q.x), y: Math.round(q.y), z: Math.round(q.z),
+			})),
+		/** Pone o quita las tapas de las canaletas (lo mismo que la casilla de la vista). */
+		ponerTapas: (puestas: boolean) => {
+			($('ver-tapas') as HTMLInputElement).checked = puestas;
+			for (const t of escenario.tapas) t.visible = puestas;
+			pintar();
+			return escenario.tapas.length;
+		},
+		/** Esconde (o devuelve) los planos de serigrafía del atlas, sin tocar nada más. */
+		marcas3d: (on: boolean) => {
+			let n = 0;
+			escena.traverse((o) => {
+				if (o.userData.esMarca) { o.visible = on; n++; }
+			});
+			pintar();
+			return n;
+		},
+		/** Los números de profundidad de la cámara, para no discutir de precisión Z a ojo. */
+		profundidadCamara: () => {
+			const c = camaraViva() as THREE.PerspectiveCamera;
+			const caja = new THREE.Box3().setFromObject(escenario.raiz);
+			const tam = caja.getSize(new THREE.Vector3());
+			const centro = caja.getCenter(new THREE.Vector3());
+			return {
+				near: c.near, far: c.far, razon: Math.round(c.far / c.near),
+				distanciaAlCentro: Math.round(c.position.distanceTo(centro)),
+				escena: { x: Math.round(tam.x), y: Math.round(tam.y), z: Math.round(tam.z) },
+			};
+		},
 		diagnosticoPixel: (x: number, y: number) => {
 			const r = renderer.domElement.getBoundingClientRect();
 			puntero.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
