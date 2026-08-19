@@ -95,3 +95,49 @@ test('lejos de toda canaleta no se inventa un encaje', () => {
 	// Muy por encima del tablero y lejos de cualquier ducto.
 	assert.equal(encajarEnCanaleta(red, { x: -400, y: -400, z: 46 }, 3), undefined);
 });
+
+test('dos cables llevados a la misma canaleta no se apartan el uno del otro', () => {
+	/*
+	 * «Cable contra cable NO debe provocar reposicionamiento automático», y en una canaleta es
+	 * donde más se nota: es justo el sitio donde en un tablero de verdad van veinte hilos juntos.
+	 *
+	 * Se llevan DOS conductores al mismo eje de la misma canaleta y a la misma profundidad —o sea,
+	 * a tocarse— y se comprueba que el recorrido dibujado de cada uno pasa por donde se le dijo. Si
+	 * algo separase los cables por su cuenta, uno de los dos saldría de ahí y esto lo cazaría.
+	 */
+	const { proyecto, canaleta } = tablero();
+	const a = proyecto.conductores[0];
+	const b = proyecto.conductores[1];
+	const z = Math.round(canaleta.alto * 0.5);
+	const eje = (f: number) => Math.round(canaleta.x + canaleta.largo * f);
+	for (const c of [a, b]) {
+		c.trazado = [
+			{ x: eje(0.35), y: Math.round(canaleta.y), z },
+			{ x: eje(0.65), y: Math.round(canaleta.y), z },
+		];
+	}
+
+	const rutas = rutasDeCables(proyecto);
+	for (const c of [a, b]) {
+		const ruta = rutas.find((r) => r.conductorId === c.id);
+		assert.ok(ruta, `${c.id} tiene recorrido`);
+		for (const q of c.trazado!) {
+			const cerca = ruta!.puntos.reduce(
+				(m, p) => Math.min(m, Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z!)), Infinity,
+			);
+			assert.ok(
+				cerca < 25,
+				`${c.id}: el punto (${q.x},${q.y},${q.z}) quedó a ${cerca.toFixed(1)} mm del cable dibujado`,
+			);
+		}
+	}
+	// Y los dos van a la profundidad pedida: si a uno lo hubieran subido de capa, se vería aquí.
+	for (const c of [a, b]) {
+		const ruta = rutas.find((r) => r.conductorId === c.id)!;
+		const dentro = ruta.puntos.filter((p) => p.x >= eje(0.35) && p.x <= eje(0.65)
+			&& Math.abs(p.y - canaleta.y) <= canaleta.ancho / 2);
+		assert.ok(dentro.length > 0, `${c.id} no pasa por el tramo pedido`);
+		const zMedia = dentro.reduce((s, p) => s + p.z, 0) / dentro.length;
+		assert.ok(Math.abs(zMedia - z) < 8, `${c.id} va a z≈${zMedia.toFixed(1)} y se pidió ${z}`);
+	}
+});

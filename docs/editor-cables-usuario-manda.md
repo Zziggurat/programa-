@@ -149,6 +149,43 @@ del *hover* es el otro, y queda apuntado como lo que es: medido, no supuesto.
 
 ---
 
+## 5. El parpadeo negro/blanco
+
+Ya se atacó en la fase anterior: se encontraron **cuatro** pares de caras coplanares —una pieza
+clara y una oscura terminando exactamente en el mismo plano— y se escalonaron. Quedaron dos
+aparatos apuntados como deuda: `x0` en **196** por millón y `f2` en **66**.
+
+La pista que lo resolvió estaba en la propia tabla: `x0` y `x1` son **el mismo modelo de bornero** y
+medían 196 y 35. Dos aparatos idénticos que motean distinto no pueden diferenciarse por su modelo,
+así que la otra superficie tenía que venir de fuera. Se escribió una sonda que busca caras
+coplanares contra **toda la escena** —la placa, los carriles, las canaletas, el aparato de al
+lado— y dijo que no: no había ninguna pareja de fuera. El problema seguía dentro, en parejas con
+separación **exactamente cero** que la sonda anterior sí listaba y que se habían pasado por alto:
+
+| pieza | acababa en | choca contra |
+|---|---|---|
+| boca del conductor de la borna | `prof` | la cara de la borna |
+| huella del tornillo | `z` | la cara del aparato |
+| marco de la mirilla del disyuntor | `zNariz + 0,4` | la cara del frontal embutido |
+
+Las tres se dibujan muchas veces: la boca y la huella **una por borna** —una regleta de veinte
+bornas tenía cuarenta focos de moteado— y `tornillo()` lo usa el catálogo entero. En el relé, además,
+el aro de la rueda de reglaje quedaba a 0,2 mm de la cara del frontal con **698 mm²** de solape, la
+pieza coplanar más grande que quedaba; sube a 0,4 mm, igual que los alojamientos de los pulsadores.
+
+Cada pieza queda escalonada en el orden en que está de verdad, con más de dos décimas entre caras.
+No se ha tocado la calidad, ni las sombras, ni los materiales, ni se ha metido ningún
+`polygonOffset` global.
+
+Barrido completo, con el control de cámara quieta en **cero** —que es lo que hace válida la medida—:
+
+| tablero | antes | ahora |
+|---|---|---|
+| climatizador (19 aparatos) | x0 196 · f2 66 · x1 35 · q1 12 · q2 9 · km1 6 | **los 19 a cero** |
+| estrella-triángulo (13 aparatos) | — | **los 13 a cero** |
+
+---
+
 ## Lo que no se ha tocado
 
 El **router automático** sigue igual: los cables que nadie ha editado se reparten exactamente como
