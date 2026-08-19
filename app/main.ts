@@ -2882,6 +2882,8 @@ function prepararProyeccion(): THREE.Camera {
  * cuando hay varios amontonados bajo el mismo punto de la pantalla.
  */
 function cablesSenalados(ev: MouseEvent, tolerancia = TOLERANCIA_PX): CableSenalado[] {
+	// Con los cables ocultos no hay cable que señalar: lo que no se ve no se coge.
+	if (!escenario.cables.visible) return [];
 	const rutas = rutaPrevia
 		? rutasVigentes().map((r) => (r.conductorId === rutaPrevia!.conductorId ? rutaPrevia! : r))
 		: rutasVigentes();
@@ -3727,10 +3729,6 @@ function arrastrarUnion(
 	const enZ = ejeArrastre?.eje === 'z';
 	const pc = medirEtapa('1 pantalla→mundo', () => puntoCable3D(ev, desde, ev.shiftKey || enZ));
 	if (!pc) return;
-	// Tocar un cable lo hace tuyo: sus puntos fijan la profundidad que tienen dibujada y a partir
-	// de ahí el repartidor deja de elegirles capa. Es lo que hace que el punto se quede donde se
-	// suelta en vez de aparecer reescrito.
-	fijarProfundidades(c);
 	// Con X o Y bloqueadas la profundidad no se toca; el resto del tiempo, solo cambia cuando se
 	// está arrastrando sobre el plano vertical, que es cuando el usuario la está pidiendo.
 	const zNueva = ejeArrastre && ejeArrastre.eje !== 'z' ? undefined
@@ -3803,6 +3801,10 @@ function moverWaypoint(
 ): void {
 	const wps = c.trazado;
 	if (!wps || !wps[idx]) return;
+	// Tocar un cable lo hace tuyo: TODOS sus puntos fijan la profundidad que tienen dibujada, y a
+	// partir de ahí el repartidor deja de elegirle capa. Va aquí y no en quien llama para que la
+	// regla no dependa de por dónde se haya entrado a mover el punto.
+	fijarProfundidades(c);
 	const p = salidasDeCable(proyecto, c);
 	const prev = idx > 0 ? wps[idx - 1] : p?.salidaA;
 	const next = idx < wps.length - 1 ? wps[idx + 1] : p?.salidaB;
@@ -6667,6 +6669,54 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			construirHandles();
 			return { punto: c.trazado[indice], pista: pistaArrastre };
 		},
+		/**
+		 * ¿ESTÁ CADA TIRADOR ENCIMA DE SU CABLE? Medido en píxeles, que es donde se ve.
+		 *
+		 * El fallo que hay que cerrar es «los puntos aparecen alejados del cable, sobre todo según
+		 * el ángulo de la cámara». Se mide desde donde se ve: se proyecta el tirador a la pantalla,
+		 * se proyecta el recorrido dibujado del cable, y se mira a cuántos píxeles cae uno del
+		 * otro. Si el tirador está sobre el cable, la distancia es del orden del grosor del tubo, y
+		 * lo es MIRE DESDE DONDE MIRE la cámara.
+		 */
+		distanciaTiradores: (conductorId: string) => {
+			aplicarSeleccion({ tipo: 'cable', id: conductorId });
+			construirHandles();
+			const ruta = rutaEnPantalla(conductorId);
+			const g = proyecto.gabinete;
+			if (!ruta || !g) return undefined;
+			const r = renderer.domElement.getBoundingClientRect();
+			prepararProyeccion();
+			const linea = ruta.puntos.map((q) => aPixeles(q.x - g.ancho / 2, g.alto / 2 - q.y, q.z, r.width, r.height));
+			const salida: { indice: number; pixeles: number; antes?: number }[] = [];
+			for (const o of escenario.handles.children) {
+				const h = o.userData.handle as DatosHandle | undefined;
+				if (!h || h.sel.tipo !== 'cable' || h.sel.id !== conductorId) continue;
+				const alEje = (px: { x: number; y: number }): number => {
+					let d = Infinity;
+					for (let i = 0; i < linea.length - 1; i++) {
+						if (linea[i].w <= 0 || linea[i + 1].w <= 0) continue;
+						d = Math.min(d, distanciaASegmento(px.x, px.y, linea[i].x, linea[i].y, linea[i + 1].x, linea[i + 1].y));
+					}
+					return Math.round(d * 100) / 100;
+				};
+				const c = aPixeles(o.position.x, o.position.y, o.position.z, r.width, r.height);
+				/*
+				 * Y EL CONTROL, en la misma pasada: dónde caería este tirador con la regla vieja, la
+				 * profundidad fija de 55 mm. Sin él, decir «0,0 píxeles» no demuestra nada —el
+				 * tirador sale del recorrido, así que faltaría más—. Con él se ve la diferencia
+				 * entre las dos reglas MIRANDO LO MISMO desde la misma cámara.
+				 */
+				const wp = proyecto.conductores.find((k) => k.id === conductorId)?.trazado?.[h.indice ?? -1];
+				const viejo = wp
+					? aPixeles(wp.x - g.ancho / 2, g.alto / 2 - wp.y, Z_HANDLE_CABLE, r.width, r.height)
+					: undefined;
+				salida.push({
+					indice: h.indice ?? -1, pixeles: alEje(c),
+					antes: viejo ? alEje(viejo) : undefined,
+				});
+			}
+			return salida;
+		},
 		/** Radio de curvatura con el que se dibuja ese cable: es lo que recorta las esquinas. */
 		radioCodoDe: (conductorId: string) => {
 			const c = proyecto.conductores.find((k) => k.id === conductorId);
@@ -6721,6 +6771,74 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			return tocados;
 		},
 		/** Dónde cae un punto del modelo en la pantalla: para poder agarrarlo con el ratón. */
+		/**
+		 * «HAGO CLIC EXACTAMENTE SOBRE EL CABLE Y EL EDITOR NO LO ENCUENTRA»: medido.
+		 *
+		 * Se apunta al EJE del cable, en el punto del recorrido que toque, se convierte a píxeles
+		 * ENTEROS —que es lo que entrega un ratón de verdad— y se pregunta qué encuentra ahí el
+		 * editor. Y en la misma pasada se pregunta lo mismo al método anterior, reproducido tal
+		 * cual: un cilindro de agarre de `max(radio + 7, 9)` MILÍMETROS alrededor del eje, cortado
+		 * por el rayo del ratón. Así la comparación es entre dos reglas mirando el mismo píxel de
+		 * la misma cámara, y no entre dos sesiones distintas.
+		 */
+		aciertoDeClic: (conductorId: string, fraccion: number) => {
+			const ruta = rutaEnPantalla(conductorId);
+			const g = proyecto.gabinete;
+			if (!ruta?.puntos.length || !g) return undefined;
+			const q = ruta.puntos[Math.min(ruta.puntos.length - 1, Math.round(fraccion * (ruta.puntos.length - 1)))];
+			const r = renderer.domElement.getBoundingClientRect();
+			prepararProyeccion();
+			const v = aPixeles(q.x - g.ancho / 2, g.alto / 2 - q.y, q.z, r.width, r.height);
+			if (v.w <= 0) return undefined;
+			// Píxeles enteros y dentro del lienzo: si el punto cae fuera, no es un caso de agarre.
+			const px = { x: Math.round(r.left + v.x), y: Math.round(r.top + v.y) };
+			if (v.x < 0 || v.y < 0 || v.x > r.width || v.y > r.height) return undefined;
+			const ev = new PointerEvent('pointermove', {
+				clientX: px.x, clientY: px.y, bubbles: true, cancelable: true, pointerId: 1, buttons: 0,
+			});
+			const lista = cablesSenalados(ev);
+			const elegido = lista[0];
+			const mio = lista.find((c) => c.id === conductorId);
+			const ahora = elegido?.id;
+			/*
+			 * Y por qué falla cuando falla, que no es lo mismo:
+			 *   ninguno  no se encuentra nada → ése es el fallo del que se queja Diego
+			 *   tapado   se encuentra otro cable que está DELANTE en ese píxel → correcto: lo que
+			 *            se ve ahí es el otro, y el clic es suyo
+			 *   otro     se encuentra otro que no está delante → eso sí sería un fallo
+			 */
+			const porque = !elegido ? 'ninguno'
+				: elegido.id === conductorId ? 'acierta'
+					: (mio && elegido.profundidad <= mio.profundidad ? 'tapado' : 'otro');
+			/*
+			 * El método anterior, reproducido: cilindro de agarre en milímetros contra el rayo. Se
+			 * comprueba sobre los puntos MEDIOS de cada tramo del recorrido, que están a 8 mm unos
+			 * de otros, así que la aproximación es más generosa que el tubo original, no menos.
+			 */
+			punteroEnPixeles(ev);
+			raycaster.setFromCamera(puntero, camaraViva());
+			const rayo = raycaster.ray;
+			let antes: string | undefined;
+			let mejor = Infinity;
+			for (const otra of rutasVigentes()) {
+				const grueso = Math.max(otra.radio + 7, 9);
+				for (let i = 0; i < otra.puntos.length - 1; i++) {
+					const a = otra.puntos[i], b = otra.puntos[i + 1];
+					const pa = new THREE.Vector3(a.x - g.ancho / 2, g.alto / 2 - a.y, a.z);
+					const pb = new THREE.Vector3(b.x - g.ancho / 2, g.alto / 2 - b.y, b.z);
+					const medio = pa.clone().add(pb).multiplyScalar(0.5);
+					const d = rayo.distanceToPoint(medio);
+					if (d <= grueso) {
+						const t = rayo.origin.distanceTo(medio);
+						if (t < mejor) { mejor = t; antes = otra.conductorId; }
+					}
+				}
+			}
+			return {
+				pantalla: px, ahora, antes, porque,
+				acierta: ahora === conductorId, acertabaAntes: antes === conductorId,
+			};
+		},
 		pantallaDe: (x: number, y: number, z: number) => {
 			const g = proyecto.gabinete;
 			if (!g) return undefined;
