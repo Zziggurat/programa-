@@ -6737,6 +6737,36 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 * MISMOS eventos que produce un ratón de verdad, en un bucle apretado, y se cronometra lo
 		 * que tarda la aplicación en atenderlos. Eso sí es lo que se siente al arrastrar.
 		 */
+		/**
+		 * PASEAR EL RATÓN POR ENCIMA DEL TABLERO, sin apretar, y cronometrarlo.
+		 *
+		 * El arrastre ya se medía; esto mide lo OTRO que pasa todo el rato: buscar qué hay bajo el
+		 * puntero en cada movimiento. Desde que la selección se resuelve proyectando los recorridos
+		 * a la pantalla, ese trabajo es proporcional al número de cables, así que hay que saber
+		 * cuánto cuesta de verdad y no suponerlo.
+		 */
+		simularPaseo: (n = 60) => {
+			const r = renderer.domElement.getBoundingClientRect();
+			const tiempos: number[] = [];
+			let encontrados = 0;
+			for (let i = 0; i < n; i++) {
+				const x = r.left + r.width * (0.18 + 0.64 * (i / (n - 1)));
+				const y = r.top + r.height * (0.22 + 0.56 * (((i * 7) % n) / (n - 1)));
+				const t0 = performance.now();
+				renderer.domElement.dispatchEvent(new PointerEvent('pointermove', {
+					clientX: x, clientY: y, bubbles: true, cancelable: true, pointerId: 1, buttons: 0,
+				}));
+				tiempos.push(performance.now() - t0);
+				if (cableHover) encontrados++;
+			}
+			const ord = [...tiempos].sort((a, b) => a - b);
+			const q = (f: number) => Math.round(ord[Math.min(ord.length - 1, Math.floor(ord.length * f))] * 100) / 100;
+			return {
+				eventos: n, encontrados,
+				mediana: q(0.5), p95: q(0.95), peor: q(0.999),
+				msTotal: Math.round(tiempos.reduce((a, b) => a + b, 0) * 10) / 10,
+			};
+		},
 		simularArrastre: (conductorId: string, indice: number, n = 30, dx = 2, dy = 1.5, eje?: 'x' | 'y' | 'z') => {
 			const c = proyecto.conductores.find((k) => k.id === conductorId);
 			const wp = c?.trazado?.[indice];

@@ -983,15 +983,20 @@ function anadirTuboCable(
 			}
 		}
 	}
-	// Tubo de agarre invisible (más grueso) para poder pinchar el cable con facilidad aunque se
-	// esté viendo el tablero alejado. Solo se usa si el puntero NO está sobre un cable visible.
-	const agarre = new THREE.Mesh(
-		new THREE.TubeGeometry(curva, segmentos, Math.max(radio + 7, 9), 6, false),
-		new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }),
-	);
-	agarre.userData.conductorId = conductorId;
-	agarre.userData.tuboAgarre = true;
-	grupo.add(agarre);
+	/*
+	 * AQUÍ HABÍA UN TUBO DE AGARRE INVISIBLE, y ya no hace falta.
+	 *
+	 * Era un segundo TubeGeometry por cable, de radio fijo en milímetros, cuyo único trabajo era
+	 * que el rayo del ratón tuviera algo gordo que cortar. Nunca funcionó bien: en milímetros, la
+	 * zona de agarre se encoge en pantalla justo cuando el tablero se ve de lejos o de canto, que
+	 * es cuando más falta hace. Y dependía de que el rayo llegara, así que una canaleta por delante
+	 * lo dejaba inservible.
+	 *
+	 * Ahora el puntero se resuelve proyectando el recorrido a la pantalla y midiendo la distancia
+	 * EN PÍXELES (ver `cablesSenalados` en `main`), así que la escena se queda con una geometría
+	 * menos por cable: cincuenta y dos TubeGeometry que ya no se construyen ni se suben a la
+	 * tarjeta en cada reconstrucción.
+	 */
 }
 
 /** Punto físico exacto del que sale un cable (mm de modelo, Y abajo; z = profundidad). */
