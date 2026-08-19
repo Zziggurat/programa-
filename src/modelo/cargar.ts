@@ -889,8 +889,22 @@ function leerConductores(
 			 */
 			trazado: esLista(c.trazado)
 				? (c.trazado as unknown[]).filter(esObjeto)
-					.map((p) => ({ x: enRango(p.x, -MAX_MM, MAX_MM), y: enRango(p.y, -MAX_MM, MAX_MM) }))
-					.filter((p): p is { x: number; y: number } => p.x !== undefined && p.y !== undefined)
+					.map((p) => {
+						// La profundidad es opcional: un punto sin ella es un punto de los de antes, y
+						// el repartidor le busca capa como siempre. Una z corrupta se tira sola y el
+						// punto sigue valiendo en x/y, que es mejor que perder el peinado entero.
+						//
+						// Y cuando no hay z, la clave NO se escribe. Un `z: undefined` explícito se
+						// cuela en el archivo guardado y hace que dos trazados iguales dejen de
+						// parecerlo a quien los compare.
+						const z = enRango(p.z, -MAX_MM, MAX_MM);
+						return {
+							x: enRango(p.x, -MAX_MM, MAX_MM),
+							y: enRango(p.y, -MAX_MM, MAX_MM),
+							...(z === undefined ? {} : { z }),
+						};
+					})
+					.filter((p): p is { x: number; y: number; z?: number } => p.x !== undefined && p.y !== undefined)
 				: undefined,
 		});
 	}

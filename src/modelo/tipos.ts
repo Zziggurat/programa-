@@ -296,10 +296,19 @@ export interface Conductor {
 	numero?: string;
 	congelado?: boolean;
 	/**
-	 * Puntos de paso manuales (mm sobre la placa) para ordenar el cable a mano cuando no
-	 * va por canaleta. Si está vacío, el cable cuelga con una catenaria natural.
+	 * Puntos de paso manuales (mm sobre la placa) para ordenar el cable a mano. Si está vacío, el
+	 * cable lo rutea el repartidor.
+	 *
+	 * LA `z` ES OPCIONAL, Y ESO ES LO QUE PERMITE METER UN CABLE EN UNA CANALETA A MANO.
+	 *
+	 * Antes el trazado era solo `{x, y}`: el usuario decía por dónde pasaba el cable mirando el
+	 * tablero de frente, y la profundidad la elegía el repartidor, la misma para todos los puntos.
+	 * Con eso un cable peinado a mano no podía entrar en un ducto ni cambiar de plano en mitad del
+	 * recorrido, por mucho que el ruteo automático sí supiera hacerlo. Un punto SIN `z` se comporta
+	 * exactamente igual que antes —el repartidor le busca capa—, así que los proyectos guardados
+	 * siguen abriéndose y viéndose como estaban.
 	 */
-	trazado?: { x: number; y: number }[];
+	trazado?: { x: number; y: number; z?: number }[];
 }
 
 /** Folio del esquema. Rejilla al estilo QET: columnas numeradas y filas con letra. */

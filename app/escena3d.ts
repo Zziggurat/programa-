@@ -16,8 +16,8 @@ import {
 	Conflicto, conflictosDe, invasionesDe, RejillaCables, Solido, Trazo,
 } from './colisiones-cables.js';
 import {
-	cruzDe, DIENTE, dientesDe, ejeDe, ESPESOR, huellaCanaleta, puntoDe, RANURA, RedCanaletas,
-	TAPA, invasionesDeCanaletas, Tramo, ZOCALO,
+	canaletasQueContienen, cruzDe, DIENTE, dientesDe, ejeDe, ESPESOR, huellaCanaleta, puntoDe,
+	RANURA, RedCanaletas, TAPA, invasionesDeCanaletas, Tramo, ZOCALO,
 } from './canaletas-red.js';
 import { ALTURA_CARRIL, bornesGenericos, construirAparato3D, Z_BORNE } from './dispositivos3d.js';
 
@@ -1836,6 +1836,8 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		radio: number;
 		codo: number;
 		sueloMin: (x: number, y: number, z: number) => number;
+		/** Canaletas que el usuario eligió a mano: para este cable no son obstáculo. */
+		aMano: Set<string>;
 		sueloDe: (suyos: Set<string>) => (x: number, y: number, z: number) => number;
 		suyosDe: (c: Candidato) => Set<string>;
 		de: Anclaje;
@@ -1933,14 +1935,35 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 			`${conductor.a.dispositivoId}:${conductor.a.borneId}`,
 		];
 
-		// Un cable peinado a mano manda: se le respeta el trazado y solo se le busca profundidad.
+		/*
+		 * UN CABLE PEINADO A MANO MANDA, Y AHORA TAMBIÉN EN PROFUNDIDAD.
+		 *
+		 * Antes esto aplanaba el peinado entero: todos los puntos del usuario iban a la MISMA `zc`,
+		 * elegida por el repartidor entre las capas expuestas. El trazado guardaba solo `x` e `y`,
+		 * así que no había otra cosa que hacer. La consecuencia práctica era que un cable llevado a
+		 * mano no podía entrar en una canaleta ni cambiar de plano a mitad de camino, por mucho que
+		 * el ruteo automático supiera hacer las dos cosas: el usuario tenía un editor 2D encima de
+		 * un motor 3D.
+		 *
+		 * Ahora cada punto puede traer su `z`. El que la trae se respeta tal cual —ahí es donde el
+		 * usuario dijo que va el cable, dentro del ducto o por delante— y el que no la trae sigue
+		 * dependiendo de la capa que proponga el repartidor, exactamente como antes. Por eso se
+		 * siguen generando las mismas `CAPAS_CABLE` alternativas: son las que se prueban para los
+		 * puntos libres, y si el usuario fijó todos los puntos, las alternativas salen iguales y la
+		 * primera vale.
+		 */
+		// Las canaletas en las que el usuario dejó puntos: para él no son obstáculo, son destino.
+		const ductosAMano = conductor.trazado?.length
+			? canaletasQueContienen(red, conductor.trazado)
+			: new Set<string>();
+
 		const aMano = (): Candidato[] => Array.from({ length: CAPAS_CABLE }, (_, capa) => {
 			const zc = Z_EXPUESTO + capa * SEPARACION_CAPAS;
 			return {
 				nodos: [
 					{ x: p.de.x, y: p.de.y, z: p.de.z },
 					{ x: p.salidaA.x, y: p.salidaA.y, z: p.de.z },
-					...conductor.trazado!.map((q) => ({ x: q.x, y: q.y, z: zc })),
+					...conductor.trazado!.map((q) => ({ x: q.x, y: q.y, z: q.z ?? zc })),
 					{ x: p.salidaB.x, y: p.salidaB.y, z: p.a.z },
 					{ x: p.a.x, y: p.a.y, z: p.a.z },
 				] as Punto3[],
@@ -1978,7 +2001,20 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 				for (const n of cand.nodos) firma += `|${n.x.toFixed(1)},${n.y.toFixed(1)},${n.z.toFixed(1)}`;
 				if (vistos.has(firma)) continue;
 				vistos.add(firma);
-				const puntos = tenderCable(cand.nodos, codo, cand.ductos ? sueloDe(suyosDe(cand)) : sueloMin);
+				/*
+				 * UN CABLE QUE EL USUARIO METIÓ EN UNA CANALETA NO PUEDE SER EXPULSADO DE ELLA.
+				 *
+				 * `sueloMin` levanta el cable por encima de todo ducto que no sea suyo, y hace bien:
+				 * un conductor que cruza una canaleta por fuera pasa por encima de sus dientes, no a
+				 * través. Pero con el peinado a mano en 3D el usuario puede decir explícitamente
+				 * «este tramo va DENTRO de esta canaleta», y entonces ese ducto deja de ser un
+				 * obstáculo para él. Sin esto, el punto que acaba de colocar dentro salía disparado
+				 * hacia fuera en cuanto se soltaba el ratón.
+				 */
+				const puntos = tenderCable(
+					cand.nodos, codo,
+					cand.ductos ? sueloDe(suyosDe(cand)) : (ductosAMano.size ? sueloDe(ductosAMano) : sueloMin),
+				);
 				const trazo: Trazo = { id: conductor.id, radio, puntos, bornes, extremos: [p.de, p.a] };
 				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, rendirse(cand, mejorNota));
 				const nota = puntuar(cand, choque ? choque.holgura : Infinity);
@@ -1997,7 +2033,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 					mejor = {
 						conductorId: conductor.id, trazo, nodos: cand.nodos, reserva: cand.reserva,
 						z: puntos[Math.floor(puntos.length / 2)].z,
-						clave: '', generar, radio, codo, sueloMin, sueloDe, suyosDe, de: p.de, a: p.a,
+						clave: '', generar, radio, codo, sueloMin, sueloDe, suyosDe, aMano: ductosAMano, de: p.de, a: p.a,
 					};
 				}
 				// Suficientemente bueno: no choca con nadie. Los candidatos vienen ordenados de
@@ -2040,7 +2076,10 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		let presupuesto = 400;
 		for (const cand of puesto.generar(3)) {
 			if (presupuesto-- <= 0) break;
-			const puntos = tenderCable(cand.nodos, puesto.codo, cand.ductos ? puesto.sueloDe(puesto.suyosDe(cand)) : puesto.sueloMin);
+			const suyos = cand.ductos ? puesto.suyosDe(cand) : puesto.aMano;
+			const puntos = tenderCable(
+				cand.nodos, puesto.codo, suyos.size ? puesto.sueloDe(suyos) : puesto.sueloMin,
+			);
 			const trazo: Trazo = {
 				id: puesto.conductorId, radio: puesto.radio, puntos,
 				bornes: puesto.trazo.bornes, extremos: puesto.trazo.extremos,

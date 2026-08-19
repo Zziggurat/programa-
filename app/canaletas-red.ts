@@ -326,3 +326,84 @@ export function invasionesDeCanaletas(
 	}
 	return salida.sort((a, b) => b.dentro - a.dentro);
 }
+
+/** Dónde ha quedado un punto respecto a una canaleta, y a dónde habría que llevarlo. */
+export interface EncajeCanaleta {
+	/** La canaleta a la que se engancha. */
+	canaleta: string;
+	/** El punto ya corregido: dentro del volumen útil, sin tocar paredes ni tapa. */
+	punto: { x: number; y: number; z: number };
+	/** Centro de la ranura por la que entra, si se ha enganchado a una. */
+	ranura?: number;
+	/** Si el punto de partida ya caía dentro del volumen interior. */
+	yaEstaba: boolean;
+}
+
+/**
+ * ENCAJA UN PUNTO DE CABLE DENTRO DE UNA CANALETA DE VERDAD.
+ *
+ * Esto es lo que hace que meter un cable a mano en un ducto no sea un truco de visibilidad. No se
+ * lleva el punto «al centro visual» de la canaleta: se mete en su VOLUMEN ÚTIL, que es el que
+ * queda entre las dos paredes y por debajo de la tapa, descontando el radio del propio conductor.
+ * El modelo es el mismo que usan el dibujo y el router —`Tramo`, con su `semiancho`, su `zMin` y su
+ * `zMax`—; aquí no se inventa ninguna geometría nueva, que era justo lo que había que evitar.
+ *
+ * Si además el punto cae cerca de una RANURA, se engancha a ella: por ahí es por donde un cable
+ * entra de verdad en una canaleta, entre dos dientes, y no atravesando el plástico.
+ *
+ *   `radio`  el del conductor, para que no quede medio tubo metido en una pared
+ *   `cerca`  a qué distancia de la huella se considera que el usuario «va a por esta canaleta»
+ */
+export function encajarEnCanaleta(
+	red: RedCanaletas, p: { x: number; y: number; z: number }, radio: number, cerca = 12,
+): EncajeCanaleta | undefined {
+	let mejor: { t: Tramo; d: number } | undefined;
+	for (const t of red.tramos) {
+		// Distancia a la huella: 0 si está dentro, y si no lo que le falta para entrar.
+		const dx = Math.max(t.huella.x0 - p.x, 0, p.x - t.huella.x1);
+		const dy = Math.max(t.huella.y0 - p.y, 0, p.y - t.huella.y1);
+		const d = Math.hypot(dx, dy);
+		if (d > cerca) continue;
+		if (!mejor || d < mejor.d) mejor = { t, d };
+	}
+	if (!mejor) return undefined;
+	const t = mejor.t;
+
+	const eje = ejeDe(t, p.x, p.y);
+	const cruz = cruzDe(t, p.x, p.y);
+	// A lo ancho: dentro de las paredes, descontando el tubo.
+	const holgura = Math.max(0, t.semiancho - radio);
+	const cruzDentro = Math.max(t.centro - holgura, Math.min(t.centro + holgura, cruz));
+	// En profundidad: apoyado en el fondo pero sin clavarse, y sin asomar por encima de la tapa.
+	const zDentro = Math.max(t.zMin + radio, Math.min(t.zMax - radio, p.z));
+	// A lo largo: si hay una ranura cerca, se entra por ella. Si no, se queda donde está.
+	const ranura = t.ranuras.reduce<number | undefined>(
+		(acc, r) => (Math.abs(r - eje) <= RANURA ? (acc === undefined || Math.abs(r - eje) < Math.abs(acc - eje) ? r : acc) : acc),
+		undefined,
+	);
+	const ejeDentro = Math.max(t.desde, Math.min(t.hasta, eje));
+
+	const yaEstaba = mejor.d === 0
+		&& Math.abs(cruz - t.centro) <= t.semiancho && p.z >= t.zMin && p.z <= t.zMax;
+	return {
+		canaleta: t.id,
+		punto: { ...puntoDe(t, ejeDentro, cruzDentro), z: zDentro },
+		ranura,
+		yaEstaba,
+	};
+}
+
+/** Las canaletas en cuyo volumen interior cae alguno de estos puntos. */
+export function canaletasQueContienen(
+	red: RedCanaletas, puntos: { x: number; y: number; z?: number }[],
+): Set<string> {
+	const dentro = new Set<string>();
+	for (const p of puntos) {
+		if (p.z === undefined) continue;
+		for (const t of red.tramos) {
+			if (p.x < t.huella.x0 || p.x > t.huella.x1 || p.y < t.huella.y0 || p.y > t.huella.y1) continue;
+			if (p.z >= t.zMin && p.z <= t.zMax) dentro.add(t.id);
+		}
+	}
+	return dentro;
+}
