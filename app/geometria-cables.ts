@@ -231,35 +231,74 @@ export function redondearEsquinas(nodos: Punto[], radio = 14, pasos = 6): Punto[
  * punto del recorrido —46 mm en el borne, la del carril dentro del ducto— y el suavizado tiene
  * que respetarla en vez de recalcularla.
  */
-function redondear3D(nodos: Punto3[], radio: number, pasos = 6): Punto3[] {
-	if (nodos.length < 3) return nodos.slice();
+function redondear3D(nodos: Punto3[], radio: number, pasos = 6): { puntos: Punto3[]; arco: boolean[] } {
+	if (nodos.length < 3) return { puntos: nodos.slice(), arco: nodos.map(() => false) };
 	const salida: Punto3[] = [nodos[0]];
+	/*
+	 * Se apunta qué puntos nacieron de un codo. Hace falta más adelante: el filtro que quita puntos
+	 * colineales los borraba, y un codo apretado —donde el radio pedido no cabe y el arco mide tres
+	 * milímetros— se quedaba otra vez en esquina de pico. El filtro tiene una tolerancia en
+	 * milímetros, y tres milímetros de arco caben dentro de ella; pero sobre un conductor de dos
+	 * milímetros de radio eso no es «un punto que no dice nada», es la curva entera.
+	 */
+	const arco: boolean[] = [false];
 	for (let i = 1; i < nodos.length - 1; i++) {
 		const a = nodos[i - 1];
 		const b = nodos[i];
 		const c = nodos[i + 1];
-		const d1 = Math.hypot(b.x - a.x, b.y - a.y);
-		const d2 = Math.hypot(c.x - b.x, c.y - b.y);
+		/*
+		 * LAS DISTANCIAS SE MIDEN EN 3D, Y AQUÍ ESTABA EL CODO PINZADO.
+		 *
+		 * Se medían con `hypot(dx, dy)` —sin la z— pero la fracción que sale de ellas se aplica
+		 * después al vector COMPLETO, profundidad incluida. Mientras todos los cables corrían por
+		 * delante del tablero daba igual, porque la z apenas cambiaba a lo largo del recorrido. Desde
+		 * que entran y salen de las canaletas hay codos que son un cambio PURO de profundidad: mismo
+		 * x, mismo y, treinta milímetros de z. Para esta cuenta ese segmento medía CERO, así que el
+		 * `continue` de abajo se llevaba el codo entero sin redondear y el tubo giraba en pico.
+		 *
+		 * Medido sobre un caso sintético de cambio de profundidad, la dirección del tubo giraba 90°
+		 * de un tramo al siguiente. El ruteo no tenía la culpa —sus puntos eran razonables—: la
+		 * deformación nacía aquí, al construir la malla.
+		 */
+		const d1 = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+		const d2 = Math.hypot(c.x - b.x, c.y - b.y, c.z - b.z);
 		const r = Math.min(radio, d1 / 2, d2 / 2);
-		if (r < 1.5 || d1 < 1e-6 || d2 < 1e-6) { salida.push(b); continue; }
+		if (r < 1.5 || d1 < 1e-6 || d2 < 1e-6) { salida.push(b); arco.push(false); continue; }
 		const t1 = r / d1;
 		const t2 = r / d2;
 		const p1 = { x: b.x + (a.x - b.x) * t1, y: b.y + (a.y - b.y) * t1, z: b.z + (a.z - b.z) * t1 };
 		const p2 = { x: b.x + (c.x - b.x) * t2, y: b.y + (c.y - b.y) * t2, z: b.z + (c.z - b.z) * t2 };
+		/*
+		 * Los pasos del arco se reparten según lo que gire el codo, no a bulto.
+		 *
+		 * Con seis fijos, un codo suave sale sobrado y uno cerrado sale facetado: en el caso
+		 * sintético del segmento corto —donde el radio pedido no cabe y hay que apretarlo— la
+		 * dirección saltaba 36,9° de un trozo al siguiente, y eso se ve como una arista. Repartiendo
+		 * por ángulo, cada trozo gira más o menos lo mismo en todos los codos.
+		 */
+		const giro = Math.acos(Math.min(1, Math.max(-1,
+			((a.x - b.x) * (c.x - b.x) + (a.y - b.y) * (c.y - b.y) + (a.z - b.z) * (c.z - b.z)) / (d1 * d2),
+		)));
+		const vuelta = Math.PI - giro;   // lo que se desvía de seguir recto
+		const trozos = Math.min(14, Math.max(pasos, Math.ceil(vuelta / (Math.PI / 12))));
 		salida.push(p1);
-		for (let k = 1; k < pasos; k++) {
-			const t = k / pasos;
+		arco.push(true);
+		for (let k = 1; k < trozos; k++) {
+			const t = k / trozos;
 			const u = 1 - t;
 			salida.push({
 				x: u * u * p1.x + 2 * u * t * b.x + t * t * p2.x,
 				y: u * u * p1.y + 2 * u * t * b.y + t * t * p2.y,
 				z: u * u * p1.z + 2 * u * t * b.z + t * t * p2.z,
 			});
+			arco.push(true);
 		}
 		salida.push(p2);
+		arco.push(true);
 	}
 	salida.push(nodos[nodos.length - 1]);
-	return salida;
+	arco.push(false);
+	return { puntos: salida, arco };
 }
 
 /**
@@ -282,7 +321,45 @@ function redondear3D(nodos: Punto3[], radio: number, pasos = 6): Punto3[] {
 export function tenderCable(
 	nodos: Punto3[], radioCodo: number, sueloMin?: (x: number, y: number, z: number) => number,
 ): Punto3[] {
-	const suave = redondear3D(nodos, radioCodo);
+	/*
+	 * PRIMERO SE TIRAN LOS NODOS QUE NO SON UN NODO.
+	 *
+	 * En el estrella-triángulo hay 59 puntos EXACTAMENTE repetidos y 391 tramos de menos de medio
+	 * milímetro sobre 3.786. Un tramo de longitud cero no tiene dirección, así que redondear una
+	 * esquina contra él no significa nada: el arco sale disparado hacia donde diga el ruido, y con
+	 * dos de esos seguidos el cable serpentea. Eso es lo que hacía que un conductor bajando a la
+	 * canaleta se desviase hasta meterse encima del que ya corría por ella.
+	 *
+	 * Se colapsan antes de tocar nada más. No es un ajuste del ruteo: un punto a 0,2 mm del
+	 * anterior describe el mismo recorrido, solo que sin decírselo a la geometría.
+	 */
+	/*
+	 * 1,5 mm, y el número sale de medir, no de elegirlo bonito. Sobre los cinco tableros, peor par
+	 * de cada uno (holgura negativa = tubos metidos uno en otro):
+	 *
+	 *              0,5 mm    1,5 mm    3,0 mm
+	 *   directo    −0,46     −0,46     +0,92
+	 *   e-t        −5,10     −2,80     −5,80
+	 *   UMA        −2,82     −2,82     −3,18
+	 *
+	 * Con 0,5 se queda corto: el zigzag de un milímetro sigue ahí y el estrella-triángulo mete un
+	 * conductor dentro de otro. Con 3,0 se pasa: empieza a tirar nodos que SÍ dicen algo y el
+	 * recorrido cambia de sitio. Un punto medio milímetro por detrás del anterior describe el mismo
+	 * camino; uno a tres milímetros ya puede ser una esquina de verdad.
+	 */
+	const MINIMO = 1.5;
+	const limpios: Punto3[] = [nodos[0]];
+	for (let i = 1; i < nodos.length; i++) {
+		const a = limpios[limpios.length - 1];
+		const b = nodos[i];
+		if (Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) >= MINIMO) limpios.push(b);
+	}
+	// El último manda siempre: es el borne, y ahí no se negocia.
+	const fin = nodos[nodos.length - 1];
+	if (limpios.length < 2) limpios.push(fin);
+	else limpios[limpios.length - 1] = fin;
+
+	const { puntos: suave, arco: arcoSuave } = redondear3D(limpios, radioCodo);
 	/*
 	 * EL RECORRIDO SE PARTE EN TROZOS CORTOS, y esto no es un detalle: es lo que hace que la
 	 * profundidad exista. Redondear solo mete vértices en las esquinas, así que una tirada recta
@@ -292,6 +369,7 @@ export function tenderCable(
 	 */
 	const PASO = 8;
 	const denso: Punto3[] = [suave[0]];
+	const enCodo: boolean[] = [arcoSuave[0]];
 	for (let i = 1; i < suave.length; i++) {
 		const trozos = Math.max(1, Math.ceil(
 			Math.hypot(suave[i].x - suave[i - 1].x, suave[i].y - suave[i - 1].y, suave[i].z - suave[i - 1].z) / PASO,
@@ -303,6 +381,11 @@ export function tenderCable(
 				y: suave[i - 1].y + (suave[i].y - suave[i - 1].y) * u,
 				z: suave[i - 1].z + (suave[i].z - suave[i - 1].z) * u,
 			});
+			// Solo lo que va DE arco A arco es curva. Con «alguno de los dos» se protegía también la
+			// tirada recta que muere en el codo, y un cable simple pasaba de nueve puntos a
+			// veintinueve: puntos que no dicen nada y que luego hay que comparar contra los demás
+			// cables uno por uno.
+			enCodo.push(arcoSuave[i - 1] && arcoSuave[i]);
 		}
 	}
 
@@ -349,7 +432,7 @@ export function tenderCable(
 	const salida: Punto3[] = [{ ...denso[0], z: z[0] }];
 	for (let i = 1; i < denso.length - 1; i++) {
 		const b = { x: denso[i].x, y: denso[i].y, z: z[i] };
-		if (levantado[i] || levantado[i - 1] || levantado[i + 1]) { salida.push(b); continue; }
+		if (levantado[i] || levantado[i - 1] || levantado[i + 1] || enCodo[i]) { salida.push(b); continue; }
 		const a = salida[salida.length - 1];
 		const c = { x: denso[i + 1].x, y: denso[i + 1].y, z: z[i + 1] };
 		const u = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
