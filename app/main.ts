@@ -35,7 +35,8 @@ import {
 	vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
-import { encajarEnCanaleta, RedCanaletas } from './canaletas-red.js';
+import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, RedCanaletas } from './canaletas-red.js';
+import { Bloqueo, Eje, normalDeArrastre, respetarBloqueo } from './edicion-cables.js';
 import { colorDeTipo } from './dispositivos3d.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
@@ -3222,10 +3223,10 @@ function puntoCable3D(
 	 * de frente como para que arrastrar en X/Y sea preciso; por debajo, el plano empieza a verse de
 	 * canto y es cuando conviene cambiar. No es un número mágico: es dónde deja de ser cómodo.
 	 */
-	const deLado = forzarProfundidad || Math.abs(mira.z) < 0.55;
-	const normal = !deLado
-		? new THREE.Vector3(0, 0, 1)
-		: (Math.abs(mira.x) >= Math.abs(mira.y) ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0));
+	// La regla vive en `edicion-cables`, para que la prueba mida exactamente lo que hace el editor.
+	const n = normalDeArrastre(mira, forzarProfundidad);
+	const normal = new THREE.Vector3(n.x, n.y, n.z);
+	const deLado = n.z === 0;
 	const impacto = new THREE.Vector3();
 	if (!raycaster.ray.intersectPlane(new THREE.Plane(normal, -normal.dot(aqui)), impacto)) return undefined;
 	return {
@@ -3387,12 +3388,140 @@ function previsualizarCable(conductorId: string): void {
 		escenario.cables.remove(hijo);
 		liberar(hijo);
 	}
-	escenario.cables.add(construirUnCable(ruta, colorDeCable(conductor.color), escenario.aEscena));
-	if (sel?.tipo === 'cable' && sel.id === conductorId) resaltarCable(conductorId);
+	/*
+	 * Un recorrido que no vale se ve ROJO, y se sigue pudiendo mover. Es la diferencia entre un
+	 * programa que informa y uno que forcejea: el cable dice «aquí no», pero no te quita el ratón.
+	 */
+	const color = motivoInvalido ? 0xd2453c : colorDeCable(conductor.color);
+	escenario.cables.add(construirUnCable(ruta, color, escenario.aEscena));
+	if (!motivoInvalido && sel?.tipo === 'cable' && sel.id === conductorId) resaltarCable(conductorId);
+}
+
+/*
+ * BLOQUEO DE EJE: «a partir de ahora solo profundidad».
+ *
+ * Mover un punto en 3D con un ratón que solo sabe de dos ejes es el problema de siempre, y el
+ * truco de elegir el plano según dónde esté la cámara lo resuelve a medias: sirve para trabajar
+ * cómodo, pero no para decir «esto y solo esto». Cambiar la profundidad sin tocar la X de rebote
+ * era prácticamente imposible.
+ *
+ * Se elige la solución más simple que existe y la que ya conoce cualquiera que haya usado un
+ * programa 3D: durante el arrastre se pulsa X, Y o Z y el movimiento se queda en ese eje. Volver a
+ * pulsar la misma tecla lo suelta. No hay gizmo que estorbe, no hay modo que recordar, no hay que
+ * apuntar a un tirador de tres píxeles, y funciona igual desde cualquier cámara.
+ *
+ * EL BLOQUEO ES DE VERDAD, no una aproximación: al pulsar la tecla se apunta dónde estaba el punto
+ * y los dos ejes que no se editan se devuelven a ese valor DESPUÉS de todo lo demás —del recorte
+ * al área, del alineado con los vecinos y del encaje en la canaleta—. Cualquiera de esos tres
+ * podría mover una coordenada que el usuario acaba de decir que no se toca.
+ */
+let ejeArrastre: Bloqueo | undefined;
+let guiaEje: THREE.Line | undefined;
+
+/** La línea del eje bloqueado, discreta y solo mientras dura el arrastre. */
+function mostrarGuiaEje(punto: { x: number; y: number; z: number }, eje: Eje): void {
+	quitarGuiaEje();
+	const LARGO = 160;
+	const d = eje === 'x' ? [LARGO, 0, 0] : eje === 'y' ? [0, LARGO, 0] : [0, 0, LARGO];
+	const c = escenario.aEscena(punto.x, punto.y, punto.z);
+	const geo = new THREE.BufferGeometry().setFromPoints([
+		new THREE.Vector3(c.x - d[0], c.y + d[1], c.z - d[2]),
+		new THREE.Vector3(c.x + d[0], c.y - d[1], c.z + d[2]),
+	]);
+	// Los colores de eje de toda la vida: X rojo, Y verde, Z azul. Apagados, que esto es una guía
+	// de trabajo y no un adorno.
+	const color = eje === 'x' ? 0xd06a63 : eje === 'y' ? 0x6fb06a : 0x5b8fd0;
+	guiaEje = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.75, depthTest: false }));
+	guiaEje.renderOrder = 999;
+	guiaEje.raycast = () => {};
+	escena.add(guiaEje);
+}
+
+function quitarGuiaEje(): void {
+	if (!guiaEje) return;
+	escena.remove(guiaEje);
+	guiaEje.geometry.dispose();
+	(guiaEje.material as THREE.Material).dispose();
+	guiaEje = undefined;
+}
+
+/**
+ * ¿ESTE PUNTO ES UN SITIO VÁLIDO PARA UN CABLE?
+ *
+ * Contesta con el MISMO criterio que usa el ruteo automático, que es el punto entero de esta
+ * función: una canaleta no es un obstáculo, es un sitio. Lo que no se puede atravesar de una
+ * canaleta son sus SÓLIDOS —el fondo, el zócalo, las paredes, los dientes y la tapa— y de eso ya
+ * sabe `invasionSolida`, que es la que usa el repartidor. Aquí no se construye un segundo detector
+ * simplificado: se pregunta al que ya existe.
+ *
+ * Lo que sí es obstáculo es la cara de un aparato: en un tablero de verdad un hilo no cruza por
+ * encima de un automático, lo rodea.
+ */
+function validezDelPunto(p: { x: number; y: number; z?: number }, radio: number): { ok: boolean; motivo?: string } {
+	const g = proyecto.gabinete;
+	if (!g) return { ok: true };
+	const z = p.z ?? Z_FRENTE;
+	const red = new RedCanaletas(g.canaletas);
+	const dentroDeDucto = canaletasQueContienen(red, [{ x: p.x, y: p.y, z }]);
+	const inv = invasionSolida(red, g.canaletas, { x: p.x, y: p.y, z }, radio);
+	if (inv) return { ok: false, motivo: `atraviesa ${inv.parte} de la canaleta ${inv.canaleta}` };
+	// Dentro del hueco de una canaleta se está bien aunque haya un aparato cerca: son cosas
+	// distintas y el cable va por debajo de su cara.
+	if (dentroDeDucto.size) return { ok: true };
+	for (const c of g.colocaciones) {
+		const d = proyecto.dispositivos.find((k) => k.id === c.dispositivoId);
+		if (d?.imagen) continue;   // las imágenes de referencia son para cablear encima
+		if (p.x > c.x - 2 && p.x < c.x + c.ancho + 2 && p.y > c.y - 2 && p.y < c.y + c.alto + 2) {
+			return { ok: false, motivo: `cruza por encima de ${d?.designacion ?? c.dispositivoId}` };
+		}
+	}
+	return { ok: true };
+}
+
+/** El último sitio válido por el que pasó el punto, para poder volver si se suelta en uno malo. */
+let ultimoValido: { x: number; y: number; z?: number } | undefined;
+/** Si la posición de ahora mismo es inválida, y por qué. */
+let motivoInvalido: string | undefined;
+
+/**
+ * MOVER UNA UNIÓN, UNA SOLA VEZ ESCRITO.
+ *
+ * Hay dos formas de coger un punto de cable —por el tubo o por su esfera azul— y durante mucho
+ * tiempo cada una tuvo su código. La del tubo se fue quedando con lo bueno (3D, bloqueo de eje,
+ * vista previa barata) y la de la esfera se quedó como estaba: dos dimensiones y reconstrucción
+ * completa del tablero en cada píxel. Y la esfera es justo por donde agarra la gente, porque es lo
+ * que se ve y lo que invita a tirar.
+ *
+ * Ahora las dos llaman aquí. Si mañana cambia la regla del plano de arrastre o la del bloqueo,
+ * cambia en un sitio y las dos formas de agarrar siguen haciendo lo mismo.
+ */
+function arrastrarUnion(
+	ev: MouseEvent, c: Conductor, indice: number, desde: { x: number; y: number; z: number },
+): void {
+	// Con Z bloqueada se fuerza el plano vertical aunque la cámara mire de frente: en el plano de
+	// la placa la profundidad no cambia por definición, y parecería que la tecla no funciona.
+	const enZ = ejeArrastre?.eje === 'z';
+	const pc = medirEtapa('1 pantalla→mundo', () => puntoCable3D(ev, desde, ev.shiftKey || enZ));
+	if (!pc) return;
+	// Un punto que nunca se ha editado en profundidad sigue sin `z`, y lo sigue colocando el
+	// repartidor. Con X o Y bloqueadas la profundidad tampoco se toca.
+	const zNueva = ejeArrastre && ejeArrastre.eje !== 'z' ? undefined
+		: (pc.modo === 'profundidad' ? pc.z : undefined);
+	medirEtapa('2 mover punto', () => moverWaypoint(c, indice, pc.x, pc.y, zNueva, ejeArrastre, true));
+	medirEtapa('2b validez', () => {
+		const wp = c.trazado?.[indice];
+		if (!wp) return;
+		const v = validezDelPunto(wp, radioDeCable(c.seccion));
+		motivoInvalido = v.ok ? undefined : v.motivo;
+		if (v.ok) ultimoValido = { ...wp };
+	});
+	medirEtapa('3 previsualizar el cable', () => previsualizarCable(c.id));
+	medirEtapa('4 handles', () => construirHandles());
+	medirEtapa('5 pista', () => mostrarPistaArrastre());
 }
 
 /** Lo último que se supo del punto que se está arrastrando: para poder contarlo en pantalla. */
-let pistaArrastre: { z: number; modo: ModoArrastre; canaleta?: string; ranura?: boolean } | undefined;
+let pistaArrastre: { z: number; modo: ModoArrastre; canaleta?: string; ranura?: boolean; eje?: Eje } | undefined;
 
 /**
  * Lo que se está haciendo con el punto, dicho en la barra que ya existe.
@@ -3406,10 +3535,12 @@ function mostrarPistaArrastre(): void {
 	const dentro = pistaArrastre.canaleta
 		? ` · dentro de la canaleta ${pistaArrastre.canaleta}${pistaArrastre.ranura ? ' (por una ranura)' : ''}`
 		: '';
-	const como = pistaArrastre.modo === 'profundidad'
-		? 'moviendo en PROFUNDIDAD'
-		: 'moviendo sobre la placa';
-	$('ayuda').textContent = `↕ ${como} · Z: ${pistaArrastre.z} mm${dentro}`;
+	const como = pistaArrastre.eje
+		? `SOLO EJE ${pistaArrastre.eje.toUpperCase()}`
+		: (pistaArrastre.modo === 'profundidad' ? 'moviendo en PROFUNDIDAD' : 'moviendo sobre la placa');
+	const suelta = pistaArrastre.eje ? ' · pulsa la misma tecla para soltar el eje' : ' · X/Y/Z bloquean un eje';
+	const aviso = motivoInvalido ? ` · ⚠ ${motivoInvalido}` : '';
+	$('ayuda').textContent = `↕ ${como} · Z: ${pistaArrastre.z} mm${dentro}${aviso}${suelta}`;
 }
 
 /**
@@ -3420,7 +3551,7 @@ function mostrarPistaArrastre(): void {
  * arrastra en modo profundidad, el punto pasa a tener z propia y a partir de ahí manda el usuario.
  */
 function moverWaypoint(
-	c: Conductor, idx: number, x: number, y: number, z?: number,
+	c: Conductor, idx: number, x: number, y: number, z?: number, bloqueo?: Bloqueo, preview = false,
 ): void {
 	const wps = c.trazado;
 	if (!wps || !wps[idx]) return;
@@ -3429,9 +3560,21 @@ function moverWaypoint(
 	const next = idx < wps.length - 1 ? wps[idx + 1] : p?.salidaB;
 	// Primero se encierra en el área y luego se alinea: así el recorte nunca desalinea un tramo
 	// que el usuario acaba de dejar recto.
-	const dentro = puntoDeCableValido(x, y);
-	let nx = dentro.x;
-	let ny = dentro.y;
+	/*
+	 * DURANTE EL ARRASTRE NO SE EXPULSA EL PUNTO. Esa era la «pared invisible».
+	 *
+	 * `puntoDeCableValido` saca el punto de encima de los aparatos, y lo hace del BLOQUE entero,
+	 * no de uno suelto: acercarse a una fila de riel teletransportaba el punto al otro lado de la
+	 * fila. Con el ratón apretado eso se siente como pelearse con el programa, y de paso hacía casi
+	 * imposible meter un cable en una canaleta que estuviera entre dos filas.
+	 *
+	 * Mientras se arrastra, el punto va donde va y se avisa en rojo si el sitio no vale. Quien
+	 * decide es el usuario al soltar. Lo único que se sigue haciendo es recortarlo al área de
+	 * cableado, porque fuera de la placa no hay tablero.
+	 */
+	const dentro = preview ? dentroDelArea({ x, y }, areaDeCableado()) : puntoDeCableValido(x, y);
+	let nx = Math.round(dentro.x);
+	let ny = Math.round(dentro.y);
 	// Alinear en vertical/horizontal con el vecino más cercano en cada eje.
 	if (prev && Math.abs(nx - prev.x) < SNAP_ORTO) nx = prev.x;
 	else if (next && Math.abs(nx - next.x) < SNAP_ORTO) nx = next.x;
@@ -3440,10 +3583,8 @@ function moverWaypoint(
 
 	// Sin profundidad nueva: el punto se queda como estaba en z (con la suya o sin ninguna).
 	if (z === undefined) {
-		wps[idx] = { ...wps[idx], x: nx, y: ny };
-		pistaArrastre = wps[idx].z !== undefined
-			? { z: wps[idx].z!, modo: 'placa' }
-			: undefined;
+		wps[idx] = respetarBloqueo({ ...wps[idx], x: nx, y: ny }, bloqueo);
+		pistaArrastre = { z: wps[idx].z ?? Z_FRENTE, modo: 'placa', eje: bloqueo?.eje };
 		return;
 	}
 
@@ -3459,20 +3600,21 @@ function moverWaypoint(
 	const radio = radioDeCable(c.seccion);
 	const encaje = encajarEnCanaleta(red, { x: nx, y: ny, z }, radio);
 	if (encaje) {
-		wps[idx] = {
+		wps[idx] = respetarBloqueo({
 			x: Math.round(encaje.punto.x),
 			y: Math.round(encaje.punto.y),
 			z: Math.round(encaje.punto.z),
-		};
+		}, bloqueo);
 		pistaArrastre = {
-			z: wps[idx].z!, modo: 'profundidad', canaleta: encaje.canaleta, ranura: encaje.ranura !== undefined,
+			z: wps[idx].z!, modo: 'profundidad', canaleta: encaje.canaleta,
+			ranura: encaje.ranura !== undefined, eje: bloqueo?.eje,
 		};
 		return;
 	}
 	// Fuera de toda canaleta: la profundidad se queda entre la placa y el frente, sin salirse.
 	const zSano = Math.max(radio, Math.min(Z_FRENTE + 24, z));
-	wps[idx] = { x: nx, y: ny, z: Math.round(zSano) };
-	pistaArrastre = { z: wps[idx].z!, modo: 'profundidad' };
+	wps[idx] = respetarBloqueo({ x: nx, y: ny, z: Math.round(zSano) }, bloqueo);
+	pistaArrastre = { z: wps[idx].z!, modo: 'profundidad', eje: bloqueo?.eje };
 }
 
 /* ------------- Riel y sus aparatos: se mueven juntos y se revierte si chocan ------------- */
@@ -3872,6 +4014,11 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			if (!capturar()) return;
 			arrastrandoCable = { id: pendienteCable.id, indice: pendienteCable.indice };
 			capturadoEsteArrastre = true;
+			// De donde sale el punto ya era un sitio bueno: si el arrastre acaba mal, aquí se vuelve.
+			const cIni = proyecto.conductores.find((x) => x.id === arrastrandoCable!.id);
+			const wpIni = cIni?.trazado?.[arrastrandoCable.indice];
+			ultimoValido = wpIni ? { ...wpIni } : undefined;
+			motivoInvalido = undefined;
 		} else {
 			// Sin unión donde se pinchó no hay nada que mover: se avisa una sola vez.
 			avisar('Haz doble clic sobre el cable para crear una unión y poder moverlo ahí.', 'info');
@@ -3893,15 +4040,12 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			 * profundidad empieza justo donde el usuario ve el cable, y no pega un salto.
 			 */
 			const desde = { x: wp.x, y: wp.y, z: wp.z ?? Z_FRENTE };
-			const pc = medirEtapa('1 pantalla→mundo', () => puntoCable3D(ev, desde, ev.shiftKey));
-			if (pc) {
-				// En el plano de la placa la profundidad no se toca: se pasa `undefined` para que un
-				// punto que nunca se ha editado en z siga sin tenerla y lo siga colocando el router.
-				medirEtapa('2 mover punto', () => moverWaypoint(c, arrastrandoCable!.indice, pc.x, pc.y, pc.modo === 'profundidad' ? pc.z : undefined));
-				medirEtapa('3 previsualizar el cable', () => previsualizarCable(arrastrandoCable!.id));
-				medirEtapa('4 handles', () => construirHandles());
-				medirEtapa('5 pista', () => mostrarPistaArrastre());
-			}
+			/*
+			 * Con Z bloqueada hay que forzar el plano vertical aunque la cámara mire de frente: en
+			 * el plano de la placa la profundidad no cambia por definición, así que sin esto pulsar
+			 * Z de frente no haría nada y parecería que la tecla no funciona.
+			 */
+			arrastrarUnion(ev, c, arrastrandoCable.indice, desde);
 		}
 		return;
 	}
@@ -3921,11 +4065,12 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			const c = proyecto.conductores.find((x) => x.id === sel!.id)!;
 			if (handleArrastrado.indice === undefined || handleArrastrado.indice < 0) {
 				c.trazado = [puntoDeCableValido(p.x, p.y)];
+				previsualizarCable(c.id);
+				construirHandles();
 			} else {
-				moverWaypoint(c, handleArrastrado.indice, p.x, p.y);
+				const wp = c.trazado?.[handleArrastrado.indice];
+				if (wp) arrastrarUnion(ev, c, handleArrastrado.indice, { x: wp.x, y: wp.y, z: wp.z ?? Z_FRENTE });
 			}
-			reconstruirCables();
-			construirHandles();
 			return;
 		}
 		if (sel.tipo === 'canaleta') {
@@ -4040,12 +4185,17 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 	}
 	if (!arrastrando) return;
 	arrastrando = false;
+	// Se apunta ANTES de limpiar, o se apunta `undefined` y no se entera nadie.
+	const handleAntes: DatosHandle | undefined = handleArrastrado;
+	const selAntes: Seleccion | undefined = sel;
 	handleArrastrado = undefined;
 	const eraCable = arrastrandoCable;
 	arrastrandoCable = undefined;
 	pendienteCable = undefined; // si no llegó a moverse, fue solo un clic de selección
 	// La barra vuelve a lo suyo: la profundidad solo interesa mientras se está moviendo el punto.
 	if (pistaArrastre) { pistaArrastre = undefined; $('ayuda').textContent = AYUDA[modo]; }
+	ejeArrastre = undefined;
+	quitarGuiaEje();
 	permitirOrbita(true);
 	renderer.domElement.style.cursor = '';
 	if (!capturadoEsteArrastre) { arrastreInicio = undefined; estadoRielArrastre = undefined; return; } // fue un clic
@@ -4063,7 +4213,38 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		pintarEstructura();
 		return;
 	}
-	if (eraCable) {
+	/*
+	 * Soltar un tirador de cable es exactamente lo mismo que soltar el tubo, así que pasa por el
+	 * mismo sitio. Antes no: el tirador no revertía nada y no explicaba nada.
+	 */
+	const eraHandleDeCable = handleAntes && selAntes?.tipo === 'cable' && (handleAntes.indice ?? -1) >= 0
+		? { id: selAntes.id, indice: handleAntes.indice! }
+		: undefined;
+	const cableSoltado = eraCable ?? eraHandleDeCable;
+	if (cableSoltado) {
+		/*
+		 * SOLTAR EN UN SITIO QUE NO VALE DEVUELVE EL PUNTO AL ÚLTIMO QUE SÍ VALÍA.
+		 *
+		 * Ni pared invisible mientras se mueve, ni geometría imposible guardada en silencio. Durante
+		 * el arrastre se explora libremente y el cable avisa en rojo; al soltar se decide, y se dice
+		 * por qué, que es lo que permite corregir sin adivinar.
+		 */
+		if (motivoInvalido) {
+			const c = proyecto.conductores.find((x) => x.id === cableSoltado.id);
+			const wp = c?.trazado?.[cableSoltado.indice];
+			if (c && wp && ultimoValido) {
+				c.trazado![cableSoltado.indice] = { ...ultimoValido };
+				avisar(`Ahí no cabe el cable: ${motivoInvalido}. El punto vuelve al último sitio válido.`, 'info');
+			} else if (c && wp) {
+				// Nunca hubo un sitio bueno en todo el arrastre: se quita el punto y el cable vuelve
+				// a su recorrido automático, que siempre es válido.
+				c.trazado!.splice(cableSoltado.indice, 1);
+				if (!c.trazado!.length) delete c.trazado;
+				avisar(`Ahí no cabe el cable: ${motivoInvalido}. Se quita la unión.`, 'info');
+			}
+		}
+		motivoInvalido = undefined;
+		ultimoValido = undefined;
 		/*
 		 * AQUÍ ES DONDE SE PAGA LO CARO, y solo aquí.
 		 *
@@ -4184,6 +4365,40 @@ renderer.domElement.addEventListener('contextmenu', (ev) => {
 window.addEventListener('keydown', (ev) => {
 	const foco = document.activeElement as HTMLElement | null;
 	const activo = foco?.tagName;
+	/*
+	 * X / Y / Z BLOQUEAN UN EJE MIENTRAS SE ARRASTRA UNA UNIÓN.
+	 *
+	 * Va lo primero, y solo con el ratón apretado sobre un punto de cable: fuera del arrastre estas
+	 * teclas no significan nada aquí y no se le quitan a nadie. La misma tecla otra vez suelta el
+	 * eje, que es como se comporta en cualquier programa 3D y es lo que la mano espera.
+	 */
+	// Vale igual si se agarró por el tubo o por la esfera azul: para la mano es el mismo gesto.
+	const unionEnMano = arrastrandoCable
+		? { id: arrastrandoCable.id, indice: arrastrandoCable.indice }
+		: (handleArrastrado && sel?.tipo === 'cable' && (handleArrastrado.indice ?? -1) >= 0
+			? { id: sel.id, indice: handleArrastrado.indice! }
+			: undefined);
+	if (unionEnMano && !activo?.match(/INPUT|TEXTAREA|SELECT/) && !ev.ctrlKey && !ev.metaKey) {
+		const tecla = ev.key.toLowerCase();
+		if (tecla === 'x' || tecla === 'y' || tecla === 'z') {
+			ev.preventDefault();
+			const c = proyecto.conductores.find((k) => k.id === unionEnMano.id);
+			const wp = c?.trazado?.[unionEnMano.indice];
+			if (!wp) return;
+			if (ejeArrastre?.eje === tecla) {
+				ejeArrastre = undefined;
+				quitarGuiaEje();
+			} else {
+				// Se apunta dónde está el punto AHORA: es a esos valores a los que vuelven los ejes
+				// que no se editan, movimiento tras movimiento.
+				ejeArrastre = { eje: tecla, ancla: { x: wp.x, y: wp.y, z: wp.z } };
+				mostrarGuiaEje({ x: wp.x, y: wp.y, z: wp.z ?? Z_FRENTE }, tecla);
+			}
+			pistaArrastre = { z: wp.z ?? Z_FRENTE, modo: ejeArrastre ? 'profundidad' : 'placa', eje: ejeArrastre?.eje };
+			mostrarPistaArrastre();
+			return;
+		}
+	}
 	/*
 	 * Escribiendo, las teclas son para escribir: Supr borra letras y no aparatos.
 	 *
@@ -6252,7 +6467,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 * MISMOS eventos que produce un ratón de verdad, en un bucle apretado, y se cronometra lo
 		 * que tarda la aplicación en atenderlos. Eso sí es lo que se siente al arrastrar.
 		 */
-		simularArrastre: (conductorId: string, indice: number, n = 30, dx = 2, dy = 1.5) => {
+		simularArrastre: (conductorId: string, indice: number, n = 30, dx = 2, dy = 1.5, eje?: 'x' | 'y' | 'z') => {
 			const c = proyecto.conductores.find((k) => k.id === conductorId);
 			const wp = c?.trazado?.[indice];
 			if (!c || !wp) return undefined;
@@ -6262,13 +6477,56 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				const v = new THREE.Vector3(x - g.ancho / 2, g.alto / 2 - y, z).project(camaraViva());
 				return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
 			};
-			const p0 = aPantalla(wp.x, wp.y, wp.z ?? Z_FRENTE);
+			/*
+			 * Primero se SELECCIONA el cable, como hace cualquiera antes de tocar una unión: los
+			 * tiradores solo existen para el cable seleccionado, y sin tirador el `pointerdown` no
+			 * tiene a qué agarrarse. La primera versión de esta sonda no lo hacía y el arrastre no
+			 * llegaba a arrancar: los pasos de la prueba salían en verde porque nada se movía, que
+			 * es la peor forma de pasar una prueba.
+			 */
+			aplicarSeleccion({ tipo: 'cable', id: conductorId });
+			construirHandles();
+			/*
+			 * Se apunta al TIRADOR, no a donde uno cree que está el punto.
+			 *
+			 * Proyectando `wp` con `Z_FRENTE` cuando el punto no tiene z propia, la pulsación caía
+			 * varios centímetros de donde el tirador se dibuja de verdad —su profundidad la decide
+			 * el repartidor— y en un tablero de cincuenta y dos cables eso significa pulsar sobre
+			 * OTRO cable: el diagnóstico decía «encontrado w27, índice −1» cuando se buscaba w1. El
+			 * tirador sabe dónde está; se le pregunta a él.
+			 */
+			const tirador = escenario.handles.children.find((o) => {
+				const h = o.userData.handle as DatosHandle | undefined;
+				return h?.sel.tipo === 'cable' && h.sel.id === conductorId && h.indice === indice;
+			});
+			const p0 = tirador
+				? (() => {
+					const v = tirador.getWorldPosition(new THREE.Vector3()).project(camaraViva());
+					return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+				})()
+				: aPantalla(wp.x, wp.y, wp.z ?? Z_FRENTE);
 			const lanzar = (tipo: string, x: number, y: number, extra: PointerEventInit = {}) =>
 				renderer.domElement.dispatchEvent(new PointerEvent(tipo, {
 					clientX: x, clientY: y, bubbles: true, cancelable: true, pointerId: 1, button: 0, buttons: 1, ...extra,
 				}));
 			lanzar('pointermove', p0.x, p0.y);
 			lanzar('pointerdown', p0.x, p0.y);
+			// Qué encontró la pulsación: sin esto, un arrastre que no arranca es indistinguible de
+			// uno que arranca y no mueve nada.
+			const tras = {
+				modo, arrastrando, pendiente: pendienteCable ? { ...pendienteCable } : undefined,
+				handle: !!handleArrastrado, seleccion: sel ? { ...sel } : undefined,
+				tiradores: escenario.handles.children.length,
+				enPantalla: { x: Math.round(p0.x), y: Math.round(p0.y) },
+			};
+			// Un primer movimiento convierte la intención en arrastre; solo entonces la tecla del eje
+			// tiene a quién aplicarse.
+			if (eje) {
+				// 40 píxeles: el arrastre no arranca hasta que el punto se ha movido 6 mm de modelo,
+				// y con un paso pequeño la tecla del eje llegaría antes de que hubiera arrastre.
+				lanzar('pointermove', p0.x + 40, p0.y + 40);
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: eje, bubbles: true }));
+			}
 			const t0 = performance.now();
 			const porEvento: number[] = [];
 			for (let i = 1; i <= n; i++) {
@@ -6277,16 +6535,33 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				porEvento.push(performance.now() - t);
 			}
 			const ms = performance.now() - t0;
+			// Se apunta ANTES de soltar: al soltar se limpia todo y ya no habría a quién preguntar.
+			// Cuenta como enganchado tanto el tubo como la esfera azul: son las dos formas de coger
+			// el mismo punto, y la esfera es la que usa la gente.
+			const enganchado = !!arrastrandoCable || (!!handleArrastrado && sel?.tipo === 'cable');
+			const bloqueo = ejeArrastre?.eje;
+			// Dónde estaba el punto CUANDO SE BLOQUEÓ el eje. Comparar contra la posición previa al
+			// arrastre no dice nada: entre una cosa y otra el punto se ha movido a propósito.
+			const ancla = ejeArrastre ? { ...ejeArrastre.ancla } : undefined;
 			lanzar('pointerup', p0.x + n * dx, p0.y + n * dy, { buttons: 0 });
 			porEvento.sort((a, b) => a - b);
 			return {
 				eventos: n,
+				// Sin esto, un arrastre que no llega a engancharse se lee como «no se movió nada» y
+				// parece que el bloqueo de eje funciona cuando lo que pasa es que no pasó nada.
+				enganchado, bloqueo, ancla, tras,
 				msTotal: Math.round(ms * 100) / 100,
 				mediana: Math.round(porEvento[Math.floor(n / 2)] * 100) / 100,
 				p95: Math.round(porEvento[Math.floor(n * 0.95)] * 100) / 100,
 				peor: Math.round(porEvento[n - 1] * 100) / 100,
 			};
 		},
+		/** ¿Vale este sitio para un cable? Con el mismo criterio que usa el ruteo automático. */
+		validez: (x: number, y: number, z: number, radio = 3) => validezDelPunto({ x, y, z }, radio),
+		/** El eje bloqueado ahora mismo, si hay alguno. */
+		ejeBloqueado: () => ejeArrastre?.eje,
+        /** Qué problema tiene la posición de ahora mismo, si tiene alguno. */
+		problemaArrastre: () => motivoInvalido,
 		/* ---- Cronómetro del arrastre: medir antes de optimizar ---- */
 		cronometro: (encender: boolean) => {
 			crono.activo = encender;

@@ -26,6 +26,10 @@ import { Punto3, tenderCable } from '../app/geometria-cables.js';
 /** Los casos que hay que aguantar, incluidos los que antes rompían. */
 const CASOS: Record<string, Punto3[]> = {
 	'90 grados': [{ x: 0, y: 0, z: 46 }, { x: 100, y: 0, z: 46 }, { x: 100, y: 100, z: 46 }],
+	'45 grados': [{ x: 0, y: 0, z: 46 }, { x: 80, y: 0, z: 46 }, { x: 140, y: 60, z: 46 }],
+	'45 grados con profundidad': [{ x: 0, y: 0, z: 46 }, { x: 80, y: 0, z: 46 }, { x: 140, y: 60, z: 20 }],
+	'punto duplicado exacto': [{ x: 0, y: 0, z: 46 }, { x: 60, y: 0, z: 46 }, { x: 60, y: 0, z: 46 }, { x: 60, y: 70, z: 46 }],
+	'ida y vuelta inmediata': [{ x: 0, y: 0, z: 46 }, { x: 60, y: 0, z: 46 }, { x: 58, y: 0, z: 46 }, { x: 58, y: 70, z: 46 }],
 	'S de dos codos': [{ x: 0, y: 0, z: 46 }, { x: 60, y: 0, z: 46 }, { x: 60, y: 60, z: 46 }, { x: 120, y: 60, z: 46 }],
 	'dos codos muy juntos': [{ x: 0, y: 0, z: 46 }, { x: 40, y: 0, z: 46 }, { x: 48, y: 8, z: 46 }, { x: 48, y: 80, z: 46 }],
 	'segmento corto': [{ x: 0, y: 0, z: 46 }, { x: 6, y: 0, z: 46 }, { x: 6, y: 80, z: 46 }],

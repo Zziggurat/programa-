@@ -263,7 +263,20 @@ function redondear3D(nodos: Punto3[], radio: number, pasos = 6): { puntos: Punto
 		const d1 = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
 		const d2 = Math.hypot(c.x - b.x, c.y - b.y, c.z - b.z);
 		const r = Math.min(radio, d1 / 2, d2 / 2);
-		if (r < 1.5 || d1 < 1e-6 || d2 < 1e-6) { salida.push(b); arco.push(false); continue; }
+		/*
+		 * SI EL RADIO NO CABE SE ENCOGE, NO SE RINDE.
+		 *
+		 * El corte estaba en 1,5 mm: por debajo de eso el codo se dejaba SIN redondear, o sea en
+		 * pico. Y ahí es justo donde más falta hace, porque un radio pequeño sale de dos codos muy
+		 * juntos. El caso que lo destapó es una ida y vuelta de dos milímetros —(60,0) → (58,0) →
+		 * (58,70)—: el radio disponible era 1 mm, se saltaba el redondeo y el tubo giraba noventa
+		 * grados de golpe.
+		 *
+		 * 0,3 mm es el nuevo suelo, y solo para no dividir por casi cero. Un arco de un milímetro en
+		 * un conductor de dos de radio no se ve como una curva, pero tampoco se ve como una punta,
+		 * que es de lo que se trata.
+		 */
+		if (r < 0.3 || d1 < 1e-6 || d2 < 1e-6) { salida.push(b); arco.push(false); continue; }
 		const t1 = r / d1;
 		const t2 = r / d2;
 		const p1 = { x: b.x + (a.x - b.x) * t1, y: b.y + (a.y - b.y) * t1, z: b.z + (a.z - b.z) * t1 };
@@ -353,6 +366,26 @@ export function tenderCable(
 		const a = limpios[limpios.length - 1];
 		const b = nodos[i];
 		if (Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) >= MINIMO) limpios.push(b);
+	}
+	/*
+	 * Y SE QUITAN LAS IDAS Y VUELTAS INMEDIATAS.
+	 *
+	 * Un vértice donde el recorrido se da la vuelta sobre sí mismo —avanza dos milímetros y
+	 * retrocede— no tiene radio que lo redondee: gire lo que gire, ahí hay un pico de 180°. Y no es
+	 * un recorrido que nadie haya querido: es basura que sale de encadenar tramos calculados por
+	 * separado. Quitando el vértice, el cable va derecho a donde iba.
+	 *
+	 * El corte está en 160°, no en 179: un giro de 170° tampoco es una esquina, es un pliegue.
+	 */
+	for (let i = limpios.length - 2; i >= 1; i--) {
+		const a = limpios[i - 1], b = limpios[i], c = limpios[i + 1];
+		const u = { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+		const v = { x: c.x - b.x, y: c.y - b.y, z: c.z - b.z };
+		const lu = Math.hypot(u.x, u.y, u.z), lv = Math.hypot(v.x, v.y, v.z);
+		if (lu < 1e-6 || lv < 1e-6) continue;
+		const cos = (u.x * v.x + u.y * v.y + u.z * v.z) / (lu * lv);
+		// cos ≈ 1 quiere decir que los dos vecinos están del MISMO lado: el camino se dobló.
+		if (cos > Math.cos((20 * Math.PI) / 180)) limpios.splice(i, 1);
 	}
 	// El último manda siempre: es el borne, y ahí no se negocia.
 	const fin = nodos[nodos.length - 1];
