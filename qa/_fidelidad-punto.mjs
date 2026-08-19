@@ -49,24 +49,50 @@ const sitios = [
 	['profundidad rara (z=15)', { x: Math.round(g.ancho * 0.35), y: Math.round(g.alto * 0.7), z: 15 }],
 ];
 
+const codo = await qa('radioCodoDe', cable);
+
+/*
+ * TRES NÚMEROS, Y CADA UNO CONTESTA UNA PREGUNTA DISTINTA:
+ *
+ *   guardado      ¿el programa ha cambiado la coordenada que se le pidió? Si cambia sin que lo
+ *                 diga la barra de estado, es una reescritura silenciosa: eso es el defecto.
+ *   guardado(Alt) ¿y con las ayudas desactivadas? Aquí tiene que salir CERO siempre: sin ayudas
+ *                 no hay nada que pueda mover un punto.
+ *   dibujado      ¿por dónde pasa el cable de verdad? En una esquina nunca llega al vértice: lo
+ *                 recorta el radio de curvatura, que para este cable es de ${codo} mm. Por debajo
+ *                 de ese radio la diferencia es geometría, no desobediencia.
+ */
+console.log(`radio de curvatura de ${cable}: ${codo.toFixed(1)} mm\n`);
 console.log('caso                             pedido            guardado          dibujado          desvío');
 let peor = 0;
+let peorGuardado = 0;
+let peorSinAyudas = 0;
 for (const [nombre, q] of sitios) {
-	await qa('moverPuntoCable', cable, idx, q.x, q.y, q.z);
+	const r = await qa('moverPuntoCable', cable, idx, q.x, q.y, q.z);
 	const wp = (await qa('trazadoDe', cable))[idx];
 	const ruta = await qa('rutaDe', cable);
-	// El punto del recorrido dibujado más cercano en XY al que se pidió.
 	let mejor, md = Infinity;
-	for (const r of ruta) {
-		const d = Math.hypot(r.x - q.x, r.y - q.y);
-		if (d < md) { md = d; mejor = r; }
+	for (const p of ruta) {
+		const d = Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z);
+		if (d < md) { md = d; mejor = p; }
 	}
-	const dGuardado = Math.hypot((wp?.x ?? 0) - q.x, (wp?.y ?? 0) - q.y, (wp?.z ?? 0) - q.z);
-	const dDibujado = Math.hypot(mejor.x - q.x, mejor.y - q.y, mejor.z - q.z);
+	// Y otra vez sin ayudas: con Alt no puede quedar ni un milímetro de diferencia.
+	await qa('moverPuntoCable', cable, idx, q.x, q.y, q.z, false);
+	const wpAlt = (await qa('trazadoDe', cable))[idx];
+	const dGuardado = Math.hypot(wp.x - q.x, wp.y - q.y, (wp.z ?? 0) - q.z);
+	const dAlt = Math.hypot(wpAlt.x - q.x, wpAlt.y - q.y, (wpAlt.z ?? 0) - q.z);
+	const dDibujado = md;
 	peor = Math.max(peor, dDibujado);
+	peorGuardado = Math.max(peorGuardado, dGuardado);
+	peorSinAyudas = Math.max(peorSinAyudas, dAlt);
+	const ayuda = (r?.pista?.canaleta ? `encaje en canaleta ${r.pista.canaleta}` : (r?.pista?.alineado ? 'alineado con el vecino' : ''));
 	const f = (o) => `${String(o.x).padStart(3)},${String(o.y).padStart(3)},${String(o.z ?? '—').padStart(3)}`;
-	console.log(`${nombre.padEnd(32)} ${f(q)}   ${f(wp ?? {})}   ${f(mejor)}   guardado ${dGuardado.toFixed(1)} · dibujado ${dDibujado.toFixed(1)} mm`);
+	console.log(`${nombre.padEnd(32)} ${f(q)}   ${f(wp)}   ${f(mejor)}   guardado ${dGuardado.toFixed(1)} · Alt ${dAlt.toFixed(1)} · dibujado ${dDibujado.toFixed(1)} mm${ayuda ? `  ← ${ayuda}` : ''}`);
+	// Se deja el punto donde lo dejó la pasada con ayudas, para no falsear el caso siguiente.
+	await qa('moverPuntoCable', cable, idx, q.x, q.y, q.z);
 }
-console.log(`\npeor desvío entre lo pedido y lo dibujado: ${peor.toFixed(1)} mm`);
+console.log(`\npeor desvío de lo GUARDADO respecto a lo pedido: ${peorGuardado.toFixed(1)} mm (con ayudas, y anunciadas)`);
+console.log(`peor desvío de lo GUARDADO con las ayudas desactivadas: ${peorSinAyudas.toFixed(1)} mm`);
+console.log(`peor desvío de lo DIBUJADO respecto a lo pedido: ${peor.toFixed(1)} mm (radio de curvatura: ${codo.toFixed(1)} mm)`);
 console.log(er.length ? `ERRORES: ${er.slice(0, 2).join(' | ')}` : 'sin errores de JavaScript');
 await b.close(); sv.close();

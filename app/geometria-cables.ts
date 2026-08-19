@@ -222,6 +222,15 @@ export function redondearEsquinas(nodos: Punto[], radio = 14, pasos = 6): Punto[
 	return salida;
 }
 
+/** Distancia de un punto al segmento A→B, en tres dimensiones. */
+function distanciaAlSegmento3D(p: Punto3, a: Punto3, b: Punto3): number {
+	const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+	const len2 = dx * dx + dy * dy + dz * dz;
+	const t = len2 === 0 ? 0 : Math.max(0, Math.min(1,
+		((p.x - a.x) * dx + (p.y - a.y) * dy + (p.z - a.z) * dz) / len2));
+	return Math.hypot(a.x + dx * t - p.x, a.y + dy * t - p.y, a.z + dz * t - p.z);
+}
+
 /**
  * Redondea las esquinas de una polilínea 3D, arrastrando la profundidad.
  *
@@ -368,15 +377,28 @@ export function tenderCable(
 		if (Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) >= MINIMO) limpios.push(b);
 	}
 	/*
-	 * Y SE QUITAN LAS IDAS Y VUELTAS INMEDIATAS.
+	 * Y SE QUITAN LAS IDAS Y VUELTAS INMEDIATAS… PERO SOLO LAS DIMINUTAS.
 	 *
 	 * Un vértice donde el recorrido se da la vuelta sobre sí mismo —avanza dos milímetros y
 	 * retrocede— no tiene radio que lo redondee: gire lo que gire, ahí hay un pico de 180°. Y no es
 	 * un recorrido que nadie haya querido: es basura que sale de encadenar tramos calculados por
 	 * separado. Quitando el vértice, el cable va derecho a donde iba.
 	 *
+	 * AQUÍ FALTABA MEDIR CUÁNTO SOBRESALE, y por eso esta limpieza se comía puntos puestos a mano.
+	 * El ángulo por sí solo no distingue una ida y vuelta de dos milímetros de un rodeo de medio
+	 * metro: los dos son «pliegues de 170°». Un punto de peinado colocado sobre un aparato, con el
+	 * cable subiendo a buscarlo y volviendo a bajar, entra por esta puerta y desaparece; medido, el
+	 * cable acababa dibujado a 155 mm de donde el usuario había dejado el punto, y no había manera
+	 * de que se quedara. El recorrido del usuario se «arreglaba» en silencio.
+	 *
+	 * Lo que se tira ahora es lo que no cambia el camino: si quitando el vértice el recorrido se
+	 * desvía menos de `PLIEGUE`, es ruido de encadenar tramos calculados por separado. Si desvía
+	 * más, es un rodeo, y un rodeo puede ser exactamente lo que alguien quiso —en un tablero de
+	 * verdad se hacen para respetar separaciones o para dejar reserva—.
+	 *
 	 * El corte está en 160°, no en 179: un giro de 170° tampoco es una esquina, es un pliegue.
 	 */
+	const PLIEGUE = 3;
 	for (let i = limpios.length - 2; i >= 1; i--) {
 		const a = limpios[i - 1], b = limpios[i], c = limpios[i + 1];
 		const u = { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
@@ -385,7 +407,9 @@ export function tenderCable(
 		if (lu < 1e-6 || lv < 1e-6) continue;
 		const cos = (u.x * v.x + u.y * v.y + u.z * v.z) / (lu * lv);
 		// cos ≈ 1 quiere decir que los dos vecinos están del MISMO lado: el camino se dobló.
-		if (cos > Math.cos((20 * Math.PI) / 180)) limpios.splice(i, 1);
+		if (cos <= Math.cos((20 * Math.PI) / 180)) continue;
+		// ¿Y cuánto se desvía el camino por pasar por ahí? Es lo que decide si sobra o no.
+		if (distanciaAlSegmento3D(b, a, c) < PLIEGUE) limpios.splice(i, 1);
 	}
 	// El último manda siempre: es el borne, y ahí no se negocia.
 	const fin = nodos[nodos.length - 1];

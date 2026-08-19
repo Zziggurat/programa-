@@ -31,7 +31,7 @@ import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	diagnosticoCables, largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable,
-	construirUnCable, contadores, radioDeCable, reiniciarContadores, rutaProvisional,
+	construirUnCable, contadores, radioCodo, radioDeCable, reiniciarContadores, rutaProvisional,
 	RutaCable, rutasVigentes, rutaVigente,
 	vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
@@ -6657,13 +6657,20 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 * es lo que le pasa a Diego cuando arrastra: si aquí el punto acaba dentro de la canaleta,
 		 * es que ahí acaba de verdad.
 		 */
-		moverPuntoCable: (conductorId: string, indice: number, x: number, y: number, z?: number) => {
+		moverPuntoCable: (
+			conductorId: string, indice: number, x: number, y: number, z?: number, asistir = true,
+		) => {
 			const c = proyecto.conductores.find((k) => k.id === conductorId);
 			if (!c?.trazado?.[indice]) return undefined;
-			moverWaypoint(c, indice, x, y, z);
+			moverWaypoint(c, indice, x, y, z, undefined, asistir);
 			reconstruirCables();
 			construirHandles();
 			return { punto: c.trazado[indice], pista: pistaArrastre };
+		},
+		/** Radio de curvatura con el que se dibuja ese cable: es lo que recorta las esquinas. */
+		radioCodoDe: (conductorId: string) => {
+			const c = proyecto.conductores.find((k) => k.id === conductorId);
+			return c ? radioCodo(radioDeCable(c.seccion)) : undefined;
 		},
 		/** Los puntos que el usuario ha fijado a mano, tal cual se guardan. */
 		trazadoDe: (conductorId: string) =>
