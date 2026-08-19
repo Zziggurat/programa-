@@ -31,7 +31,8 @@ import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	diagnosticoCables, largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable,
-	contadores, radioDeCable, reiniciarContadores, vaciar, VOLTAJE_COLOR,
+	construirUnCable, contadores, radioDeCable, reiniciarContadores, rutaProvisional,
+	vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
 import { encajarEnCanaleta, RedCanaletas } from './canaletas-red.js';
@@ -3357,6 +3358,39 @@ function medirEtapa<T>(etapa: string, fn: () => T): T {
 	return r;
 }
 
+/**
+ * VISTA PREVIA DE UN SOLO CABLE MIENTRAS SE ARRASTRA.
+ *
+ * El editor manual y el ruteo automático son dos problemas distintos aunque compartan geometría.
+ * Mientras el usuario tiene el ratón apretado hace falta una cosa: que el cable siga al cursor. Lo
+ * demás —encontrarle sitio en las canaletas, reservar carriles, comprobarlo contra los otros
+ * cincuenta y uno, pasar el DRC— es trabajo de cuando suelta.
+ *
+ * Antes no había esa separación y se pagaba entera en cada píxel de movimiento. Medido sobre el
+ * estrella-triángulo: 5.215 ms por movimiento del ratón, 50 cables reconstruidos y 50
+ * TubeGeometry creadas… para mover UN punto de UN cable, y encima con un reparto completo del
+ * router por medio (0,93 por movimiento).
+ *
+ * Aquí se cambia solo la malla de ese cable. Los otros cincuenta y uno no se tocan: ni se
+ * destruyen ni se vuelven a subir a la tarjeta.
+ */
+function previsualizarCable(conductorId: string): void {
+	const ruta = rutaProvisional(proyecto, conductorId);
+	if (!ruta) return;
+	const conductor = proyecto.conductores.find((c) => c.id === conductorId);
+	if (!conductor) return;
+	// Fuera la malla vieja de ESTE cable, y solo la suya.
+	for (const hijo of [...escenario.cables.children]) {
+		let suyo = false;
+		hijo.traverse((o) => { if (o.userData.conductorId === conductorId) suyo = true; });
+		if (!suyo) continue;
+		escenario.cables.remove(hijo);
+		liberar(hijo);
+	}
+	escenario.cables.add(construirUnCable(ruta, colorDeCable(conductor.color), escenario.aEscena));
+	if (sel?.tipo === 'cable' && sel.id === conductorId) resaltarCable(conductorId);
+}
+
 /** Lo último que se supo del punto que se está arrastrando: para poder contarlo en pantalla. */
 let pistaArrastre: { z: number; modo: ModoArrastre; canaleta?: string; ranura?: boolean } | undefined;
 
@@ -3788,15 +3822,15 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 });
 
 renderer.domElement.addEventListener('pointermove', (ev) => {
+	if (crono.activo) { const e = crono.etapas.get('0 pointermove') ?? { n: 0, ms: 0 }; e.n++; crono.etapas.set('0 pointermove', e); }
 	if (visualizacion) return;
 	// Aparato recién sacado del catálogo: va pegado al ratón hasta que un clic lo suelta.
 	if (colocando) { moverColocacionAlCursor(ev); return; }
 	// Resaltado al pasar el ratón (modo Trabajo): bornes (para cablear) y cables (para tocarlos).
 	if (!arrastrando) {
 		if (modo === 'trabajo') {
-			const b = borneBajoElPuntero(ev);
-			resaltarHoverBorne(b);
-			mostrarTipBorne(b, ev);
+			const b = medirEtapa('h1 borne bajo puntero', () => borneBajoElPuntero(ev));
+			medirEtapa('h2 resaltar borne', () => { resaltarHoverBorne(b); mostrarTipBorne(b, ev); });
 			/*
 			 * CADA COSA SE BUSCA UNA VEZ.
 			 *
@@ -3810,10 +3844,10 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			 * misma función que decide qué se selecciona al pulsar. No hay un segundo criterio: con
 			 * uno propio, el hover podría iluminar un aparato y el clic elegir otro.
 			 */
-			const cid = b ? undefined : cableBajoElPuntero(ev);
-			resaltarHoverCable(cid);
-			const bajo = b || cid || cableandoDesde ? undefined : elementoBajoElPuntero(ev);
-			resaltarHoverDispositivo(bajo?.tipo === 'dispositivo' ? bajo.id : undefined);
+			const cid = medirEtapa('h3 cable bajo puntero', () => (b ? undefined : cableBajoElPuntero(ev)));
+			medirEtapa('h4 resaltar cable', () => resaltarHoverCable(cid));
+			const bajo = medirEtapa('h5 elemento bajo puntero', () => (b || cid || cableandoDesde ? undefined : elementoBajoElPuntero(ev)));
+			medirEtapa('h6 resaltar aparato', () => resaltarHoverDispositivo(bajo?.tipo === 'dispositivo' ? bajo.id : undefined));
 			if (cableandoDesde) {
 				const p = puntoCable(ev);
 				if (p) actualizarGomaCable(p.x, p.y);
@@ -3864,7 +3898,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 				// En el plano de la placa la profundidad no se toca: se pasa `undefined` para que un
 				// punto que nunca se ha editado en z siga sin tenerla y lo siga colocando el router.
 				medirEtapa('2 mover punto', () => moverWaypoint(c, arrastrandoCable!.indice, pc.x, pc.y, pc.modo === 'profundidad' ? pc.z : undefined));
-				medirEtapa('3 reconstruir cables', () => reconstruirCables());
+				medirEtapa('3 previsualizar el cable', () => previsualizarCable(arrastrandoCable!.id));
 				medirEtapa('4 handles', () => construirHandles());
 				medirEtapa('5 pista', () => mostrarPistaArrastre());
 			}
@@ -4030,9 +4064,14 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		return;
 	}
 	if (eraCable) {
-		// Mover un cable a mano no cambia la estructura ni el ruteo eléctrico: refresco ligero.
-		// (La adaptación a la canaleta ya ocurre durante el arrastre, pegando el punto a su eje,
-		// así que no hay ningún «salto» sorpresa al soltar.)
+		/*
+		 * AQUÍ ES DONDE SE PAGA LO CARO, y solo aquí.
+		 *
+		 * Durante el arrastre se ha ido dibujando una vista previa de ESTE cable y nada más. Al
+		 * soltar se hace el trabajo de verdad: el repartidor vuelve a buscar sitio para todos, con
+		 * su comprobación contra los demás conductores, contra los aparatos y contra las canaletas.
+		 * Una vez, no trescientas.
+		 */
 		reconstruirCables();
 		construirHandles();
 		pintarPaneles();
@@ -6195,6 +6234,58 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			});
 			pintar();
 			return tocados;
+		},
+		/** Dónde cae un punto del modelo en la pantalla: para poder agarrarlo con el ratón. */
+		pantallaDe: (x: number, y: number, z: number) => {
+			const g = proyecto.gabinete;
+			if (!g) return undefined;
+			const v = new THREE.Vector3(x - g.ancho / 2, g.alto / 2 - y, z).project(camaraViva());
+			const r = renderer.domElement.getBoundingClientRect();
+			return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+		},
+		/**
+		 * ARRASTRA UNA UNIÓN DESDE DENTRO DE LA PÁGINA, sin pasar por el ida y vuelta del navegador.
+		 *
+		 * Conducir el ratón desde Playwright mide sobre todo a Playwright: treinta movimientos
+		 * tardaban 147 segundos y el cronómetro de la aplicación apenas contaba treinta
+		 * milisegundos de trabajo. Eso no es el lag de Diego, es el arnés. Aquí se despachan los
+		 * MISMOS eventos que produce un ratón de verdad, en un bucle apretado, y se cronometra lo
+		 * que tarda la aplicación en atenderlos. Eso sí es lo que se siente al arrastrar.
+		 */
+		simularArrastre: (conductorId: string, indice: number, n = 30, dx = 2, dy = 1.5) => {
+			const c = proyecto.conductores.find((k) => k.id === conductorId);
+			const wp = c?.trazado?.[indice];
+			if (!c || !wp) return undefined;
+			const g = proyecto.gabinete!;
+			const r = renderer.domElement.getBoundingClientRect();
+			const aPantalla = (x: number, y: number, z: number) => {
+				const v = new THREE.Vector3(x - g.ancho / 2, g.alto / 2 - y, z).project(camaraViva());
+				return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+			};
+			const p0 = aPantalla(wp.x, wp.y, wp.z ?? Z_FRENTE);
+			const lanzar = (tipo: string, x: number, y: number, extra: PointerEventInit = {}) =>
+				renderer.domElement.dispatchEvent(new PointerEvent(tipo, {
+					clientX: x, clientY: y, bubbles: true, cancelable: true, pointerId: 1, button: 0, buttons: 1, ...extra,
+				}));
+			lanzar('pointermove', p0.x, p0.y);
+			lanzar('pointerdown', p0.x, p0.y);
+			const t0 = performance.now();
+			const porEvento: number[] = [];
+			for (let i = 1; i <= n; i++) {
+				const t = performance.now();
+				lanzar('pointermove', p0.x + i * dx, p0.y + i * dy);
+				porEvento.push(performance.now() - t);
+			}
+			const ms = performance.now() - t0;
+			lanzar('pointerup', p0.x + n * dx, p0.y + n * dy, { buttons: 0 });
+			porEvento.sort((a, b) => a - b);
+			return {
+				eventos: n,
+				msTotal: Math.round(ms * 100) / 100,
+				mediana: Math.round(porEvento[Math.floor(n / 2)] * 100) / 100,
+				p95: Math.round(porEvento[Math.floor(n * 0.95)] * 100) / 100,
+				peor: Math.round(porEvento[n - 1] * 100) / 100,
+			};
 		},
 		/* ---- Cronómetro del arrastre: medir antes de optimizar ---- */
 		cronometro: (encender: boolean) => {

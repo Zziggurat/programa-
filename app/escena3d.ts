@@ -2262,6 +2262,63 @@ export function construirCables(
 	return grupo;
 }
 
+/**
+ * EL RECORRIDO PROVISIONAL DE UN SOLO CABLE, sin pasar por el repartidor.
+ *
+ * Esto es la mitad barata del editor. Mientras el usuario arrastra una unión no hace falta —ni se
+ * puede— volver a repartir los cincuenta y dos conductores del tablero: medido, cada movimiento
+ * del ratón costaba 5.215 ms y reconstruía 50 cables y 50 tubos para mover UNO. Aquí se toma el
+ * peinado que el usuario tiene delante y se tiende el cable por él y nada más.
+ *
+ * Lo que NO hace, y es a propósito: no busca sitio en las canaletas, no reserva carriles, no
+ * comprueba contra los demás cables y no levanta el recorrido por encima de los ductos ajenos. De
+ * eso se encarga el reparto completo cuando se suelta el ratón. Aquí solo se dibuja lo que el
+ * usuario está pidiendo, para que lo vea seguir al cursor.
+ *
+ * La profundidad de un punto sin `z` se hereda del recorrido que ya estaba dibujado, así que el
+ * cable no pega un salto al empezar a arrastrar: sigue donde estaba y se mueve desde ahí.
+ */
+export function rutaProvisional(proyecto: Proyecto, conductorId: string): RutaCable | undefined {
+	const conductor = proyecto.conductores.find((c) => c.id === conductorId);
+	if (!conductor) return undefined;
+	const p = salidasDeCable(proyecto, conductor);
+	if (!p) return undefined;
+	const radio = radioDeCable(conductor.seccion);
+	const codo = radioCodo(radio);
+	// La z de referencia para los puntos que no la tienen: la que ya tenía el cable dibujado.
+	const previa = ultimoReparto?.rutas.find((r) => r.conductorId === conductorId);
+	const zSuelta = previa?.puntos.length
+		? previa.puntos[Math.floor(previa.puntos.length / 2)].z
+		: Z_EXPUESTO;
+	const nodos: Punto3[] = [
+		{ x: p.de.x, y: p.de.y, z: p.de.z },
+		{ x: p.salidaA.x, y: p.salidaA.y, z: p.de.z },
+		...(conductor.trazado ?? []).map((q) => ({ x: q.x, y: q.y, z: q.z ?? zSuelta })),
+		{ x: p.salidaB.x, y: p.salidaB.y, z: p.a.z },
+		{ x: p.a.x, y: p.a.y, z: p.a.z },
+	];
+	const puntos = tenderCable(nodos, codo);
+	return {
+		conductorId, de: p.de, a: p.a, radio, puntos,
+		nodos: nodos.map((q) => ({ x: q.x, y: q.y })),
+		z: puntos[Math.floor(puntos.length / 2)]?.z ?? zSuelta,
+	};
+}
+
+/**
+ * Dibuja UN cable y devuelve su malla, para poder cambiarla sin tocar las otras cincuenta.
+ */
+export function construirUnCable(
+	ruta: RutaCable, color: number, aEscena: Escenario['aEscena'],
+): THREE.Group {
+	const grupo = new THREE.Group();
+	contadores.cablesConstruidos++;
+	const puntos = ruta.puntos.map((q) => aEscena(q.x, q.y, q.z));
+	const curva = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
+	anadirTuboCable(grupo, curva, Math.min(260, Math.max(64, puntos.length * 3)), ruta.radio, color, ruta.conductorId);
+	return grupo;
+}
+
 /** Corredores libres del gabinete: franjas sin aparatos, incluida la que va a los prensaestopas. */
 export function corredoresLibresDe(proyecto: Proyecto): Banda[] {
 	const g = proyecto.gabinete;
