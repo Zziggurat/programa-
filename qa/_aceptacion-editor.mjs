@@ -65,7 +65,17 @@ console.log('4. cámara puesta de lado');
 
 // --- 5-6. bloquear Z y mover SOLO profundidad ---
 const antes = { ...(await qa('trazadoDe', cable))[idx] };
-const m = await qa('simularArrastre', cable, idx, 18, 0, -3, 'z');
+/*
+ * El arrastre tiene que ser LO BASTANTE LARGO para que se note.
+ *
+ * Con 18 pasos de 3 px valía cuando el punto del cable nacía al aire, a 92 mm de profundidad. Al
+ * crecer el tablero de ejemplo, ese punto pasó a nacer DENTRO de una canaleta, donde el volumen
+ * libre va de 2 a 57 mm: un empujón pequeño desde una cámara casi de canto se quedaba en el mismo
+ * milímetro y el paso cantaba «no cambió la profundidad» sin que nada estuviera roto —comprobado
+ * aparte: pidiendo 10, 25, 35 y 50 mm el punto se guarda exactamente ahí, y 70 se recorta a 57
+ * porque es donde acaba el hueco de la canaleta—.
+ */
+const m = await qa('simularArrastre', cable, idx, 26, 0, -6, 'z');
 const eje = await qa('ejeBloqueado');
 const despues = { ...(await qa('trazadoDe', cable))[idx] };
 await p.screenshot({ path: join(SALIDA, '02-guia-eje-z.png') });
