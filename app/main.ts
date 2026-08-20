@@ -1111,10 +1111,20 @@ function moverPuerta(abrir: boolean): void {
 	aplicarPuerta();
 }
 
-/** Deja la puerta en el estado que le toca al modo, sin animación (la escena se acaba de montar). */
+/**
+ * Deja la puerta como estaba, sin animación, después de montar la escena de nuevo.
+ *
+ * SE CONSERVA EL ESTADO, no se impone uno. La escena se vuelve a montar cada vez que se mueve un
+ * aparato o un carril, y una puerta que se abriera sola en cada uno de esos momentos sería un
+ * tic. Arranca abierta —trabajando, lo que importa está dentro— y a partir de ahí manda quien
+ * pulse el botón.
+ *
+ * En Visualización se deja abierta a propósito: ahí los paneles laterales están escondidos, así
+ * que el botón no se alcanza, y dejar al usuario delante de una caja cerrada que no puede abrir
+ * sería encerrarle fuera de su propio tablero.
+ */
 function asentarPuerta(): void {
-	const abierta = !visualizacion;
-	puertaDestino = abierta ? 1 : 0;
+	if (visualizacion) puertaDestino = 1;
 	puertaCrudo = puertaDestino;
 	puertaAhora = puertaDestino;
 	escenario.envolvente.visible = ($('ver-gabinete') as HTMLInputElement).checked;

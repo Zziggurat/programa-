@@ -192,8 +192,9 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	const caja = cajaDe(g);
 	const envolvente = construirEnvolvente(caja.ancho, caja.alto, caja.profundidad, {
 		bisagras: g.caja?.bisagras,
-		// En Visualización el armario se enseña terminado, o sea cerrado. Trabajando estorba.
-		apertura: realista ? 0 : 1,
+		// Se monta abierta y quien la maneja es la interfaz: abrir y cerrar es un estado de quien
+		// está mirando, no una propiedad del tablero, y la escena no tiene por qué opinar.
+		apertura: 1,
 		pasacables: bocaDePasacables(proyecto),
 	});
 	raiz.add(envolvente.grupo);

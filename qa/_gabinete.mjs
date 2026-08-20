@@ -82,5 +82,26 @@ await abrir(true);
 const abiertaQ = (await qa('medirMoteado', quietas)).porMillon;
 const abiertaM = (await qa('medirMoteado', moviendo)).porMillon;
 console.log(`moteado del armario abierto  · cámara quieta ${abiertaQ} (tiene que ser 0) · moviéndose ${abiertaM} por millón`);
+
+/*
+ * Los OTROS estados: Editor (donde se mueve la estructura) y Visualización (donde se enseña el
+ * tablero terminado y los paneles laterales desaparecen, así que el botón de la puerta no se
+ * alcanza y por eso ahí se deja abierta).
+ */
+await abrir(true);
+await p.evaluate(() => document.getElementById('modo-editor')?.click()); await p.waitForTimeout(700);
+await qa('verDesde', { x: -900, y: 340, z: 1150 }); await p.waitForTimeout(300);
+await p.screenshot({ path: join(SALIDA, `gab${EJEMPLO}-editor.png`) });
+await p.evaluate(() => document.getElementById('modo-trabajo')?.click()); await p.waitForTimeout(600);
+await p.evaluate(() => document.getElementById('btn-ver')?.click()); await p.waitForTimeout(1400);
+await qa('verDesde', { x: -900, y: 340, z: 1150 }); await p.waitForTimeout(300);
+await p.screenshot({ path: join(SALIDA, `gab${EJEMPLO}-visualizacion.png`) });
+await p.evaluate(() => document.getElementById('btn-ver')?.click()); await p.waitForTimeout(1200);
+
+// Y una bisagra de cerca, que es donde se ve si la puerta está bien colgada.
+await abrir(true);
+await qa('verDesde', { x: -520, y: 150, z: 330, tx: -300, ty: 150, tz: 120 }); await p.waitForTimeout(300);
+await p.screenshot({ path: join(SALIDA, `gab${EJEMPLO}-bisagra.png`) });
+
 console.log(er.length ? `ERRORES: ${er.slice(0, 3).join(' | ')}` : 'sin errores de JavaScript');
 await b.close(); sv.close();
