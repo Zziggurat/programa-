@@ -1317,9 +1317,40 @@ function soltarArrastreFrontal(): void {
 	renderer.domElement.style.cursor = '';
 	if (!a) return;
 	if (a.movido) {
-		// El paso de deshacer se captura al SOLTAR y no al empezar: un clic que no llegó a mover
-		// nada no tiene por qué gastar un paso del historial.
-		marcarSucio();
+		/*
+		 * EL PASO DE DESHACER SE TOMA AQUÍ, Y ANTES NO SE TOMABA EN NINGUNA PARTE.
+		 *
+		 * Este comentario prometía «la foto se captura al soltar» y no había ninguna llamada a
+		 * `capturar()` en todo el arrastre del frontal. O sea: mover un piloto por la puerta no
+		 * dejaba paso en el historial, y Ctrl+Z después deshacía LO ANTERIOR. Medido usando el
+		 * editor: mover de x=228 a x=304, deshacer, y la pieza aparecía en 229 —el estado que
+		 * había guardado la última pulsación de flecha— con la posición nueva perdida.
+		 *
+		 * La foto tiene que ser del sitio DE PARTIDA, y al soltar las piezas ya están en el de
+		 * llegada. Así que se las devuelve un instante a donde estaban, se hace la foto y se las
+		 * vuelve a poner donde el usuario las dejó. Son dos escrituras de dos números por pieza,
+		 * sin dibujar nada entre medias, y a cambio el historial guarda exactamente el paso que
+		 * el usuario acaba de dar.
+		 *
+		 * Hacerlo al soltar y no al primer movimiento tiene además dos ventajas: un clic que no
+		 * llega a mover nada no gasta paso, y no se llama a `autoguardar()` en cada `pointermove`,
+		 * que serializaría el proyecto entero decenas de veces por arrastre.
+		 */
+		const tocadas = [
+			{ clase: a.pieza.clase, id: a.pieza.id, x0: a.pieza.x, y0: a.pieza.y },
+			...a.acompanan.map((q) => ({ clase: q.clase, id: q.id, x0: a.pieza.x + q.dx, y0: a.pieza.y + q.dy })),
+		].map((t) => {
+			const q = piezasFrontal().find((k) => k.clase === t.clase && k.id === t.id);
+			return { ...t, x: q?.x ?? t.x0, y: q?.y ?? t.y0 };
+		});
+		for (const t of tocadas) moverPiezaFrontal(t.clase, t.id, t.x0, t.y0);
+		// Si el proyecto es de solo lectura, `capturar` dice que no y las piezas se quedan donde
+		// estaban: el arrastre se deshace solo, que es lo honesto.
+		const sePuedeEditar = capturar();
+		if (sePuedeEditar) {
+			for (const t of tocadas) moverPiezaFrontal(t.clase, t.id, t.x, t.y);
+			marcarSucio();
+		}
 		pintarListaFrontal();
 		pintarSeleccion();
 	}

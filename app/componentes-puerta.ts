@@ -451,7 +451,17 @@ export function fichaFrontal(d: Dispositivo): FichaFrontal {
 
 registrarFrontal('piloto', {
 	familia: 'Luz piloto',
-	huella: () => ({ forma: 'redonda', ancho: TALADRO }),
+	/*
+	 * LA HUELLA ES EL ARO, NO EL TALADRO.
+	 *
+	 * El taladro mide 22 y es lo que se marca en el plano de mecanizado, pero lo que OCUPA el
+	 * piloto en la chapa es el embellecedor, que mide casi treinta. Y la huella no la usa el
+	 * taladrista: la usan el imantado, el reparto por huecos, la alineación por cantos, el borde
+	 * de la hoja y la zona de agarre del ratón. Con 22, dos pilotos «sin hueco entre ellos»
+	 * quedaban con los aros montados uno sobre otro, y uno pegado al canto sacaba el aro fuera de
+	 * la chapa. Lo que el editor mide tiene que ser lo que se ve.
+	 */
+	huella: () => ({ forma: 'redonda', ancho: R_ARO * 2 }),
 	construir: construirPilotoPuerta,
 	propiedades: [
 		{ clave: 'designacion', etiqueta: 'Marca', tipo: 'texto' },
