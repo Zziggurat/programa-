@@ -21,6 +21,7 @@ import {
 } from './canaletas-red.js';
 import { ALTURA_CARRIL, bornesGenericos, construirAparato3D, Z_BORNE } from './dispositivos3d.js';
 import { BocaPasacables, construirEnvolvente, Puerta } from './gabinete3d.js';
+import { construirComponentePuerta } from './componentes-puerta.js';
 
 /*
  * LOS COLORES DE CONDUCTOR, EN TONO DE PVC Y NO DE PALETA DE PANTALLA.
@@ -123,6 +124,14 @@ export interface Escenario {
 	envolvente: THREE.Group;
 	/** La puerta, con su eje de giro y sus dos caras de montaje. Ver `gabinete3d`. */
 	puerta: Puerta;
+	/**
+	 * TODOS los aparatos del tablero, estén montados donde estén.
+	 *
+	 * Los de placa cuelgan de `dispositivos` y los de puerta cuelgan de la hoja, porque cada cosa
+	 * cuelga de la superficie donde está atornillada. Esta lista es la que hay que recorrer para
+	 * hablar de «los aparatos» sin preocuparse de dónde están montados.
+	 */
+	aparatos: THREE.Object3D[];
 	tapas: THREE.Object3D[];     // tapas de canaletas (para ocultarlas)
 	etiquetas: THREE.Object3D[]; // sprites de designación
 	centro: THREE.Vector3;
@@ -209,10 +218,34 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 
 	const dispositivos = new THREE.Group();
 	const etiquetas: THREE.Object3D[] = [];
+	/*
+	 * EL REGISTRO PLANO DE APARATOS, y por qué hace falta ahora.
+	 *
+	 * Hasta aquí todos los aparatos colgaban de `dispositivos`, así que recorrer sus hijos era lo
+	 * mismo que recorrer los aparatos del tablero. Con los componentes de puerta deja de serlo:
+	 * un piloto montado en la puerta tiene que colgar de la HOJA para abrirse con ella, y un
+	 * objeto solo puede tener un padre.
+	 *
+	 * Así que la jerarquía la manda la física —cada cosa cuelga de la superficie donde está
+	 * atornillada— y quien necesita recorrer «todos los aparatos» usa esta lista. La animación de
+	 * la simulación y la búsqueda por id preguntan aquí, y les da igual dónde esté montado cada
+	 * uno, que es exactamente como tiene que ser.
+	 */
+	const aparatos: THREE.Object3D[] = [];
 	for (const col of g.colocaciones) {
 		const d = proyecto.dispositivos.find((x) => x.id === col.dispositivoId);
 		if (!d) continue;
-		dispositivos.add(construirDispositivo(d, col, aEscena, etiquetas));
+		if (col.montaje === 'puerta') {
+			const comp = construirComponentePuerta(d, col);
+			// Se coloca UNA vez, con su origen en la cara exterior: lo de fuera y lo de dentro son
+			// la misma pieza atravesando la chapa, no dos mitades que haya que sincronizar.
+			envolvente.puerta.colocar(comp, 'frente', col.x, col.y, 0);
+			aparatos.push(comp);
+			continue;
+		}
+		const grupo = construirDispositivo(d, col, aEscena, etiquetas);
+		dispositivos.add(grupo);
+		aparatos.push(grupo);
 	}
 	/*
 	 * Prensaestopas de entrada y el aparato de campo que cuelga de cada uno.
@@ -240,7 +273,7 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 
 	return {
 		raiz, dispositivos, cables, bornes, cotas, handles, tapas, etiquetas,
-		envolvente: envolvente.grupo, puerta: envolvente.puerta,
+		envolvente: envolvente.grupo, puerta: envolvente.puerta, aparatos,
 		centro: new THREE.Vector3(0, 0, 0), aEscena,
 	};
 }
@@ -2663,6 +2696,21 @@ export function anclajeBorne(
 	const d = proyecto.dispositivos.find((x) => x.id === dispositivoId);
 	const col = proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === dispositivoId);
 	if (!d) return undefined;
+	/*
+	 * APARATO MONTADO EN LA PUERTA: todavía no tiene anclaje para el cable en 3D.
+	 *
+	 * Eléctricamente está completo —el simulador, el DRC, los potenciales, el esquema y el dossier
+	 * lo tratan como cualquier otro aparato, porque para ellos lo es—, pero el RECORRIDO del cable
+	 * hasta él es otra cosa: sale de la placa y tiene que llegar a una pieza que gira sobre unas
+	 * bisagras. En un tablero de verdad eso se resuelve con un mazo flexible que va al lado de las
+	 * bisagras y deja seno para que la puerta abra; dibujarlo bien es un trabajo con entidad, y
+	 * dibujarlo mal —un cable recto tendido hasta la puerta cerrada— sería peor que no dibujarlo:
+	 * se estiraría por el aire en cuanto la puerta se abriera.
+	 *
+	 * Sin anclaje, `salidasDeCable` devuelve `undefined` y el conductor simplemente no se dibuja.
+	 * No se pierde: sigue en el proyecto, sigue conduciendo y sigue saliendo en el esquema.
+	 */
+	if (col?.montaje === 'puerta') return undefined;
 	// Aparato NO colocado en la placa (red/acometida o aparato de campo): su cable no puede
 	// quedar en el aire («cable fantasma»). Entra por un PRENSAESTOPAS en el borde inferior
 	// del gabinete, igual que en un tablero real, para que el cable tenga un recorrido visible.

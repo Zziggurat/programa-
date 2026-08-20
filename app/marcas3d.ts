@@ -108,6 +108,16 @@ function material(clara: boolean): THREE.MeshStandardMaterial {
  * justo donde más falta hace acertar.
  */
 export function marca(texto: string, alto: number, clara = false): THREE.Mesh | undefined {
+	/*
+	 * SIN NAVEGADOR NO HAY SERIGRAFÍA, y no pasa nada.
+	 *
+	 * El atlas se dibuja sobre un `<canvas>`, que fuera del navegador no existe. Las pruebas
+	 * construyen geometría de verdad —la de la puerta y la de sus componentes— para comprobar
+	 * jerarquías y transformaciones, y sin esto se caían al llegar al primer rótulo. Devolver
+	 * `undefined` es lo que ya hace esta función cuando un texto no cabe en el atlas, así que
+	 * todos los sitios que la llaman saben tratarlo.
+	 */
+	if (typeof document === 'undefined') return undefined;
 	const i = celdaDe(texto);
 	if (i === undefined) return undefined;
 	/*

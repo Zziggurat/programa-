@@ -333,6 +333,10 @@ function leerGabinete(bruto: Record<string, unknown>, arreglos: string[]): Gabin
 				x, y, ancho: anchoCol, alto: altoCol,
 				rielId: texto(c.rielId),
 				z: enRango(c.z, -MAX_MM, MAX_MM),
+				// Solo se acepta `puerta`; cualquier otra cosa cae en la placa, que es donde va un
+				// aparato mientras nadie diga lo contrario. Un valor raro no puede dejar un aparato
+				// montado en ninguna parte.
+				montaje: c.montaje === 'puerta' ? 'puerta' as const : undefined,
 			};
 		}),
 	};
@@ -572,6 +576,21 @@ function leerTerminales(bruto: unknown): BloqueTerminales[] | undefined {
 	return salida.length ? salida : undefined;
 }
 
+/**
+ * Color de señalización de un piloto o un mando. Admite los nombres normalizados y un `#rrggbb`.
+ * `COLOR_PILOTO` vive en la escena y aquí solo se comprueba la forma: el modelo no puede depender
+ * del dibujo, así que la lista de nombres válidos se repite —son cinco— antes que atar el archivo
+ * de proyecto a un módulo de Three.js.
+ */
+const COLORES_SENAL = ['rojo', 'verde', 'ambar', 'amarillo', 'azul', 'blanco'];
+
+function leerColorSenal(bruto: unknown): string | undefined {
+	if (typeof bruto !== 'string') return undefined;
+	const v = bruto.trim().toLowerCase();
+	if (COLORES_SENAL.includes(v)) return v;
+	return /^#[0-9a-f]{6}$/.test(v) ? v : undefined;
+}
+
 /** Un rango `[mínimo, máximo]`. Al revés o incompleto no es un rango. */
 function leerRango(bruto: unknown, min: number, max: number): [number, number] | undefined {
 	if (!esLista(bruto) || bruto.length !== 2) return undefined;
@@ -778,6 +797,11 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 				ruta('rangoRegulacionA'), 'el rango de regulación no era [mínimo, máximo] en amperios'),
 			rangoSonda: oQuitado(d.rangoSonda, leerRango(d.rangoSonda, -10_000, 10_000),
 				ruta('rangoSonda'), 'el rango de la sonda no era [mínimo, máximo]'),
+			// Color de señalización: un nombre normalizado o un #rrggbb. Cualquier otra cosa se
+			// tira y el piloto sale blanco, que es el color «sin significado asignado» de la norma:
+			// un dato corrupto no puede hacer que un tablero mienta diciendo «falla» en rojo.
+			colorSenal: oQuitado(d.colorSenal, leerColorSenal(d.colorSenal),
+				ruta('colorSenal'), 'el color de señalización no era un nombre conocido ni un #rrggbb'),
 			rangoSalidaAnalogica: oQuitado(d.rangoSalidaAnalogica,
 				leerRango(d.rangoSalidaAnalogica, -1000, 1000),
 				ruta('rangoSalidaAnalogica'), 'el rango de la salida analógica no era [mínimo, máximo]'),

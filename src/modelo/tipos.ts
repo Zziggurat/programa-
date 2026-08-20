@@ -196,6 +196,16 @@ export interface Dispositivo {
 	/** Rango de regulación de un guardamotor o relé térmico, en A: [mínimo, máximo]. */
 	rangoRegulacionA?: [number, number];
 	/**
+	 * COLOR DE SEÑALIZACIÓN de un piloto, un pulsador o un selector: `rojo`, `verde`, `ambar`,
+	 * `azul`, `blanco` — o un `#rrggbb` si hace falta uno concreto.
+	 *
+	 * Es dato del APARATO y no del dibujo, y por eso vive aquí y no en la escena. IEC 60073 le da
+	 * significado a cada uno —rojo es falla o parada, verde es marcha, ámbar es aviso— así que el
+	 * color de un piloto es tan parte de su definición como su tensión: cambiarlo cambia lo que el
+	 * tablero le dice a quien lo mira, y tiene que sobrevivir a guardar y volver a abrir.
+	 */
+	colorSenal?: string;
+	/**
 	 * Rango de medida de una SONDA analógica: [mínimo, máximo] en su unidad.
 	 *
 	 * Es lo que separa una sonda de un contacto de campo. Un presostato de filtro sucio y una sonda
@@ -360,6 +370,15 @@ export interface Colocacion {
 	 * positivo las trae al frente, para que no queden tapadas.
 	 */
 	z?: number;
+	/**
+	 * SOBRE QUÉ SUPERFICIE VA MONTADO. Por defecto, la placa de montaje del fondo.
+	 *
+	 * Con `puerta`, `x` e `y` se miden en milímetros desde la esquina SUPERIOR IZQUIERDA de la
+	 * hoja vista de frente, igual que en la placa se miden desde la suya. Es el único dato que
+	 * distingue un piloto de puerta de uno de placa: el aparato, sus bornes y su comportamiento
+	 * eléctrico son exactamente los mismos.
+	 */
+	montaje?: 'placa' | 'puerta';
 }
 
 export interface Gabinete {

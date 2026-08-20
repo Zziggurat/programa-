@@ -608,7 +608,16 @@ test('ESTRELLA-TRIÁNGULO: por el térmico pasa la corriente del motor, no el tr
 	const f2 = r.cargaPorAparato.get('f2');
 	assert.ok(f2, 'el relé térmico no aparece en el reparto de corrientes');
 	assert.equal(f2!.corriente, 8.5, `por el térmico pasan ${f2!.corriente} A y el motor consume 8,5 A`);
-	assert.equal(r.corrienteTotal, 8.5);
+	/*
+	 * El TOTAL ya no es solo el motor: desde que el tablero lleva tres pilotos de presencia de
+	 * fase en la puerta, la acometida alimenta también esos tres LED de 20 mA. Que salgan en el
+	 * total es la prueba de que están conectados de verdad y no encendidos por decreto —si el
+	 * piloto fuese una variable de dibujo, aquí seguirían saliendo 8,5 A—.
+	 *
+	 * Los pilotos cuelgan ANTES del automático general, así que ni el térmico ni Q1 los ven: por
+	 * eso las dos comprobaciones de arriba y la de abajo siguen dando lo mismo que siempre.
+	 */
+	assert.equal(r.corrienteTotal, 8.56, 'el total tiene que ser el motor más los tres pilotos de 20 mA');
 	const q1 = r.cargaPorAparato.get('q1');
 	assert.equal(q1!.porcentaje, 53, 'un motor de 8,5 A en un automático de 16 A es el 53 %');
 });

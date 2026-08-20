@@ -368,10 +368,48 @@ function estrellaTriangulo(): Proyecto {
 			bornes: [C('A1'), C('A2'), C('11'), C('12'), C('13'), C('14')],
 		},
 		{
+			/*
+			 * El automático de los pilotos de presencia. Hace falta y no es un adorno: los pilotos
+			 * se cuelgan ANTES del automático general —para que avisen de que hay tensión aunque
+			 * el general esté bajado, que es justamente su trabajo— y un hilo de 1 mm² colgado de
+			 * la acometida pelada no lo protege nadie. Con 2 A, el hilo queda protegido y el DRC
+			 * deja de tener razón para quejarse.
+			 */
+			id: 'q3', tipo: 'disyuntor', descripcion: 'Automático 3P C2 (pilotos de presencia)',
+			fabricante: 'Schneider Electric', referencia: 'iC60N 3P C2', tensionNominal: 380,
+			hojaId: 'h2', corrienteNominal: 2, curvaDisparo: 'C', polos: 3,
+			poderCorteKA: 10, disipacionW: 2, poderCorteEstimado: true, disipacionEstimada: true,
+			bornes: [L('1'), L('3'), L('5'), L('2'), L('4'), L('6')],
+			puentesInternos: [['1', '2'], ['3', '4'], ['5', '6']],
+		},
+		{
 			id: 'x2', tipo: 'bornero', descripcion: 'Bornero de mando (botonera)', hojaId: 'h2',
 			bornes: [C('1'), C('2'), C('3'), C('4'), C('5'), C('6')],
 			puentes: [['2', '5'], ['3', '6']],
 		},
+		/*
+		 * LOS TRES PILOTOS DE PRESENCIA DE FASE, montados EN LA PUERTA.
+		 *
+		 * Son aparatos normales y corrientes: `tipo: 'piloto'`, dos bornes, su tensión y su
+		 * consumo. El simulador los enciende porque entre X1 y X2 hay fase y neutro, igual que
+		 * haría con un piloto atornillado al carril; lo único distinto es la `Colocacion`, que
+		 * dice que van en la puerta. No hay ni un estado «encendido» guardado en ninguna parte.
+		 *
+		 * Los colores son los de la fase que vigilan, que es como se rotula un tablero de verdad:
+		 * si un día falta la S, el del medio se apaga y los otros dos siguen encendidos, y con eso
+		 * ya se sabe qué fase falta sin sacar el multímetro.
+		 */
+		...(['R', 'S', 'T'] as const).map((fase, i) => ({
+			// La designación se pone a mano —R, S, T— porque es lo que va rotulado en la puerta y
+			// lo que hay que leer de un vistazo; la letra de clase la pone el proyecto (P de piloto).
+			id: `h${fase.toLowerCase()}`, tipo: 'piloto' as const, congelado: true,
+			designacion: fase,
+			descripcion: `Piloto de presencia de fase ${fase} (puerta)`,
+			fabricante: 'Schneider Electric', referencia: 'XB5AVM4',
+			tensionNominal: 220, corrienteNominal: 0.02, hojaId: 'h2',
+			colorSenal: (['rojo', 'ambar', 'azul'] as const)[i],
+			bornes: [C('X1'), C('X2')],
+		})),
 	];
 
 	p.conductores = [
@@ -435,6 +473,30 @@ function estrellaTriangulo(): Proyecto {
 		cable(['km3', '22'], ['km2', 'A1'], 1, 'negro'),
 		cable(['kt', '14'], ['km2', '21'], 1, 'negro'),  // pasando por el bloqueo de la estrella
 		cable(['km2', '22'], ['km3', 'A1'], 1, 'negro'),
+		// --- Presencia de fase: un piloto de puerta por fase, ANTES del automático general ---
+		/*
+		 * Se cuelgan de las bornas de ENTRADA de Q1 (1, 3, 5), que son el mismo potencial que la
+		 * acometida: por ahí llega la tensión esté Q1 subido o bajado. Es lo que se quiere de un
+		 * piloto de presencia —tiene que avisar de que el tablero tiene tensión aunque el general
+		 * esté abierto— y además ahorra tres tiradas desde el prensaestopas hasta arriba, que en
+		 * un tablero con las canaletas ya cargadas no es un detalle: medido, tirándolos desde la
+		 * acometida el peor par de conductores pasaba de −2,8 a −4,8 mm de holgura, y desde la
+		 * entrada de Q1 se queda en −3,0.
+		 *
+		 * El hilo de 1 mm² lo protege Q3, de 2 A: colgado directamente de un automático de 16 A
+		 * no lo protegería nadie, y el DRC lo dice.
+		 */
+		cable(['q1', '1'], ['q3', '1'], 1, 'marrón'),
+		cable(['q1', '3'], ['q3', '3'], 1, 'negro'),
+		cable(['q1', '5'], ['q3', '5'], 1, 'gris'),
+		cable(['q3', '2'], ['hr', 'X1'], 1, 'marrón'),
+		cable(['q3', '4'], ['hs', 'X1'], 1, 'negro'),
+		cable(['q3', '6'], ['ht', 'X1'], 1, 'gris'),
+		// Los tres X2 van ENCADENADOS hasta el neutro, no los tres a la misma borna: en una borna
+		// caben dos hilos, y encadenar es lo que se hace en el tablero.
+		cable(['hr', 'X2'], ['hs', 'X2'], 1, 'azul'),
+		cable(['hs', 'X2'], ['ht', 'X2'], 1, 'azul'),
+		cable(['ht', 'X2'], ['red', 'N'], 1, 'azul'),
 		// Los cuatro retornos de bobina se encadenan y vuelven por el contacto del térmico.
 		cable(['km2', 'A2'], ['km3', 'A2'], 1, 'azul'),
 		cable(['km3', 'A2'], ['kt', 'A2'], 1, 'azul'),
@@ -519,6 +581,12 @@ function estrellaTriangulo(): Proyecto {
 			{ dispositivoId: 'km3', x: 485, y: 47, ancho: 45, alto: 86, rielId: 'r1' },
 			{ dispositivoId: 'kt', x: 265, y: 240, ancho: 22, alto: 80, rielId: 'r2' },
 			{ dispositivoId: 'x2', x: 265, y: 445, ancho: 110, alto: 50, rielId: 'r3' },
+			{ dispositivoId: 'q3', x: 150, y: 47, ancho: 54, alto: 85, rielId: 'r1' },
+			// En la PUERTA: x e y se miden desde su esquina superior izquierda, igual que en la
+			// placa se miden desde la suya. La hoja de este armario mide 660 × 660.
+			{ dispositivoId: 'hr', x: 250, y: 70, ancho: 30, alto: 30, montaje: 'puerta' },
+			{ dispositivoId: 'hs', x: 330, y: 70, ancho: 30, alto: 30, montaje: 'puerta' },
+			{ dispositivoId: 'ht', x: 410, y: 70, ancho: 30, alto: 30, montaje: 'puerta' },
 		],
 	};
 	return p;

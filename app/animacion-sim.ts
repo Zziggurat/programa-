@@ -42,13 +42,15 @@ interface Piezas {
 	vastago: THREE.Mesh[];
 	pantalla: THREE.Mesh[];
 	led: THREE.Mesh[];
+	/** El resplandor de un piloto encendido: un disco aditivo, no una luz. */
+	halo: THREE.Mesh[];
 	/** Posición de reposo de cada pieza, para poder devolverla al desenergizar. */
 	reposo: Map<THREE.Object3D, THREE.Vector3>;
 }
 
 const VACIO = (): Piezas => ({
 	armadura: [], palanca: [], mirilla: [], lente: [], boton: [], eje: [], vastago: [],
-	pantalla: [], led: [],
+	pantalla: [], led: [], halo: [],
 	reposo: new Map(),
 });
 
@@ -221,14 +223,35 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		}
 
 		/* --- Pilotos, lámparas y testigos: se encienden con su propio color --- */
+		// Una sonda o boya se enciende cuando está ACCIONADA, aunque no consuma nada.
+		const encendida = enMarcha || (d.tipo === 'sensor' && !!st.activo);
 		for (const m of p.lente) {
 			const propio = (m.userData.colorPropio as number | undefined) ?? 0xffd54f;
 			const mat = m.material as THREE.MeshStandardMaterial;
-			// Una sonda o boya se enciende cuando está ACCIONADA, aunque no consuma nada.
-			const encendida = enMarcha || (d.tipo === 'sensor' && !!st.activo);
 			mat.emissive.setHex(encendida ? propio : 0x000000);
 			mat.emissiveIntensity = encendida ? 1.15 : 0;
-			mat.color.setHex(propio);
+			/*
+			 * APAGADO NO ES «EL MISMO COLOR SIN BRILLO».
+			 *
+			 * Un piloto apagado se ve más oscuro y más denso —es una lente de plástico teñido con
+			 * la lámpara muerta detrás—, y pintándolo del color vivo parece encendido de día. Los
+			 * componentes que declaran su `colorApagado` lo usan; los que no, se comportan
+			 * exactamente como antes, así que ningún aparato de placa cambia de aspecto.
+			 */
+			const apagado = m.userData.colorApagado as number | undefined;
+			mat.color.setHex(encendida || apagado === undefined ? propio : apagado);
+		}
+		/*
+		 * EL HALO. Es un disco aditivo, no una luz: un piloto de veinte miliamperios no ilumina el
+		 * armario, y meter una luz por piloto costaría un fragmento por píxel y por piloto para
+		 * conseguir justamente el efecto que no se quiere. Se sube y se baja la opacidad, que no
+		 * recompila el material ni toca la geometría.
+		 */
+		for (const m of p.halo) {
+			const mat = m.material as THREE.MeshBasicMaterial;
+			const objetivo = encendida ? 0.34 : 0;
+			if (mat.opacity !== objetivo) mat.opacity = objetivo;
+			m.visible = objetivo > 0;
 		}
 
 		/* --- Pulsadores: la cabeza se hunde mientras está apretada --- */

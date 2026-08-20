@@ -42,6 +42,7 @@ import {
 	proyectarEnPolilinea, respetarBloqueo,
 } from './edicion-cables.js';
 import { colorDeTipo } from './dispositivos3d.js';
+import { RADIO_PILOTO } from './componentes-puerta.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
 import { huellaMinima, leerRotulos } from '../src/motores/terminales.js';
@@ -2527,8 +2528,14 @@ function idDispositivoSel(): string | undefined {
 	return sel?.tipo === 'dispositivo' ? sel.id : undefined;
 }
 
+/**
+ * El grupo 3D de un aparato, esté montado en la placa o en la puerta.
+ *
+ * Se pregunta al REGISTRO y no a los hijos de `escenario.dispositivos`: desde que hay componentes
+ * de puerta, un aparato puede colgar de la hoja —tiene que abrirse con ella— y ya no está ahí.
+ */
 function grupoDe(id: string): THREE.Group | undefined {
-	return escenario.dispositivos.children.find((g) => g.userData.dispositivoId === id) as THREE.Group | undefined;
+	return escenario.aparatos.find((g) => g.userData.dispositivoId === id) as THREE.Group | undefined;
 }
 
 /*
@@ -2553,14 +2560,14 @@ function limpiarResaltado(): void {
 	for (const m of resaltados) m.emissive.setHex(0x000000);
 	resaltados = [];
 	if (marcoSeleccion) {
-		escena.remove(marcoSeleccion);
+		marcoSeleccion.parent?.remove(marcoSeleccion);
 		marcoSeleccion.geometry.dispose();
 		marcoSeleccion = undefined;
 	}
 	// Y el del hover, que si no se queda flotando sobre un aparato que ya no existe al reconstruir.
 	hoverDispositivo = undefined;
 	if (marcoHover) {
-		escena.remove(marcoHover);
+		marcoHover.parent?.remove(marcoHover);
 		marcoHover.geometry.dispose();
 		marcoHover = undefined;
 	}
@@ -2584,10 +2591,23 @@ function marcoDe(raiz: THREE.Object3D, color: number, opacidad: number, holgura:
 	const m = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
 		color, transparent: true, opacity: opacidad, depthTest: false,
 	}));
-	m.position.copy(centro);
 	m.renderOrder = 998;
 	m.raycast = () => {};
-	escena.add(m);
+	/*
+	 * EL MARCO CUELGA DE DONDE CUELGUE SU APARATO, no de la escena.
+	 *
+	 * Colgado de la escena, un marco sobre un piloto de puerta se quedaba clavado en el aire en
+	 * cuanto la puerta se movía. Colgándolo del padre del aparato viaja con él. Para todo lo que
+	 * está en la placa no cambia nada —ese padre no tiene transformación— y para lo que está en la
+	 * puerta pasa a ser correcto.
+	 *
+	 * La caja se midió en coordenadas de MUNDO, así que se le quita la rotación del padre para que
+	 * siga siendo la misma caja que se midió.
+	 */
+	const padre = raiz.parent ?? escena;
+	padre.add(m);
+	m.position.copy(padre.worldToLocal(centro.clone()));
+	m.quaternion.copy(padre.getWorldQuaternion(new THREE.Quaternion()).invert());
 	return m;
 }
 
@@ -2609,7 +2629,7 @@ function resaltarHoverDispositivo(id: string | undefined): void {
 	if (id === hoverDispositivo) return;
 	hoverDispositivo = id;
 	if (marcoHover) {
-		escena.remove(marcoHover);
+		marcoHover.parent?.remove(marcoHover);
 		marcoHover.geometry.dispose();
 		marcoHover = undefined;
 	}
@@ -2906,7 +2926,45 @@ function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 		}
 	}
 	const cable = cableVisible ?? cableAgarre;
-	return cable ? { tipo: 'cable', id: cable } : undefined; // los cables tienen la prioridad más baja
+	if (cable) return { tipo: 'cable', id: cable }; // los cables tienen la prioridad más baja
+	// Y si el rayo no ha dado con nada, se mira si el puntero está CERCA de un componente de
+	// puerta: una lente de diez milímetros a dos metros son tres píxeles, y acertarle sería
+	// cuestión de puntería. Ver `componentePuertaCerca`.
+	return componentePuertaCerca(ev);
+}
+
+/** Radio de agarre de un componente de puerta, en píxeles. El mismo dedo que para los cables. */
+const AGARRE_PUERTA_PX = 15;
+
+/**
+ * COMPONENTE DE PUERTA CERCA DEL PUNTERO, medido en PÍXELES.
+ *
+ * Es la misma regla que se aplicó a los cables y por el mismo motivo: una zona de agarre definida
+ * en milímetros se encoge en pantalla justo cuando el tablero se ve de lejos o de canto, que es
+ * cuando más falta hace. Aquí la tolerancia es la misma esté el piloto donde esté.
+ *
+ * Solo entra en juego cuando el trazado de rayos NO ha encontrado nada, así que no le quita el
+ * clic a nada: es una red de seguridad, no una prioridad nueva.
+ */
+function componentePuertaCerca(ev: MouseEvent): Seleccion | undefined {
+	if (!escenario.envolvente.visible) return undefined;
+	const px = punteroEnPixeles(ev);
+	prepararProyeccion();
+	let mejor: { id: string; d: number } | undefined;
+	for (const g of escenario.aparatos) {
+		if (g.userData.montaje !== 'puerta') continue;
+		const centro = g.getWorldPosition(new THREE.Vector3());
+		const p = aPixeles(centro.x, centro.y, centro.z, px.ancho, px.alto);
+		if (p.w <= 0) continue;
+		// El radio aparente del propio piloto, para que de cerca la zona sea la pieza y de lejos
+		// nunca baje de un dedo de ratón.
+		const borde = aPixeles(centro.x + RADIO_PILOTO, centro.y, centro.z, px.ancho, px.alto);
+		const radio = Math.max(AGARRE_PUERTA_PX, Math.hypot(borde.x - p.x, borde.y - p.y));
+		const d = Math.hypot(p.x - px.x, p.y - px.y);
+		if (d > radio) continue;
+		if (!mejor || d < mejor.d) mejor = { id: g.userData.dispositivoId as string, d };
+	}
+	return mejor ? { tipo: 'dispositivo', id: mejor.id } : undefined;
 }
 
 /* ==================================================================================
@@ -6030,7 +6088,9 @@ renderer.setAnimationLoop(() => {
 	const dt = Math.min((ahora - ultimoFotograma) / 1000, 0.1);
 	ultimoFotograma = ahora;
 	animarSimulacion({
-		grupos: escenario.dispositivos.children,
+		// Todos los aparatos, monten donde monten: un piloto de puerta se enciende con el mismo
+		// bucle y por el mismo motivo que uno de placa.
+		grupos: escenario.aparatos,
 		proyecto,
 		resultado: panelSim.resultado(),
 		estado: panelSim.estadoDeLosMandos(),
@@ -7011,6 +7071,50 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				acierta: ahora === conductorId, acertabaAntes: antes === conductorId,
 			};
 		},
+		/**
+		 * QUÉ ESTÁN HACIENDO LOS COMPONENTES DE PUERTA, leído de la ESCENA y no del modelo.
+		 *
+		 * Es la única forma de comprobar que lo que se ve es lo que dice el circuito: se mira la
+		 * intensidad de emisión de la lente y la opacidad del halo —lo que de verdad se dibuja—,
+		 * no una variable de estado que podría estar diciendo una cosa mientras la pantalla dice
+		 * otra. Y se devuelve la posición en el mundo, para poder verificar que la pieza viaja con
+		 * la puerta.
+		 */
+		componentesDePuerta: () => escenario.aparatos
+			.filter((g) => g.userData.montaje === 'puerta')
+			.map((g) => {
+				let lente: THREE.Mesh | undefined;
+				let halo: THREE.Mesh | undefined;
+				g.traverse((o) => {
+					if (o.userData.pieza === 'lente') lente = o as THREE.Mesh;
+					if (o.userData.pieza === 'halo') halo = o as THREE.Mesh;
+				});
+				const mat = lente?.material as THREE.MeshStandardMaterial | undefined;
+				const mh = halo?.material as THREE.MeshBasicMaterial | undefined;
+				const w = g.getWorldPosition(new THREE.Vector3());
+				return {
+					id: g.userData.dispositivoId as string,
+					encendido: (mat?.emissiveIntensity ?? 0) > 0.01,
+					emision: Math.round((mat?.emissiveIntensity ?? 0) * 100) / 100,
+					halo: Math.round((mh?.opacity ?? 0) * 100) / 100,
+					color: mat ? `#${mat.color.getHexString()}` : undefined,
+					mundo: { x: Math.round(w.x), y: Math.round(w.y), z: Math.round(w.z) },
+				};
+			}),
+		/** Quita un conductor por su id: así se «pierde una fase» sin tocar ninguna bandera. */
+		quitarConductor: (conductorId: string) => {
+			const antes = proyecto.conductores.length;
+			proyecto.conductores = proyecto.conductores.filter((c) => c.id !== conductorId);
+			if (proyecto.conductores.length === antes) return false;
+			recalcular();
+			reconstruirCables();
+			return true;
+		},
+		/** El conductor que alimenta un borne, para poder cortarlo por su nombre. */
+		conductorHacia: (dispositivoId: string, borneId: string) => proyecto.conductores.find(
+			(c) => (c.a.dispositivoId === dispositivoId && c.a.borneId === borneId)
+				|| (c.de.dispositivoId === dispositivoId && c.de.borneId === borneId),
+		)?.id,
 		pantallaDe: (x: number, y: number, z: number) => {
 			const g = proyecto.gabinete;
 			if (!g) return undefined;
