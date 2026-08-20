@@ -307,6 +307,41 @@ export interface HuellaFrontal {
 	alto?: number;
 }
 
+/**
+ * UNA PROPIEDAD CONFIGURABLE, declarada por la ficha y presentada sola por el editor.
+ *
+ * Ésta es la pieza que faltaba y la que causó el fallo del color. El piloto TENÍA su color en el
+ * modelo, el constructor lo leía y el material lo pintaba… pero no había ni un solo control en
+ * ninguna parte para cambiarlo, así que un piloto nacía verde y verde se quedaba. Y la ficha del
+ * aparato, en el espacio Frontal, ofrecía únicamente los controles de cablear.
+ *
+ * El arreglo no es «añadir un selector de color al piloto»: eso lo volvería a dejar roto para el
+ * pulsador, para el selector y para la seta. La ficha DECLARA qué se puede configurar y el editor
+ * lo dibuja sin saber de qué familia se trata. Registrar una familia nueva con sus propiedades no
+ * toca ni una línea de la interfaz.
+ */
+export interface PropiedadFrontal {
+	/** Dónde vive en el modelo: una clave de `Dispositivo`. */
+	clave: 'colorSenal' | 'designacion' | 'descripcion' | 'tensionNominal';
+	etiqueta: string;
+	/**
+	 * Cómo se edita:
+	 *  · `texto`  — una línea
+	 *  · `numero` — un número con unidad
+	 *  · `lista`  — una de las `opciones`
+	 */
+	tipo: 'texto' | 'numero' | 'lista';
+	opciones?: { valor: string; texto: string }[];
+	unidad?: string;
+	/** Qué se guarda al crear el aparato si nadie dice otra cosa. */
+	porDefecto?: string | number;
+	/**
+	 * True cuando cambiarla obliga a rehacer la geometría (un color de lente sí; una descripción
+	 * no). Sirve para no reconstruir nada que no haga falta.
+	 */
+	rehaceGeometria?: boolean;
+}
+
 export interface FichaFrontal {
 	/** Nombre de la familia, para la interfaz. */
 	familia: string;
@@ -314,7 +349,18 @@ export interface FichaFrontal {
 	huella(d: Dispositivo): HuellaFrontal;
 	/** La geometría, con el origen en la CARA EXTERIOR de la puerta y +Z hacia el observador. */
 	construir(d: Dispositivo, col: Colocacion): THREE.Group;
+	/** Lo que el editor deja configurar. La posición y el identificador los pone él por su cuenta. */
+	propiedades: PropiedadFrontal[];
 }
+
+/** Las cinco de señalización de IEC 60073, para que las ofrezca cualquier familia que las use. */
+export const OPCIONES_COLOR: { valor: string; texto: string }[] = [
+	{ valor: 'rojo', texto: 'Rojo — falla, parada, peligro' },
+	{ valor: 'verde', texto: 'Verde — marcha, condición normal' },
+	{ valor: 'ambar', texto: 'Ámbar — aviso, atención' },
+	{ valor: 'azul', texto: 'Azul — acción obligatoria' },
+	{ valor: 'blanco', texto: 'Blanco — confirmación, sin significado' },
+];
 
 const FICHAS = new Map<string, FichaFrontal>();
 
@@ -336,7 +382,24 @@ registrarFrontal('piloto', {
 	familia: 'Luz piloto',
 	huella: () => ({ forma: 'redonda', ancho: TALADRO }),
 	construir: construirPilotoPuerta,
+	propiedades: [
+		{ clave: 'designacion', etiqueta: 'Marca', tipo: 'texto' },
+		{
+			clave: 'colorSenal', etiqueta: 'Color de la lente', tipo: 'lista',
+			opciones: OPCIONES_COLOR, porDefecto: 'rojo', rehaceGeometria: true,
+		},
+		{ clave: 'tensionNominal', etiqueta: 'Tensión', tipo: 'numero', unidad: 'V', porDefecto: 24 },
+		{ clave: 'descripcion', etiqueta: 'Para qué es', tipo: 'texto' },
+	],
 });
+
+/** Lo que hay que guardar al crear un aparato de esta familia: los valores por defecto de su ficha. */
+export function valoresPorDefecto(tipo: string): Record<string, string | number> {
+	const f = FICHAS.get(tipo);
+	const v: Record<string, string | number> = {};
+	for (const p of f?.propiedades ?? []) if (p.porDefecto !== undefined) v[p.clave] = p.porDefecto;
+	return v;
+}
 
 /** Construye el componente de frontal que le toque a este aparato. */
 export function construirComponentePuerta(d: Dispositivo, col: Colocacion): THREE.Group {

@@ -146,27 +146,52 @@ export function alinearFrontal(
 }
 
 /**
- * REPARTE con la misma separación entre centros.
+ * REPARTIR: hay dos criterios y los dos son legítimos, así que están los dos.
  *
- * Entre centros y no entre bordes, y es una decisión: en un frontal lo que se mira son los ejes de
- * los taladros, no los cantos de los embellecedores. Tres pilotos y un pulsador más gordo puestos
- * «a la misma distancia de canto» se ven torcidos; puestos a la misma distancia de eje, se ven
- * como una fila. Los extremos no se mueven: son los que fijan el tramo.
+ *   `ejes`   la misma distancia entre CENTROS. Es el paso de taladrado, y es lo que se pide en un
+ *            frontal: una fila de mandos se lee por dónde están sus ejes, no por sus embellecedores.
+ *            Con piezas del mismo tamaño —el caso normal— los dos criterios dan lo mismo.
+ *   `huecos` el mismo AIRE entre piezas. Es lo que se quiere cuando hay tamaños muy distintos: tres
+ *            pilotos de 22 mm y una placa de 90 puestos a la misma distancia de eje dejan huecos
+ *            desiguales y se ven torcidos.
+ *
+ * Los extremos no se mueven en ninguno de los dos: son los que fijan el tramo.
  */
 export function repartirFrontal(
-	piezas: readonly PiezaFrontal[], eje: 'x' | 'y',
+	piezas: readonly PiezaFrontal[], eje: 'x' | 'y', modo: 'ejes' | 'huecos' = 'ejes',
 ): Map<string, { x: number; y: number }> {
 	const cambios = new Map<string, { x: number; y: number }>();
 	if (piezas.length < 3) return cambios;
-	const orden = [...piezas].sort((a, b) => (eje === 'x' ? a.x - b.x : a.y - b.y));
+	const de = (p: PiezaFrontal) => (eje === 'x' ? p.x : p.y);
+	const grueso = (p: PiezaFrontal) => (eje === 'x' ? p.ancho : p.alto);
+	const orden = [...piezas].sort((a, b) => de(a) - de(b));
 	const primero = orden[0];
 	const ultimo = orden[orden.length - 1];
-	const desde = eje === 'x' ? primero.x : primero.y;
-	const hasta = eje === 'x' ? ultimo.x : ultimo.y;
-	const paso = (hasta - desde) / (orden.length - 1);
+
+	const centros: number[] = [];
+	if (modo === 'ejes') {
+		const paso = (de(ultimo) - de(primero)) / (orden.length - 1);
+		for (let i = 0; i < orden.length; i++) centros.push(de(primero) + paso * i);
+	} else {
+		// El aire disponible es el tramo entre los cantos interiores de los extremos, menos lo que
+		// ocupan las piezas de en medio. Repartido entre los huecos que hay.
+		const desde = de(primero) + grueso(primero) / 2;
+		const hasta = de(ultimo) - grueso(ultimo) / 2;
+		const ocupado = orden.slice(1, -1).reduce((a, p) => a + grueso(p), 0);
+		const hueco = (hasta - desde - ocupado) / (orden.length - 1);
+		centros.push(de(primero));
+		let cursor = desde;
+		for (let i = 1; i < orden.length - 1; i++) {
+			cursor += hueco + grueso(orden[i]) / 2;
+			centros.push(cursor);
+			cursor += grueso(orden[i]) / 2;
+		}
+		centros.push(de(ultimo));
+	}
+
 	for (let i = 1; i < orden.length - 1; i++) {
 		const p = orden[i];
-		const v = Math.round(desde + paso * i);
+		const v = Math.round(centros[i]);
 		const nuevo = eje === 'x' ? { x: v, y: p.y } : { x: p.x, y: v };
 		if (nuevo.x !== p.x || nuevo.y !== p.y) cambios.set(p.id, nuevo);
 	}

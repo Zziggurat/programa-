@@ -104,3 +104,41 @@ test('repartir deja los extremos donde están y iguala las separaciones', () => 
 	// Y con menos de tres no hay nada que repartir.
 	assert.equal(repartirFrontal([pieza('a', 0, 0), pieza('b', 10, 0)], 'x').size, 0);
 });
+
+test('repartir por HUECOS iguala el aire, no los ejes', () => {
+	/*
+	 * Con piezas del mismo tamaño los dos criterios dan lo mismo, así que el caso que decide es el
+	 * de tamaños distintos: una placa ancha entre dos pilotos. Repartiendo ejes, los huecos salen
+	 * desiguales; repartiendo huecos, el aire a cada lado de la placa es el mismo.
+	 */
+	const piezas = [
+		pieza('a', 100, 50, 22, 22),
+		pieza('ancha', 200, 50, 90, 22),
+		pieza('c', 400, 50, 22, 22),
+	];
+	const porHuecos = repartirFrontal(piezas, 'x', 'huecos').get('ancha')!;
+	// Aire disponible: de 111 a 389 son 278 mm, menos los 90 de la placa, repartidos en 2 huecos.
+	const hueco = (389 - 111 - 90) / 2;
+	assert.equal(porHuecos.x, Math.round(111 + hueco + 45));
+	const izquierda = porHuecos.x - 45 - 111;
+	const derecha = 389 - (porHuecos.x + 45);
+	assert.ok(Math.abs(izquierda - derecha) <= 1, `huecos de ${izquierda} y ${derecha} mm`);
+
+	// Y por EJES la placa queda centrada entre los dos extremos, que es otra cosa.
+	assert.equal(repartirFrontal(piezas, 'x', 'ejes').get('ancha')!.x, 250);
+});
+
+test('alinear no puede sacar una pieza de la hoja', () => {
+	/*
+	 * Alinear a la izquierda un grupo cuya pieza más a la izquierda ya toca el canto empujaría a
+	 * las demás fuera de la chapa. El recorte es de quien aplica los cambios, no del cálculo: la
+	 * función de alinear dice dónde iría cada una y el borde de la hoja se impone después, igual
+	 * que en el arrastre.
+	 */
+	const hoja = { ancho: 300, alto: 300 };
+	const cambios = alinearFrontal([pieza('a', 12, 50), pieza('b', 200, 50)], 'izquierda');
+	const b = cambios.get('b')!;
+	assert.equal(b.x, 12, 'sin recortar, se alinearía al canto de la primera');
+	// Y al aplicarlo, dentro de la hoja: 12 está por debajo del margen mínimo (11 + 6 = 17).
+	assert.equal(dentroDeLaHoja(b, pieza('b', 0, 0), hoja).x, 17);
+});

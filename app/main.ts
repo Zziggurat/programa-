@@ -42,7 +42,10 @@ import {
 	proyectarEnPolilinea, respetarBloqueo,
 } from './edicion-cables.js';
 import { colorDeTipo } from './dispositivos3d.js';
-import { colorDePiloto, huellaFrontal, RADIO_PILOTO } from './componentes-puerta.js';
+import {
+	colorDePiloto, construirComponentePuerta, fichaFrontal, huellaFrontal, RADIO_PILOTO,
+	valoresPorDefecto,
+} from './componentes-puerta.js';
 import {
 	Alineacion as AlineacionFrontal, alinearFrontal, AyudasFrontal, dentroDeLaHoja, Guia, imantarEnFrontal,
 	PiezaFrontal, repartirFrontal,
@@ -1326,6 +1329,115 @@ function soltarArrastreFrontal(): void {
 		: AYUDA[modo];
 }
 
+/* ------------------- La ficha de un componente de puerta ------------------- */
+
+/**
+ * LA FICHA SE DIBUJA SOLA A PARTIR DE LO QUE DECLARA LA FAMILIA.
+ *
+ * No hay una línea aquí que sepa qué es un piloto. Cuando llegue el pulsador, la seta o el
+ * voltímetro, cada uno declarará sus propiedades en su ficha y este panel las enseñará sin
+ * enterarse. Lo único que pone el editor por su cuenta es lo que tienen TODOS: dónde está y qué
+ * se puede hacer con él.
+ */
+function pintarPanelComponenteFrontal(id: string): void {
+	const panel = $('panel-der');
+	const d = proyecto.dispositivos.find((x) => x.id === id);
+	const col = proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === id);
+	if (!d || !col) { panel.style.display = 'none'; return; }
+	const ficha = fichaFrontal(d);
+	panel.style.display = 'block';
+
+	const campos = ficha.propiedades.map((p, i) => {
+		const valor = (d as unknown as Record<string, unknown>)[p.clave];
+		const idc = `fp-${i}`;
+		if (p.tipo === 'lista') {
+			const ops = (p.opciones ?? []).map((o) =>
+				`<option value="${escaparHtml(o.valor)}"${String(valor ?? p.porDefecto) === o.valor ? ' selected' : ''}>${escaparHtml(o.texto)}</option>`).join('');
+			return `<div class="campo"><label for="${idc}">${escaparHtml(p.etiqueta)}</label>`
+				+ `<span><select id="${idc}">${ops}</select></span></div>`;
+		}
+		const tipo = p.tipo === 'numero' ? 'number' : 'text';
+		return `<div class="campo"><label for="${idc}">${escaparHtml(p.etiqueta)}</label>`
+			+ `<span><input id="${idc}" type="${tipo}" value="${escaparHtml(String(valor ?? ''))}">`
+			+ `${p.unidad ? ` ${escaparHtml(p.unidad)}` : ''}</span></div>`;
+	}).join('');
+
+	panel.innerHTML = `
+		<h1>${escaparHtml(d.designacion ?? d.id)}</h1>
+		<div class="sub">${escaparHtml(ficha.familia)} · montado en la puerta</div>
+		${campos}
+		<div class="campo"><label for="fp-x">X</label><span><input id="fp-x" type="number" step="1" value="${Math.round(col.x)}"> mm</span></div>
+		<div class="campo"><label for="fp-y">Y</label><span><input id="fp-y" type="number" step="1" value="${Math.round(col.y)}"> mm</span></div>
+		<div class="botonera">
+			<button class="boton" id="fp-duplicar">⧉ Duplicar</button>
+			<button class="boton" id="fp-borrar">🗑 Quitar</button>
+		</div>`;
+
+	ficha.propiedades.forEach((p, i) => {
+		const el = document.getElementById(`fp-${i}`) as HTMLInputElement | HTMLSelectElement | null;
+		if (!el) return;
+		el.onchange = () => {
+			if (!capturar()) return;
+			const bruto = el.value.trim();
+			const objeto = d as unknown as Record<string, unknown>;
+			if (p.tipo === 'numero') objeto[p.clave] = bruto === '' ? undefined : Number(bruto);
+			else objeto[p.clave] = bruto === '' ? undefined : bruto;
+			/*
+			 * Solo se rehace la GEOMETRÍA DE ESE COMPONENTE, y solo si la propiedad la cambia. Un
+			 * color de lente sí; una descripción no. Cambiar el color de un piloto no puede costar
+			 * reconstruir el armario entero, y con decenas de mandos en la puerta se notaría.
+			 */
+			if (p.rehaceGeometria) rehacerComponenteFrontal(id);
+			recalcular();
+			pintarListaFrontal();
+			pintarPaneles();
+			pintarSeleccion();
+			marcarSucio();
+		};
+	});
+	const mover = (cual: 'x' | 'y') => () => {
+		const el = $(`fp-${cual}`) as HTMLInputElement;
+		if (!capturar()) return;
+		const hoja = hojaDeLaPuerta();
+		const pieza = piezasFrontal().find((q) => q.clase === 'aparato' && q.id === id) ?? { ancho: 30, alto: 30 };
+		const destino = dentroDeLaHoja(
+			{ x: cual === 'x' ? Number(el.value) || 0 : col.x, y: cual === 'y' ? Number(el.value) || 0 : col.y },
+			pieza, hoja,
+		);
+		moverPiezaFrontal('aparato', id, destino.x, destino.y);
+		pintarListaFrontal();
+		pintarSeleccion();
+		marcarSucio();
+	};
+	($('fp-x') as HTMLInputElement).onchange = mover('x');
+	($('fp-y') as HTMLInputElement).onchange = mover('y');
+	($('fp-duplicar') as HTMLButtonElement).onclick = () => duplicarFrontal();
+	($('fp-borrar') as HTMLButtonElement).onclick = () => borrarFrontal();
+}
+
+/**
+ * Rehace UN componente de la puerta y nada más.
+ *
+ * Se quita su grupo, se construye otro con los datos nuevos y se cuelga donde estaba. El armario,
+ * la puerta, los otros mandos, los rótulos y todo el interior se quedan como están: cambiar el
+ * color de una lente no puede costar volver a montar el tablero.
+ */
+function rehacerComponenteFrontal(id: string): void {
+	const d = proyecto.dispositivos.find((x) => x.id === id);
+	const col = proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === id);
+	const i = escenario.frontal.findIndex((f) => f.tipo === 'aparato' && f.id === id);
+	if (!d || !col || i < 0) return;
+	const viejo = escenario.frontal[i].grupo;
+	viejo.parent?.remove(viejo);
+	liberar(viejo);
+	const nuevo = construirComponentePuerta(d, col);
+	escenario.puerta.colocar(nuevo, 'frente', col.x, col.y, 0);
+	escenario.frontal[i] = { tipo: 'aparato', id, grupo: nuevo };
+	const j = escenario.aparatos.findIndex((g) => g.userData.dispositivoId === id);
+	if (j >= 0) escenario.aparatos[j] = nuevo;
+	if (espacio === 'frontal') resaltarFrontal();
+}
+
 /* ------------------------- La ficha de un rótulo ------------------------- */
 
 function pintarPanelRotulo(id: string): void {
@@ -1523,18 +1635,32 @@ function alternarFrontalExtra(clase: 'aparato' | 'rotulo', id: string): void {
 	pintarSeleccion();
 }
 
-/** Marca en la escena todo lo elegido del frontal. */
+/** Los recuadros de lo marcado en el frontal. Se rehacen enteros: son cuatro líneas. */
+let marcosFrontal: THREE.LineSegments[] = [];
+
+/**
+ * MARCA LO ELEGIDO CON UN RECUADRO, no tiñendo materiales.
+ *
+ * Aquí había un fallo de los que no se ven hasta que se ven: se recorría el grupo y se le subía el
+ * `emissive` a cada material. Los rótulos se dibujan con la tinta del ATLAS, y esa tinta es UN
+ * material compartido por toda la escena —dos, en realidad: uno claro y uno oscuro—. Marcar un
+ * rótulo ponía azul la serigrafía de TODO el tablero: los números de los bornes, las referencias
+ * de los aparatos, todo.
+ *
+ * El arreglo no es esquivar los rótulos, que dejaría la misma trampa puesta para el siguiente que
+ * comparta un material. Es no tocar materiales que no son tuyos: se dibuja un recuadro, que es
+ * además lo que ya hace el resto del programa para decir «esto está seleccionado».
+ */
 function resaltarFrontal(): void {
+	for (const m of marcosFrontal) { m.parent?.remove(m); m.geometry.dispose(); }
+	marcosFrontal = [];
+	if (espacio !== 'frontal') return;
 	for (const m of escenario.frontal) {
-		const marcado = frontalMarcado(m.tipo, m.id);
-		m.grupo.traverse((o) => {
-			const mesh = o as THREE.Mesh;
-			if (!mesh.isMesh || o.userData.pieza === 'halo') return;
-			const mat = mesh.material as THREE.MeshStandardMaterial;
-			if (!mat?.emissive || o.userData.pieza === 'lente') return;
-			if (marcado) { mat.emissive.setHex(0x1d4ed8); mat.emissiveIntensity = 0.55; }
-			else if (mat.emissiveIntensity === 0.55) { mat.emissive.setHex(0x000000); mat.emissiveIntensity = 0; }
-		});
+		if (!frontalMarcado(m.tipo, m.id)) continue;
+		const principal = (m.tipo === 'rotulo' && sel?.tipo === 'rotulo' && sel.id === m.id)
+			|| (m.tipo === 'aparato' && sel?.tipo === 'dispositivo' && sel.id === m.id);
+		const marco = marcoDe(m.grupo, principal ? 0x4da3ff : 0x2f6fa8, principal ? 0.95 : 0.7, 4);
+		if (marco) marcosFrontal.push(marco);
 	}
 }
 
@@ -1566,11 +1692,17 @@ function anadirPilotoFrontal(): void {
 	const g = proyecto.gabinete!;
 	const id = idLibre('h', (k) => proyecto.dispositivos.some((d) => d.id === k));
 	const sitio = huecoEnLaHoja(30, 30);
+	/*
+	 * Los valores de arranque salen de la FICHA de la familia, no de un literal escrito aquí. Era
+	 * justo lo que dejaba todos los pilotos verdes: un `colorSenal: 'verde'` en esta línea, sin
+	 * ningún sitio donde cambiarlo después.
+	 */
 	proyecto.dispositivos.push({
 		id, tipo: 'piloto', designacion: id.toUpperCase(),
 		descripcion: 'Piloto de señalización (puerta)',
-		tensionNominal: 24, corrienteNominal: 0.02, colorSenal: 'verde',
+		corrienteNominal: 0.02,
 		bornes: [{ id: 'X1' }, { id: 'X2' }],
+		...valoresPorDefecto('piloto'),
 	} as Dispositivo);
 	g.colocaciones.push({
 		dispositivoId: id, x: sitio.x, y: sitio.y, ancho: 30, alto: 30, montaje: 'puerta',
@@ -1618,7 +1750,13 @@ function duplicarFrontal(): void {
 			const col = g.colocaciones.find((c) => c.dispositivoId === p.id);
 			if (!d || !col) continue;
 			const id = idLibre('h', (k) => proyecto.dispositivos.some((x) => x.id === k));
-			proyecto.dispositivos.push({ ...d, id, designacion: id.toUpperCase() });
+			/*
+			 * COPIA PROFUNDA, y no es una precaución teórica: con `{ ...d }` la copia comparte el
+			 * ARRAY DE BORNES con el original, así que tocar un borne de la copia tocaba el del
+			 * original y al guardar salían dos aparatos atados por una referencia que nadie ve.
+			 * Lo mismo con `terminales`, `puentes` y `rol`. Se clona entero y se le da identidad.
+			 */
+			proyecto.dispositivos.push({ ...clonar(d), id, designacion: id.toUpperCase() });
 			const sitio = dentroDeLaHoja({ x: col.x + dx, y: col.y }, p, hojaDeLaPuerta());
 			g.colocaciones.push({ ...col, dispositivoId: id, x: Math.round(sitio.x), y: Math.round(sitio.y) });
 			nuevos.push({ clase: 'aparato', id });
@@ -1627,7 +1765,7 @@ function duplicarFrontal(): void {
 			if (!r) continue;
 			const id = idLibre('rot', (k) => g.rotulos!.some((x) => x.id === k));
 			const sitio = dentroDeLaHoja({ x: r.x + dx, y: r.y }, p, hojaDeLaPuerta());
-			g.rotulos!.push({ ...r, id, x: Math.round(sitio.x), y: Math.round(sitio.y) });
+			g.rotulos!.push({ ...clonar(r), id, x: Math.round(sitio.x), y: Math.round(sitio.y) });
 			nuevos.push({ clase: 'rotulo', id });
 		}
 	}
@@ -1677,9 +1815,12 @@ function trasCambiarFrontal(): void {
 function aplicarCambiosFrontal(cambios: Map<string, { x: number; y: number }>, que: string): void {
 	if (cambios.size === 0) { avisar('No había nada que mover', 'info'); return; }
 	if (!capturar()) return;
+	const hoja = hojaDeLaPuerta();
 	for (const p of piezasFrontal()) {
 		const c = cambios.get(p.id);
-		if (c) moverPiezaFrontal(p.clase, p.id, c.x, c.y);
+		// El borde de la hoja se impone también aquí: alinear a la izquierda un grupo que ya
+		// tocaba el canto no puede sacar la primera pieza fuera de la chapa.
+		if (c) { const d = dentroDeLaHoja(c, p, hoja); moverPiezaFrontal(p.clase, p.id, d.x, d.y); }
 	}
 	pintarListaFrontal();
 	pintarSeleccion();
@@ -1898,6 +2039,17 @@ function trasCambiarProyecto(): void {
  * negro genérico: si el cuadrito no coincide con lo que se ve en el tablero, el usuario cree que
  * ya lo ha cambiado cuando todavía no ha tocado nada.
  */
+/**
+ * Copia PROFUNDA de un objeto de datos del proyecto.
+ *
+ * Un `{ ...x }` copia el objeto pero no lo que cuelga de él: los bornes, los terminales y los
+ * puentes siguen siendo los MISMOS arrays. Dos aparatos que comparten su lista de bornes son dos
+ * aparatos que en realidad son uno, y el día que se toque cualquiera de los dos se descubre tarde.
+ */
+function clonar<T>(x: T): T {
+	return JSON.parse(JSON.stringify(x)) as T;
+}
+
 function colorPorDefectoDe(d: Dispositivo): string {
 	if (d.colorCuerpo) return d.colorCuerpo;
 	return '#' + colorDeTipo(d.tipo).toString(16).padStart(6, '0');
@@ -2470,6 +2622,20 @@ function pintarSeleccion(): void {
 	}
 	if (sel.tipo === 'rotulo') {
 		pintarPanelRotulo(sel.id);
+		return;
+	}
+	/*
+	 * EN EL FRONTAL, LA FICHA LA MANDA EL FRONTAL.
+	 *
+	 * La ficha corriente de un aparato está partida por el modo del interior: en Editor enseña lo
+	 * de colocar y en Trabajo lo de cablear. Un piloto de puerta seleccionado desde el Frontal caía
+	 * en la mitad de «Trabajo» y solo ofrecía controles de cableado —justo lo que en la puerta
+	 * todavía no se hace—, así que sus propiedades no estaban en ninguna parte y su color no se
+	 * podía tocar. Aquí manda el espacio, no el modo.
+	 */
+	if (espacio === 'frontal' && sel.tipo === 'dispositivo'
+		&& proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === sel!.id)?.montaje === 'puerta') {
+		pintarPanelComponenteFrontal(sel.id);
 		return;
 	}
 	if (sel.tipo === 'cable') {
@@ -6399,8 +6565,10 @@ for (const [id, como, que] of [
 ] as const) {
 	$(id).onclick = () => aplicarCambiosFrontal(alinearFrontal(seleccionFrontal(), como as AlineacionFrontal), que);
 }
-$('btn-rep-h').onclick = () => aplicarCambiosFrontal(repartirFrontal(seleccionFrontal(), 'x'), 'Repartido en horizontal');
-$('btn-rep-v').onclick = () => aplicarCambiosFrontal(repartirFrontal(seleccionFrontal(), 'y'), 'Repartido en vertical');
+$('btn-rep-h').onclick = () => aplicarCambiosFrontal(repartirFrontal(seleccionFrontal(), 'x'), 'Ejes repartidos en horizontal');
+$('btn-rep-v').onclick = () => aplicarCambiosFrontal(repartirFrontal(seleccionFrontal(), 'y'), 'Ejes repartidos en vertical');
+$('btn-hue-h').onclick = () => aplicarCambiosFrontal(repartirFrontal(seleccionFrontal(), 'x', 'huecos'), 'Huecos igualados en horizontal');
+$('btn-hue-v').onclick = () => aplicarCambiosFrontal(repartirFrontal(seleccionFrontal(), 'y', 'huecos'), 'Huecos igualados en vertical');
 
 ($('frontal-rejilla') as HTMLInputElement).onchange = () => refrescarRejillaFrontal();
 ($('frontal-paso') as HTMLInputElement).onchange = () => refrescarRejillaFrontal();
@@ -7886,6 +8054,27 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				hallado: hallado ? `${hallado.tipo}:${hallado.id}` : 'nada',
 				acierta: hallado?.tipo === 'dispositivo' && hallado.id === dispositivoId,
 			};
+		},
+		/**
+		 * ABRE UN PROYECTO desde su JSON, por el MISMO camino que el botón de abrir archivo.
+		 *
+		 * Es lo que permite probar el ida y vuelta de guardar y cargar sin tocar el disco: si esto
+		 * pasara por un atajo distinto del que usa el usuario, la prueba diría que el archivo
+		 * sobrevive cuando lo que sobrevive es otra cosa.
+		 */
+		cargarJson: (json: string) => {
+			const { proyecto: abierto } = cargarProyecto(json);
+			reemplazarProyecto(abierto);
+			return true;
+		},
+		/** Deja la puerta en un ángulo exacto, sin animación: para mirarla a medio abrir. */
+		ponerPuerta: (t: number) => {
+			puertaDestino = Math.max(0, Math.min(1, t));
+			puertaCrudo = puertaDestino;
+			puertaAhora = puertaDestino;
+			aplicarPuerta();
+			pintar();
+			return puertaAhora;
 		},
 		/* ---- El frontal, para poder probarlo desde fuera ---- */
 		/** Las piezas montadas en la puerta tal como las ve el editor. */

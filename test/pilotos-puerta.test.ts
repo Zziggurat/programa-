@@ -19,7 +19,10 @@ import { cargarProyecto } from '../src/modelo/cargar.js';
 import { revisarTablero } from '../src/motores/revision.js';
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
 import { construirEnvolvente } from '../app/gabinete3d.js';
-import { colorApagado, colorDePiloto, construirComponentePuerta, COLOR_PILOTO } from '../app/componentes-puerta.js';
+import {
+	colorApagado, colorDePiloto, construirComponentePuerta, COLOR_PILOTO, fichaFrontal,
+	valoresPorDefecto,
+} from '../app/componentes-puerta.js';
 import { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 
 function tablero(): Proyecto {
@@ -225,4 +228,54 @@ test('un componente de puerta se mide contra la PUERTA, no contra la placa', () 
 		!revisarTablero(p).hallazgos.some((h) => h.mensaje.includes('hr') && /fuera/i.test(h.mensaje)),
 		'un piloto dentro de la puerta no puede salir como fuera de sitio',
 	);
+});
+
+/* ===================== Lo que descubrió el uso real ===================== */
+
+test('el color de un piloto es SUYO: cambiar uno no toca a los demás', () => {
+	/*
+	 * El fallo que Diego encontró usando el programa: los pilotos salían verdes y no había forma de
+	 * cambiarlos. La causa no era el valor por defecto —eso habría sido un parche de una línea—
+	 * sino que no existía NINGÚN control para tocar `colorSenal`: la ficha del aparato, en el
+	 * espacio Frontal, solo ofrecía los controles de cablear.
+	 *
+	 * Esto fija la parte que se puede probar sin navegador: que el color es una propiedad
+	 * individual y que cada piloto construye su propio material. Si dos pilotos compartieran
+	 * material —que es como se rompe esto de verdad— cambiar uno cambiaría el otro.
+	 */
+	const uno = pilotoDePrueba('rojo');
+	const otro = { ...pilotoDePrueba('verde'), id: 'hy' } as Dispositivo;
+	const ga = construirComponentePuerta(uno, { dispositivoId: uno.id, x: 0, y: 0, ancho: 30, alto: 30 });
+	const gb = construirComponentePuerta(otro, { dispositivoId: 'hy', x: 0, y: 0, ancho: 30, alto: 30 });
+	const lenteDe = (g: THREE.Object3D) => {
+		let m: THREE.Mesh | undefined;
+		g.traverse((o) => { if (o.userData.pieza === 'lente') m = o as THREE.Mesh; });
+		return m!;
+	};
+	const a = lenteDe(ga);
+	const b = lenteDe(gb);
+	assert.notEqual(a.material, b.material, 'dos pilotos comparten el material de la lente');
+	assert.equal(a.userData.colorPropio, COLOR_PILOTO.rojo);
+	assert.equal(b.userData.colorPropio, COLOR_PILOTO.verde);
+
+	// Y tocar el material de uno no puede llegar al otro.
+	(a.material as THREE.MeshStandardMaterial).color.setHex(0x123456);
+	assert.notEqual((b.material as THREE.MeshStandardMaterial).color.getHex(), 0x123456);
+});
+
+test('la ficha del piloto declara su color, y no está escrito en el editor', () => {
+	/*
+	 * La otra mitad del arreglo: el editor no sabe qué es un piloto. Le pregunta a la ficha qué se
+	 * puede configurar y dibuja lo que le digan. Si mañana el pulsador declara sus propiedades, el
+	 * panel las enseña sin tocar una línea de interfaz.
+	 */
+	const f = fichaFrontal(pilotoDePrueba('rojo'));
+	const color = f.propiedades.find((p) => p.clave === 'colorSenal');
+	assert.ok(color, 'la ficha del piloto no declara su color');
+	assert.equal(color!.tipo, 'lista');
+	for (const n of ['rojo', 'verde', 'ambar', 'azul', 'blanco']) {
+		assert.ok(color!.opciones?.some((o) => o.valor === n), `falta el color ${n}`);
+	}
+	// Y el valor con el que nace un piloto sale de ahí, no de un literal en `main`.
+	assert.equal(valoresPorDefecto('piloto').colorSenal, color!.porDefecto);
 });
