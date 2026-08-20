@@ -17,7 +17,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { BloqueTerminales, CLASE_POR_TIPO, Colocacion, Conductor, Dispositivo, OpcionesProyecto, Proyecto } from '../src/modelo/tipos.js';
-import { crearProyecto, declarado, extremoTexto, opcionesDe } from '../src/modelo/proyecto.js';
+import { cajaDeGabinete, crearProyecto, declarado, extremoTexto, opcionesDe } from '../src/modelo/proyecto.js';
 import {
 	AjustesDossier, BloqueDossier, FUENTES, SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion,
 } from '../src/modelo/dossier.js';
@@ -3340,6 +3340,17 @@ function aplicarEstructura(): void {
 		col.x = Math.min(Math.max(col.x, 0), Math.max(0, g.ancho - col.ancho));
 		col.y = Math.min(Math.max(col.y, 0), Math.max(0, g.alto - col.alto));
 	}
+	/*
+	 * 5. LA CAJA NO PUEDE SER MÁS PEQUEÑA QUE LO QUE TIENE QUE CONTENER, Y LA FICHA TIENE QUE
+	 *    DECIRLO.
+	 *
+	 * El modelo ya agrandaba la envolvente al dibujarla si no cabía la placa, pero el campo se
+	 * quedaba con lo tecleado: uno escribía 30 cm, veía dibujados 36 y la ficha seguía diciendo
+	 * 30. Aquí se guarda la medida EFECTIVA, la misma que usan el dibujo, el plano y el balance
+	 * térmico, y `pintarEstructura` la devuelve al campo. Así lo que se lee es lo que hay.
+	 */
+	const efectiva = cajaDeGabinete(g);
+	g.caja = { ancho: efectiva.ancho, alto: efectiva.alto, profundidad: efectiva.profundidad };
 	actualizarTodo();
 	pintarEstructura();
 	encuadrar();
@@ -8138,6 +8149,24 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			for (const [clase, id] of claves.slice(1)) alternarFrontalExtra(clase, id);
 			return seleccionFrontal().length;
 		},
+		/**
+		 * LA IDENTIDAD DE LAS PIEZAS GRANDES DE LA ESCENA.
+		 *
+		 * «Mover un piloto no reconstruye el armario» no se puede comprobar contando milisegundos:
+		 * un ordenador rápido reconstruye el armario entero sin que se note. Lo que sí es
+		 * incontestable es la IDENTIDAD de las mallas: si el grupo del armario sigue siendo el
+		 * mismo objeto de antes, nadie lo ha vuelto a montar. Y si cambia, se ha rehecho aunque el
+		 * resultado se vea igual.
+		 */
+		identidades: () => ({
+			envolvente: escenario.envolvente.uuid,
+			puerta: escenario.puerta.pivote.uuid,
+			raiz: escenario.raiz.uuid,
+			cables: escenario.cables.uuid,
+			dispositivos: escenario.dispositivos.uuid,
+			frontal: escenario.frontal.map((f) => `${f.tipo}:${f.id}=${f.grupo.uuid}`),
+			mallasEnEscena: (() => { let n = 0; escenario.raiz.traverse((o) => { if ((o as THREE.Mesh).isMesh) n++; }); return n; })(),
+		}),
 		/** Dónde está la cámara ahora mismo: para comprobar que cambiar de espacio no la pierde. */
 		camaraAhora: () => ({
 			espacio,
