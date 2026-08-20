@@ -20,6 +20,7 @@ import {
 	RANURA, RedCanaletas, TAPA, invasionesDeCanaletas, Tramo, ZOCALO,
 } from './canaletas-red.js';
 import { ALTURA_CARRIL, bornesGenericos, construirAparato3D, Z_BORNE } from './dispositivos3d.js';
+import { BocaPasacables, construirEnvolvente, Puerta } from './gabinete3d.js';
 
 /*
  * LOS COLORES DE CONDUCTOR, EN TONO DE PVC Y NO DE PALETA DE PANTALLA.
@@ -118,6 +119,10 @@ export interface Escenario {
 	bornes: THREE.Group;         // puntos de conexión clicables (para cablear en modo Trabajo)
 	cotas: THREE.Group;          // acotado dimensional (modo "ver tamaños")
 	handles: THREE.Group;        // tiradores de mover/redimensionar del elemento seleccionado
+	/** El armario: fondo, laterales, techo, suelo, marco y puerta. Se puede esconder entero. */
+	envolvente: THREE.Group;
+	/** La puerta, con su eje de giro y sus dos caras de montaje. Ver `gabinete3d`. */
+	puerta: Puerta;
 	tapas: THREE.Object3D[];     // tapas de canaletas (para ocultarlas)
 	etiquetas: THREE.Object3D[]; // sprites de designación
 	centro: THREE.Vector3;
@@ -137,6 +142,40 @@ export const Z_FRENTE = 52;
 export const Z_IMAGEN_FRENTE = 26;
 export const Z_IMAGEN_FONDO = -12;
 
+/**
+ * DÓNDE HAY QUE ABRIR EL SUELO DEL ARMARIO.
+ *
+ * Se saca de donde de verdad caen los prensaestopas, que los reparte `xEntradaCampo` a lo ancho de
+ * la placa. Calcularlo aquí y no dentro de la envolvente es lo que hace que el hueco siga estando
+ * donde toca cuando cambie el número de aparatos de campo o el ancho del tablero: la envolvente no
+ * sabe nada de aparatos, y no tiene por qué.
+ */
+function bocaDePasacables(proyecto: Proyecto): BocaPasacables | undefined {
+	const g = proyecto.gabinete;
+	const campo = aparatosDeCampo(proyecto);
+	if (!g || campo.length === 0) return undefined;
+	let x0 = Infinity;
+	let x1 = -Infinity;
+	let mas = 26;
+	for (const d of campo) {
+		const cx = xEntradaCampo(proyecto, d.id);
+		if (cx === undefined) continue;
+		x0 = Math.min(x0, cx);
+		x1 = Math.max(x1, cx);
+		mas = Math.max(mas, d.bornes.length * 13 + 10);
+	}
+	if (!Number.isFinite(x0)) return undefined;
+	// Centro y ancho en coordenadas de ESCENA: la x de escena va del centro de la placa.
+	const centro = (x0 + x1) / 2 - g.ancho / 2;
+	return {
+		x: centro,
+		// Los prensaestopas se dibujan a z = 10 con veinte milímetros de fondo.
+		z: 10,
+		ancho: (x1 - x0) + mas + 26,
+		fondo: 46,
+	};
+}
+
 export function construirEscenario(proyecto: Proyecto, realista = false): Escenario {
 	const g = proyecto.gabinete;
 	if (!g) throw new Error('El proyecto no tiene gabinete');
@@ -145,7 +184,20 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	const aEscena = (x: number, y: number, z: number) =>
 		new THREE.Vector3(x - g.ancho / 2, g.alto / 2 - y, z);
 
-	raiz.add(construirCaja(g, realista));
+	/*
+	 * EL ARMARIO, y por qué va lo PRIMERO: todo lo demás —placa, carriles, canaletas, aparatos y
+	 * cables— vive dentro de él, así que la envolvente es el suelo sobre el que se apoya la
+	 * lectura de la escena. Sin ella el tablero se ve como una plancha flotando.
+	 */
+	const caja = cajaDe(g);
+	const envolvente = construirEnvolvente(caja.ancho, caja.alto, caja.profundidad, {
+		bisagras: g.caja?.bisagras,
+		// En Visualización el armario se enseña terminado, o sea cerrado. Trabajando estorba.
+		apertura: realista ? 0 : 1,
+		pasacables: bocaDePasacables(proyecto),
+	});
+	raiz.add(envolvente.grupo);
+	raiz.add(construirPlacaDeMontaje(g));
 	for (const riel of g.rieles) raiz.add(construirRiel(riel, aEscena));
 
 	const tapas: THREE.Object3D[] = [];
@@ -185,7 +237,11 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	const handles = new THREE.Group();
 	raiz.add(handles);
 
-	return { raiz, dispositivos, cables, bornes, cotas, handles, tapas, etiquetas, centro: new THREE.Vector3(0, 0, 0), aEscena };
+	return {
+		raiz, dispositivos, cables, bornes, cotas, handles, tapas, etiquetas,
+		envolvente: envolvente.grupo, puerta: envolvente.puerta,
+		centro: new THREE.Vector3(0, 0, 0), aEscena,
+	};
 }
 
 /**
@@ -397,18 +453,8 @@ function granoDePintura(): THREE.CanvasTexture {
 	return tex;
 }
 
-function construirCaja(g: Gabinete, realista = false): THREE.Group {
+function construirPlacaDeMontaje(g: Gabinete): THREE.Group {
 	const grupo = new THREE.Group();
-	const caja = cajaDe(g);
-	const fondo = caja.profundidad;
-	const ancho = caja.ancho;
-	const alto = caja.alto;
-	const chapaLateral = realista
-		? new THREE.MeshStandardMaterial({ color: 0xdadde0, metalness: 0.45, roughness: 0.42, side: THREE.DoubleSide })
-		: new THREE.MeshStandardMaterial({
-			color: 0xbfc3c7, metalness: 0.15, roughness: 0.75,
-			transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false,
-		});
 
 	/*
 	 * LA PLACA DE MONTAJE es la superficie más grande del tablero, y era la que menos decía.
@@ -461,41 +507,15 @@ function construirCaja(g: Gabinete, realista = false): THREE.Group {
 		}
 	}
 
-	// Fondo y paredes de la envolvente (frente abierto para mirar dentro).
-	const fondoCaja = new THREE.Mesh(new THREE.BoxGeometry(ancho, alto, 2), chapaLateral);
-	fondoCaja.position.z = -12;
-	grupo.add(fondoCaja);
-
-	const pared = (w: number, h: number, x: number, y: number) => {
-		const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, fondo), chapaLateral);
-		m.position.set(x, y, fondo / 2 - 12);
-		grupo.add(m);
-	};
-	pared(2, alto, -ancho / 2, 0);
-	pared(2, alto, ancho / 2, 0);
-	pared(ancho, 2, 0, alto / 2);
-	pared(ancho, 2, 0, -alto / 2);
-
-	// Modo visualización: puerta de chapa ABIERTA sobre la bisagra izquierda, con su manilla.
-	if (realista) {
-		const puerta = new THREE.Group();
-		const hoja = new THREE.Mesh(
-			new THREE.BoxGeometry(ancho, alto, 12),
-			new THREE.MeshStandardMaterial({ color: 0xe3e6e8, metalness: 0.5, roughness: 0.35 }),
-		);
-		hoja.position.set(ancho / 2, 0, 0); // el pivote queda en el borde izquierdo (la bisagra)
-		hoja.castShadow = true;
-		puerta.add(hoja);
-		const manilla = new THREE.Mesh(
-			new THREE.BoxGeometry(16, 60, 16),
-			new THREE.MeshStandardMaterial({ color: 0x2f3438, metalness: 0.7, roughness: 0.3 }),
-		);
-		manilla.position.set(ancho - 26, 0, 12);
-		puerta.add(manilla);
-		puerta.position.set(-ancho / 2, 0, fondo - 12);
-		puerta.rotation.y = -Math.PI * 0.62; // abierta hacia el frente-izquierda
-		grupo.add(puerta);
-	}
+	/*
+	 * AQUÍ ESTABAN EL FONDO Y LAS CUATRO PAREDES DE DOS MILÍMETROS, más una puerta de adorno que
+	 * solo salía en Visualización, clavada a 0,62·π y sin manera de cerrarla.
+	 *
+	 * Se han ido a `gabinete3d`, que monta la envolvente de verdad —fondo, laterales, techo, suelo,
+	 * marco perimetral, junta, bisagras y una puerta que gira— y la deja preparada para colgarle
+	 * pilotos y pulsadores. Esta función se queda con lo que de verdad le toca: la PLACA DE
+	 * MONTAJE, que es una pieza del interior y no de la caja.
+	 */
 
 	return grupo;
 }

@@ -36,7 +36,7 @@ export const Z_BORNE = 46;
  * lente se veían iguales, porque solo cambiaba el color. Lo que distingue a un material de otro
  * de cerca no es el tono: es cómo devuelve la luz.
  */
-const M = {
+export const M = {
 	/** Chapa y tornillería: refleja el entorno y devuelve un brillo estrecho. */
 	metal: (color = 0xb9bec2) => new THREE.MeshStandardMaterial({ color, metalness: 0.85, roughness: 0.35 }),
 	/**
@@ -209,7 +209,7 @@ function caja(w: number, h: number, d: number, mat: THREE.Material, x = 0, y = 0
  * malla, así que una geometría compartida se quedaría desmontada bajo los pies del siguiente
  * tablero. Construirlas cuesta una vez por aparato, no una vez por fotograma.
  */
-function cajaCanto(
+export function cajaCanto(
 	w: number, h: number, d: number, mat: THREE.Material,
 	x = 0, y = 0, z = 0, radio = 1.6, chaflan = 0.6,
 ): THREE.Mesh {

@@ -345,7 +345,12 @@ function leerCaja(bruto: unknown, anchoPlaca: number, altoPlaca: number): Gabine
 	const alto = enRango(bruto.alto, altoPlaca, MAX_MM);
 	const profundidad = enRango(bruto.profundidad, 1, MAX_MM);
 	if (ancho === undefined || alto === undefined || profundidad === undefined) return undefined;
-	return { ancho, alto, profundidad };
+	// El lado de las bisagras es opcional y solo admite dos valores. Cualquier otra cosa se ignora
+	// y la puerta abre por la izquierda, que es lo corriente: un dato raro no puede dejar el
+	// armario sin puerta.
+	const bisagras = bruto.bisagras === 'derecha' ? 'derecha' as const
+		: bruto.bisagras === 'izquierda' ? 'izquierda' as const : undefined;
+	return { ancho, alto, profundidad, ...(bisagras ? { bisagras } : {}) };
 }
 
 /**

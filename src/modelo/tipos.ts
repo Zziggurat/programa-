@@ -366,8 +366,17 @@ export interface Gabinete {
 	/** Dimensiones útiles de la placa de montaje, en mm. */
 	ancho: number;
 	alto: number;
-	/** Caja envolvente (opcional): si falta, se asume placa + margen estándar. */
-	caja?: { ancho: number; alto: number; profundidad: number };
+	/**
+	 * Caja envolvente (opcional): si falta, se asume placa + margen estándar.
+	 *
+	 * `bisagras` dice de qué lado abre la puerta mirando el armario de frente. Es una propiedad
+	 * del armario, no del dibujo: en un cuadro montado contra una pared o al lado de una puerta,
+	 * de qué lado abre lo decide el sitio, y a quien monta le importa.
+	 */
+	caja?: {
+		ancho: number; alto: number; profundidad: number;
+		bisagras?: 'izquierda' | 'derecha';
+	};
 	canaletas: Canaleta[];
 	rieles: Riel[];
 	colocaciones: Colocacion[];

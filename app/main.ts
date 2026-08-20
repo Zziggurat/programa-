@@ -1023,10 +1023,102 @@ function montarEscenario(): void {
 	// flotantes ni cotas (en la vida real no existen), para que se vea tal cual quedaría.
 	const verTapas = visualizacion || ($('ver-tapas') as HTMLInputElement).checked;
 	for (const t of escenario.tapas) t.visible = verTapas;
-	const verEtiquetas = !visualizacion && ($('ver-etiquetas') as HTMLInputElement).checked;
-	for (const t of escenario.etiquetas) t.visible = verEtiquetas;
+	asentarPuerta();   // deja la puerta y, con ella, los rótulos que tape
 	asentarSuelo();
 	ajustarSombras();
+}
+
+/* ============================ LA PUERTA DEL ARMARIO ============================
+
+ * Una puerta que no se puede cerrar no es una puerta, y una que no se puede abrir tapa el trabajo.
+ * Así que es un ESTADO, con dos reglas de sentido común:
+ *
+ *   · trabajando (Editor y Trabajo) arranca ABIERTA, porque lo que se está haciendo está dentro;
+ *   · en Visualización arranca CERRADA, porque ahí se enseña el armario terminado.
+ *
+ * Y se puede cambiar cuando uno quiera. Además, el armario entero se puede esconder con su
+ * casilla: si alguna vez estorba —una cámara metida entre la puerta y la placa—, se quita de en
+ * medio sin perder nada, igual que las tapas de las canaletas.
+ *
+ * La animación NO es física. Es una interpolación con arranque y frenada suaves, de poco más de
+ * un tercio de segundo, montada sobre el bucle de dibujo que ya existe: ni un `requestAnimationFrame`
+ * nuevo, ni un motor de física para girar una chapa.
+ */
+
+/** Dónde está la puerta ahora mismo: 0 cerrada, 1 abierta del todo. */
+let puertaAhora = 1;
+/** El parámetro sin suavizar, que es sobre el que avanza el tiempo. */
+let puertaCrudo = 1;
+/** Adónde va. Si coincide con `puertaAhora`, no hay nada que animar. */
+let puertaDestino = 1;
+/** Segundos que tarda en recorrer todo el arco. */
+const PUERTA_SEGUNDOS = 0.38;
+
+/** Arranque y frenada suaves. Sin esto el giro sale de máquina, no de puerta. */
+function suavizar(t: number): number {
+	return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
+}
+
+/** Lleva la puerta al ángulo que le toca según `puertaAhora`. */
+function aplicarPuerta(): void {
+	const p = escenario.puerta;
+	if (p) p.pivote.rotation.y = p.aperturaMaxima * puertaAhora;
+	const b = $('btn-puerta') as HTMLButtonElement | null;
+	if (b) b.textContent = puertaDestino > 0.5 ? 'Cerrar la puerta' : 'Abrir la puerta';
+	refrescarEtiquetas();
+}
+
+/**
+ * CON LA PUERTA CERRADA NO SE LEE LO QUE HAY DENTRO.
+ *
+ * Los rótulos de designación son sprites que se dibujan SIN comprobar profundidad, a propósito:
+ * así se leen aunque pase un cable por delante, que es para lo que están. El precio es que
+ * atraviesan cualquier cosa, y con una puerta de chapa delante eso se ve raro de verdad: una
+ * caja cerrada con «-KM1» flotando encima.
+ *
+ * No se les cambia el material —eso rompería justo lo que los hace útiles—: se apagan mientras la
+ * puerta tape lo que rotulan. Si el armario está escondido no hay puerta que tape nada, y vuelven.
+ */
+function refrescarEtiquetas(): void {
+	const casilla = ($('ver-etiquetas') as HTMLInputElement).checked;
+	const hayArmario = escenario.envolvente.visible;
+	// 0,15 ≈ 18°: en cuanto la puerta despega, lo de dentro ya se ve.
+	const seVeDentro = !hayArmario || puertaAhora > 0.15;
+	const v = casilla && !visualizacion && seVeDentro;
+	for (const t of escenario.etiquetas) t.visible = v;
+}
+
+/** Un paso de la animación. Devuelve verdadero mientras siga moviéndose. */
+function animarPuerta(dt: number): boolean {
+	if (puertaAhora === puertaDestino) return false;
+	const paso = dt / PUERTA_SEGUNDOS;
+	const sentido = Math.sign(puertaDestino - puertaAhora);
+	// Se avanza sobre el parámetro CRUDO y se suaviza al aplicarlo: así el suavizado no depende
+	// del punto de partida y una puerta a medio camino no pega un tirón al cambiar de idea.
+	puertaCrudo = Math.max(0, Math.min(1, puertaCrudo + sentido * paso));
+	puertaAhora = suavizar(puertaCrudo);
+	if ((sentido > 0 && puertaCrudo >= 1) || (sentido < 0 && puertaCrudo <= 0)) {
+		puertaCrudo = puertaDestino;
+		puertaAhora = puertaDestino;
+	}
+	aplicarPuerta();
+	return true;
+}
+
+/** Abre o cierra la puerta con su animación. */
+function moverPuerta(abrir: boolean): void {
+	puertaDestino = abrir ? 1 : 0;
+	aplicarPuerta();
+}
+
+/** Deja la puerta en el estado que le toca al modo, sin animación (la escena se acaba de montar). */
+function asentarPuerta(): void {
+	const abierta = !visualizacion;
+	puertaDestino = abierta ? 1 : 0;
+	puertaCrudo = puertaDestino;
+	puertaAhora = puertaDestino;
+	escenario.envolvente.visible = ($('ver-gabinete') as HTMLInputElement).checked;
+	aplicarPuerta();
 }
 
 /**
@@ -5482,10 +5574,12 @@ $('leyenda-voltaje').innerHTML =
 	const v = (e.target as HTMLInputElement).checked;
 	for (const t of escenario.tapas) t.visible = v;
 };
-($('ver-etiquetas') as HTMLInputElement).onchange = (e) => {
-	const v = (e.target as HTMLInputElement).checked;
-	for (const t of escenario.etiquetas) t.visible = v;
+($('ver-etiquetas') as HTMLInputElement).onchange = () => refrescarEtiquetas();
+($('ver-gabinete') as HTMLInputElement).onchange = (e) => {
+	escenario.envolvente.visible = (e.target as HTMLInputElement).checked;
+	refrescarEtiquetas();
 };
+($('btn-puerta') as HTMLButtonElement).onclick = () => moverPuerta(puertaDestino < 0.5);
 
 /* ----------------- Detalle de la verificación eléctrica (chip DRC) ----------------- */
 
@@ -5935,6 +6029,7 @@ renderer.setAnimationLoop(() => {
 		reloj: ahora / 1000,
 		cables: escenario.cables,
 	});
+	animarPuerta(dt);
 	(vista2D ? controlesOrto : controles).update();
 	ajustarRotulos();
 	pintar();
