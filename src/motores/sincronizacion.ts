@@ -5,7 +5,8 @@
  * de montaje y detecta inconsistencias en ambos sentidos. En QElectroTech el plano de
  * montaje es un dibujo aparte sin ningún vínculo; aquí es el mismo modelo.
  */
-import { Proyecto } from '../modelo/tipos.js';
+import { Colocacion, Proyecto } from '../modelo/tipos.js';
+import { cajaDeGabinete } from '../modelo/proyecto.js';
 
 export interface ResultadoSincronizacion {
 	/** Dispositivos del esquema (dentro del gabinete) sin colocar en la placa. */
@@ -42,11 +43,22 @@ export function sincronizarEsquemaGabinete(proyecto: Proyecto): ResultadoSincron
 		.filter((c) => proyecto.dispositivos.find((d) => d.id === c.dispositivoId)!.campo)
 		.map((c) => c.dispositivoId);
 
+	/*
+	 * DOS APARATOS SOLO SE ESTORBAN SI ESTÁN EN LA MISMA SUPERFICIE.
+	 *
+	 * Las coordenadas de un aparato de placa y las de uno de puerta se parecen —las dos se miden
+	 * en milímetros desde una esquina de arriba a la izquierda— pero son de sitios distintos, y
+	 * están separadas por el fondo del armario. Comparándolas sin mirar dónde va montado cada uno,
+	 * un piloto de puerta a 250 mm «se solapaba» con el contactor que hay a 250 mm en la placa, y
+	 * el DRC daba tres errores de un tablero que está perfectamente montado.
+	 */
+	const superficie = (c: Colocacion) => c.montaje ?? 'placa';
 	const solapes: [string, string][] = [];
 	for (let i = 0; i < colocaciones.length; i++) {
 		for (let j = i + 1; j < colocaciones.length; j++) {
 			const a = colocaciones[i];
 			const b = colocaciones[j];
+			if (superficie(a) !== superficie(b)) continue;
 			const separados =
 				a.x + a.ancho <= b.x || b.x + b.ancho <= a.x ||
 				a.y + a.alto <= b.y || b.y + b.alto <= a.y;
@@ -54,9 +66,17 @@ export function sincronizarEsquemaGabinete(proyecto: Proyecto): ResultadoSincron
 		}
 	}
 
+	// Y cada uno se sale por el borde de LA SUYA: la puerta es del tamaño del armario, que es
+	// mayor que la placa, así que medir un piloto de puerta contra la placa lo dejaría fuera sin
+	// estarlo (o dentro estando fuera, que es peor).
+	const caja = gabinete ? cajaDeGabinete(gabinete) : undefined;
 	const fueraDePlaca = gabinete
 		? colocaciones
-			.filter((c) => c.x < 0 || c.y < 0 || c.x + c.ancho > gabinete.ancho || c.y + c.alto > gabinete.alto)
+			.filter((c) => {
+				const ancho = superficie(c) === 'puerta' ? caja!.ancho : gabinete.ancho;
+				const alto = superficie(c) === 'puerta' ? caja!.alto : gabinete.alto;
+				return c.x < 0 || c.y < 0 || c.x + c.ancho > ancho || c.y + c.alto > alto;
+			})
 			.map((c) => c.dispositivoId)
 		: [];
 

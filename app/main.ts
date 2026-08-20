@@ -4082,6 +4082,9 @@ function solapaCon(x: number, y: number, ancho: number, alto: number, exceptoId:
 	const g = proyecto.gabinete!;
 	for (const c of g.colocaciones) {
 		if (c.dispositivoId === exceptoId) continue;
+		// Lo que está montado en OTRA superficie no estorba: un piloto de puerta y un contactor de
+		// placa pueden estar en las mismas coordenadas porque los separa el fondo del armario.
+		if ((c.montaje ?? 'placa') !== 'placa') continue;
 		if (proyecto.dispositivos.find((z) => z.id === c.dispositivoId)?.imagen) continue;
 		const separados =
 			x + ancho + HOLGURA <= c.x || c.x + c.ancho + HOLGURA <= x ||
@@ -7101,6 +7104,30 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 					mundo: { x: Math.round(w.x), y: Math.round(w.y), z: Math.round(w.z) },
 				};
 			}),
+		/**
+		 * ¿SE PUEDE SEÑALAR ESE APARATO? Se apunta a su centro, se despacha un movimiento de ratón
+		 * de verdad y se pregunta qué ha encontrado el editor. `desvio` mueve el puntero unos
+		 * píxeles: sirve para comprobar que la zona de agarre es cómoda y no exige puntería.
+		 */
+		senalar: (dispositivoId: string, desvio = 0) => {
+			const g = escenario.aparatos.find((o) => o.userData.dispositivoId === dispositivoId);
+			if (!g) return undefined;
+			const r = renderer.domElement.getBoundingClientRect();
+			prepararProyeccion();
+			const w = g.getWorldPosition(new THREE.Vector3());
+			const v = aPixeles(w.x, w.y, w.z, r.width, r.height);
+			if (v.w <= 0) return { fuera: true };
+			const ev = new PointerEvent('pointermove', {
+				clientX: Math.round(r.left + v.x + desvio), clientY: Math.round(r.top + v.y),
+				bubbles: true, cancelable: true, pointerId: 1, buttons: 0,
+			});
+			const hallado = elementoBajoElPuntero(ev);
+			return {
+				pantalla: { x: Math.round(v.x), y: Math.round(v.y) },
+				hallado: hallado ? `${hallado.tipo}:${hallado.id}` : 'nada',
+				acierta: hallado?.tipo === 'dispositivo' && hallado.id === dispositivoId,
+			};
+		},
 		/** Quita un conductor por su id: así se «pierde una fase» sin tocar ninguna bandera. */
 		quitarConductor: (conductorId: string) => {
 			const antes = proyecto.conductores.length;

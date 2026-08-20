@@ -8,3 +8,7 @@ qa/_*.png
 qa/_*.mjs
 qa/_salida/
 qa/_audit/
+
+# Capturas de QA: son evidencia regenerable con los guiones de qa/, no fuente.
+# Doce megas de PNG en el historial no le sirven a nadie.
+qa/capturas/

@@ -16,6 +16,8 @@ import * as THREE from 'three';
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import { simular } from '../src/motores/simulacion.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
+import { revisarTablero } from '../src/motores/revision.js';
+import { cajaDeGabinete } from '../src/modelo/proyecto.js';
 import { construirEnvolvente } from '../app/gabinete3d.js';
 import { colorApagado, colorDePiloto, construirComponentePuerta, COLOR_PILOTO } from '../app/componentes-puerta.js';
 import { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
@@ -172,5 +174,55 @@ test('al abrir la puerta, la lente y los terminales se mueven juntos', () => {
 	assert.ok(
 		Math.abs(abierta.l.distanceTo(abierta.t) - separacion) < 1e-6,
 		'la lente y su terminal se separaron al abrir: no son la misma pieza',
+	);
+});
+
+test('un aparato de puerta y uno de placa no se estorban aunque compartan coordenadas', () => {
+	/*
+	 * Esto lo cazó el DRC en cuanto se montaron los tres pilotos: daba tres errores de solape
+	 * -«f2 y hr se solapan en la placa»- en un tablero perfectamente montado. Las coordenadas de
+	 * la placa y las de la puerta se parecen —las dos se miden en milímetros desde una esquina de
+	 * arriba a la izquierda— pero son de sitios distintos, separados por el fondo del armario.
+	 *
+	 * Se comprueba con el caso extremo: dos aparatos EXACTAMENTE en las mismas coordenadas, uno en
+	 * cada superficie. No pueden estorbarse, y dos en la MISMA sí.
+	 */
+	const p = tablero();
+	const hr = p.gabinete!.colocaciones.find((c) => c.dispositivoId === 'hr')!;
+	const f2 = p.gabinete!.colocaciones.find((c) => c.dispositivoId === 'f2')!;
+	hr.x = f2.x;
+	hr.y = f2.y;
+	hr.ancho = f2.ancho;
+	hr.alto = f2.alto;
+
+	const r = revisarTablero(p);
+	const solapes = r.hallazgos.filter((h) => h.regla === 'S1-solape');
+	assert.equal(solapes.length, 0, `sobran solapes: ${solapes.map((h) => h.mensaje).join(' · ')}`);
+
+	// Y la regla no se ha roto: dos en la MISMA superficie sí tienen que cantar.
+	hr.montaje = undefined;
+	const r2 = revisarTablero(p);
+	assert.ok(
+		r2.hallazgos.some((h) => h.regla === 'S1-solape'),
+		'dos aparatos encimados en la placa tienen que dar error de solape',
+	);
+});
+
+test('un componente de puerta se mide contra la PUERTA, no contra la placa', () => {
+	/*
+	 * La puerta es del tamaño del armario y el armario es mayor que la placa. Un piloto colocado
+	 * en la banda que hay entre las dos medidas está perfectamente dentro de la puerta, y medido
+	 * contra la placa saldría fuera.
+	 */
+	const p = tablero();
+	const caja = cajaDeGabinete(p.gabinete!);
+	assert.ok(caja.ancho > p.gabinete!.ancho, 'este ejemplo no sirve: la caja no es mayor que la placa');
+	const hr = p.gabinete!.colocaciones.find((c) => c.dispositivoId === 'hr')!;
+	hr.x = p.gabinete!.ancho + 5;         // fuera de la placa, dentro de la puerta
+	hr.ancho = 30;
+	assert.ok(hr.x + hr.ancho <= caja.ancho, 'el caso de prueba no cabe en la puerta');
+	assert.ok(
+		!revisarTablero(p).hallazgos.some((h) => h.mensaje.includes('hr') && /fuera/i.test(h.mensaje)),
+		'un piloto dentro de la puerta no puede salir como fuera de sitio',
 	);
 });
