@@ -11,7 +11,7 @@
  */
 import {
 	BloqueTerminales, Borne, Canaleta, Colocacion, Conductor, Dispositivo, Gabinete, Hoja,
-	LadoAparato, OpcionesProyecto, Posicion, Proyecto, Riel, Rol,
+	LadoAparato, OpcionesProyecto, RotuloFrontal, Posicion, Proyecto, Riel, Rol,
 } from './tipos.js';
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 
@@ -320,6 +320,28 @@ function leerGabinete(bruto: Record<string, unknown>, arreglos: string[]): Gabin
 		 * huella creíbles se descarta, el aparato se queda en el proyecto sin colocar y el DRC lo
 		 * canta como aparato sin montar, que es exactamente lo que hay que arreglar a mano.
 		 */
+		/*
+		 * Los rótulos del frontal. Un rótulo sin texto no es un rótulo: se tira. Y el texto se
+		 * recorta a algo razonable, porque una placa no es un documento y una cadena de un mega
+		 * en un archivo de proyecto solo puede venir de algo que fue mal.
+		 */
+		rotulos: lista<RotuloFrontal>(bruto.rotulos, 'rotulos', (r, i) => {
+			const linea = texto(r.texto)?.trim();
+			const x = enRango(r.x, -MAX_MM, MAX_MM);
+			const y = enRango(r.y, -MAX_MM, MAX_MM);
+			if (!linea || x === undefined || y === undefined) return undefined;
+			const estilo = r.estilo === 'placa' || r.estilo === 'aviso' || r.estilo === 'grabado'
+				? r.estilo : undefined;
+			return {
+				id: texto(r.id) || `rot${i + 1}`,
+				texto: linea.slice(0, 120),
+				x, y,
+				alto: enRango(r.alto, 1, 200),
+				ancho: enRango(r.ancho, 4, MAX_MM),
+				...(estilo ? { estilo } : {}),
+				montaje: 'puerta' as const,
+			};
+		}),
 		colocaciones: lista<Colocacion>(bruto.colocaciones, 'colocaciones', (c) => {
 			const x = enRango(c.x, -MAX_MM, MAX_MM);
 			const y = enRango(c.y, -MAX_MM, MAX_MM);

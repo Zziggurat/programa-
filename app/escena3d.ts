@@ -21,7 +21,7 @@ import {
 } from './canaletas-red.js';
 import { ALTURA_CARRIL, bornesGenericos, construirAparato3D, Z_BORNE } from './dispositivos3d.js';
 import { BocaPasacables, construirEnvolvente, Puerta } from './gabinete3d.js';
-import { construirComponentePuerta } from './componentes-puerta.js';
+import { construirComponentePuerta, construirRotuloFrontal } from './componentes-puerta.js';
 
 /*
  * LOS COLORES DE CONDUCTOR, EN TONO DE PVC Y NO DE PALETA DE PANTALLA.
@@ -113,6 +113,13 @@ export function vaciar(grupo: THREE.Object3D): void {
 
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 
+/** Algo atornillado a la puerta: un aparato o un rótulo. Para el editor del frontal son lo mismo. */
+export interface MontadoEnPuerta {
+	tipo: 'aparato' | 'rotulo';
+	id: string;
+	grupo: THREE.Object3D;
+}
+
 export interface Escenario {
 	raiz: THREE.Group;
 	dispositivos: THREE.Group;   // mallas con userData.dispositivoId
@@ -132,6 +139,8 @@ export interface Escenario {
 	 * hablar de «los aparatos» sin preocuparse de dónde están montados.
 	 */
 	aparatos: THREE.Object3D[];
+	/** Lo montado en la puerta: aparatos y rótulos, que es con lo que trabaja el editor del frontal. */
+	frontal: MontadoEnPuerta[];
 	tapas: THREE.Object3D[];     // tapas de canaletas (para ocultarlas)
 	etiquetas: THREE.Object3D[]; // sprites de designación
 	centro: THREE.Vector3;
@@ -232,6 +241,14 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	 * uno, que es exactamente como tiene que ser.
 	 */
 	const aparatos: THREE.Object3D[] = [];
+	/*
+	 * Y lo que va montado EN LA PUERTA, aparatos y rótulos juntos.
+	 *
+	 * Para el editor del frontal son la misma clase de cosa: algo pegado a una superficie que se
+	 * selecciona, se mueve por su plano y se alinea con sus vecinos. Que uno lleve corriente y el
+	 * otro no le importa al editor —le importa al simulador, y ése mira `aparatos`—.
+	 */
+	const frontal: MontadoEnPuerta[] = [];
 	for (const col of g.colocaciones) {
 		const d = proyecto.dispositivos.find((x) => x.id === col.dispositivoId);
 		if (!d) continue;
@@ -241,6 +258,7 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 			// la misma pieza atravesando la chapa, no dos mitades que haya que sincronizar.
 			envolvente.puerta.colocar(comp, 'frente', col.x, col.y, 0);
 			aparatos.push(comp);
+			frontal.push({ tipo: 'aparato', id: d.id, grupo: comp });
 			continue;
 		}
 		const grupo = construirDispositivo(d, col, aEscena, etiquetas);
@@ -256,6 +274,13 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	 */
 	raiz.add(construirEntradasCampo(proyecto, aEscena, dispositivos));
 	raiz.add(dispositivos);
+
+	// La señalética del frontal: placas y rótulos grabados. Van en la puerta y viajan con ella.
+	for (const r of g.rotulos ?? []) {
+		const rot = construirRotuloFrontal(r);
+		envolvente.puerta.colocar(rot, 'frente', r.x, r.y, 0);
+		frontal.push({ tipo: 'rotulo', id: r.id, grupo: rot });
+	}
 
 	const cables = new THREE.Group();
 	raiz.add(cables);
@@ -273,7 +298,7 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 
 	return {
 		raiz, dispositivos, cables, bornes, cotas, handles, tapas, etiquetas,
-		envolvente: envolvente.grupo, puerta: envolvente.puerta, aparatos,
+		envolvente: envolvente.grupo, puerta: envolvente.puerta, aparatos, frontal,
 		centro: new THREE.Vector3(0, 0, 0), aEscena,
 	};
 }

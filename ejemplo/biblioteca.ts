@@ -565,6 +565,25 @@ function estrellaTriangulo(): Proyecto {
 			{ id: 'r2', x: 35, y: 280, largo: 530 },
 			{ id: 'r3', x: 35, y: 470, largo: 530 },
 		],
+		/*
+		 * LA SEÑALÉTICA DEL FRONTAL. Es lo que el tablero le dice a quien lo opera sin abrirlo: qué
+		 * hay dentro, qué tensión trae y qué significa cada luz. No son aparatos —no consumen, no
+		 * salen en el esquema— y por eso van aquí y no en `dispositivos`.
+		 *
+		 * Las tres letras van justo debajo de sus pilotos (R en 250, S en 330, T en 410) y a la
+		 * misma altura, que es lo que hace que una fila de mandos se lea como una fila.
+		 */
+		rotulos: [
+			// La placa de identificación arriba del todo, que es lo primero que se lee al llegar.
+			{ id: 'rotIdent', texto: 'VENTILADOR DE CUBIERTA\n380 V · 4 kW', x: 330, y: 62, alto: 7, ancho: 230, estilo: 'placa' },
+			// La fila de presencia de fase, con su encabezado y una letra bajo cada piloto.
+			{ id: 'rotFases', texto: 'PRESENCIA DE FASE', x: 330, y: 148, alto: 4.5 },
+			{ id: 'rotR', texto: 'R', x: 250, y: 232, alto: 5.5 },
+			{ id: 'rotS', texto: 'S', x: 330, y: 232, alto: 5.5 },
+			{ id: 'rotT', texto: 'T', x: 410, y: 232, alto: 5.5 },
+			// Y el aviso de riesgo, abajo y a la vista.
+			{ id: 'rotAviso', texto: 'CUIDADO\nTABLERO ELÉCTRICO', x: 330, y: 545, alto: 9, ancho: 190, estilo: 'aviso' },
+		],
 		canaletas: [
 			{ id: 'c1', x: 30, y: 175, largo: 540, orientacion: 'h', ancho: 40, alto: 60 },
 			{ id: 'c2', x: 30, y: 365, largo: 540, orientacion: 'h', ancho: 40, alto: 60 },
@@ -584,9 +603,9 @@ function estrellaTriangulo(): Proyecto {
 			{ dispositivoId: 'q3', x: 150, y: 47, ancho: 54, alto: 85, rielId: 'r1' },
 			// En la PUERTA: x e y se miden desde su esquina superior izquierda, igual que en la
 			// placa se miden desde la suya. La hoja de este armario mide 660 × 660.
-			{ dispositivoId: 'hr', x: 250, y: 70, ancho: 30, alto: 30, montaje: 'puerta' },
-			{ dispositivoId: 'hs', x: 330, y: 70, ancho: 30, alto: 30, montaje: 'puerta' },
-			{ dispositivoId: 'ht', x: 410, y: 70, ancho: 30, alto: 30, montaje: 'puerta' },
+			{ dispositivoId: 'hr', x: 250, y: 195, ancho: 30, alto: 30, montaje: 'puerta' },
+			{ dispositivoId: 'hs', x: 330, y: 195, ancho: 30, alto: 30, montaje: 'puerta' },
+			{ dispositivoId: 'ht', x: 410, y: 195, ancho: 30, alto: 30, montaje: 'puerta' },
 		],
 	};
 	return p;

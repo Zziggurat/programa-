@@ -36,8 +36,8 @@
  */
 import * as THREE from 'three';
 
-import { Colocacion, Dispositivo } from '../src/modelo/tipos.js';
-import { M } from './dispositivos3d.js';
+import { Colocacion, Dispositivo, RotuloFrontal } from '../src/modelo/tipos.js';
+import { cajaCanto, M } from './dispositivos3d.js';
 import { marca } from './marcas3d.js';
 
 /**
@@ -256,21 +256,174 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 /** Radio aparente del piloto, en mm: lo usa la selección para saber cuándo el puntero está encima. */
 export const RADIO_PILOTO = R_ARO;
 
+/* ==================================================================================
+ * EL REGISTRO DE COMPONENTES DE FRONTAL
+ *
+ * Hoy solo hay pilotos. Mañana habrá pulsadores NA/NC, setas de emergencia, selectores de dos y
+ * tres posiciones, voltímetros, amperímetros, multimedidores y pantallas. Todos comparten lo
+ * mismo y por eso caben en la misma ficha:
+ *
+ *   · ocupan un TALADRO en la chapa —redondo de 22 mm los mandos, rectangular los instrumentos—;
+ *   · sobresalen por fuera y entran por dentro;
+ *   · son `Dispositivo` normales para el resto del programa.
+ *
+ * Añadir una familia es registrar una ficha. No hay que tocar la escena, ni la animación, ni la
+ * selección, ni el editor del frontal, ni el guardado: todos preguntan por la ficha y ninguno sabe
+ * qué familias existen.
+ * ================================================================================== */
+
+/** El hueco que un componente ocupa en la chapa. Lo usan el dibujo y el editor del frontal. */
+export interface HuellaFrontal {
+	forma: 'redonda' | 'rectangular';
+	/** Diámetro si es redonda; ancho si es rectangular. En mm. */
+	ancho: number;
+	/** Alto, solo para las rectangulares. */
+	alto?: number;
+}
+
+export interface FichaFrontal {
+	/** Nombre de la familia, para la interfaz. */
+	familia: string;
+	/** El hueco que ocupa este aparato concreto (puede depender de su ficha). */
+	huella(d: Dispositivo): HuellaFrontal;
+	/** La geometría, con el origen en la CARA EXTERIOR de la puerta y +Z hacia el observador. */
+	construir(d: Dispositivo, col: Colocacion): THREE.Group;
+}
+
+const FICHAS = new Map<string, FichaFrontal>();
+
+/** Da de alta una familia de componentes de frontal. */
+export function registrarFrontal(tipo: string, ficha: FichaFrontal): void {
+	FICHAS.set(tipo, ficha);
+}
+
 /**
- * EL PUNTO POR DONDE CRECE ESTO.
- *
- * Hoy solo hay pilotos. Mañana habrá pulsadores, selectores, instrumentos y pantallas, y todos
- * comparten lo mismo: van en un taladro de 22 mm, atraviesan la chapa, tienen bornes por dentro y
- * son `Dispositivo` normales para el resto del programa. Cuando llegue el pulsador, se añade su
- * constructor aquí y no hay que tocar `escena3d`, ni la animación, ni la selección, ni el guardado.
- *
- * Lo que NO se conoce se dibuja como piloto en vez de desaparecer: un aparato montado en la puerta
- * que no se ve es un aparato que el usuario cree que ha perdido.
+ * La ficha de un aparato. Lo que NO se conoce se dibuja como un mando redondo de 22 mm en vez de
+ * desaparecer: un aparato montado en la puerta que no se ve es un aparato que el usuario cree que
+ * ha perdido.
  */
+export function fichaFrontal(d: Dispositivo): FichaFrontal {
+	return FICHAS.get(d.tipo) ?? FICHAS.get('piloto')!;
+}
+
+registrarFrontal('piloto', {
+	familia: 'Luz piloto',
+	huella: () => ({ forma: 'redonda', ancho: TALADRO }),
+	construir: construirPilotoPuerta,
+});
+
+/** Construye el componente de frontal que le toque a este aparato. */
 export function construirComponentePuerta(d: Dispositivo, col: Colocacion): THREE.Group {
-	switch (d.tipo) {
-		case 'piloto':
-		default:
-			return construirPilotoPuerta(d, col);
+	return fichaFrontal(d).construir(d, col);
+}
+
+/** El hueco que ocupa un aparato en la chapa del frontal. */
+export function huellaFrontal(d: Dispositivo): HuellaFrontal {
+	return fichaFrontal(d).huella(d);
+}
+
+/* ==================================================================================
+ * SEÑALÉTICA: las placas y los rótulos grabados
+ *
+ * Un rótulo NO es geometría de texto. Se dibuja con el mismo atlas de serigrafía que ya llevan los
+ * bornes y los aparatos: cada palabra ocupa una celda y la comparten todos los rótulos del
+ * tablero, así que dos placas que digan «MARCHA» cuestan una sola vez. Un tablero con cuarenta
+ * rótulos sigue siendo una textura.
+ *
+ * Se parte por PALABRAS y no por líneas enteras porque las palabras se repiten —MARCHA, MOTOR,
+ * TABLERO, FALLA— y las frases no. Y de paso el texto se ajusta al ancho de la placa en vez de
+ * aplastarse para caber en una celda.
+ * ================================================================================== */
+
+/** Colores de cada estilo de rótulo: fondo, letra y borde. */
+const ESTILO_ROTULO = {
+	grabado: { fondo: undefined, letra: false, borde: undefined },
+	placa: { fondo: 0xe7e9ea, letra: false, borde: 0x8d9499 },
+	aviso: { fondo: 0xf2c515, letra: false, borde: 0x1c1c1c },
+} as const;
+
+/** Alto de letra por defecto, en mm. */
+const ALTO_ROTULO = 5;
+
+function anchoDe(m: THREE.Mesh): number {
+	return (m.geometry as THREE.PlaneGeometry).parameters?.width ?? 0;
+}
+
+/**
+ * Construye un rótulo del frontal. El origen va en la CARA EXTERIOR de la puerta, igual que el de
+ * los componentes, y el rótulo queda centrado en el punto que se le da.
+ */
+export function construirRotuloFrontal(r: RotuloFrontal): THREE.Group {
+	const g = new THREE.Group();
+	g.userData.rotuloId = r.id;
+	const alto = Math.max(2, r.alto ?? ALTO_ROTULO);
+	const estilo = ESTILO_ROTULO[r.estilo ?? 'grabado'];
+	const anchoMax = r.ancho ?? Math.max(40, alto * 16);
+
+	// Cada palabra, medida, y repartida en líneas que quepan.
+	const espacio = alto * 0.42;
+	const lineas: THREE.Mesh[][] = [[]];
+	let usado = 0;
+	for (const trozo of r.texto.split(/\n/)) {
+		if (lineas[lineas.length - 1].length) { lineas.push([]); usado = 0; }
+		for (const palabra of trozo.split(/\s+/).filter(Boolean)) {
+			const m = marca(palabra, alto, !!estilo.letra);
+			if (!m) continue;
+			const w = anchoDe(m);
+			const fila = lineas[lineas.length - 1];
+			if (fila.length && usado + espacio + w > anchoMax) { lineas.push([m]); usado = w; continue; }
+			fila.push(m);
+			usado += (fila.length > 1 ? espacio : 0) + w;
+		}
 	}
+	const conTexto = lineas.filter((l) => l.length);
+
+	/*
+	 * Sin atlas —fuera del navegador, o con el atlas lleno— no hay letras. La placa se dibuja
+	 * igual: es mejor una placa en blanco, que se ve y se puede mover, que un rótulo invisible que
+	 * el usuario cree que ha perdido.
+	 */
+	const salto = alto * 1.42;
+	const anchoTexto = Math.max(
+		alto * 4,
+		...conTexto.map((f) => f.reduce((a, m, i) => a + anchoDe(m) + (i ? espacio : 0), 0)),
+	);
+	const altoTexto = Math.max(alto, conTexto.length * salto - (salto - alto));
+
+	/*
+	 * LA PLACA, cuando la lleva. Va sobre la chapa, no dentro: una placa de señalización se
+	 * atornilla o se pega encima, y el escalón de un milímetro es lo que la hace verse como una
+	 * pieza y no como algo pintado. El texto va delante de la placa, nunca en su mismo plano.
+	 */
+	let zTexto = 0.35;
+	if (estilo.fondo !== undefined) {
+		const margen = alto * 0.75;
+		const placa = cajaCanto(anchoTexto + margen * 2, altoTexto + margen * 1.6, 1.6,
+			M.plastico(estilo.fondo, 0.5), 0, 0, 0.8, Math.min(3, alto * 0.5), 0.3);
+		placa.castShadow = true;
+		g.add(placa);
+		if (estilo.borde !== undefined) {
+			// El borde es un marco un pelo más grande y MÁS HUNDIDO, así que no comparte plano con
+			// la placa: asoma por los cuatro lados y por detrás, como el canto de una pieza.
+			const borde = cajaCanto(anchoTexto + margen * 2 + 2.4, altoTexto + margen * 1.6 + 2.4, 1.2,
+				M.plastico(estilo.borde, 0.6), 0, 0, 0.4, Math.min(3.6, alto * 0.6), 0.3);
+			g.add(borde);
+		}
+		zTexto = 1.75;
+	}
+
+	// Y las palabras, línea a línea, centradas.
+	conTexto.forEach((fila, f) => {
+		const anchoFila = fila.reduce((a, m, i) => a + anchoDe(m) + (i ? espacio : 0), 0);
+		let x = -anchoFila / 2;
+		const y = altoTexto / 2 - alto / 2 - f * salto;
+		for (const m of fila) {
+			m.position.set(x + anchoDe(m) / 2, y, zTexto);
+			x += anchoDe(m) + espacio;
+			g.add(m);
+		}
+	});
+
+	g.userData.huellaRotulo = { ancho: anchoTexto, alto: altoTexto };
+	return g;
 }

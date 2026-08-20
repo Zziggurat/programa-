@@ -42,7 +42,11 @@ import {
 	proyectarEnPolilinea, respetarBloqueo,
 } from './edicion-cables.js';
 import { colorDeTipo } from './dispositivos3d.js';
-import { RADIO_PILOTO } from './componentes-puerta.js';
+import { colorDePiloto, huellaFrontal, RADIO_PILOTO } from './componentes-puerta.js';
+import {
+	Alineacion as AlineacionFrontal, alinearFrontal, AyudasFrontal, dentroDeLaHoja, Guia, imantarEnFrontal,
+	PiezaFrontal, repartirFrontal,
+} from './edicion-frontal.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
 import { huellaMinima, leerRotulos } from '../src/motores/terminales.js';
@@ -74,7 +78,27 @@ type Seleccion =
 	| { tipo: 'dispositivo'; id: string }
 	| { tipo: 'canaleta'; id: string }
 	| { tipo: 'riel'; id: string }
-	| { tipo: 'cable'; id: string };
+	| { tipo: 'cable'; id: string }
+	/** Un rótulo del frontal. Los aparatos de puerta se siguen seleccionando como `dispositivo`. */
+	| { tipo: 'rotulo'; id: string };
+
+/**
+ * DÓNDE SE ESTÁ TRABAJANDO.
+ *
+ * Un tablero tiene dos caras y en cada una se hace un oficio distinto: dentro se arma y se
+ * cablea, y en el frontal se decide lo que el tablero le dice a quien lo opera. Son dos trabajos
+ * con herramientas distintas, y meterlos en la misma pantalla obliga a esquivar la puerta para
+ * cablear y a bucear entre canaletas para colocar un piloto.
+ *
+ *   interior   la placa, los carriles, las canaletas y los cables. La puerta se abre y se aparta.
+ *   frontal    la hoja de frente, cerrada, como una superficie técnica sobre la que se compone.
+ *   conjunto   el armario entero, para mirarlo y enseñarlo.
+ *
+ * Cambiar de espacio NO reconstruye nada ni mueve un aparato: solo cambia la cámara, lo que se
+ * ve y qué herramientas hay a mano. Y cada espacio se acuerda de su cámara, así que volver es
+ * volver a donde uno estaba.
+ */
+type Espacio = 'interior' | 'frontal' | 'conjunto';
 
 /* ------------------------------ Estado ------------------------------ */
 
@@ -1025,8 +1049,631 @@ function montarEscenario(): void {
 	const verTapas = visualizacion || ($('ver-tapas') as HTMLInputElement).checked;
 	for (const t of escenario.tapas) t.visible = verTapas;
 	asentarPuerta();   // deja la puerta y, con ella, los rótulos que tape
+	/*
+	 * La escena es nueva, así que la rejilla y las guías que colgaban de la puerta ANTERIOR ya no
+	 * existen: se olvidan las referencias antes de volver a dibujarlas. Sin esto, la rejilla se
+	 * quedaba apuntando a un grupo liberado y no había forma de apagarla.
+	 */
+	rejillaFrontal = undefined;
+	guiasFrontal = undefined;
+	refrescarRejillaFrontal();
+	if (espacio === 'frontal') resaltarFrontal();
+	pintarListaFrontal();
 	asentarSuelo();
 	ajustarSombras();
+}
+
+/* ======================= EL FRONTAL: ESPACIOS Y EDICIÓN =======================
+ *
+ * Dos espacios igual de importantes, y la misma escena para los dos. Cambiar de espacio no
+ * reconstruye nada ni mueve un aparato: cambia la cámara, lo que se ve y las herramientas.
+ */
+
+let espacio: Espacio = 'interior';
+/** La cámara de cada espacio, para poder volver a donde uno estaba. */
+const camaraDeEspacio = new Map<Espacio, { pos: THREE.Vector3; mira: THREE.Vector3 }>();
+/** Piezas del frontal marcadas además de la principal (Mayúsculas). */
+let frontalExtra: { clase: 'aparato' | 'rotulo'; id: string }[] = [];
+
+/** La hoja de la puerta, en milímetros. Es la superficie sobre la que se compone el frontal. */
+function hojaDeLaPuerta(): { ancho: number; alto: number } {
+	const caja = cajaDe(proyecto.gabinete!);
+	return { ancho: caja.ancho, alto: caja.alto };
+}
+
+/**
+ * Las piezas del frontal tal como están en el PROYECTO, con la huella que ocupan.
+ *
+ * Sale del modelo y no de la escena a propósito: el editor mueve datos, y la escena es lo que se
+ * dibuja a partir de ellos. Si el editor leyera la escena, redondear un milímetro al dibujar
+ * acabaría corriendo la pieza de sitio cada vez que se la tocara.
+ */
+function piezasFrontal(): PiezaFrontal[] {
+	const g = proyecto.gabinete;
+	if (!g) return [];
+	const piezas: PiezaFrontal[] = [];
+	for (const col of g.colocaciones) {
+		if (col.montaje !== 'puerta') continue;
+		const d = proyecto.dispositivos.find((x) => x.id === col.dispositivoId);
+		if (!d) continue;
+		const h = huellaFrontal(d);
+		piezas.push({
+			id: col.dispositivoId, clase: 'aparato', x: col.x, y: col.y,
+			ancho: h.ancho, alto: h.alto ?? h.ancho,
+		});
+	}
+	for (const r of g.rotulos ?? []) {
+		const grupo = escenario.frontal.find((f) => f.tipo === 'rotulo' && f.id === r.id)?.grupo;
+		const h = grupo?.userData.huellaRotulo as { ancho: number; alto: number } | undefined;
+		piezas.push({
+			id: r.id, clase: 'rotulo', x: r.x, y: r.y,
+			ancho: h?.ancho ?? 40, alto: h?.alto ?? (r.alto ?? 5),
+		});
+	}
+	return piezas;
+}
+
+/** Escribe la posición de una pieza en el modelo. Es el único sitio que la mueve. */
+function moverPiezaFrontal(clase: 'aparato' | 'rotulo', id: string, x: number, y: number): void {
+	const g = proyecto.gabinete!;
+	if (clase === 'aparato') {
+		const col = g.colocaciones.find((c) => c.dispositivoId === id);
+		if (col) { col.x = Math.round(x); col.y = Math.round(y); }
+	} else {
+		const r = g.rotulos?.find((k) => k.id === id);
+		if (r) { r.x = Math.round(x); r.y = Math.round(y); }
+	}
+	// Y en la escena, moviendo SOLO ese grupo. Colocar una pieza no reconstruye la puerta.
+	const m = escenario.frontal.find((f) => f.id === id && f.tipo === clase);
+	if (m) escenario.puerta.colocar(m.grupo, 'frente', Math.round(x), Math.round(y), 0);
+}
+
+/* --------------------------- Señalar en el frontal --------------------------- */
+
+/**
+ * LA PIEZA DEL FRONTAL BAJO EL PUNTERO, con tolerancia en PÍXELES.
+ *
+ * Mismo criterio que los cables y por el mismo motivo: una lente de 22 mm vista de lejos son unos
+ * pocos píxeles. Se mide contra la huella real de cada pieza y nunca por debajo de un dedo de
+ * ratón, así que da igual el zoom.
+ */
+function piezaFrontalBajoElPuntero(ev: MouseEvent, tolerancia = 12): PiezaFrontal | undefined {
+	if (!escenario.envolvente.visible) return undefined;
+	const px = punteroEnPixeles(ev);
+	prepararProyeccion();
+	const piezas = piezasFrontal();
+	let mejor: { p: PiezaFrontal; d: number } | undefined;
+	for (const p of piezas) {
+		const m = escenario.frontal.find((f) => f.id === p.id && f.tipo === p.clase);
+		if (!m) continue;
+		const c = m.grupo.getWorldPosition(new THREE.Vector3());
+		const v = aPixeles(c.x, c.y, c.z, px.ancho, px.alto);
+		if (v.w <= 0) continue;
+		const borde = aPixeles(c.x + p.ancho / 2, c.y, c.z, px.ancho, px.alto);
+		const radio = Math.max(tolerancia, Math.hypot(borde.x - v.x, borde.y - v.y));
+		const d = Math.hypot(v.x - px.x, v.y - px.y);
+		if (d > radio) continue;
+		if (!mejor || d < mejor.d) mejor = { p, d };
+	}
+	return mejor?.p;
+}
+
+/**
+ * El punto del ratón sobre EL PLANO DE LA HOJA, en milímetros desde su esquina superior izquierda.
+ *
+ * Se usa el plano de la puerta esté donde esté —abierta, cerrada o a medias—, así que las piezas
+ * se pueden mover también con el armario en escorzo. Y como todo se expresa en el plano de la
+ * hoja, una pieza NO PUEDE quedarse flotando por delante o por detrás de la chapa: no hay ninguna
+ * coordenada donde meter esa distancia. No es una comprobación, es que no existe el grado de
+ * libertad.
+ */
+function puntoEnLaPuerta(ev: MouseEvent): { x: number; y: number } | undefined {
+	const f = escenario.puerta.frente;
+	f.updateMatrixWorld(true);
+	const q = f.getWorldQuaternion(new THREE.Quaternion());
+	const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
+	const origen = f.getWorldPosition(new THREE.Vector3());
+	punteroEnPixeles(ev);
+	raycaster.setFromCamera(puntero, camaraViva());
+	const impacto = new THREE.Vector3();
+	const plano = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, origen);
+	if (!raycaster.ray.intersectPlane(plano, impacto)) return undefined;
+	const local = f.worldToLocal(impacto.clone());
+	const hoja = hojaDeLaPuerta();
+	return { x: local.x + hoja.ancho / 2, y: hoja.alto / 2 - local.y };
+}
+
+/* ------------------------------- Arrastre ------------------------------- */
+
+interface ArrastreFrontal {
+	pieza: PiezaFrontal;
+	/** Del centro de la pieza al punto donde se pinchó: mover no debe centrarla en el cursor. */
+	dx: number;
+	dy: number;
+	/** Y las demás piezas marcadas, con su desfase respecto a la que se agarró. */
+	acompanan: { clase: 'aparato' | 'rotulo'; id: string; dx: number; dy: number }[];
+	movido: boolean;
+}
+let arrastreFrontal: ArrastreFrontal | undefined;
+let guiasFrontal: THREE.Group | undefined;
+
+/** Dibuja las guías del imantado sobre la hoja. Se borran al soltar: no son decoración fija. */
+function mostrarGuiasFrontal(guias: Guia[]): void {
+	quitarGuiasFrontal();
+	if (!guias.length) return;
+	const hoja = hojaDeLaPuerta();
+	const g = new THREE.Group();
+	for (const guia of guias) {
+		const puntos = guia.eje === 'x'
+			? [new THREE.Vector3(guia.valor - hoja.ancho / 2, hoja.alto / 2, 1.2),
+				new THREE.Vector3(guia.valor - hoja.ancho / 2, -hoja.alto / 2, 1.2)]
+			: [new THREE.Vector3(-hoja.ancho / 2, hoja.alto / 2 - guia.valor, 1.2),
+				new THREE.Vector3(hoja.ancho / 2, hoja.alto / 2 - guia.valor, 1.2)];
+		const linea = new THREE.Line(
+			new THREE.BufferGeometry().setFromPoints(puntos),
+			new THREE.LineBasicMaterial({
+				// La rejilla y un vecino no son lo mismo y no se pintan igual: azul es «me he
+				// alineado con esa pieza», gris es «he caído en la rejilla».
+				color: guia.con === 'rejilla' ? 0x8a929a : 0x4da3ff,
+				transparent: true, opacity: 0.9, depthTest: false,
+			}),
+		);
+		linea.renderOrder = 997;
+		linea.raycast = () => undefined;
+		g.add(linea);
+	}
+	escenario.puerta.frente.add(g);
+	guiasFrontal = g;
+}
+
+function quitarGuiasFrontal(): void {
+	if (!guiasFrontal) return;
+	guiasFrontal.parent?.remove(guiasFrontal);
+	liberar(guiasFrontal);
+	guiasFrontal = undefined;
+}
+
+/** La rejilla del frontal, si está encendida. Se dibuja una vez y se enseña o se esconde. */
+let rejillaFrontal: THREE.Object3D | undefined;
+
+function refrescarRejillaFrontal(): void {
+	const on = espacio === 'frontal' && ($('frontal-rejilla') as HTMLInputElement).checked;
+	if (rejillaFrontal) { rejillaFrontal.parent?.remove(rejillaFrontal); liberar(rejillaFrontal); rejillaFrontal = undefined; }
+	if (!on) return;
+	const paso = Math.max(1, Number(($('frontal-paso') as HTMLInputElement).value) || 5);
+	const hoja = hojaDeLaPuerta();
+	const puntos: THREE.Vector3[] = [];
+	for (let x = paso; x < hoja.ancho; x += paso) {
+		puntos.push(new THREE.Vector3(x - hoja.ancho / 2, hoja.alto / 2, 0.9),
+			new THREE.Vector3(x - hoja.ancho / 2, -hoja.alto / 2, 0.9));
+	}
+	for (let y = paso; y < hoja.alto; y += paso) {
+		puntos.push(new THREE.Vector3(-hoja.ancho / 2, hoja.alto / 2 - y, 0.9),
+			new THREE.Vector3(hoja.ancho / 2, hoja.alto / 2 - y, 0.9));
+	}
+	const g = new THREE.LineSegments(
+		new THREE.BufferGeometry().setFromPoints(puntos),
+		new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.14 }),
+	);
+	g.raycast = () => undefined;
+	escenario.puerta.frente.add(g);
+	rejillaFrontal = g;
+}
+
+/** Las ayudas que están activas ahora mismo. Alt las apaga todas mientras se tenga apretada. */
+function ayudasFrontal(ev: MouseEvent): AyudasFrontal {
+	const imantar = ($('frontal-snap') as HTMLInputElement).checked && !ev.altKey;
+	const rejilla = ($('frontal-rejilla') as HTMLInputElement).checked
+		? Math.max(1, Number(($('frontal-paso') as HTMLInputElement).value) || 5)
+		: undefined;
+	return { imantar, rejilla, tolerancia: 4 };
+}
+
+/** Un movimiento del ratón con una pieza del frontal agarrada. */
+function moverArrastreFrontal(ev: MouseEvent): void {
+	if (!arrastreFrontal) {
+		// Sin nada agarrado, el ratón solo señala: cursor de mano sobre lo que se puede coger.
+		renderer.domElement.style.cursor = piezaFrontalBajoElPuntero(ev) ? 'grab' : '';
+		return;
+	}
+	const p = puntoEnLaPuerta(ev);
+	if (!p) return;
+	const a = arrastreFrontal;
+	const hoja = hojaDeLaPuerta();
+	const bruto = { x: p.x + a.dx, y: p.y + a.dy };
+	/*
+	 * Las ayudas se calculan contra las piezas que NO se están moviendo: alinearse consigo mismo no
+	 * significa nada, y con Alt no se calcula ninguna.
+	 */
+	const quietas = piezasFrontal().filter(
+		(q) => !(q.clase === a.pieza.clase && q.id === a.pieza.id)
+			&& !a.acompanan.some((k) => k.clase === q.clase && k.id === q.id),
+	);
+	const imantado = imantarEnFrontal(bruto, quietas, ayudasFrontal(ev));
+	const sitio = dentroDeLaHoja(imantado, a.pieza, hoja);
+	moverPiezaFrontal(a.pieza.clase, a.pieza.id, sitio.x, sitio.y);
+	for (const q of a.acompanan) {
+		const suyo = dentroDeLaHoja({ x: sitio.x + q.dx, y: sitio.y + q.dy },
+			piezasFrontal().find((k) => k.clase === q.clase && k.id === q.id) ?? { ancho: 24, alto: 24 }, hoja);
+		moverPiezaFrontal(q.clase, q.id, suyo.x, suyo.y);
+	}
+	mostrarGuiasFrontal(imantado.guias);
+	a.movido = true;
+	$('ayuda').textContent = `🎛️ ${Math.round(sitio.x)} · ${Math.round(sitio.y)} mm`
+		+ (imantado.guias.length ? ` · imantado a ${imantado.guias.map((g) => g.con).join(' y ')}` : '')
+		+ ' · Alt para colocar al milímetro';
+}
+
+/** Soltar. Aquí NO se recoloca nada: la pieza se queda exactamente donde se dejó. */
+function soltarArrastreFrontal(): void {
+	const a = arrastreFrontal;
+	arrastreFrontal = undefined;
+	quitarGuiasFrontal();
+	arrastrando = false;
+	permitirOrbita(true);
+	renderer.domElement.style.cursor = '';
+	if (!a) return;
+	if (a.movido) {
+		// El paso de deshacer se captura al SOLTAR y no al empezar: un clic que no llegó a mover
+		// nada no tiene por qué gastar un paso del historial.
+		marcarSucio();
+		pintarListaFrontal();
+		pintarSeleccion();
+	}
+	$('ayuda').textContent = espacio === 'frontal'
+		? '🎛️ FRONTAL — Arrastra los mandos y los rótulos sobre la puerta · Mayúsculas para elegir varios · '
+			+ 'Alt mientras arrastras coloca al milímetro sin ayudas · Supr quita · Ctrl+D duplica'
+		: AYUDA[modo];
+}
+
+/* ------------------------- La ficha de un rótulo ------------------------- */
+
+function pintarPanelRotulo(id: string): void {
+	const panel = $('panel-der');
+	const r = proyecto.gabinete?.rotulos?.find((k) => k.id === id);
+	if (!r) { panel.style.display = 'none'; return; }
+	panel.style.display = 'block';
+	const opcion = (v: string, t: string) => `<option value="${v}"${(r.estilo ?? 'grabado') === v ? ' selected' : ''}>${t}</option>`;
+	panel.innerHTML = `
+		<h1>Rótulo</h1>
+		<div class="sub">Señalética del frontal · no es un aparato: no consume ni sale en el esquema</div>
+		<div class="campo"><label for="rot-texto">Texto</label></div>
+		<textarea id="rot-texto" rows="3" style="width:100%">${escaparHtml(r.texto)}</textarea>
+		<div class="campo"><label for="rot-estilo">Tipo</label><span><select id="rot-estilo">
+			${opcion('grabado', 'Grabado en la chapa')}${opcion('placa', 'Placa atornillada')}${opcion('aviso', 'Aviso de riesgo')}
+		</select></span></div>
+		<div class="campo"><label for="rot-alto">Altura de letra</label><span><input type="number" id="rot-alto" min="2" max="40" step="0.5" value="${r.alto ?? 5}"> mm</span></div>
+		<div class="campo"><label for="rot-ancho">Ancho máximo</label><span><input type="number" id="rot-ancho" min="10" max="1200" step="5" value="${Math.round(r.ancho ?? 0) || ''}" placeholder="auto"> mm</span></div>
+		<div class="campo"><label for="rot-x">X</label><span><input type="number" id="rot-x" step="1" value="${Math.round(r.x)}"> mm</span></div>
+		<div class="campo"><label for="rot-y">Y</label><span><input type="number" id="rot-y" step="1" value="${Math.round(r.y)}"> mm</span></div>
+		<div class="botonera">
+			<button class="boton" id="rot-duplicar">⧉ Duplicar</button>
+			<button class="boton" id="rot-borrar">🗑 Quitar</button>
+		</div>`;
+
+	const guardar = (cambio: () => void, rehacer: boolean) => {
+		if (!capturar()) return;
+		cambio();
+		if (rehacer) trasCambiarFrontal();
+		else { moverPiezaFrontal('rotulo', r.id, r.x, r.y); pintarListaFrontal(); marcarSucio(); }
+	};
+	// El texto y el aspecto cambian la geometría, así que hay que rehacerla; mover no.
+	($('rot-texto') as HTMLTextAreaElement).onchange = (e) =>
+		guardar(() => { r.texto = (e.target as HTMLTextAreaElement).value.slice(0, 120); }, true);
+	($('rot-estilo') as HTMLSelectElement).onchange = (e) =>
+		guardar(() => { r.estilo = (e.target as HTMLSelectElement).value as typeof r.estilo; }, true);
+	($('rot-alto') as HTMLInputElement).onchange = (e) =>
+		guardar(() => { r.alto = Math.max(2, Number((e.target as HTMLInputElement).value) || 5); }, true);
+	($('rot-ancho') as HTMLInputElement).onchange = (e) => guardar(() => {
+		const v = Number((e.target as HTMLInputElement).value);
+		if (v > 0) r.ancho = v; else delete r.ancho;
+	}, true);
+	($('rot-x') as HTMLInputElement).onchange = (e) =>
+		guardar(() => { r.x = Math.round(Number((e.target as HTMLInputElement).value) || 0); }, false);
+	($('rot-y') as HTMLInputElement).onchange = (e) =>
+		guardar(() => { r.y = Math.round(Number((e.target as HTMLInputElement).value) || 0); }, false);
+	($('rot-duplicar') as HTMLButtonElement).onclick = () => duplicarFrontal();
+	($('rot-borrar') as HTMLButtonElement).onclick = () => borrarFrontal();
+}
+
+/* ------------------------- Cambiar de espacio ------------------------- */
+
+/** Encuadra la puerta de frente, como una lámina técnica. */
+function encuadrarFrontal(): void {
+	const hoja = hojaDeLaPuerta();
+	const lienzo = renderer.domElement;
+	const alto = Math.max(40, lienzo.clientHeight);
+	const tapaIzq = $('panel-izq').getBoundingClientRect().width;
+	const panelDer = $('panel-der');
+	const tapaDer = panelDer.style.display === 'none' ? 0 : panelDer.getBoundingClientRect().width;
+	const anchoVisible = Math.max(260, lienzo.clientWidth - tapaIzq - tapaDer);
+	const fovV = (camara.fov * Math.PI) / 180;
+	const fovH = 2 * Math.atan(Math.tan(fovV / 2) * (anchoVisible / alto));
+	// 1,18 es el aire alrededor de la hoja: lo justo para ver el marco y el canto del armario.
+	const distancia = Math.max(
+		(hoja.alto * 1.18) / 2 / Math.tan(fovV / 2),
+		(hoja.ancho * 1.18) / 2 / Math.tan(fovH / 2),
+		320,
+	);
+	const mundoPorPixel = (2 * distancia * Math.tan(fovV / 2)) / alto;
+	const desvio = ((tapaIzq - tapaDer) / 2) * mundoPorPixel;
+	// La puerta cerrada está delante de la boca del armario; la cámara se pone frente a ELLA.
+	const zPuerta = escenario.puerta.frente.getWorldPosition(new THREE.Vector3()).z;
+	controles.target.set(-desvio, 0, zPuerta);
+	camara.position.set(-desvio, 0, zPuerta + distancia);
+	controles.update();
+}
+
+/**
+ * CAMBIA DE ESPACIO. No reconstruye la escena ni toca una sola posición del tablero.
+ *
+ * Lo que hace es tres cosas: guardar dónde estaba la cámara del espacio que se deja, poner la del
+ * que se entra —la que quedó guardada, o una de estreno si es la primera vez— y ajustar qué se ve
+ * y qué se puede tocar. Volver a un espacio es volver exactamente a donde uno estaba.
+ */
+function aplicarEspacio(nuevo: Espacio): void {
+	if (colocando) soltarColocacion();
+	// Se guarda la cámara del espacio que se abandona.
+	camaraDeEspacio.set(espacio, {
+		pos: camara.position.clone(), mira: controles.target.clone(),
+	});
+	const antes = espacio;
+	espacio = nuevo;
+	for (const [id, e] of [['esp-interior', 'interior'], ['esp-frontal', 'frontal'], ['esp-conjunto', 'conjunto']] as const) {
+		$(id).classList.toggle('activo', espacio === e);
+	}
+	document.body.classList.toggle('espacio-frontal', espacio === 'frontal');
+
+	/*
+	 * LA PUERTA SE PONE DONDE HAGA FALTA PARA EL OFICIO DE CADA ESPACIO, y solo al ENTRAR: dentro
+	 * del espacio manda el botón, porque un usuario que abre la puerta en el frontal para ver los
+	 * cuerpos por dentro no quiere que se le vuelva a cerrar sola.
+	 */
+	if (antes !== nuevo) {
+		if (espacio === 'frontal') moverPuerta(false);          // cerrada: es la superficie a componer
+		else if (espacio === 'interior') moverPuerta(true);     // abierta: estorba menos
+	}
+	// En el frontal no se cablea ni se mueven canaletas: la selección del interior se suelta.
+	if (espacio === 'frontal' && sel && sel.tipo !== 'rotulo' && sel.tipo !== 'dispositivo') {
+		aplicarSeleccion(undefined);
+	}
+	if (espacio !== 'frontal') { frontalExtra = []; quitarGuiasFrontal(); }
+	escenario.bornes.visible = espacio === 'interior' && modo === 'trabajo' && !visualizacion;
+
+	const guardada = camaraDeEspacio.get(espacio);
+	if (guardada) {
+		camara.position.copy(guardada.pos);
+		controles.target.copy(guardada.mira);
+		controles.update();
+	} else if (espacio === 'frontal') {
+		encuadrarFrontal();
+	} else {
+		encuadrar();
+	}
+	refrescarRejillaFrontal();
+	pintarListaFrontal();
+	pintarSeleccion();
+	$('ayuda').textContent = espacio === 'frontal'
+		? '🎛️ FRONTAL — Arrastra los mandos y los rótulos sobre la puerta · Mayúsculas para elegir varios · '
+			+ 'Alt mientras arrastras coloca al milímetro sin ayudas · Supr quita · Ctrl+D duplica'
+		: espacio === 'conjunto'
+			? '🧊 CONJUNTO — El armario entero. Gira y acerca la vista; para editar, entra en Interior o Frontal.'
+			: AYUDA[modo];
+}
+
+/* ------------------------- La lista y las órdenes ------------------------- */
+
+/** ¿Está esta pieza marcada, sola o dentro de la selección múltiple? */
+function frontalMarcado(clase: 'aparato' | 'rotulo', id: string): boolean {
+	const principal = clase === 'rotulo' ? sel?.tipo === 'rotulo' && sel.id === id
+		: sel?.tipo === 'dispositivo' && sel.id === id;
+	return principal || frontalExtra.some((f) => f.clase === clase && f.id === id);
+}
+
+/** Todas las piezas marcadas, en orden de la lista. */
+function seleccionFrontal(): PiezaFrontal[] {
+	return piezasFrontal().filter((p) => frontalMarcado(p.clase, p.id));
+}
+
+function pintarListaFrontal(): void {
+	const ul = document.getElementById('lista-frontal');
+	if (!ul) return;
+	ul.innerHTML = '';
+	const g = proyecto.gabinete;
+	if (!g) return;
+	for (const p of piezasFrontal()) {
+		const li = document.createElement('li');
+		li.className = frontalMarcado(p.clase, p.id) ? 'seleccionado' : '';
+		let nombre = p.id;
+		let color = '#8a929a';
+		if (p.clase === 'aparato') {
+			const d = proyecto.dispositivos.find((x) => x.id === p.id);
+			nombre = d?.designacion ?? p.id;
+			color = `#${colorDePiloto(d ?? ({ } as Dispositivo)).toString(16).padStart(6, '0')}`;
+		} else {
+			nombre = (g.rotulos?.find((r) => r.id === p.id)?.texto ?? p.id).split(/\n/)[0];
+			color = '#cfd6de';
+		}
+		li.innerHTML = `<span class="punto" style="background:${color}"></span>`
+			+ `<span class="des">${escaparHtml(nombre)}</span>`
+			+ `<span class="donde">${Math.round(p.x)} · ${Math.round(p.y)}</span>`;
+		li.onclick = (ev) => {
+			if (ev.shiftKey) alternarFrontalExtra(p.clase, p.id);
+			else seleccionarFrontal(p.clase, p.id);
+		};
+		ul.appendChild(li);
+	}
+}
+
+function seleccionarFrontal(clase: 'aparato' | 'rotulo', id: string): void {
+	frontalExtra = [];
+	aplicarSeleccion(clase === 'rotulo' ? { tipo: 'rotulo', id } : { tipo: 'dispositivo', id });
+	pintarListaFrontal();
+}
+
+function alternarFrontalExtra(clase: 'aparato' | 'rotulo', id: string): void {
+	if (!sel) { seleccionarFrontal(clase, id); return; }
+	if (frontalMarcado(clase, id)) {
+		frontalExtra = frontalExtra.filter((f) => !(f.clase === clase && f.id === id));
+	} else {
+		frontalExtra.push({ clase, id });
+	}
+	resaltarFrontal();
+	pintarListaFrontal();
+	pintarSeleccion();
+}
+
+/** Marca en la escena todo lo elegido del frontal. */
+function resaltarFrontal(): void {
+	for (const m of escenario.frontal) {
+		const marcado = frontalMarcado(m.tipo, m.id);
+		m.grupo.traverse((o) => {
+			const mesh = o as THREE.Mesh;
+			if (!mesh.isMesh || o.userData.pieza === 'halo') return;
+			const mat = mesh.material as THREE.MeshStandardMaterial;
+			if (!mat?.emissive || o.userData.pieza === 'lente') return;
+			if (marcado) { mat.emissive.setHex(0x1d4ed8); mat.emissiveIntensity = 0.55; }
+			else if (mat.emissiveIntensity === 0.55) { mat.emissive.setHex(0x000000); mat.emissiveIntensity = 0; }
+		});
+	}
+}
+
+/* ------------------------- Añadir, duplicar y quitar ------------------------- */
+
+/** Un hueco libre cerca del centro de la hoja, para no nacer encima de otra cosa. */
+function huecoEnLaHoja(ancho: number, alto: number): { x: number; y: number } {
+	const hoja = hojaDeLaPuerta();
+	const piezas = piezasFrontal();
+	for (let anillo = 0; anillo < 24; anillo++) {
+		for (const [sx, sy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+			const x = hoja.ancho / 2 + sx * anillo * 44;
+			const y = hoja.alto * 0.22 + sy * anillo * 40;
+			const choca = piezas.some((p) => Math.abs(p.x - x) < (p.ancho + ancho) / 2 + 6
+				&& Math.abs(p.y - y) < (p.alto + alto) / 2 + 6);
+			if (!choca) return dentroDeLaHoja({ x, y }, { ancho, alto }, hoja);
+		}
+	}
+	return dentroDeLaHoja({ x: hoja.ancho / 2, y: hoja.alto / 2 }, { ancho, alto }, hoja);
+}
+
+function idLibre(prefijo: string, usados: (id: string) => boolean): string {
+	for (let i = 1; i < 9999; i++) if (!usados(`${prefijo}${i}`)) return `${prefijo}${i}`;
+	return `${prefijo}${Date.now()}`;
+}
+
+function anadirPilotoFrontal(): void {
+	if (!capturar()) return;
+	const g = proyecto.gabinete!;
+	const id = idLibre('h', (k) => proyecto.dispositivos.some((d) => d.id === k));
+	const sitio = huecoEnLaHoja(30, 30);
+	proyecto.dispositivos.push({
+		id, tipo: 'piloto', designacion: id.toUpperCase(),
+		descripcion: 'Piloto de señalización (puerta)',
+		tensionNominal: 24, corrienteNominal: 0.02, colorSenal: 'verde',
+		bornes: [{ id: 'X1' }, { id: 'X2' }],
+	} as Dispositivo);
+	g.colocaciones.push({
+		dispositivoId: id, x: sitio.x, y: sitio.y, ancho: 30, alto: 30, montaje: 'puerta',
+	});
+	trasCambiarFrontal();
+	seleccionarFrontal('aparato', id);
+}
+
+function anadirRotuloFrontal(estilo: 'grabado' | 'placa' | 'aviso'): void {
+	if (!capturar()) return;
+	const g = proyecto.gabinete!;
+	g.rotulos = g.rotulos ?? [];
+	const id = idLibre('rot', (k) => g.rotulos!.some((r) => r.id === k));
+	const texto = estilo === 'aviso' ? 'CUIDADO\nTABLERO ELÉCTRICO'
+		: estilo === 'placa' ? 'MOTOR 1' : 'MARCHA';
+	const alto = estilo === 'aviso' ? 8 : estilo === 'placa' ? 6 : 4.5;
+	const sitio = huecoEnLaHoja(texto.length * alto * 0.4, alto * 2.4);
+	g.rotulos.push({ id, texto, x: sitio.x, y: sitio.y, alto, estilo, montaje: 'puerta' });
+	trasCambiarFrontal();
+	seleccionarFrontal('rotulo', id);
+}
+
+function duplicarFrontal(): void {
+	const piezas = seleccionFrontal();
+	if (!piezas.length || !capturar()) return;
+	const g = proyecto.gabinete!;
+	const nuevos: { clase: 'aparato' | 'rotulo'; id: string }[] = [];
+	for (const p of piezas) {
+		// El duplicado nace DESPLAZADO, no encima: dos piezas exactamente superpuestas se ven como
+		// una y quien duplica cree que no ha pasado nada.
+		const dx = p.ancho + 10;
+		if (p.clase === 'aparato') {
+			const d = proyecto.dispositivos.find((x) => x.id === p.id);
+			const col = g.colocaciones.find((c) => c.dispositivoId === p.id);
+			if (!d || !col) continue;
+			const id = idLibre('h', (k) => proyecto.dispositivos.some((x) => x.id === k));
+			proyecto.dispositivos.push({ ...d, id, designacion: id.toUpperCase() });
+			const sitio = dentroDeLaHoja({ x: col.x + dx, y: col.y }, p, hojaDeLaPuerta());
+			g.colocaciones.push({ ...col, dispositivoId: id, x: Math.round(sitio.x), y: Math.round(sitio.y) });
+			nuevos.push({ clase: 'aparato', id });
+		} else {
+			const r = g.rotulos?.find((k) => k.id === p.id);
+			if (!r) continue;
+			const id = idLibre('rot', (k) => g.rotulos!.some((x) => x.id === k));
+			const sitio = dentroDeLaHoja({ x: r.x + dx, y: r.y }, p, hojaDeLaPuerta());
+			g.rotulos!.push({ ...r, id, x: Math.round(sitio.x), y: Math.round(sitio.y) });
+			nuevos.push({ clase: 'rotulo', id });
+		}
+	}
+	trasCambiarFrontal();
+	if (nuevos.length) {
+		seleccionarFrontal(nuevos[0].clase, nuevos[0].id);
+		frontalExtra = nuevos.slice(1);
+		resaltarFrontal();
+		pintarListaFrontal();
+	}
+	avisar(`${nuevos.length} ${nuevos.length === 1 ? 'pieza duplicada' : 'piezas duplicadas'}`, 'ok');
+}
+
+function borrarFrontal(): void {
+	const piezas = seleccionFrontal();
+	if (!piezas.length || !capturar()) return;
+	const g = proyecto.gabinete!;
+	for (const p of piezas) {
+		if (p.clase === 'aparato') {
+			// Un aparato se lleva sus cables: dejarlos colgando de un borne que ya no existe es lo
+			// que producía los «cables fantasma».
+			proyecto.conductores = proyecto.conductores.filter(
+				(c) => c.de.dispositivoId !== p.id && c.a.dispositivoId !== p.id,
+			);
+			proyecto.dispositivos = proyecto.dispositivos.filter((d) => d.id !== p.id);
+			g.colocaciones = g.colocaciones.filter((c) => c.dispositivoId !== p.id);
+		} else {
+			g.rotulos = (g.rotulos ?? []).filter((r) => r.id !== p.id);
+		}
+	}
+	frontalExtra = [];
+	aplicarSeleccion(undefined);
+	trasCambiarFrontal();
+	avisar(`${piezas.length} ${piezas.length === 1 ? 'pieza quitada' : 'piezas quitadas'}`, 'ok');
+}
+
+/** Añadir o quitar piezas SÍ cambia la escena: se rehace y se recalcula. Mover, no. */
+function trasCambiarFrontal(): void {
+	recalcular();
+	montarEscenario();
+	pintarListaFrontal();
+	pintarPaneles();
+	pintarSeleccion();
+	marcarSucio();
+}
+
+function aplicarCambiosFrontal(cambios: Map<string, { x: number; y: number }>, que: string): void {
+	if (cambios.size === 0) { avisar('No había nada que mover', 'info'); return; }
+	if (!capturar()) return;
+	for (const p of piezasFrontal()) {
+		const c = cambios.get(p.id);
+		if (c) moverPiezaFrontal(p.clase, p.id, c.x, c.y);
+	}
+	pintarListaFrontal();
+	pintarSeleccion();
+	marcarSucio();
+	avisar(`${que}: ${cambios.size} ${cambios.size === 1 ? 'pieza' : 'piezas'}`, 'ok');
 }
 
 /* ============================ LA PUERTA DEL ARMARIO ============================
@@ -1808,6 +2455,10 @@ function pintarSeleccion(): void {
 	}
 	if (sel.tipo === 'canaleta' || sel.tipo === 'riel') {
 		pintarPanelEstructura(sel);
+		return;
+	}
+	if (sel.tipo === 'rotulo') {
+		pintarPanelRotulo(sel.id);
 		return;
 	}
 	if (sel.tipo === 'cable') {
@@ -2840,6 +3491,7 @@ function aplicarSeleccion(nueva: Seleccion | undefined): void {
 	else if (sel?.tipo === 'canaleta') resaltarPorUserData('canaletaId', sel.id);
 	else if (sel?.tipo === 'riel') resaltarPorUserData('rielId', sel.id);
 	else if (sel?.tipo === 'cable') resaltarCable(sel.id);
+	if (espacio === 'frontal') resaltarFrontal();
 	// Al seleccionar un cable, se atenúan los demás para que se vea cuál estás tocando.
 	atenuarCables(sel?.tipo === 'cable' ? sel.id : undefined);
 	resaltarSeleccionExtra();
@@ -4235,6 +4887,34 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	const foco = document.activeElement as HTMLElement | null;
 	if (foco && /^(INPUT|SELECT|TEXTAREA)$/.test(foco.tagName)) foco.blur();
 	if (visualizacion) return; // en Visualización solo se mira: nada se selecciona ni se mueve
+	/*
+	 * EN EL FRONTAL SE TRABAJA SOBRE LA PUERTA, y nada más. Aquí no se cablea, no se mueven
+	 * canaletas y no se pincha un aparato del interior por accidente a través de la chapa: el clic
+	 * es para lo que hay montado en la hoja, y si no hay nada, para deseleccionar.
+	 */
+	if (espacio === 'frontal' && ev.button === 0) {
+		const pieza = piezaFrontalBajoElPuntero(ev);
+		if (!pieza) {
+			if (!ev.shiftKey) { frontalExtra = []; aplicarSeleccion(undefined); pintarListaFrontal(); }
+			return;
+		}
+		if (ev.shiftKey) { alternarFrontalExtra(pieza.clase, pieza.id); return; }
+		if (!frontalMarcado(pieza.clase, pieza.id)) seleccionarFrontal(pieza.clase, pieza.id);
+		const p = puntoEnLaPuerta(ev);
+		if (!p) return;
+		// Se agarran TODAS las marcadas, cada una con su desfase: mover un grupo alineado no puede
+		// desalinearlo.
+		arrastreFrontal = {
+			pieza, dx: pieza.x - p.x, dy: pieza.y - p.y, movido: false,
+			acompanan: seleccionFrontal()
+				.filter((q) => !(q.clase === pieza.clase && q.id === pieza.id))
+				.map((q) => ({ clase: q.clase, id: q.id, dx: q.x - pieza.x, dy: q.y - pieza.y })),
+		};
+		arrastrando = true;
+		permitirOrbita(false);
+		renderer.domElement.style.cursor = 'grabbing';
+		return;
+	}
 	// Aparato pegado al ratón: el clic lo suelta y no hace nada más.
 	if (colocando && ev.button === 0) { soltarColocacion(); return; }
 	// Cablear por clic: si estamos eligiendo destino, el próximo clic sobre otro aparato
@@ -4397,6 +5077,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (crono.activo) { const e = crono.etapas.get('0 pointermove') ?? { n: 0, ms: 0 }; e.n++; crono.etapas.set('0 pointermove', e); }
 	if (visualizacion) return;
+	if (espacio === 'frontal') { moverArrastreFrontal(ev); return; }
 	// Aparato recién sacado del catálogo: va pegado al ratón hasta que un clic lo suelta.
 	if (colocando) { moverColocacionAlCursor(ev); return; }
 	// Resaltado al pasar el ratón (modo Trabajo): bornes (para cablear) y cables (para tocarlos).
@@ -4599,6 +5280,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 renderer.domElement.addEventListener('pointerleave', () => mostrarTipBorne(undefined));
 
 renderer.domElement.addEventListener('pointerup', (ev) => {
+	if (arrastreFrontal) { soltarArrastreFrontal(); return; }
 	/*
 	 * TENDER EL CABLE ARRASTRANDO, no solo a dos clics.
 	 *
@@ -4790,6 +5472,41 @@ renderer.domElement.addEventListener('contextmenu', (ev) => {
 window.addEventListener('keydown', (ev) => {
 	const foco = document.activeElement as HTMLElement | null;
 	const activo = foco?.tagName;
+	/*
+	 * LOS ATAJOS DEL FRONTAL. Van antes que los del interior porque en el frontal las mismas teclas
+	 * significan otra cosa —Supr quita un piloto de la puerta, no un aparato del carril— y porque
+	 * el espacio activo es lo que dice qué se está tocando.
+	 */
+	if (espacio === 'frontal' && !activo?.match(/INPUT|TEXTAREA|SELECT/)) {
+		if (ev.key === 'Delete' || ev.key === 'Backspace') { ev.preventDefault(); borrarFrontal(); return; }
+		if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'd') { ev.preventDefault(); duplicarFrontal(); return; }
+		if (ev.key === 'Escape') { frontalExtra = []; aplicarSeleccion(undefined); pintarListaFrontal(); return; }
+		/*
+		 * Y LAS FLECHAS, que es como se coloca al milímetro sin pelearse con el ratón: una pulsación
+		 * mueve un milímetro y con Mayúsculas diez. Ninguna ayuda toca esto —el usuario está
+		 * diciendo exactamente cuánto— más allá del borde de la hoja.
+		 */
+		const flechas: Record<string, [number, number]> = {
+			ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+		};
+		const paso = flechas[ev.key];
+		if (paso) {
+			const piezas = seleccionFrontal();
+			if (!piezas.length) return;
+			ev.preventDefault();
+			if (!capturar()) return;
+			const cuanto = ev.shiftKey ? 10 : 1;
+			const hoja = hojaDeLaPuerta();
+			for (const q of piezas) {
+				const sitio = dentroDeLaHoja({ x: q.x + paso[0] * cuanto, y: q.y + paso[1] * cuanto }, q, hoja);
+				moverPiezaFrontal(q.clase, q.id, sitio.x, sitio.y);
+			}
+			pintarListaFrontal();
+			pintarSeleccion();
+			marcarSucio();
+			return;
+		}
+	}
 	/*
 	 * X / Y / Z BLOQUEAN UN EJE MIENTRAS SE ARRASTRA UNA UNIÓN.
 	 *
@@ -5339,7 +6056,9 @@ function aplicarModo(nuevo: Modo): void {
 	// Los bornes clicables solo se ven en Trabajo, y se reconstruyen al entrar para que estén
 	// donde de verdad quedaron los aparatos si se movieron en el Editor.
 	if (modo === 'trabajo') reconstruirBornes();
-	escenario.bornes.visible = modo === 'trabajo';
+	// Los bornes son del interior: en el frontal no se cablea, así que no se enseñan aunque el
+	// modo de dentro siga siendo Trabajo.
+	escenario.bornes.visible = modo === 'trabajo' && espacio !== 'frontal';
 	// Al pasar a trabajo se cancela cualquier arrastre en curso y se quitan los tiradores.
 	if (modo === 'trabajo') {
 		arrastrando = false;
@@ -5646,6 +6365,35 @@ $('leyenda-voltaje').innerHTML =
 	for (const t of escenario.tapas) t.visible = v;
 };
 ($('ver-etiquetas') as HTMLInputElement).onchange = () => refrescarEtiquetas();
+/* ------------------- Los mandos del frontal y de los espacios ------------------- */
+
+$('esp-interior').onclick = () => aplicarEspacio('interior');
+$('esp-frontal').onclick = () => aplicarEspacio('frontal');
+$('esp-conjunto').onclick = () => aplicarEspacio('conjunto');
+
+$('btn-add-piloto').onclick = () => anadirPilotoFrontal();
+$('btn-add-rotulo').onclick = () => anadirRotuloFrontal('grabado');
+$('btn-add-placa').onclick = () => anadirRotuloFrontal('placa');
+$('btn-add-aviso').onclick = () => anadirRotuloFrontal('aviso');
+$('btn-dup-frontal').onclick = () => duplicarFrontal();
+$('btn-borrar-frontal').onclick = () => borrarFrontal();
+
+for (const [id, como, que] of [
+	['btn-al-izq', 'izquierda', 'Alineado a la izquierda'],
+	['btn-al-cx', 'centroX', 'Centrado en vertical'],
+	['btn-al-der', 'derecha', 'Alineado a la derecha'],
+	['btn-al-arr', 'arriba', 'Alineado arriba'],
+	['btn-al-cy', 'centroY', 'Centrado en horizontal'],
+	['btn-al-aba', 'abajo', 'Alineado abajo'],
+] as const) {
+	$(id).onclick = () => aplicarCambiosFrontal(alinearFrontal(seleccionFrontal(), como as AlineacionFrontal), que);
+}
+$('btn-rep-h').onclick = () => aplicarCambiosFrontal(repartirFrontal(seleccionFrontal(), 'x'), 'Repartido en horizontal');
+$('btn-rep-v').onclick = () => aplicarCambiosFrontal(repartirFrontal(seleccionFrontal(), 'y'), 'Repartido en vertical');
+
+($('frontal-rejilla') as HTMLInputElement).onchange = () => refrescarRejillaFrontal();
+($('frontal-paso') as HTMLInputElement).onchange = () => refrescarRejillaFrontal();
+
 ($('ver-gabinete') as HTMLInputElement).onchange = (e) => {
 	escenario.envolvente.visible = (e.target as HTMLInputElement).checked;
 	refrescarEtiquetas();
@@ -7128,6 +7876,35 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				acierta: hallado?.tipo === 'dispositivo' && hallado.id === dispositivoId,
 			};
 		},
+		/* ---- El frontal, para poder probarlo desde fuera ---- */
+		/** Las piezas montadas en la puerta tal como las ve el editor. */
+		piezasDelFrontal: () => piezasFrontal().map((q) => ({
+			...q, x: Math.round(q.x), y: Math.round(q.y),
+			ancho: Math.round(q.ancho), alto: Math.round(q.alto),
+		})),
+		/** Dónde cae en pantalla una pieza del frontal, para poder pincharla con el ratón de verdad. */
+		puntoEnPantallaDeFrontal: (clase: 'aparato' | 'rotulo', id: string) => {
+			const m = escenario.frontal.find((f) => f.tipo === clase && f.id === id);
+			if (!m) return undefined;
+			const r = renderer.domElement.getBoundingClientRect();
+			prepararProyeccion();
+			const w = m.grupo.getWorldPosition(new THREE.Vector3());
+			const v = aPixeles(w.x, w.y, w.z, r.width, r.height);
+			return v.w > 0 ? { x: r.left + v.x, y: r.top + v.y } : undefined;
+		},
+		/** Marca varias piezas del frontal, como haría un Mayúsculas+clic repetido. */
+		marcarEnFrontal: (claves: ['aparato' | 'rotulo', string][]) => {
+			if (!claves.length) return 0;
+			seleccionarFrontal(claves[0][0], claves[0][1]);
+			for (const [clase, id] of claves.slice(1)) alternarFrontalExtra(clase, id);
+			return seleccionFrontal().length;
+		},
+		/** Dónde está la cámara ahora mismo: para comprobar que cambiar de espacio no la pierde. */
+		camaraAhora: () => ({
+			espacio,
+			pos: { x: Math.round(camara.position.x), y: Math.round(camara.position.y), z: Math.round(camara.position.z) },
+			mira: { x: Math.round(controles.target.x), y: Math.round(controles.target.y), z: Math.round(controles.target.z) },
+		}),
 		/** Quita un conductor por su id: así se «pierde una fase» sin tocar ninguna bandera. */
 		quitarConductor: (conductorId: string) => {
 			const antes = proyecto.conductores.length;

@@ -381,6 +381,35 @@ export interface Colocacion {
 	montaje?: 'placa' | 'puerta';
 }
 
+/**
+ * Un rótulo del frontal: una placa grabada, un aviso o una simple leyenda bajo un mando.
+ *
+ * El texto es un texto, no una imagen: se dibuja con el mismo atlas de serigrafía que ya usan los
+ * bornes y los aparatos, así que dos rótulos que digan «MARCHA» comparten celda y no cuesta nada
+ * tener cuarenta. Cambiar lo que dice una placa es cambiar esta cadena.
+ */
+export interface RotuloFrontal {
+	id: string;
+	/** Lo que dice. Los saltos de línea se respetan; si no los trae, se parte solo por palabras. */
+	texto: string;
+	/** Posición en mm desde la esquina superior izquierda de la superficie donde va montado. */
+	x: number;
+	y: number;
+	/** Altura de la letra en mm. Una leyenda de mando ronda los 4 mm; un aviso, los 8. */
+	alto?: number;
+	/**
+	 * Cómo está hecho:
+	 *  · `grabado` — letras directamente sobre la chapa, sin placa. Lo normal bajo un piloto.
+	 *  · `placa`   — placa de plástico atornillada, con su fondo claro. Para identificar circuitos.
+	 *  · `aviso`   — placa de seguridad, fondo amarillo y borde negro. Riesgo eléctrico.
+	 */
+	estilo?: 'grabado' | 'placa' | 'aviso';
+	/** Sobre qué superficie va. Hoy solo la puerta; el campo existe para no tener que migrarlo. */
+	montaje?: 'puerta';
+	/** Ancho máximo en mm antes de partir el texto en varias líneas. */
+	ancho?: number;
+}
+
 export interface Gabinete {
 	/** Dimensiones útiles de la placa de montaje, en mm. */
 	ancho: number;
@@ -396,6 +425,14 @@ export interface Gabinete {
 		ancho: number; alto: number; profundidad: number;
 		bisagras?: 'izquierda' | 'derecha';
 	};
+	/**
+	 * SEÑALÉTICA DEL FRONTAL: las placas y los rótulos grabados de la puerta.
+	 *
+	 * No son aparatos y por eso no viven en `dispositivos`: una placa de «CUIDADO TABLERO
+	 * ELÉCTRICO» no tiene bornes, no consume, no sale en el esquema y no debe ensuciar el listado
+	 * de materiales eléctricos ni el DRC. Es señalización, y se guarda como lo que es.
+	 */
+	rotulos?: RotuloFrontal[];
 	canaletas: Canaleta[];
 	rieles: Riel[];
 	colocaciones: Colocacion[];

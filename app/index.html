@@ -900,6 +900,22 @@
 	#toast.error { border-left-color: var(--error); }
 
 	/* Conmutador de modos */
+	#espacios { display: flex; border: 1px solid var(--borde); border-radius: 9px; overflow: hidden; }
+	#espacios button { background: var(--panel-2); border: none; color: var(--texto-suave); padding: 6px 12px; }
+	#espacios button.activo { background: #2f5c46; color: var(--texto); }
+	/* En el frontal no se arma la estructura ni se cablea: los modos del interior no pintan nada. */
+	body.espacio-frontal #modos { display: none; }
+	body.espacio-frontal #seccion-catalogo,
+	body.espacio-frontal #seccion-cables,
+	body.espacio-frontal #seccion-estructura { display: none; }
+	body:not(.espacio-frontal) #seccion-frontal { display: none; }
+	#lista-frontal { max-height: 240px; overflow-y: auto; margin: 4px 0; }
+	#lista-frontal li { display: flex; gap: 8px; align-items: center; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+	#lista-frontal li:hover { background: var(--panel-2); }
+	#lista-frontal li.seleccionado { background: #2b4a6f; }
+	#lista-frontal .punto { width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid #0006; }
+	#lista-frontal .des { font-weight: 600; }
+	#lista-frontal .donde { margin-left: auto; color: var(--texto-suave); font-size: 11px; font-variant-numeric: tabular-nums; }
 	#modos { display: flex; border: 1px solid var(--borde); border-radius: 9px; overflow: hidden; }
 	#modos button { background: var(--panel-2); border: none; color: var(--texto-suave); padding: 6px 13px; }
 	#modos button.activo { background: #2b4a6f; color: var(--texto); }
@@ -998,6 +1014,11 @@
 	<span id="chip-ejemplo" hidden>📚 Ejemplo — solo lectura
 		<button id="btn-copiar-ejemplo" title="Crea un tablero tuyo, igual a este, que sí puedes modificar y se guarda con tu trabajo">Hacer una copia para trabajar</button>
 	</span>
+	<div id="espacios" title="Dónde estás trabajando: dentro del tablero, sobre su frontal, o mirándolo entero">
+		<button id="esp-interior" class="activo">🧰 Interior</button>
+		<button id="esp-frontal">🎛️ Frontal</button>
+		<button id="esp-conjunto">🧊 Conjunto</button>
+	</div>
 	<div id="modos" title="Editor: armar y modificar la caja. Trabajo: solo cablear y verificar (nada se mueve).">
 		<button id="modo-editor" class="activo">🔧 Editor</button>
 		<button id="modo-trabajo">🔌 Trabajo</button>
@@ -1198,6 +1219,42 @@
 			<div class="sub" style="color:var(--texto-suave);margin-top:8px">Estimación por el método
 			simplificado de IEC 60890. Declara la disipación real de cada aparato en su ficha para
 			afinarla, y el montaje del armario en Archivo → Datos del proyecto.</div>
+		</div>
+	</details>
+	<details open id="seccion-frontal">
+		<summary>Frontal de la puerta</summary>
+		<div class="contenido">
+			<div class="grupo-catalogo" style="color:#7cc0ff">Montado en la puerta</div>
+			<ul id="lista-frontal"></ul>
+			<div class="grupo-catalogo" style="color:#7ee2a1">Añadir</div>
+			<div class="botonera">
+				<button class="boton" id="btn-add-piloto" title="Piloto de 22 mm en el centro de la puerta">+ Piloto</button>
+				<button class="boton" id="btn-add-rotulo" title="Rótulo grabado sobre la chapa">+ Rótulo</button>
+				<button class="boton" id="btn-add-placa" title="Placa de identificación atornillada">+ Placa</button>
+				<button class="boton" id="btn-add-aviso" title="Placa de aviso de riesgo eléctrico">+ Aviso</button>
+			</div>
+			<div class="grupo-catalogo" style="color:#ffe58f">Alinear y repartir <span style="color:var(--texto-suave);font-weight:400">(elige varios con Mayúsculas)</span></div>
+			<div class="botonera">
+				<button class="boton" id="btn-al-izq" title="Alinear por la izquierda">⇤</button>
+				<button class="boton" id="btn-al-cx" title="Centrar en vertical (misma X)">⇹</button>
+				<button class="boton" id="btn-al-der" title="Alinear por la derecha">⇥</button>
+				<button class="boton" id="btn-al-arr" title="Alinear arriba">⤒</button>
+				<button class="boton" id="btn-al-cy" title="Centrar en horizontal (misma Y)">⇳</button>
+				<button class="boton" id="btn-al-aba" title="Alinear abajo">⤓</button>
+			</div>
+			<div class="botonera">
+				<button class="boton" id="btn-rep-h" title="Repartir con la misma separación en horizontal">↔ Repartir</button>
+				<button class="boton" id="btn-rep-v" title="Repartir con la misma separación en vertical">↕ Repartir</button>
+				<button class="boton" id="btn-dup-frontal" title="Duplicar lo seleccionado (Ctrl+D)">⧉ Duplicar</button>
+				<button class="boton" id="btn-borrar-frontal" title="Quitar lo seleccionado (Supr)">🗑 Quitar</button>
+			</div>
+			<div class="grupo-catalogo" style="color:#ffc069">Precisión</div>
+			<label class="toggle"><input type="checkbox" id="frontal-rejilla"> Rejilla</label>
+			<div class="campo"><label for="frontal-paso">Paso</label><span><input type="number" id="frontal-paso" min="1" max="50" step="1" value="5"> mm</span></div>
+			<label class="toggle"><input type="checkbox" id="frontal-snap" checked> Imantar a la rejilla y a los vecinos</label>
+			<div class="sub" style="color:var(--texto-suave);line-height:1.6;margin-top:6px">
+			Mantén <b>Alt</b> mientras arrastras para colocar al milímetro sin ninguna ayuda. Las
+			ayudas solo actúan mientras mueves: nada se recoloca después de soltarlo.</div>
 		</div>
 	</details>
 	<details id="seccion-estructura">
