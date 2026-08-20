@@ -28,7 +28,7 @@
  */
 import * as THREE from 'three';
 
-import { M, cajaCanto } from './dispositivos3d.js';
+import { M, cajaCanto, granoDePintura } from './dispositivos3d.js';
 
 /* ------------------------------- Medidas de la chapa ------------------------------- */
 
@@ -367,9 +367,25 @@ interface Materiales {
 }
 
 function materiales(): Materiales {
+	/*
+	 * LA CHAPA DEL ARMARIO ES PINTURA EN POLVO, y eso se nota en el GRANO: un powder-coat tiene
+	 * una piel de naranja finísima que rompe el reflejo y es lo que impide que una superficie
+	 * grande de chapa se lea como plástico moldeado. Es el mismo mapa que ya lleva la placa de
+	 * montaje —una textura de 64 píxeles compartida—, así que no cuesta nada y las dos piezas
+	 * pintadas del tablero se ven del mismo material, que es lo que son.
+	 *
+	 * NO se toca la respuesta metálica: subirla convertiría la chapa en un espejo, que es
+	 * justamente lo que un armario pintado no es.
+	 */
+	const grano = granoDePintura();
+	const pintada = (color: number) => {
+		const m = M.pintado(color);
+		if (grano) m.roughnessMap = grano;
+		return m;
+	};
 	return {
-		exterior: M.pintado(0xb9bab6),
-		puerta: M.pintado(0xc3c4c0),
+		exterior: pintada(0xb9bab6),
+		puerta: pintada(0xc3c4c0),
 		herraje: M.metal(0xb4b9bd),
 		acero: M.metal(0x8d9297),
 		galvanizada: M.galvanizado(),

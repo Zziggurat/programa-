@@ -1575,6 +1575,17 @@ function anadirPilotoFrontal(): void {
 	g.colocaciones.push({
 		dispositivoId: id, x: sitio.x, y: sitio.y, ancho: 30, alto: 30, montaje: 'puerta',
 	});
+	/*
+	 * Y SU RÓTULO DEBAJO. Un mando sin leyenda no dice nada, y un tablero donde hay que acordarse
+	 * de rotular cada piloto a mano acaba con la mitad sin rotular. Nace como una pieza aparte, no
+	 * pegada al piloto: se mueve, se alinea y se edita por su cuenta, que es lo que hace falta
+	 * cuando la leyenda es «MARCHA VENTILADOR» y no cabe centrada bajo el aro.
+	 */
+	g.rotulos = g.rotulos ?? [];
+	g.rotulos.push({
+		id: idLibre('rot', (k) => g.rotulos!.some((r) => r.id === k)),
+		texto: id.toUpperCase(), x: sitio.x, y: Math.round(sitio.y + 28), alto: 5, montaje: 'puerta',
+	});
 	trasCambiarFrontal();
 	seleccionarFrontal('aparato', id);
 }

@@ -76,12 +76,38 @@ export function colorApagado(color: number): number {
 	return c.getHex();
 }
 
+/**
+ * El degradado del resplandor: opaco en el centro y transparente en el borde. Una sola textura de
+ * 64 píxeles que comparten TODOS los pilotos del tablero, porque un resplandor es igual en todos.
+ */
+let haloCache: THREE.CanvasTexture | undefined;
+
+function degradadoDeHalo(): THREE.CanvasTexture | null {
+	if (haloCache) return haloCache;
+	if (typeof document === 'undefined') return null;
+	const lado = 64;
+	const canvas = document.createElement('canvas');
+	canvas.width = canvas.height = lado;
+	const ctx = canvas.getContext('2d')!;
+	const g = ctx.createRadialGradient(lado / 2, lado / 2, 0, lado / 2, lado / 2, lado / 2);
+	// La curva es rápida al principio: el resplandor de un LED se apaga enseguida, no se difumina
+	// como una niebla. Con una rampa lineal parecía un halo de foco de teatro.
+	g.addColorStop(0, '#ffffff');
+	g.addColorStop(0.28, '#8a8a8a');
+	g.addColorStop(0.62, '#242424');
+	g.addColorStop(1, '#000000');
+	ctx.fillStyle = g;
+	ctx.fillRect(0, 0, lado, lado);
+	haloCache = new THREE.CanvasTexture(canvas);
+	return haloCache;
+}
+
 /* ------------------------------- Medidas del piloto ------------------------------- */
 
 /** Diámetro del taladro: 22 mm es LA medida de la aparamenta de mando y señalización. */
 const TALADRO = 22;
-const R_ARO = 14.5;
-const R_LENTE = 9.6;
+const R_ARO = 13.6;
+const R_LENTE = 11;
 /** Lo que sobresale el conjunto por delante de la chapa. */
 const VUELO = 7.4;
 /** Fondo de la hoja de la puerta: lo que hay que atravesar para salir por dentro. */
@@ -149,9 +175,13 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 	 * profundidad y sin coste apreciable: se ve el resplandor y no ilumina nada.
 	 */
 	const halo = new THREE.Mesh(
-		new THREE.CircleGeometry(R_ARO * 1.5, 24),
+		new THREE.CircleGeometry(R_ARO * 1.28, 24),
 		new THREE.MeshBasicMaterial({
 			color, transparent: true, opacity: 0, depthWrite: false,
+			// Con el disco liso, de cerca el resplandor era un CÍRCULO de color con el canto
+			// recortado: se veía el borde de la malla, que es exactamente lo que un resplandor no
+			// tiene. El degradado lo apaga hacia fuera y la forma desaparece.
+			alphaMap: degradadoDeHalo(),
 			blending: THREE.AdditiveBlending, toneMapped: false,
 		}),
 	);
@@ -161,19 +191,15 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 	g.add(halo);
 
 	/*
-	 * EL RÓTULO —R, S, T, MARCHA, FALLA— sale del ATLAS de serigrafía que ya existe. No se crea
-	 * una textura por palabra: el atlas guarda cada texto una vez y lo comparten todos los
-	 * aparatos del tablero, que es lo que permite que un tablero con cien marcas siga siendo una
-	 * textura.
+	 * AQUÍ EL PILOTO SE DIBUJABA SU PROPIA LETRA, y se la ha quitado.
+	 *
+	 * Desde que el frontal tiene señalética de verdad —rótulos que se colocan, se mueven, se
+	 * alinean y se editan— la leyenda de un mando es un rótulo, no una decoración del mando. Con
+	 * las dos cosas a la vez, un piloto con su rótulo debajo salía rotulado DOS veces, una encima
+	 * de la otra y sin poder mover ninguna de ellas.
+	 *
+	 * Quien añade un piloto desde el panel se lleva su rótulo hecho, así que no se pierde nada.
 	 */
-	const texto = (d.designacion ?? '').replace(/^-/, '').trim();
-	if (texto) {
-		const r = marca(texto.slice(0, 10).toUpperCase(), 5.4);
-		if (r) {
-			r.position.set(0, -(R_ARO + 6.5), 1.2);
-			g.add(r);
-		}
-	}
 
 	/* ---------------- Por dentro: cuerpo y terminales ---------------- */
 

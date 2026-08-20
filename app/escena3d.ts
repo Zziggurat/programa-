@@ -19,7 +19,7 @@ import {
 	canaletasQueContienen, cruzDe, DIENTE, dientesDe, ejeDe, ESPESOR, huellaCanaleta, puntoDe,
 	RANURA, RedCanaletas, TAPA, invasionesDeCanaletas, Tramo, ZOCALO,
 } from './canaletas-red.js';
-import { ALTURA_CARRIL, bornesGenericos, construirAparato3D, Z_BORNE } from './dispositivos3d.js';
+import { ALTURA_CARRIL, bornesGenericos, construirAparato3D, granoDePintura, Z_BORNE } from './dispositivos3d.js';
 import { BocaPasacables, construirEnvolvente, Puerta } from './gabinete3d.js';
 import { construirComponentePuerta, construirRotuloFrontal } from './componentes-puerta.js';
 
@@ -480,37 +480,7 @@ export function cajaDe(g: Gabinete): { ancho: number; alto: number; profundidad:
  * viendo el interior; en modo VISUALIZACIÓN (`realista`) son de chapa opaca y se añade la
  * puerta abierta, para ver el tablero tal como quedaría montado.
  */
-/**
- * El GRANO de la pintura al horno: ruido suave en el canal de rugosidad, no en el color.
- *
- * Va en rugosidad a propósito. Metido en el color saldría suciedad —manchas grises sobre la
- * chapa—, que es justo el ruido visible que no se quiere. En rugosidad lo que cambia es cómo
- * devuelve la luz cada trocito de superficie: no se ve el mapa, se ve que la chapa tiene piel.
- *
- * Se construye una sola vez y la comparten todas las placas del programa.
- */
-let granoCache: THREE.CanvasTexture | undefined;
-function granoDePintura(): THREE.CanvasTexture {
-	if (granoCache) return granoCache;
-	const lado = 64;
-	const canvas = document.createElement('canvas');
-	canvas.width = canvas.height = lado;
-	const ctx = canvas.getContext('2d')!;
-	const img = ctx.createImageData(lado, lado);
-	for (let i = 0; i < lado * lado; i++) {
-		// Banda estrecha alrededor del valor medio: el mapa MULTIPLICA la rugosidad del material,
-		// así que un rango amplio convertiría la pintura en una superficie sucia a manchas.
-		const v = 210 + Math.round(Math.random() * 45);
-		img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
-		img.data[i * 4 + 3] = 255;
-	}
-	ctx.putImageData(img, 0, 0);
-	const tex = new THREE.CanvasTexture(canvas);
-	tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-	tex.repeat.set(26, 26);
-	granoCache = tex;
-	return tex;
-}
+
 
 function construirPlacaDeMontaje(g: Gabinete): THREE.Group {
 	const grupo = new THREE.Group();
