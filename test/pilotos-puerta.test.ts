@@ -279,3 +279,62 @@ test('la ficha del piloto declara su color, y no está escrito en el editor', ()
 	// Y el valor con el que nace un piloto sale de ahí, no de un literal en `main`.
 	assert.equal(valoresPorDefecto('piloto').colorSenal, color!.porDefecto);
 });
+
+test('la lente es REDONDA y sobresale lo que dice sobresalir', () => {
+	/*
+	 * ESTA ES LA PRUEBA QUE FALTABA CUANDO EL BUG ESTABA VIVO.
+	 *
+	 * La lente era un casquete de esfera con `scale.z = 0,62` puesto para aplastar la cúpula. Pero
+	 * la malla se gira después 90° sobre X, y ese giro lleva el eje local +Y —el de la cúpula— a
+	 * +Z y el local +Z a −Y. O sea que el factor no aplastaba la cúpula: aplastaba la lente EN
+	 * VERTICAL. Salía un óvalo de 21,3 × 13,2 mm que además sobresalía 14,2 mm en vez de 7,4.
+	 *
+	 * Las 700 pruebas pasaban igual, porque ninguna miraba la forma. Ésta la mira: la lente tiene
+	 * que medir lo mismo de ancho que de alto —es un vidrio de revolución— y no puede sobresalir
+	 * más de lo que promete el vuelo del conjunto.
+	 */
+	const { grupo, puerta } = construirEnvolvente(660, 660, 160);
+	const g = construirComponentePuerta(pilotoDePrueba('rojo'), { dispositivoId: 'hx', x: 250, y: 70, ancho: 30, alto: 30 });
+	puerta.colocar(g, 'frente', 250, 70, 0);
+	grupo.updateMatrixWorld(true);
+
+	let lente: THREE.Mesh | undefined;
+	g.traverse((o) => { if (o.userData.pieza === 'lente') lente = o as THREE.Mesh; });
+	assert.ok(lente, 'el piloto no tiene lente');
+
+	const caja = new THREE.Box3().setFromObject(lente!);
+	const ancho = caja.max.x - caja.min.x;
+	const alto = caja.max.y - caja.min.y;
+	assert.ok(Math.abs(ancho - alto) < 0.4, `la lente no es redonda: ${ancho.toFixed(1)} × ${alto.toFixed(1)} mm`);
+
+	const origen = g.getWorldPosition(new THREE.Vector3());
+	const vuelo = caja.max.z - origen.z;
+	assert.ok(vuelo > 5 && vuelo <= 8, `la lente sobresale ${vuelo.toFixed(1)} mm, que no es el vuelo del piloto`);
+	// Y cabe dentro del embellecedor, que es lo que la sujeta.
+	assert.ok(ancho < 30, `la lente mide ${ancho.toFixed(1)} mm y no cabe en un aro de Ø22`);
+});
+
+test('el resplandor cae FUERA del aro, que es donde se puede ver', () => {
+	/*
+	 * El halo medía 1,28 veces el aro, así que todo el degradado se consumía por debajo del metal
+	 * opaco. Medido sobre la aplicación —luminancia alrededor del piloto, apagado contra
+	 * encendido— aportaba cero fuera del embellecedor a cualquier distancia: existía en el código
+	 * y no en la pantalla. Tiene que ser bastante mayor que el aro, y quedarse pegado a la chapa
+	 * para no verse como un disco flotante al mirar la puerta de canto.
+	 */
+	const g = construirComponentePuerta(pilotoDePrueba('rojo'), { dispositivoId: 'hx', x: 0, y: 0, ancho: 30, alto: 30 });
+	let halo: THREE.Mesh | undefined;
+	let aro: THREE.Mesh | undefined;
+	g.traverse((o) => {
+		if (o.userData.pieza === 'halo') halo = o as THREE.Mesh;
+		if ((o as THREE.Mesh).isMesh && o.userData.pieza === undefined && !aro
+			&& (o as THREE.Mesh).geometry.type === 'LatheGeometry') aro = o as THREE.Mesh;
+	});
+	assert.ok(halo && aro, 'falta el halo o el aro');
+	halo!.geometry.computeBoundingBox();
+	aro!.geometry.computeBoundingBox();
+	const rHalo = halo!.geometry.boundingBox!.max.x;
+	const rAro = aro!.geometry.boundingBox!.max.x;
+	assert.ok(rHalo > rAro * 1.8, `el resplandor (${rHalo} mm) no rebasa el aro (${rAro} mm) lo bastante para verse`);
+	assert.ok(halo!.position.z < 3, 'el halo vuela por delante de la lente y se ve de canto');
+});

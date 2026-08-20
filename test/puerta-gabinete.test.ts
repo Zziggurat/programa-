@@ -16,6 +16,8 @@ import test from 'node:test';
 import * as THREE from 'three';
 
 import { construirEnvolvente } from '../app/gabinete3d.js';
+import { cajaDeGabinete } from '../src/modelo/proyecto.js';
+import { Gabinete } from '../src/modelo/tipos.js';
 
 /** Un objeto cualquiera, del tamaño de un piloto, para usarlo de testigo. */
 function testigo(): THREE.Object3D {
@@ -106,4 +108,110 @@ test('la envolvente se adapta al tamaño del armario sin cambiar el espesor de l
 	assert.ok(Math.abs(grande.x - chico.x - 800) < 6, `el ancho creció ${(grande.x - chico.x).toFixed(1)} y debía crecer 800`);
 	assert.ok(Math.abs(grande.y - chico.y - 1500) < 6, `el alto creció ${(grande.y - chico.y).toFixed(1)} y debía crecer 1500`);
 	assert.ok(Math.abs(grande.z - chico.z - 150) < 6, `el fondo creció ${(grande.z - chico.z).toFixed(1)} y debía crecer 150`);
+});
+
+test('la pala de la bisagra atornillada al armario NO se va con la puerta', () => {
+	/*
+	 * Las dos palas y el nudillo colgaban del PIVOTE, así que al abrir se iban las dos con la
+	 * hoja: la que está atornillada al costado del armario se despegaba y se quedaba en el aire
+	 * junto a la puerta. Con la puerta cerrada no se notaba —están superpuestas— y por eso había
+	 * aguantado. Aquí se comprueba lo único que lo delata: abrir la puerta y mirar si se ha
+	 * movido algo que no debía.
+	 *
+	 * Y de paso, el NUDILLO. Estaba siete milímetros fuera del eje de giro, así que al abrir
+	 * describía un arco en vez de girar sobre sí mismo. Un nudillo que se desplaza no es un
+	 * nudillo: es un bulto pegado a la puerta.
+	 */
+	const { grupo, puerta } = construirEnvolvente(600, 800, 200);
+	grupo.updateMatrixWorld(true);
+
+	const antes = new Map<THREE.Object3D, THREE.Vector3>();
+	grupo.traverse((o) => antes.set(o, o.getWorldPosition(new THREE.Vector3())));
+
+	puerta.pivote.rotation.y = puerta.aperturaMaxima;
+	grupo.updateMatrixWorld(true);
+
+	// Todo lo que NO cuelgue del pivote tiene que estar exactamente donde estaba.
+	let quietos = 0;
+	grupo.traverse((o) => {
+		let bajoLaPuerta = false;
+		for (let n: THREE.Object3D | null = o; n; n = n.parent) if (n === puerta.pivote) bajoLaPuerta = true;
+		if (bajoLaPuerta) return;
+		const p = o.getWorldPosition(new THREE.Vector3());
+		assert.ok(p.distanceTo(antes.get(o)!) < 1e-6, 'una pieza del cuerpo se ha movido al abrir la puerta');
+		quietos += 1;
+	});
+	assert.ok(quietos > 10, 'la prueba no ha encontrado piezas de cuerpo que comprobar');
+
+	/*
+	 * Y que no se mueva no basta: la pala del cuerpo tiene que ESTAR en el cuerpo. Si alguien
+	 * volviera a colgarla del pivote, el bucle de arriba dejaría de mirarla y la prueba pasaría
+	 * sin comprobar nada. Así que se cuenta: junto al eje de cada bisagra, y FUERA del pivote,
+	 * tiene que haber chapa.
+	 */
+	const ejes = new Set<number>();
+	puerta.pivote.traverse((o) => {
+		const g = (o as THREE.Mesh).geometry as THREE.CylinderGeometry | undefined;
+		if (g?.type === 'CylinderGeometry' && Math.abs(g.parameters.height - 34) < 0.01) {
+			ejes.add(Math.round(antes.get(o)!.y));
+		}
+	});
+	for (const y of ejes) {
+		let palas = 0;
+		grupo.traverse((o) => {
+			if (!(o as THREE.Mesh).isMesh) return;
+			for (let n: THREE.Object3D | null = o; n; n = n.parent) if (n === puerta.pivote) return;
+			const p = antes.get(o)!;
+			if (Math.abs(p.y - y) < 14 && Math.abs(p.x - puerta.pivote.position.x) < 30) palas += 1;
+		});
+		assert.ok(palas >= 1, `la bisagra a y=${y} no tiene pala atornillada al armario`);
+	}
+
+	// El nudillo: cilindro vertical de la bisagra, colgado del pivote y EN el eje.
+	const nudillos: THREE.Mesh[] = [];
+	puerta.pivote.traverse((o) => {
+		const m = o as THREE.Mesh;
+		const g = m.geometry as THREE.CylinderGeometry | undefined;
+		if (m.isMesh && g?.type === 'CylinderGeometry' && Math.abs(g.parameters.height - 34) < 0.01) nudillos.push(m);
+	});
+	assert.ok(nudillos.length >= 2, `esperaba al menos dos nudillos, hay ${nudillos.length}`);
+	for (const n of nudillos) {
+		const p = n.getWorldPosition(new THREE.Vector3());
+		const q = antes.get(n)!;
+		assert.ok(
+			Math.hypot(p.x - q.x, p.z - q.z) < 0.5,
+			`el nudillo se desplaza ${Math.hypot(p.x - q.x, p.z - q.z).toFixed(1)} mm al abrir: no está en el eje`,
+		);
+	}
+});
+
+test('la placa nunca toca las paredes del armario', () => {
+	/*
+	 * El recorte mínimo era «la placa más un centímetro»: cinco milímetros de aire por lado. Con
+	 * eso, una canaleta de 40 mm puesta a 15 mm del canto —lo normal— acaba con su cara en el
+	 * MISMO plano que el costado del armario, y las dos superficies se disputan la profundidad:
+	 * sobre la chapa del lateral aparecía dibujada la escalerilla de las ranuras de la canaleta.
+	 * Se reprodujo pidiendo una caja de 30 × 40 sobre una placa de 30 × 40.
+	 *
+	 * Un armario monta la placa sobre espárragos con tres centímetros largos hasta la pared. El
+	 * mínimo es ahora ese mismo margen, así que ya no se puede pedir un armario en el que la
+	 * placa no cabe.
+	 */
+	const placa = (ancho: number, alto: number, caja?: { ancho: number; alto: number; profundidad: number }): Gabinete =>
+		({ ancho, alto, rieles: [], canaletas: [], colocaciones: [], ...(caja ? { caja } : {}) }) as Gabinete;
+
+	const apretado = cajaDeGabinete(placa(300, 400, { ancho: 300, alto: 400, profundidad: 150 }));
+	assert.ok(apretado.ancho - 300 >= 60, `solo ${apretado.ancho - 300} mm de aire a lo ancho`);
+	assert.ok(apretado.alto - 400 >= 60, `solo ${apretado.alto - 400} mm de aire a lo alto`);
+
+	// Y una caja holgada se respeta tal cual: el mínimo es un suelo, no una imposición.
+	const holgado = cajaDeGabinete(placa(300, 400, { ancho: 800, alto: 1000, profundidad: 250 }));
+	assert.equal(holgado.ancho, 800);
+	assert.equal(holgado.alto, 1000);
+
+	// Sin caja declarada, la estimación ya dejaba ese aire y no cambia.
+	const estimado = cajaDeGabinete(placa(300, 400));
+	assert.equal(estimado.ancho, 360);
+	assert.equal(estimado.alto, 460);
+	assert.equal(estimado.estimada, true);
 });

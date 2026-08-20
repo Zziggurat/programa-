@@ -38,7 +38,7 @@ export const Z_BORNE = 46;
  */
 export const M = {
 	/** Chapa y tornillería: refleja el entorno y devuelve un brillo estrecho. */
-	metal: (color = 0xb9bec2) => new THREE.MeshStandardMaterial({ color, metalness: 0.85, roughness: 0.35 }),
+	metal: (color = 0xb9bec2, roughness = 0.35) => new THREE.MeshStandardMaterial({ color, metalness: 0.85, roughness }),
 	/**
 	 * ACERO GALVANIZADO: el del carril DIN y la chapa del armario. No es un metal pulido —no hace
 	 * espejo— pero tampoco es plástico gris: tiene el brillo ancho y algo sucio del zincado, que

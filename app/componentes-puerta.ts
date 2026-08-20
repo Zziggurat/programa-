@@ -106,12 +106,69 @@ function degradadoDeHalo(): THREE.CanvasTexture | null {
 
 /** Diámetro del taladro: 22 mm es LA medida de la aparamenta de mando y señalización. */
 const TALADRO = 22;
-const R_ARO = 13.6;
-const R_LENTE = 11;
-/** Lo que sobresale el conjunto por delante de la chapa. */
+/** Radio exterior del aro embellecedor. Un Ø22 real calza un embellecedor de unos 29 mm. */
+const R_ARO = 14.6;
+/** Radio del vidrio. El hueco del aro es un pelo mayor, para que la lente asome por él. */
+const R_LENTE = 10.2;
+/** Lo que sobresale el conjunto por delante de la chapa. Y ahora se cumple: ver `perfilLente`. */
 const VUELO = 7.4;
+/** Hasta dónde llega el resplandor sobre la chapa. Poco más que el aro no se ve; ver el halo. */
+const R_HALO = 34;
 /** Fondo de la hoja de la puerta: lo que hay que atravesar para salir por dentro. */
 const CHAPA_PUERTA = 15;
+
+/**
+ * EL PERFIL DE LA LENTE, Y POR QUÉ NO ES MEDIA ESFERA APLASTADA.
+ *
+ * Aquí había un casquete esférico con `scale.z = 0.62` y el comentario «una lente de piloto es un
+ * casquete, no media bola». La intención era buena y el eje estaba equivocado: la malla se gira
+ * después con `rotation.x = π/2`, que lleva el eje local +Y —el de la cúpula— a +Z, y el local +Z
+ * a −Y. O sea que ese 0,62 no aplastaba la cúpula: APLASTABA LA LENTE EN VERTICAL. Medido sobre
+ * la geometría, la lente salía de 21,3 × 13,2 mm —un óvalo— y sobresalía 14,2 mm en vez de los
+ * 7,4 mm que promete `VUELO`. De frente se veía un huevo y de canto un caramelo brillante, que es
+ * exactamente lo que un piloto industrial no parece.
+ *
+ * Se cambia por un PERFIL DE REVOLUCIÓN, que no tiene ejes que confundir: se dibuja el corte de
+ * la lente —el faldón cilíndrico que entra en el aro y la cúpula que asoma— y se hace girar. Lo
+ * que mide el dibujo es lo que mide la pieza, y el vuelo sale de la última cota, no de un factor.
+ *
+ * Una sola malla y un solo material, además: la lente tiene que seguir siendo LA pieza que
+ * enciende, porque de eso depende que cambiar un piloto no toque a ninguno de sus vecinos.
+ */
+function perfilLente(): THREE.LatheGeometry {
+	const R = R_LENTE;
+	const puntos = [
+		new THREE.Vector2(R, 0),           // asiento, dentro del aro
+		new THREE.Vector2(R, 2.6),         // faldón recto: lo que asoma por el hueco del aro
+		new THREE.Vector2(R * 0.99, 3.4),
+		new THREE.Vector2(R * 0.94, 4.6),
+		new THREE.Vector2(R * 0.83, 5.8),
+		new THREE.Vector2(R * 0.65, 6.7),
+		new THREE.Vector2(R * 0.38, 7.3),
+		new THREE.Vector2(0, VUELO),       // la cúpula acaba EXACTAMENTE en el vuelo prometido
+	];
+	return new THREE.LatheGeometry(puntos, 28);
+}
+
+/**
+ * EL ARO EMBELLECEDOR, que es un ANILLO y no un disco.
+ *
+ * Era un cilindro macizo, así que la lente nacía enterrada dentro de él y lo único que se veía
+ * era la cúpula flotando sobre una arandela cromada. Un embellecedor de verdad tiene hueco: por
+ * él asoma el faldón de la lente, y esa sombra estrecha entre el vidrio y el metal es la mitad de
+ * lo que hace que la pieza se lea como aparamenta montada y no como un botón dibujado encima.
+ */
+function perfilAro(): THREE.LatheGeometry {
+	const puntos = [
+		new THREE.Vector2(R_LENTE + 0.45, -0.6),   // pared interior, metida en la chapa
+		new THREE.Vector2(R_LENTE + 0.45, 3.6),
+		new THREE.Vector2(R_LENTE + 1.6, 4.4),     // el canto matado de la boca
+		new THREE.Vector2(R_ARO - 1.2, 4.6),       // cara superior
+		new THREE.Vector2(R_ARO, 3.7),             // chaflán exterior
+		new THREE.Vector2(R_ARO, -0.6),            // falda exterior, apoyada en la puerta
+	];
+	return new THREE.LatheGeometry(puntos, 28);
+}
 
 /**
  * Construye un piloto para montar en la puerta.
@@ -133,12 +190,8 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 	 * botonera industrial: el aro es de metal aunque el cuerpo sea de plástico, y esa diferencia
 	 * de material es la mitad de lo que hace que la pieza se lea como aparamenta.
 	 */
-	const aro = new THREE.Mesh(
-		new THREE.CylinderGeometry(R_ARO, R_ARO + 0.6, 4.6, 28),
-		M.metal(0xb6bcc1),
-	);
+	const aro = new THREE.Mesh(perfilAro(), M.metal(0xb6bcc1, 0.44));
 	aro.rotation.x = Math.PI / 2;
-	aro.position.z = 1.6;
 	aro.castShadow = true;
 	g.add(aro);
 
@@ -151,15 +204,18 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 	 * color a plena saturación y parece encendido de día.
 	 */
 	const lente = new THREE.Mesh(
-		new THREE.SphereGeometry(R_LENTE, 22, 14, 0, Math.PI * 2, 0, Math.PI * 0.42),
+		perfilLente(),
 		new THREE.MeshStandardMaterial({
-			color: colorApagado(color), roughness: 0.22, metalness: 0.0,
+			/*
+			 * NO ES UN PLÁSTICO PULIDO. Una lente de piloto DIFUNDE: por eso se ve encendida
+			 * desde un lado del pasillo y no como un punto de luz que solo existe de frente. Con
+			 * `roughness` de espejo salía un reflejo blanco duro que la convertía en un caramelo.
+			 */
+			color: colorApagado(color), roughness: 0.42, metalness: 0.0,
 			emissive: new THREE.Color(color), emissiveIntensity: 0,
 		}),
 	);
 	lente.rotation.x = Math.PI / 2;
-	lente.position.z = VUELO - 4.2;
-	lente.scale.z = 0.62;                 // una lente de piloto es un casquete, no media bola
 	lente.userData.pieza = 'lente';
 	lente.userData.colorPropio = color;
 	lente.userData.colorApagado = colorApagado(color);
@@ -174,8 +230,23 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 	 * hace un piloto de 20 mA. Esto es un disco aditivo de una sola malla, sin sombra, sin
 	 * profundidad y sin coste apreciable: se ve el resplandor y no ilumina nada.
 	 */
+	/*
+	 * EL DISCO ERA DEMASIADO PEQUEÑO PARA VERSE, Y ESTABA DELANTE DE LA LENTE.
+	 *
+	 * Medido sobre la build —perfil radial de luminancia alrededor del piloto, apagado contra
+	 * encendido— el resplandor aportaba +9 sobre 255 en el propio aro y CERO fuera de él a
+	 * cualquier distancia. O sea: no existía. El radio era 1,28 × el aro, así que todo el
+	 * degradado se consumía por debajo del metal y lo poco que sobraba se apagaba en cuatro
+	 * milímetros.
+	 *
+	 * Ahora el disco es bastante mayor que el aro y va PEGADO A LA CHAPA, no volando por delante
+	 * de la lente. Con eso el resplandor cae donde tiene que caer —en la puerta, alrededor del
+	 * embellecedor— y el aro y la lente, que son opacos y están delante, tapan el centro solos.
+	 * De canto el disco queda a milímetro y medio de la chapa, así que no aparece la raya
+	 * luminosa flotante que delataba al truco.
+	 */
 	const halo = new THREE.Mesh(
-		new THREE.CircleGeometry(R_ARO * 1.28, 24),
+		new THREE.CircleGeometry(R_HALO, 28),
 		new THREE.MeshBasicMaterial({
 			color, transparent: true, opacity: 0, depthWrite: false,
 			// Con el disco liso, de cerca el resplandor era un CÍRCULO de color con el canto
@@ -185,7 +256,7 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 			blending: THREE.AdditiveBlending, toneMapped: false,
 		}),
 	);
-	halo.position.z = VUELO + 0.6;
+	halo.position.z = 1.4;
 	halo.userData.pieza = 'halo';
 	halo.raycast = () => undefined;
 	g.add(halo);

@@ -285,21 +285,61 @@ function construirCuerpo(
 
 /* --------------------------------- La puerta --------------------------------- */
 
-function construirBisagra(mats: Materiales): THREE.Group {
-	const b = new THREE.Group();
-	// Nudillo: el cilindro por el que pasa el pasador.
-	const nudillo = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 34, 12), mats.herraje);
+/**
+ * UNA BISAGRA TIENE DOS PALAS Y SOLO UNA DE ELLAS GIRA.
+ *
+ * La primera versión montaba las dos palas y el nudillo en un solo grupo colgado del PIVOTE, así
+ * que al abrir la puerta la bisagra entera se iba con ella: la pala que debería estar atornillada
+ * al armario se despegaba del armario y se quedaba flotando en el aire junto a la hoja. Se veía a
+ * simple vista con la puerta a medio abrir, y no se veía con la puerta cerrada, que es por lo que
+ * había aguantado.
+ *
+ * Y el nudillo estaba SIETE MILÍMETROS FUERA DEL EJE, así que además describía un arco al abrir
+ * en lugar de quedarse quieto girando sobre sí mismo, que es lo único que hace un nudillo.
+ *
+ * Ahora se devuelven las dos partes por separado: `movil` se cuelga del pivote —el nudillo, en el
+ * eje exacto, y la pala de la hoja— y `fija` se cuelga del CUERPO, que es donde está atornillada.
+ * Con eso la bisagra se comporta como una bisagra en todo el recorrido sin una línea de animación.
+ */
+interface Bisagra {
+	/** Nudillo, pasador y pala de la hoja: giran con la puerta. */
+	movil: THREE.Group;
+	/** Pala atornillada al armario: no se mueve nunca. */
+	fija: THREE.Group;
+}
+
+function construirBisagra(mats: Materiales, signo: number): Bisagra {
+	const movil = new THREE.Group();
+	// Nudillo: el cilindro por el que pasa el pasador. EN EL EJE, que es donde gira la puerta.
+	const nudillo = new THREE.Mesh(new THREE.CylinderGeometry(6.5, 6.5, 34, 14), mats.herraje);
 	nudillo.castShadow = true;
-	b.add(nudillo);
+	movil.add(nudillo);
 	// Pasador, asomando un par de milímetros por arriba y por abajo, como uno de verdad.
 	const pasador = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, 40, 8), mats.acero);
-	b.add(pasador);
-	// Las dos palas atornilladas: una a la hoja y otra al cuerpo.
-	for (const s of [-1, 1]) {
-		const pala = chapa(16, 26, 4, mats.herraje, s * 8, 0, 4.5);
-		b.add(pala);
+	movil.add(pasador);
+	/*
+	 * La pala de la HOJA sale del nudillo hacia la puerta y se mete en su canto: no sobresale por
+	 * el costado del armario, que es lo que hacía que la bisagra pareciera un tirante pegado a la
+	 * pared. `-signo` apunta siempre hacia el interior del armario, tenga las bisagras del lado
+	 * que las tenga.
+	 */
+	const palaHoja = chapa(22, 26, 3.6, mats.herraje, -signo * 10, 0, 5);
+	palaHoja.castShadow = true;
+	movil.add(palaHoja);
+
+	const fija = new THREE.Group();
+	// La pala del CUERPO va detrás de la de la hoja, apoyada contra el costado del armario.
+	const palaCuerpo = chapa(20, 26, 3.6, mats.herraje, -signo * 9, 0, -5);
+	palaCuerpo.castShadow = true;
+	fija.add(palaCuerpo);
+	// Sus dos tornillos: es lo que la lee como pieza atornillada y no como un bulto de la chapa.
+	for (const sy of [-1, 1]) {
+		const t = new THREE.Mesh(new THREE.CylinderGeometry(1.9, 1.9, 2.4, 8), mats.acero);
+		t.rotation.x = Math.PI / 2;
+		t.position.set(-signo * 13, sy * 8, -7.2);
+		fija.add(t);
 	}
-	return b;
+	return { movil, fija };
 }
 
 /**
@@ -386,8 +426,18 @@ function materiales(): Materiales {
 	return {
 		exterior: pintada(0xb9bab6),
 		puerta: pintada(0xc3c4c0),
-		herraje: M.metal(0xb4b9bd),
-		acero: M.metal(0x8d9297),
+		/*
+		 * HERRAJES SATINADOS, NO CROMADOS DE ESPEJO.
+		 *
+		 * Con la rugosidad de serie (0,35) el nudillo de la bisagra —un cilindro pequeño y muy
+		 * curvo— devolvía casi solo el entorno, y el entorno tiene el cielo azulado: mirando el
+		 * armario de canto, la bisagra salía AZUL y se leía como una pieza de plástico. El cierre,
+		 * que es plano y grande, aguantaba bien el espejo; la bisagra no. Un herraje de armario es
+		 * acero niquelado satinado, así que se le sube la rugosidad hasta que refleja la luz y no
+		 * el paisaje. El cierre pierde un punto de brillo y sigue leyéndose como metal.
+		 */
+		herraje: M.metal(0xb4b9bd, 0.48),
+		acero: M.metal(0x8d9297, 0.52),
 		galvanizada: M.galvanizado(),
 		junta: M.baquelita(0x23262a),
 		sombra: M.baquelita(0x2a2e32),
@@ -460,11 +510,16 @@ export function construirEnvolvente(
 	 */
 	const cuantas = alto > 1000 ? 3 : 2;
 	for (let i = 0; i < cuantas; i++) {
-		const b = construirBisagra(mats);
-		const t = cuantas === 2 ? [0.22, 0.78][i] : [0.14, 0.5, 0.86][i];
-		b.position.set(signo * 7, alto / 2 - alto * t, -6);
-		if (!izquierda) b.rotation.y = Math.PI;
-		pivote.add(b);
+		const { movil, fija } = construirBisagra(mats, signo);
+		const y = alto / 2 - alto * (cuantas === 2 ? [0.22, 0.78][i] : [0.14, 0.5, 0.86][i]);
+		// En el EJE: x = 0 e z = 0 en coordenadas del pivote. Todo lo que se separe de ahí
+		// describe un arco al abrir, y un nudillo no describe arcos.
+		movil.position.set(0, y, 0);
+		pivote.add(movil);
+		// La pala fija se cuelga del cuerpo, no del pivote, y por eso hay que darle la posición
+		// del eje en coordenadas de la escena.
+		fija.position.set(pivote.position.x, y, pivote.position.z);
+		grupo.add(fija);
 	}
 
 	/*

@@ -8029,6 +8029,14 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 					halo: Math.round((mh?.opacity ?? 0) * 100) / 100,
 					color: mat ? `#${mat.color.getHexString()}` : undefined,
 					mundo: { x: Math.round(w.x), y: Math.round(w.y), z: Math.round(w.z) },
+					/*
+					 * SIN REDONDEAR. Comprobar que la puerta se mueve como un sólido rígido es
+					 * comparar distancias entre piezas a lo largo del giro, y con las coordenadas
+					 * redondeadas al milímetro esa distancia baila sola casi un milímetro: la
+					 * prueba acusaba a la puerta de deformarse cuando lo que se deformaba era la
+					 * medida. Lo redondeado se queda para leerlo; esto es para medirlo.
+					 */
+					fino: { x: w.x, y: w.y, z: w.z },
 				};
 			}),
 		/**
@@ -8312,6 +8320,40 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 					: u.handle ? 'tirador' : 'otro';
 				return `${que}:${u.conductorId ?? u.borneId ?? u.dispositivoId ?? u.canaletaId ?? u.rielId ?? ''}@${h.distance.toFixed(1)}`;
 			}));
+		},
+		/**
+		 * QUÉ HAY DE VERDAD EN ESE PÍXEL, CHAPA DEL ARMARIO INCLUIDA.
+		 *
+		 * `diagnosticoPixel` usa el trazado de rayos de la interacción, y la envolvente está fuera
+		 * de él a propósito —el armario no se pincha—. Eso está bien para saber qué se puede
+		 * seleccionar y es inútil para la pregunta «¿se ve la canaleta A TRAVÉS del costado?»,
+		 * porque el costado no aparece en la lista aunque esté delante. Aquí se le devuelve el
+		 * trazado a la envolvente el tiempo justo de lanzar un rayo, y se recupera después.
+		 */
+		queHayEnPixel: (x: number, y: number) => {
+			const r = renderer.domElement.getBoundingClientRect();
+			puntero.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
+			raycaster.setFromCamera(puntero, camaraViva());
+			const devueltos: { m: THREE.Mesh; fn: THREE.Mesh['raycast'] }[] = [];
+			escenario.envolvente.traverse((o) => {
+				const m = o as THREE.Mesh;
+				if (!m.isMesh) return;
+				devueltos.push({ m, fn: m.raycast });
+				m.raycast = THREE.Mesh.prototype.raycast;
+			});
+			try {
+				return raycaster.intersectObjects(escenario.raiz.children, true).slice(0, 6).map((h) => {
+					const u = h.object.userData;
+					const que = u.tuboVisible ? 'cable' : u.canaletaId ? 'canaleta' : u.rielId ? 'riel'
+						: u.dispositivoId ? 'aparato' : devueltos.some((d) => d.m === h.object) ? 'ARMARIO' : 'otro';
+					const m = h.object as THREE.Mesh;
+					return `${que}:${u.canaletaId ?? u.rielId ?? u.dispositivoId ?? m.geometry.type}`
+						+ `@${h.distance.toFixed(1)}`
+						+ `[${h.point.x.toFixed(1)},${h.point.y.toFixed(1)},${h.point.z.toFixed(1)}]`;
+				});
+			} finally {
+				for (const d of devueltos) d.m.raycast = d.fn;
+			}
 		},
 		/** Qué cable elegiría un clic en ese píxel de pantalla (misma lógica que la selección real). */
 		/*

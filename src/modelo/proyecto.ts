@@ -61,9 +61,27 @@ export function declarado<K extends keyof OpcionesProyecto>(proyecto: Proyecto, 
 export function cajaDeGabinete(g: Gabinete): {
 	ancho: number; alto: number; profundidad: number; estimada: boolean;
 } {
+	/*
+	 * LA PLACA NO TOCA LAS PAREDES, Y ESE MARGEN NO ES DECORATIVO.
+	 *
+	 * El recorte mínimo era «la placa más un centímetro», o sea cinco milímetros de aire por lado.
+	 * Con eso, cualquier cosa que asome del canto de la placa —una canaleta de 40 mm colocada a
+	 * 15 mm del borde, que es lo normal— acaba EXACTAMENTE en el plano del costado del armario.
+	 * Se veía: pidiendo una caja de 30 × 40 sobre una placa de 30 × 40 aparecía la escalerilla de
+	 * las ranuras de la canaleta dibujada sobre la chapa del lateral, porque las dos superficies
+	 * se disputaban la misma profundidad. Medido con el rayo: pared del armario y canaleta
+	 * devolvían el mismo punto, x = −155,0 las dos.
+	 *
+	 * Un armario de verdad monta la placa sobre espárragos y deja tres centímetros largos hasta
+	 * la pared, que es por donde suben los cables y se atornillan los pasamuros. Así que el
+	 * mínimo pasa a ser el MISMO margen que ya se usa cuando nadie declara la caja: si la placa
+	 * mide 300, la envolvente no puede medir menos de 360. Deja de ser posible pedir un armario
+	 * en el que la placa no cabe.
+	 */
+	const AIRE = 60;
 	return {
-		ancho: Math.max(g.caja?.ancho ?? g.ancho + 60, g.ancho + 10),
-		alto: Math.max(g.caja?.alto ?? g.alto + 60, g.alto + 10),
+		ancho: Math.max(g.caja?.ancho ?? g.ancho + AIRE, g.ancho + AIRE),
+		alto: Math.max(g.caja?.alto ?? g.alto + AIRE, g.alto + AIRE),
 		profundidad: g.caja?.profundidad ?? 160,
 		estimada: !g.caja,
 	};
