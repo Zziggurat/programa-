@@ -149,13 +149,26 @@ export function alturaDeMazo(
  *
  * Los tres pilotos R, S y T están a la MISMA altura, así que sus tres cables llegarían al mismo
  * punto de la bisagra y se dibujarían uno dentro de otro. El mazo se abanica: cada aparato tiene
- * su carril. Y el índice sale del modelo —del orden de las colocaciones— para que el tramo de
- * placa y el tramo de puerta calculen el mismo sin hablarse.
+ * su carril, y el carril tiene que salir del modelo para que el tramo de placa y el de puerta
+ * calculen el mismo sin hablarse.
+ *
+ * EL CARRIL LO DA LA POSICIÓN, NO EL ORDEN DEL ARRAY. Salía del orden de `colocaciones`, y eso
+ * no es un dato estable: basta con que el proyecto se guarde y se vuelva a abrir después de
+ * haber tocado algo para que dos aparatos cambien de sitio en la lista. Medido: tras guardar y
+ * recargar, el tramo de hoja de un conductor caía uno o dos milímetros más adentro que antes,
+ * porque su carril había pasado a ser el del vecino. Un recorrido guardado tiene que volver
+ * exactamente igual, y no puede depender de en qué orden se escribieron las cosas.
+ *
+ * Ordenar de izquierda a derecha y de arriba abajo, además, es lo que haría un montador: el
+ * aparato más a la izquierda se lleva el carril de fuera. El identificador solo desempata dos
+ * aparatos que estuvieran exactamente en el mismo punto, para que el orden sea total.
  */
 export function carrilDeMazo(
 	colocaciones: readonly Colocacion[], dispositivoId: string,
 ): { indice: number; total: number } {
-	const enPuerta = colocaciones.filter((c) => c.montaje === 'puerta');
+	const enPuerta = colocaciones.filter((c) => c.montaje === 'puerta').slice().sort(
+		(a, b) => (a.x - b.x) || (a.y - b.y) || (a.dispositivoId < b.dispositivoId ? -1 : 1),
+	);
 	return { indice: Math.max(0, enPuerta.findIndex((c) => c.dispositivoId === dispositivoId)), total: enPuerta.length };
 }
 
