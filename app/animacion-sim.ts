@@ -133,8 +133,15 @@ export interface EntradaAnimacion {
 	dt: number;
 	/** Segundos desde que arrancó el editor, para los latidos lentos (el refresco de un display). */
 	reloj: number;
-	/** El grupo de los cables, para encenderlos según la corriente que llevan. */
-	cables?: THREE.Object3D;
+	/**
+	 * LOS GRUPOS de cables, para encenderlos según la corriente que llevan.
+	 *
+	 * Es una lista y no un grupo suelto porque los conductores no viven todos en el mismo sitio:
+	 * los de la placa cuelgan de la raíz y los que van a la puerta tienen su tramo colgado de la
+	 * hoja, que gira con ella. Con un solo grupo, un conductor de puerta conducía en la
+	 * simulación —y el piloto del otro extremo se encendía— pero él se quedaba apagado.
+	 */
+	cables?: THREE.Object3D | THREE.Object3D[];
 }
 
 /**
@@ -161,7 +168,7 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 	 */
 	if (e.cables) {
 		const corrientes = e.energizado ? e.resultado?.corrientePorConductor : undefined;
-		e.cables.traverse((o) => {
+		for (const grupoDeCables of (Array.isArray(e.cables) ? e.cables : [e.cables])) grupoDeCables.traverse((o) => {
 			if (!(o instanceof THREE.Mesh)) return;
 			// Solo el TUBO. Del cable cuelgan además el tubo de agarre invisible y las punteras de
 			// las dos puntas, y una puntera de plástico blanco encendiéndose no es un cable con

@@ -726,9 +726,26 @@ export function valoresPorDefecto(tipo: string): Record<string, string | number>
 	return v;
 }
 
-/** Construye el componente de frontal que le toque a este aparato. */
+/**
+ * Construye el componente de frontal que le toque a este aparato.
+ *
+ * Y LO FIRMA ENTERO. Cada malla del componente lleva el identificador del aparato, y eso no es
+ * un detalle de contabilidad: el señalado del editor mira el `dispositivoId` de la malla que
+ * corta el rayo, no el del grupo. Sin la firma, un piloto solo se podía «encontrar» a través de
+ * su cilindro de agarre invisible, y el día que ese cilindro pasó a ser el último recurso —para
+ * que dejara de robarle el clic a los cables que pasan por detrás— pinchar el centro de la lente
+ * dejó de seleccionar el piloto: se lo llevaba cualquier cable que cruzara ese píxel, aunque
+ * estuviera detrás de la chapa de la puerta.
+ *
+ * Se firma aquí, en el registro, y no en cada familia: así lo hereda el pulsador, el selector y
+ * todo lo que se registre mañana, sin que su autor tenga que acordarse.
+ */
 export function construirComponentePuerta(d: Dispositivo, col: Colocacion): THREE.Group {
-	return fichaFrontal(d).construir(d, col);
+	const g = fichaFrontal(d).construir(d, col);
+	g.traverse((o) => {
+		if ((o as THREE.Mesh).isMesh && o.userData.dispositivoId === undefined) o.userData.dispositivoId = d.id;
+	});
+	return g;
 }
 
 /** El hueco que ocupa un aparato en la chapa del frontal. */

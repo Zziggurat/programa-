@@ -4000,25 +4000,43 @@ function aplicarSeleccion(nueva: Seleccion | undefined): void {
 	pintarSeleccion();
 }
 
+/**
+ * Recorre TODAS las mallas de cable, monten en la placa o en la puerta.
+ *
+ * Los tres resaltados —selección, atenuado del resto y hover— recorrían solo `escenario.cables`.
+ * Desde que un conductor de puerta se puede seleccionar, eso significaba que al elegirlo no se
+ * encendía, no se atenuaban sus vecinos y al pasar el ratón por encima no pasaba nada: el editor
+ * decía tenerlo seleccionado y en la escena no se notaba.
+ */
+function porCadaMallaDeCable(f: (m: THREE.Mesh, cid: string) => void): void {
+	for (const g of mallasDeCable()) {
+		g.traverse((o) => {
+			const m = o as THREE.Mesh;
+			if (!m.isMesh || !(m.material instanceof THREE.MeshStandardMaterial)) return;
+			const cid = m.userData.conductorId as string | undefined;
+			if (cid) f(m, cid);
+		});
+	}
+}
+
 function resaltarCable(id: string): void {
-	escenario.cables.traverse((o) => {
-		if (o.userData.conductorId === id && o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
-			o.material = o.material.clone();
-			o.material.emissive.setHex(0x2ea3ff);
-			o.material.emissiveIntensity = 0.7;
-			resaltados.push(o.material);
-		}
+	porCadaMallaDeCable((m, cid) => {
+		if (cid !== id) return;
+		const mat = (m.material as THREE.MeshStandardMaterial).clone();
+		m.material = mat;
+		mat.emissive.setHex(0x2ea3ff);
+		mat.emissiveIntensity = 0.7;
+		resaltados.push(mat);
 	});
 }
 
 /** Atenúa (baja opacidad) todos los cables salvo el resaltado; sin argumento, los devuelve a opacos. */
 function atenuarCables(exceptoId: string | undefined): void {
-	escenario.cables.traverse((o) => {
-		if (!(o instanceof THREE.Mesh) || !(o.material instanceof THREE.MeshStandardMaterial)) return;
-		if (!o.userData.conductorId) return;
-		const atenuar = exceptoId !== undefined && o.userData.conductorId !== exceptoId;
-		o.material.transparent = atenuar;
-		o.material.opacity = atenuar ? 0.25 : 1;
+	porCadaMallaDeCable((m, cid) => {
+		const atenuar = exceptoId !== undefined && cid !== exceptoId;
+		const mat = m.material as THREE.MeshStandardMaterial;
+		mat.transparent = atenuar;
+		mat.opacity = atenuar ? 0.25 : 1;
 	});
 }
 
@@ -4026,13 +4044,11 @@ let cableHover: string | undefined;
 /** Resalta suavemente el cable bajo el ratón (o desde la lista) y pone el cursor de agarre. */
 function resaltarHoverCable(id: string | undefined): void {
 	if (id === cableHover) return;
-	escenario.cables.traverse((o) => {
-		if (!(o instanceof THREE.Mesh) || !(o.material instanceof THREE.MeshStandardMaterial)) return;
-		const cid = o.userData.conductorId;
-		if (!cid) return;
+	porCadaMallaDeCable((m, cid) => {
+		const mat = m.material as THREE.MeshStandardMaterial;
 		const esSel = sel?.tipo === 'cable' && sel.id === cid;
-		if (cid === cableHover && !esSel) o.material.emissiveIntensity = 0;   // quitar hover anterior
-		if (cid === id && !esSel) { o.material.emissive.setHex(0x8fd0ff); o.material.emissiveIntensity = 0.5; }
+		if (cid === cableHover && !esSel) mat.emissiveIntensity = 0;   // quitar hover anterior
+		if (cid === id && !esSel) { mat.emissive.setHex(0x8fd0ff); mat.emissiveIntensity = 0.5; }
 	});
 	cableHover = id;
 	renderer.domElement.style.cursor = id ? 'grab' : '';
@@ -4372,12 +4388,17 @@ function cableEstaDelante(ev: MouseEvent, golpe?: CableSenalado): boolean {
 	punteroEnPixeles(ev);
 	raycaster.setFromCamera(puntero, camaraViva());
 	/*
-	 * Y las zonas de agarre invisibles de los componentes de puerta tampoco tapan: son cilindros
-	 * generosos puestos para poder pinchar un piloto sin puntería, no chapa. Contándolas, un cable
-	 * que pasa por detrás de un piloto —a dos centímetros de él y perfectamente a la vista— se
-	 * declaraba «tapado por un aparato» y el clic se lo llevaba el piloto.
+	 * TODOS LOS APARATOS, MONTEN DONDE MONTEN. Se buscaba solo en `escenario.dispositivos`, que
+	 * son los de la placa: los de la PUERTA cuelgan de la hoja y no estaban ahí, así que para
+	 * esta comprobación no existían. Resultado: con la puerta cerrada, un cable del interior que
+	 * cruzaba por detrás de un piloto —tapado por quince milímetros de chapa y por el propio
+	 * piloto— se declaraba «visible por delante» y se llevaba el clic de la lente.
+	 *
+	 * Y las zonas de agarre invisibles no tapan: son cilindros generosos puestos para poder
+	 * pinchar un piloto sin puntería, no chapa. Contándolas, un cable que pasa por detrás de un
+	 * piloto —a dos centímetros de él y perfectamente a la vista— se declaraba tapado.
 	 */
-	const dAparato = raycaster.intersectObjects(escenario.dispositivos.children, true)
+	const dAparato = raycaster.intersectObjects(escenario.raiz.children, true)
 		.find((i) => i.object.userData.dispositivoId && !i.object.userData.agarre)?.distance ?? Infinity;
 	return c.profundidad <= dAparato + 2;
 }
@@ -7510,7 +7531,8 @@ renderer.setAnimationLoop(() => {
 		energizado: panelSim.energizado(),
 		dt,
 		reloj: ahora / 1000,
-		cables: escenario.cables,
+		// Todos los grupos de cable: los de la placa y los dos del mazo de puerta.
+		cables: [escenario.cables, escenario.mazo.enLaPuerta, escenario.mazo.flexibles],
 	});
 	animarPuerta(dt);
 	(vista2D ? controlesOrto : controles).update();
