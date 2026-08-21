@@ -8767,6 +8767,18 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			return s ? `${s.tipo}:${s.id}` : 'nada';
 		},
 		/** Las cajas envolventes de cada tramo del mazo, en mundo, para saber qué está delante de qué. */
+		/** Cada malla colgada de la hoja, con su caja en mundo: para diffear la puerta entera. */
+		piezasDeLaHoja: () => {
+			const salida: string[] = [];
+			escenario.puerta.hoja.traverse((o) => {
+				const m = o as THREE.Mesh;
+				if (!m.isMesh) return;
+				const c = new THREE.Box3().setFromObject(m);
+				const r = (v: THREE.Vector3) => `${Math.round(v.x)},${Math.round(v.y)},${Math.round(v.z)}`;
+				salida.push(`${(m.userData.pieza as string) ?? m.geometry.type}|${(m.userData.dispositivoId as string) ?? (m.userData.conductorId as string) ?? '-'}|${r(c.min)}|${r(c.max)}`);
+			});
+			return salida.sort();
+		},
 		dondeMazo: () => {
 			const caja = (o: THREE.Object3D) => {
 				const c = new THREE.Box3().setFromObject(o);

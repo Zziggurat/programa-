@@ -237,14 +237,29 @@ const estadoBoton = () => p.evaluate(() => {
 /* 16-18 */ paso(16, 'guardar, recargar y volver a abrir');
 {
 	await puerta(p, 0);
+	/*
+	 * SE COMPARA EL MAZO, NO LA CAJA DE LA HOJA ENTERA.
+	 *
+	 * `dondeMazo()` da además la caja envolvente de la hoja completa, que es un dato de contexto
+	 * muy útil para diagnosticar… y que NO es del mazo: incluye todo lo que cuelgue de la puerta
+	 * en ese momento, marco de selección incluido. En este recorrido queda un piloto seleccionado
+	 * desde el paso 13, así que su recuadro de selección engordaba la caja dos milímetros; al
+	 * recargar, la selección se suelta, el recuadro desaparece y la caja volvía a su medida. La
+	 * prueba acusaba al mazo de moverse y lo que se movía era el subrayado. Comprobado aparte con
+	 * `qa/_v-hoja.mjs`: sin selección, las 87 mallas de la hoja caen exactamente donde estaban.
+	 */
+	const soloElMazo = (d) => JSON.stringify({
+		enLaPuerta: d.enLaPuerta, flexibles: d.flexibles, tramosHoja: d.tramosHoja, porCable: d.porCable,
+	});
 	const antes = await p.evaluate(() => JSON.stringify(window.qa.dondeMazo()));
 	const json = await p.evaluate(() => JSON.stringify(window.qa.proyecto()));
 	await p.evaluate((j) => window.qa.cargarJson(j), json);
 	await p.waitForTimeout(1800);
 	await puerta(p, 0);
 	const despues = await p.evaluate(() => JSON.stringify(window.qa.dondeMazo()));
-	ok(antes === despues, 'tras recargar, el mazo cae exactamente donde estaba');
-	if (antes !== despues) {
+	ok(soloElMazo(JSON.parse(antes)) === soloElMazo(JSON.parse(despues)),
+		'tras recargar, el mazo cae exactamente donde estaba');
+	if (soloElMazo(JSON.parse(antes)) !== soloElMazo(JSON.parse(despues))) {
 		// Y se dice EN QUÉ se diferencian, que es lo único que sirve para arreglarlo.
 		const a = JSON.parse(antes), b = JSON.parse(despues);
 		const plano = (o, pre = '') => Object.entries(o).flatMap(([k, v]) => (v && typeof v === 'object'
@@ -260,7 +275,8 @@ const estadoBoton = () => p.evaluate(() => {
 	await p.waitForTimeout(1800);
 	await puerta(p, 1);
 	const abiertoDespues = await p.evaluate(() => JSON.stringify(window.qa.dondeMazo()));
-	ok(abierto === abiertoDespues, 'y abrirla después de cargar produce el mismo recorrido');
+	ok(soloElMazo(JSON.parse(abierto)) === soloElMazo(JSON.parse(abiertoDespues)),
+		'y abrirla después de cargar produce el mismo recorrido');
 	const n = await p.evaluate(() => window.qa.cablesDibujados());
 	ok(n === cables0, `y no se ha perdido ningún conductor (${n})`);
 }
