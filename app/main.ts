@@ -37,6 +37,7 @@ import {
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
 import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, RedCanaletas } from './canaletas-red.js';
+import { actualizarMazoPuerta, trazasDeMazo } from './mazo-puerta.js';
 import {
 	Bloqueo, distanciaASegmento, Eje, indiceDeInsercion, normalDeArrastre, P3,
 	proyectarEnPolilinea, respetarBloqueo,
@@ -743,7 +744,6 @@ const camara = new THREE.PerspectiveCamera(42, 1, 25, 8000);
 
 const controles = new OrbitControls(camara, renderer.domElement);
 controles.enableDamping = true;
-controles.dampingFactor = 0.08;
 /*
  * 130 mm en vez de 220. El plano cercano está a 25 mm, así que no era él quien impedía acercarse:
  * era este tope. Con 220 mm no se puede poner la vista donde de verdad hace falta para leer la
@@ -753,13 +753,103 @@ controles.dampingFactor = 0.08;
  */
 controles.minDistance = 130;
 controles.maxDistance = 6000;
-// La cámara se mantiene SIEMPRE por delante del tablero, como en un configurador profesional:
-// se puede girar de lado a lado y mirar desde arriba o abajo, pero nunca pasar por detrás
-// (donde todo se ve espejado, los cables quedan tapados por la caja y no hay forma de trabajar).
-controles.minAzimuthAngle = -Math.PI * 0.42;
-controles.maxAzimuthAngle = Math.PI * 0.42;
-controles.minPolarAngle = Math.PI * 0.10;
-controles.maxPolarAngle = Math.PI * 0.80;
+/*
+ * LA VUELTA COMPLETA. Y por qué antes no se podía dar.
+ *
+ * Aquí había un tope de azimut de ±0,42 π —unos ±75°— puesto a propósito, con el argumento de que
+ * por detrás «todo se ve espejado y los cables quedan tapados por la caja». Ese argumento era
+ * cierto cuando el tablero era una placa: mirarla por detrás es mirar una chapa. Dejó de serlo en
+ * cuanto el tablero se convirtió en un armario con puerta, bisagras, costados, techo, suelo,
+ * placa pasacables y ahora un mazo que cruza de la placa a la hoja. La mitad de las cosas que
+ * esta herramienta dibuja SOLO se ven desde atrás o desde el costado, y con el tope no había
+ * forma de llegar: era una pared invisible a los setenta y cinco grados.
+ *
+ * Los topes se quitan del todo. `OrbitControls` con los límites en ±Infinity deja el azimut
+ * correr sin dar la vuelta de campana ni saltar: frente, costado, detrás, el otro costado y otra
+ * vez frente, de forma continua.
+ */
+controles.minAzimuthAngle = -Infinity;
+controles.maxAzimuthAngle = Infinity;
+/*
+ * LA VERTICAL SÍ SE ACOTA, pero solo lo justo para no pasar por los polos —donde la órbita se
+ * vuelve loca porque el vector «arriba» deja de estar definido— y para no acabar mirando el
+ * tablero del revés. Cuatro grados de margen a cada lado bastan: se puede mirar el techo del
+ * armario desde arriba y la placa pasacables desde abajo, que es lo que hacía falta.
+ */
+controles.minPolarAngle = Math.PI * 0.022;
+controles.maxPolarAngle = Math.PI * 0.978;
+
+/*
+ * NAVEGAR Y SELECCIONAR SON DOS COSAS, Y EL BOTÓN IZQUIERDO SOLO HACE UNA.
+ *
+ * El reparto de fábrica de `OrbitControls` es izquierdo=girar, central=acercar, derecho=desplazar,
+ * y encima de eso este editor colgaba la selección y el arrastre de objetos TAMBIÉN del izquierdo.
+ * Con las dos responsabilidades en el mismo botón, cada gesto tenía que decidirse a posteriori y
+ * el resultado era el de siempre: giras la vista y sueltas encima de un cable, y acabas de
+ * seleccionar un cable que no querías.
+ *
+ * Se pasa al reparto de las herramientas 3D: izquierdo para los objetos, RUEDA PULSADA para
+ * girar, Mayúsculas+rueda pulsada para desplazar. Se conserva además el botón derecho para
+ * desplazar, que no estorba a nadie y salva a quien tenga un ratón sin botón central.
+ */
+controles.mouseButtons = {
+	LEFT: null,
+	MIDDLE: THREE.MOUSE.ROTATE,
+	RIGHT: THREE.MOUSE.PAN,
+};
+
+/*
+ * EL ZOOM VA HACIA EL CURSOR. Es lo que quita el baile de «acerco, se me va el detalle a una
+ * esquina, desplazo, vuelvo a acercar». `zoomToCursor` lo trae `OrbitControls` de serie.
+ *
+ * Y la velocidad se baja: con el paso de rueda de fábrica, un tablero cabe en dos golpes de rueda
+ * y de cerca cada golpe lo cruza entero. `OrbitControls` acerca en PROPORCIÓN a la distancia, así
+ * que el paso ya es relativo; lo que sobraba era el tamaño del paso.
+ */
+controles.zoomToCursor = true;
+controles.zoomSpeed = 0.62;
+/*
+ * EL DESPLAZAMIENTO, EN PÍXELES DE PANTALLA. Con `screenSpacePanning` en falso, arrastrar mueve
+ * la cámara por el plano del suelo, y en un tablero —que es una pared— eso significa que subir el
+ * ratón aleja en vez de subir. Con él en verdadero, un centímetro de ratón es un centímetro de
+ * escena a cualquier distancia, que es la sensación que se pedía.
+ */
+controles.screenSpacePanning = true;
+controles.rotateSpeed = 0.85;
+/*
+ * LA AMORTIGUACIÓN, MÁS FIRME. A 0,08 la cámara seguía deslizando casi medio segundo después de
+ * soltar: bonito en una demo, incómodo cuando uno está intentando parar sobre un borne. A 0,17
+ * conserva el suavizado —no es una cámara rígida— pero se detiene cuando se le dice.
+ */
+controles.dampingFactor = 0.17;
+
+/*
+ * MIENTRAS SE NAVEGA NO SE BUSCA NADA BAJO EL PUNTERO.
+ *
+ * Girar el tablero con la rueda pulsada lanza un `pointermove` por fotograma, y cada uno de ellos
+ * disparaba el resaltado: un trazado de rayos contra los bornes, otro contra los cables y otro
+ * contra los aparatos, sesenta veces por segundo, para iluminar cosas que nadie está mirando
+ * porque está moviendo la cámara. Y además hacía parpadear el resaltado durante el giro.
+ *
+ * `OrbitControls` avisa cuando empieza y cuando acaba un gesto de cámara. Entre esos dos avisos,
+ * el hover se calla y se apaga; al soltar, vuelve solo con el siguiente movimiento del ratón.
+ */
+let navegando = false;
+function vigilarNavegacion(c: OrbitControls): void {
+	c.addEventListener('start', () => { navegando = true; });
+	c.addEventListener('end', () => { navegando = false; });
+}
+vigilarNavegacion(controles);
+
+/*
+ * Y EL NAVEGADOR NO SE METE EN MEDIO. El botón central, sobre una página, es «desplazamiento
+ * automático» en Windows y «pegar la selección» en Linux; el derecho abre el menú contextual en
+ * cuanto los controles están desactivados —arrastrando un cable, por ejemplo—. Ninguna de las
+ * tres cosas tiene sentido encima de un tablero, y las tres interrumpen el gesto a medias.
+ */
+renderer.domElement.addEventListener('pointerdown', (ev) => { if (ev.button === 1) ev.preventDefault(); });
+renderer.domElement.addEventListener('auxclick', (ev) => ev.preventDefault());
+renderer.domElement.addEventListener('contextmenu', (ev) => ev.preventDefault());
 
 /*
  * ------------------------------ VISTA 2D ------------------------------
@@ -779,7 +869,11 @@ camaraOrto.position.set(0, 0, 3000);
 const controlesOrto = new OrbitControls(camaraOrto, renderer.domElement);
 controlesOrto.enableRotate = false;
 controlesOrto.enableDamping = true;
-controlesOrto.dampingFactor = 0.08;
+// El mismo tacto que la cámara de perspectiva: se para cuando se le dice y acerca al cursor.
+controlesOrto.dampingFactor = 0.17;
+controlesOrto.zoomToCursor = true;
+controlesOrto.zoomSpeed = 0.62;
+vigilarNavegacion(controlesOrto);
 controlesOrto.enabled = false;
 // Sin giro, el botón izquierdo tiene que servir para lo único que queda: desplazar la hoja.
 controlesOrto.mouseButtons = {
@@ -787,6 +881,32 @@ controlesOrto.mouseButtons = {
 };
 
 let vista2D = false;
+/**
+ * TODAS LAS MALLAS DE CABLE QUE HAY EN LA ESCENA, monten donde monten.
+ *
+ * Los conductores de placa cuelgan de `escenario.cables`; los que van a la puerta tienen además
+ * —o solo— un tramo colgado de la hoja, porque tiene que girar con ella. Todo lo que busque «un
+ * cable» tiene que mirar en los dos sitios: si no, un puente entre dos pilotos no se puede ni
+ * señalar ni pinchar, que es exactamente lo que pasaba nada más dibujarlo.
+ */
+function mallasDeCable(): THREE.Object3D[] {
+	return [...escenario.cables.children, escenario.mazo.enLaPuerta, escenario.mazo.flexibles];
+}
+
+/**
+ * Enseña o esconde TODOS los cables, monten donde monten.
+ *
+ * La casilla «ver cables» apagaba únicamente el grupo de la placa: el mazo de puerta se quedaba
+ * colgando en el aire, saliendo de ninguna parte, y encima seguía siendo señalable —el señalador
+ * pregunta por `escenario.cables.visible`, que decía «escondidos»—. Un interruptor que apaga la
+ * mitad de lo que nombra es peor que no tenerlo.
+ */
+function mostrarCables(ver: boolean): void {
+	escenario.cables.visible = ver;
+	escenario.mazo.enLaPuerta.visible = ver;
+	escenario.mazo.flexibles.visible = ver;
+}
+
 /** La cámara con la que se dibuja y se pincha ahora mismo. */
 function camaraViva(): THREE.Camera { return vista2D ? camaraOrto : camara; }
 
@@ -942,6 +1062,62 @@ let encuadrePendiente = false;
  * —que ocupa todo el ancho y va por debajo—, así que el centro de la pantalla no es el
  * centro de lo que se ve. Se corrige apuntando a un punto desplazado.
  */
+/**
+ * ENFOCAR LO SELECCIONADO (tecla F).
+ *
+ * Es el gesto que más falta hacía al inspeccionar piezas pequeñas. Sin él, mirar un piloto de
+ * cerca era: acercar, ver que el pivote de la órbita sigue en el centro del tablero, girar y ver
+ * cómo el piloto se va de la pantalla, desplazar, corregir. El pivote pasa a estar DONDE se está
+ * mirando, así que a partir de ahí girar es girar alrededor de la pieza.
+ *
+ * Sin nada seleccionado vuelve al tablero entero, que es la salida natural de un zoom perdido.
+ */
+function enfocarSeleccion(): void {
+	if (!sel) { encuadrar(); avisar('Vista al tablero', 'info'); return; }
+	const caja = cajaDeSeleccion(sel);
+	if (!caja || caja.isEmpty()) { encuadrar(); return; }
+	const centro = caja.getCenter(new THREE.Vector3());
+	const radio = Math.max(caja.getSize(new THREE.Vector3()).length() / 2, 18);
+	// La distancia sale del tamaño de la pieza y del campo de la cámara: una lente de 22 mm se
+	// mira desde cerca y un armario de dos metros desde lejos, sin números escritos a mano.
+	const distancia = Math.max(controles.minDistance + 20, (radio * 2.6) / Math.tan((camara.fov * Math.PI) / 360));
+	// Se conserva la DIRECCIÓN desde la que se estaba mirando: enfocar no debe teletransportar.
+	const direccion = camara.position.clone().sub(controles.target).normalize();
+	if (direccion.lengthSq() < 1e-6) direccion.set(0, 0, 1);
+	controles.target.copy(centro);
+	camara.position.copy(centro).addScaledVector(direccion, distancia);
+	controles.update();
+	pintar();
+}
+
+/**
+ * LA CAJA EN COORDENADAS DE MUNDO de lo que haya seleccionado. Para poder encuadrarlo.
+ *
+ * Va en mundo y no en mallas sueltas porque un conductor puede tener DOS tramos —el de la placa y
+ * el que va colgado de la hoja de la puerta— y el de la hoja lleva encima la rotación de la
+ * puerta. Juntando las mallas en un grupo aparte, como se hacía, ese tramo perdía la matriz de la
+ * puerta y la caja salía en el sitio equivocado: pulsar F sobre un cable de puerta llevaba la
+ * vista a un punto donde no había nada.
+ */
+function cajaDeSeleccion(s: Seleccion): THREE.Box3 | undefined {
+	const caja = new THREE.Box3();
+	const sumar = (o: THREE.Object3D | undefined): void => {
+		if (!o) return;
+		o.updateWorldMatrix(true, false);
+		caja.union(new THREE.Box3().setFromObject(o));
+	};
+	if (s.tipo === 'dispositivo') {
+		sumar(escenario.aparatos.find((o) => o.userData.dispositivoId === s.id));
+	} else if (s.tipo === 'cable') {
+		for (const m of mallasDeCable().flatMap((g) => g.children)) {
+			if (m.userData.conductorId === s.id && m.userData.tuboVisible) sumar(m);
+		}
+	} else if (s.tipo === 'rotulo') {
+		sumar(escenario.frontal.find((f) => f.tipo === 'rotulo' && f.id === s.id)?.grupo);
+	}
+	return caja.isEmpty() ? undefined : caja;
+}
+
 function encuadrar(): void {
 	const g = proyecto.gabinete!;
 	const caja = cajaDe(g);
@@ -1005,7 +1181,7 @@ function reconstruirCables(): void {
 		}
 	}
 	escenario.cables.add(construirCables(proyecto, escenario.aEscena, voltajeMap));
-	escenario.cables.visible = ($('ver-cables') as HTMLInputElement).checked;
+	mostrarCables(($('ver-cables') as HTMLInputElement).checked);
 	// Reaplicar el resaltado/atenuado del cable seleccionado tras reconstruir.
 	cableHover = undefined;
 	if (sel?.tipo === 'cable') { resaltarCable(sel.id); atenuarCables(sel.id); }
@@ -1024,7 +1200,18 @@ function reconstruirBornes(): void {
 	vaciar(escenario.bornes);
 	const esferas = [...construirBornes(proyecto, escenario.aEscena).children];
 	if (esferas.length) escenario.bornes.add(...esferas); // add() sin argumentos da error en three
-	escenario.bornes.visible = modo === 'trabajo';
+	escenario.bornes.visible = bornesALaVista();
+}
+
+/**
+ * ¿SE ENSEÑAN LOS TERMINALES? Una sola respuesta, en un solo sitio.
+ *
+ * Son del espacio Interior y del modo Trabajo: es donde se cablea. Mirando el conjunto o
+ * componiendo el frontal no pintan nada, y en Visualización no se edita. Esto vivía repetido en
+ * tres funciones con tres criterios distintos.
+ */
+function bornesALaVista(): boolean {
+	return modo === 'trabajo' && espacio === 'interior' && !visualizacion;
 }
 
 /**
@@ -1581,7 +1768,7 @@ function aplicarEspacio(nuevo: Espacio): void {
 		aplicarSeleccion(undefined);
 	}
 	if (espacio !== 'frontal') { frontalExtra = []; quitarGuiasFrontal(); }
-	escenario.bornes.visible = espacio === 'interior' && modo === 'trabajo' && !visualizacion;
+	escenario.bornes.visible = bornesALaVista();
 
 	const guardada = camaraDeEspacio.get(espacio);
 	if (guardada) {
@@ -1745,9 +1932,17 @@ function anadirPilotoFrontal(): void {
 	 * cuando la leyenda es «MARCHA VENTILADOR» y no cabe centrada bajo el aro.
 	 */
 	g.rotulos = g.rotulos ?? [];
+	/*
+	 * Y CERCA, no «por ahí debajo». La leyenda se colocaba a 28 mm del centro del piloto con 5 mm
+	 * de letra: contra un aro de casi treinta milímetros eso son cinco milímetros de letra
+	 * perdidos a un centímetro largo del aparato al que se refieren, y en una hoja de medio metro
+	 * ya no se sabe de quién es la leyenda. Se ata a la medida del aro —justo debajo de la falda,
+	 * con un respiro— y la letra sube a 6, que es la altura de un rótulo de mando de verdad.
+	 */
 	g.rotulos.push({
 		id: idLibre('rot', (k) => g.rotulos!.some((r) => r.id === k)),
-		texto: id.toUpperCase(), x: sitio.x, y: Math.round(sitio.y + 28), alto: 5, montaje: 'puerta',
+		texto: id.toUpperCase(), x: sitio.x, y: Math.round(sitio.y + RADIO_PILOTO + 9),
+		alto: 6, montaje: 'puerta',
 	});
 	trasCambiarFrontal();
 	seleccionarFrontal('aparato', id);
@@ -1893,9 +2088,21 @@ function suavizar(t: number): number {
 /** Lleva la puerta al ángulo que le toca según `puertaAhora`. */
 function aplicarPuerta(): void {
 	const p = escenario.puerta;
-	if (p) p.pivote.rotation.y = p.aperturaMaxima * puertaAhora;
+	if (p) {
+		p.pivote.rotation.y = p.aperturaMaxima * puertaAhora;
+		/*
+		 * Y CON LA HOJA SE VA EL MAZO. Solo se vuelve a tender el LAZO de servicio: el tramo que
+		 * corre por dentro del armario no se ha movido, y el que corre por la hoja cuelga de ella,
+		 * así que gira solo. Se llama desde aquí y no desde el bucle de dibujo porque este es el
+		 * único sitio donde el ángulo de la puerta cambia de verdad: con la puerta quieta no se
+		 * recalcula nada.
+		 */
+		p.pivote.updateMatrixWorld(true);
+		actualizarMazoPuerta(escenario.mazo);
+	}
 	const b = $('btn-puerta') as HTMLButtonElement | null;
 	if (b) b.textContent = puertaDestino > 0.5 ? 'Cerrar la puerta' : 'Abrir la puerta';
+	pintarControlPuerta();
 	refrescarEtiquetas();
 }
 
@@ -1934,6 +2141,47 @@ function animarPuerta(dt: number): boolean {
 	}
 	aplicarPuerta();
 	return true;
+}
+
+/**
+ * EL CONTROL FLOTANTE DE PUERTA: texto, icono, estado y disponibilidad.
+ *
+ * Se esconde cuando no hay armario que abrir —con la casilla del armario desmarcada, o en la
+ * vista 2D, donde una puerta en alzado no significa nada—. Esconderlo es mejor que dejarlo
+ * pulsable sin efecto: un botón que no hace nada es un botón que enseña a desconfiar del resto.
+ */
+function pintarControlPuerta(): void {
+	const b = document.getElementById('puerta-flotante') as HTMLButtonElement | null;
+	if (!b) return;
+	b.hidden = !escenario?.envolvente?.visible || vista2D;
+	const abierta = puertaDestino > 0.5;
+	b.classList.toggle('abierta', abierta);
+	(b.querySelector('.texto') as HTMLElement).textContent = abierta ? 'Cerrar puerta' : 'Abrir puerta';
+	/*
+	 * La etiqueta accesible dice lo que VA A PASAR, que es lo que un botón tiene que decir. Y no
+	 * lleva `aria-pressed`: con las dos cosas a la vez un lector de pantalla anuncia «Cerrar
+	 * puerta, pulsado», que es una contradicción. Cambia el nombre O el estado; aquí, el nombre.
+	 */
+	b.setAttribute('aria-label', abierta ? 'Cerrar la puerta del armario' : 'Abrir la puerta del armario');
+	b.removeAttribute('aria-pressed');
+	b.title = `${abierta ? 'Cerrar' : 'Abrir'} la puerta del armario (O)`;
+}
+
+/**
+ * ABRIR O CERRAR, desde el botón o desde la tecla O.
+ *
+ * Y EN EL FRONTAL NO SE IGNORA. El espacio Frontal compone la cara exterior de la hoja con la
+ * puerta cerrada: abrirla ahí dejaría al usuario mirando el canto de la chapa que está editando.
+ * Pero callarse tampoco vale —una tecla que no hace nada parece rota—, así que pedir «abrir»
+ * desde el Frontal lleva al espacio de conjunto y abre allí, que es donde eso se ve.
+ */
+function alternarPuerta(): void {
+	const abrir = puertaDestino < 0.5;
+	if (abrir && espacio === 'frontal') {
+		aplicarEspacio('conjunto');
+		avisar('Se abre en la vista de conjunto: el frontal se compone con la puerta cerrada', 'info');
+	}
+	moverPuerta(abrir);
 }
 
 /** Abre o cierra la puerta con su animación. */
@@ -3786,18 +4034,55 @@ function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 	// si no, el agarre del vecino robaría el clic y se seleccionaría un cable distinto del señalado.
 	let cableVisible: string | undefined;
 	let cableAgarre: string | undefined;
+	let agarreAparato: string | undefined;
+	let distanciaCable = Infinity;
 	for (const i of impactos) {
 		const u = i.object.userData;
-		if (u.dispositivoId) return { tipo: 'dispositivo', id: u.dispositivoId };
-		if (u.canaletaId) return { tipo: 'canaleta', id: u.canaletaId };
-		if (u.rielId) return { tipo: 'riel', id: u.rielId };
+		/*
+		 * UN CABLE QUE PASA CLARAMENTE POR DELANTE SE QUEDA EL CLIC.
+		 *
+		 * La prioridad de siempre es «aparatos > canaletas y carriles > cables», y se conserva:
+		 * un hilo apoyado sobre la cara de un contactor le sigue cediendo el clic al contactor,
+		 * que es lo que hace cómodo mover aparatos con el tablero cableado. Lo que no puede pasar
+		 * es que un aparato que está DETRÁS se lleve el clic de un cable que se ve delante.
+		 *
+		 * Y no era un caso raro reservado a la teoría: los puentes que unen dos pilotos de la
+		 * puerta corren por delante de sus cuerpos, así que con la regla anterior no había forma
+		 * de seleccionarlos desde NINGÚN ángulo. Medido con el ratón: cero de dos, mientras los
+		 * conductores de placa salían ocho de ocho.
+		 *
+		 * El margen es el radio del propio tubo: lo bastante para distinguir «por delante» de
+		 * «apoyado encima», y lo bastante poco para no cambiar nada de lo que ya funcionaba.
+		 */
+		// Las zonas de agarre invisibles no tapan: se guardan por si al final no hay nada mejor.
+		if (u.agarre) {
+			if (!agarreAparato) agarreAparato = u.dispositivoId as string;
+			continue;
+		}
+		if (u.dispositivoId) {
+			if (cableVisible && i.distance > distanciaCable + 4) break;
+			return { tipo: 'dispositivo', id: u.dispositivoId };
+		}
+		if (u.canaletaId) {
+			if (cableVisible && i.distance > distanciaCable + 4) break;
+			return { tipo: 'canaleta', id: u.canaletaId };
+		}
+		if (u.rielId) {
+			if (cableVisible && i.distance > distanciaCable + 4) break;
+			return { tipo: 'riel', id: u.rielId };
+		}
 		if (u.conductorId) {
-			if (u.tuboVisible && !cableVisible) cableVisible = u.conductorId as string;
-			else if (!cableAgarre) cableAgarre = u.conductorId as string;
+			if (u.tuboVisible && !cableVisible) {
+				cableVisible = u.conductorId as string;
+				distanciaCable = i.distance;
+			} else if (!cableAgarre) cableAgarre = u.conductorId as string;
 		}
 	}
 	const cable = cableVisible ?? cableAgarre;
 	if (cable) return { tipo: 'cable', id: cable }; // los cables tienen la prioridad más baja
+	// Y por debajo de todo, la zona de agarre de un componente de puerta: solo si no había nada
+	// visible bajo el puntero. Es lo que mantiene cómodo pinchar una lente de diez milímetros.
+	if (agarreAparato) return { tipo: 'dispositivo', id: agarreAparato };
 	// Y si el rayo no ha dado con nada, se mira si el puntero está CERCA de un componente de
 	// puerta: una lente de diez milímetros a dos metros son tres píxeles, y acertarle sería
 	// cuestión de puntería. Ver `componentePuertaCerca`.
@@ -3907,6 +4192,79 @@ function prepararProyeccion(): THREE.Camera {
 	return camara;
 }
 
+/*
+ * Buffers reutilizados: proyectar cincuenta recorridos no puede crear cincuenta mil objetos.
+ * Son de módulo y no de la función porque ahora los usan dos recorridos distintos —los de placa
+ * y los del mazo— y reservarlos dos veces por movimiento del ratón sería peor que no reservarlos.
+ */
+let _sx = new Float64Array(0);
+let _sy = new Float64Array(0);
+let _sw = new Float64Array(0);
+
+/**
+ * MIDE UNA POLILÍNEA CONTRA EL PUNTERO y la apunta si pasa lo bastante cerca.
+ *
+ * Es el corazón del señalado de cables, y está aquí fuera porque hay dos clases de recorrido que
+ * medir: los trazados de placa, que se guardan en milímetros de modelo, y los del mazo de puerta,
+ * que se calculan en coordenadas de escena porque llevan encima el giro de la hoja. El criterio
+ * —distancia en píxeles al eje, radio aparente, profundidad— tiene que ser EL MISMO para los dos,
+ * o coger un cable de puerta pediría una puntería distinta que coger uno de placa.
+ */
+function medirPolilineaDeCable(
+	id: string, radioMm: number, puntos: readonly { x: number; y: number; z: number }[],
+	enModelo: boolean, px: { x: number; y: number; ancho: number; alto: number },
+	ojo: THREE.Vector3, tolerancia: number, salida: CableSenalado[],
+): void {
+	const g = proyecto.gabinete;
+	if (!g) return;
+	const n = puntos.length;
+	if (n < 2) return;
+	// De modelo a escena, o tal cual si ya viene en escena.
+	const ex = (q: { x: number; y: number; z: number }): number => (enModelo ? q.x - g.ancho / 2 : q.x);
+	const ey = (q: { x: number; y: number; z: number }): number => (enModelo ? g.alto / 2 - q.y : q.y);
+	if (_sx.length < n) { _sx = new Float64Array(n * 2); _sy = new Float64Array(n * 2); _sw = new Float64Array(n * 2); }
+	for (let i = 0; i < n; i++) {
+		const q = puntos[i];
+		const p = aPixeles(ex(q), ey(q), q.z, px.ancho, px.alto);
+		_sx[i] = p.x; _sy[i] = p.y; _sw[i] = p.w;
+	}
+	let mejor = Infinity;
+	let seg = 0;
+	let t = 0;
+	for (let i = 0; i < n - 1; i++) {
+		if (_sw[i] <= 0 || _sw[i + 1] <= 0) continue; // tramo que pasa por detrás de la cámara
+		const d = distanciaASegmento(px.x, px.y, _sx[i], _sy[i], _sx[i + 1], _sy[i + 1]);
+		if (d >= mejor) continue;
+		mejor = d;
+		seg = i;
+		const dx = _sx[i + 1] - _sx[i], dy = _sy[i + 1] - _sy[i];
+		const l2 = dx * dx + dy * dy;
+		t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((px.x - _sx[i]) * dx + (px.y - _sy[i]) * dy) / l2));
+	}
+	if (mejor > tolerancia) return;
+	const a = puntos[seg], b = puntos[seg + 1];
+	/*
+	 * El punto que se devuelve va SIEMPRE en milímetros de modelo, porque es lo que espera quien
+	 * lo recibe —el arrastre de uniones—. Para un tramo de puerta esa conversión es solo la
+	 * inversa de `aEscena`: no se guarda en ninguna parte, se calcula para este clic y se olvida.
+	 */
+	const escena = {
+		x: ex(a) + (ex(b) - ex(a)) * t,
+		y: ey(a) + (ey(b) - ey(a)) * t,
+		z: a.z + (b.z - a.z) * t,
+	};
+	const punto: P3 = { x: escena.x + g.ancho / 2, y: g.alto / 2 - escena.y, z: escena.z };
+	// Radio aparente: cuántos píxeles mide el grosor del cable justo ahí.
+	const c0 = aPixeles(escena.x, escena.y, escena.z, px.ancho, px.alto);
+	const c1 = aPixeles(escena.x + radioMm, escena.y, escena.z, px.ancho, px.alto);
+	const c2 = aPixeles(escena.x, escena.y, escena.z + radioMm, px.ancho, px.alto);
+	const radio = Math.max(Math.hypot(c1.x - c0.x, c1.y - c0.y), Math.hypot(c2.x - c0.x, c2.y - c0.y));
+	salida.push({
+		id, punto, avance: seg + t, pixeles: mejor, radio,
+		profundidad: ojo.distanceTo(_v.set(escena.x, escena.y, escena.z)),
+	});
+}
+
 /**
  * TODOS los cables cuyo recorrido pasa a menos de `tolerancia` píxeles del puntero, el más
  * cercano primero. Devolver la lista entera —y no solo el ganador— es lo que permite desempatar
@@ -3918,51 +4276,28 @@ function cablesSenalados(ev: MouseEvent, tolerancia = TOLERANCIA_PX): CableSenal
 	const rutas = rutaPrevia
 		? rutasVigentes().map((r) => (r.conductorId === rutaPrevia!.conductorId ? rutaPrevia! : r))
 		: rutasVigentes();
-	if (!rutas.length) return [];
+	// Sin trazados de placa NO se sale: un tablero puede tener solo puentes de puerta, y ese
+	// atajo los dejaba fuera del señalado igual que si no existieran.
 	const px = punteroEnPixeles(ev);
 	const camara = prepararProyeccion();
 	const g = proyecto.gabinete;
 	if (!g) return [];
 	const ojo = camara.position;
 	const salida: CableSenalado[] = [];
-	// Buffer reutilizado: proyectar cincuenta recorridos no puede crear cincuenta mil objetos.
-	let sx: Float64Array = new Float64Array(0);
-	let sy: Float64Array = new Float64Array(0);
-	let sw: Float64Array = new Float64Array(0);
 	for (const ruta of rutas) {
-		const n = ruta.puntos.length;
-		if (n < 2) continue;
-		if (sx.length < n) { sx = new Float64Array(n * 2); sy = new Float64Array(n * 2); sw = new Float64Array(n * 2); }
-		for (let i = 0; i < n; i++) {
-			const q = ruta.puntos[i];
-			const p = aPixeles(q.x - g.ancho / 2, g.alto / 2 - q.y, q.z, px.ancho, px.alto);
-			sx[i] = p.x; sy[i] = p.y; sw[i] = p.w;
-		}
-		let mejor = Infinity;
-		let seg = 0;
-		let t = 0;
-		for (let i = 0; i < n - 1; i++) {
-			if (sw[i] <= 0 || sw[i + 1] <= 0) continue; // tramo que pasa por detrás de la cámara
-			const d = distanciaASegmento(px.x, px.y, sx[i], sy[i], sx[i + 1], sy[i + 1]);
-			if (d >= mejor) continue;
-			mejor = d;
-			seg = i;
-			const dx = sx[i + 1] - sx[i], dy = sy[i + 1] - sy[i];
-			const l2 = dx * dx + dy * dy;
-			t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((px.x - sx[i]) * dx + (px.y - sy[i]) * dy) / l2));
-		}
-		if (mejor > tolerancia) continue;
-		const a = ruta.puntos[seg], b = ruta.puntos[seg + 1];
-		const punto: P3 = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
-		// Radio aparente: cuántos píxeles mide el grosor del cable justo ahí.
-		const c0 = aPixeles(punto.x - g.ancho / 2, g.alto / 2 - punto.y, punto.z, px.ancho, px.alto);
-		const c1 = aPixeles(punto.x - g.ancho / 2 + ruta.radio, g.alto / 2 - punto.y, punto.z, px.ancho, px.alto);
-		const c2 = aPixeles(punto.x - g.ancho / 2, g.alto / 2 - punto.y, punto.z + ruta.radio, px.ancho, px.alto);
-		const radio = Math.max(Math.hypot(c1.x - c0.x, c1.y - c0.y), Math.hypot(c2.x - c0.x, c2.y - c0.y));
-		salida.push({
-			id: ruta.conductorId, punto, avance: seg + t, pixeles: mejor, radio,
-			profundidad: ojo.distanceTo(_v.set(punto.x - g.ancho / 2, g.alto / 2 - punto.y, punto.z)),
-		});
+		// Los trazados de placa viven en milímetros de MODELO; se pasan a escena al proyectar.
+		medirPolilineaDeCable(ruta.conductorId, ruta.radio, ruta.puntos, true, px, ojo, tolerancia, salida);
+	}
+	/*
+	 * Y EL MAZO DE PUERTA, que no tiene trazado de placa y por eso no existía para el señalador.
+	 *
+	 * Sus recorridos vienen YA en coordenadas de escena —el tramo de la hoja lleva encima el giro
+	 * de la puerta, que en milímetros de modelo no se puede escribir— así que se miden sin
+	 * convertir. Con esto un puente entre dos pilotos se coge con la misma tolerancia en píxeles
+	 * que cualquier cable de la placa, que es lo único que se pedía.
+	 */
+	for (const t of escenario.mazo ? trazasDeMazo(escenario.mazo) : []) {
+		medirPolilineaDeCable(t.conductorId, t.radio, t.puntos, false, px, ojo, tolerancia, salida);
 	}
 	/*
 	 * VARIOS CABLES BAJO EL MISMO PUNTO. Manda el que esté SOBRE el puntero de verdad (dentro de
@@ -4003,8 +4338,14 @@ function cableEstaDelante(ev: MouseEvent, golpe?: CableSenalado): boolean {
 	if (!c) return false;
 	punteroEnPixeles(ev);
 	raycaster.setFromCamera(puntero, camaraViva());
+	/*
+	 * Y las zonas de agarre invisibles de los componentes de puerta tampoco tapan: son cilindros
+	 * generosos puestos para poder pinchar un piloto sin puntería, no chapa. Contándolas, un cable
+	 * que pasa por detrás de un piloto —a dos centímetros de él y perfectamente a la vista— se
+	 * declaraba «tapado por un aparato» y el clic se lo llevaba el piloto.
+	 */
 	const dAparato = raycaster.intersectObjects(escenario.dispositivos.children, true)
-		.find((i) => i.object.userData.dispositivoId)?.distance ?? Infinity;
+		.find((i) => i.object.userData.dispositivoId && !i.object.userData.agarre)?.distance ?? Infinity;
 	return c.profundidad <= dAparato + 2;
 }
 
@@ -4022,6 +4363,18 @@ let arrastreDeCableado: { movido: boolean; recorrido: number } | undefined;
  * decidir quién se queda el clic cuando un cable pasa justo por delante del terminal.
  */
 function borneBajoElPunteroCon(ev: MouseEvent): { borne: RefBorne; distancia: number } | undefined {
+	/*
+	 * LOS TERMINALES QUE NO SE VEN NO SE PINCHAN, y ese era el motivo real de que dos conductores
+	 * de puerta no se pudieran seleccionar con el ratón.
+	 *
+	 * `escenario.bornes` solo se muestra en el espacio Interior; fuera de él el grupo queda
+	 * invisible… pero el trazado de rayos de Three NO mira `visible`, así que las esferitas
+	 * seguían ahí, cazando clics. Un puente que llega a la parte trasera de un piloto pasa
+	 * justo por delante de su terminal: pinchar el cable iniciaba en silencio un cableado
+	 * desde un borne que no estaba dibujado, y el cable nunca llegaba a seleccionarse. Desde
+	 * cualquier vista que no fuera el Interior, ese cable era simplemente inagarrable.
+	 */
+	if (!escenario.bornes.visible) return undefined;
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camaraViva());
@@ -4049,7 +4402,7 @@ function cableTapaAlBorne(ev: MouseEvent, distanciaBorne: number): boolean {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camaraViva());
-	const d = raycaster.intersectObjects(escenario.cables.children, true)
+	const d = raycaster.intersectObjects(mallasDeCable(), true)
 		.find((i) => i.object.userData.tuboVisible)?.distance;
 	return d !== undefined && d < distanciaBorne;
 }
@@ -4337,6 +4690,24 @@ function construirHandles(): void {
 
 let arrastrando = false;
 let capturadoEsteArrastre = false;
+/*
+ * UN CLIC CON TEMBLOR NO ES UN ARRASTRE.
+ *
+ * Nadie suelta el botón exactamente en el píxel donde lo apretó: un clic real trae dos o tres
+ * píxeles de deriva. Sin umbral, esa deriva bastaba para empezar un arrastre de verdad —foto de
+ * deshacer incluida— y para desplazar el aparato o el rótulo un milímetro sin querer, de modo
+ * que «seleccionar» y «mover un poquito» eran el mismo gesto. Cuatro píxeles separan las dos
+ * cosas sin que se note al arrastrar.
+ */
+const UMBRAL_ARRASTRE = 4;
+let origenPuntero: { x: number; y: number } | undefined;
+let superadoUmbral = false;
+function seMovioDeVerdad(ev: MouseEvent): boolean {
+	if (superadoUmbral || !origenPuntero) return true;
+	if (Math.hypot(ev.clientX - origenPuntero.x, ev.clientY - origenPuntero.y) < UMBRAL_ARRASTRE) return false;
+	superadoUmbral = true;
+	return true;
+}
 let handleArrastrado: DatosHandle | undefined;
 let arrastrandoCable: { id: string; indice: number } | undefined; // conductor y punto de quiebre que se arrastra
 /** Cable agarrado a la espera de que el ratón se mueva para empezar a arrastrarlo de verdad. */
@@ -5105,6 +5476,15 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	// (el buscador del catálogo, una medida…), los atajos dejaban de responder sin avisar.
 	const foco = document.activeElement as HTMLElement | null;
 	if (foco && /^(INPUT|SELECT|TEXTAREA)$/.test(foco.tagName)) foco.blur();
+	/*
+	 * LOS BOTONES DE CÁMARA NO SELECCIONAN. Girar es rueda pulsada y desplazar es botón derecho;
+	 * este manejador seguía corriendo entero con cualquiera de los dos, así que EMPEZAR a girar
+	 * seleccionaba lo que hubiera bajo el puntero —y de paso preparaba su arrastre—. Era la misma
+	 * ambigüedad que se acaba de quitar del botón izquierdo, colada por la puerta de atrás.
+	 */
+	if (ev.button !== 0) return;
+	origenPuntero = { x: ev.clientX, y: ev.clientY };
+	superadoUmbral = false;
 	if (visualizacion) return; // en Visualización solo se mira: nada se selecciona ni se mueve
 	/*
 	 * EN EL FRONTAL SE TRABAJA SOBRE LA PUERTA, y nada más. Aquí no se cablea, no se mueven
@@ -5296,9 +5676,15 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (crono.activo) { const e = crono.etapas.get('0 pointermove') ?? { n: 0, ms: 0 }; e.n++; crono.etapas.set('0 pointermove', e); }
 	if (visualizacion) return;
-	if (espacio === 'frontal') { moverArrastreFrontal(ev); return; }
+	if (espacio === 'frontal') {
+		if (arrastreFrontal && !seMovioDeVerdad(ev)) return;
+		moverArrastreFrontal(ev);
+		return;
+	}
 	// Aparato recién sacado del catálogo: va pegado al ratón hasta que un clic lo suelta.
 	if (colocando) { moverColocacionAlCursor(ev); return; }
+	// Navegando no se resalta nada: ver `navegando`.
+	if (navegando) return;
 	// Resaltado al pasar el ratón (modo Trabajo): bornes (para cablear) y cables (para tocarlos).
 	if (!arrastrando) {
 		if (modo === 'trabajo') {
@@ -5334,6 +5720,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		}
 		return;
 	}
+	if (!seMovioDeVerdad(ev)) return;   // todavía es un clic, no un arrastre
 	// --- Cable agarrado: al primer movimiento real empieza el arrastre de verdad ---
 	// Arrastrar MUEVE una unión existente; no crea ninguna. Las uniones se crean solo con doble
 	// clic, para que mover un cable un poco no llene el tablero de puntos sin querer.
@@ -5691,6 +6078,18 @@ renderer.domElement.addEventListener('contextmenu', (ev) => {
 window.addEventListener('keydown', (ev) => {
 	const foco = document.activeElement as HTMLElement | null;
 	const activo = foco?.tagName;
+	/*
+	 * ATAJOS DE VISTA. Van los primeros porque no dependen de en qué espacio se esté: enfocar y
+	 * abrir la puerta significan lo mismo mires lo que mires. Y no se disparan si el foco está en
+	 * un campo de texto, que es donde una «o» tiene que seguir siendo una letra.
+	 */
+	const tecleando = !!activo?.match(/INPUT|TEXTAREA|SELECT/) || !!foco?.isContentEditable;
+	// Y con un diálogo delante tampoco: ahí el teclado es del diálogo, no del tablero.
+	const conDialogo = !!document.querySelector('[id^="modal-"]:not([hidden])');
+	if (!tecleando && !conDialogo && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+		if (ev.key.toLowerCase() === 'f') { ev.preventDefault(); enfocarSeleccion(); return; }
+		if (ev.key.toLowerCase() === 'o') { ev.preventDefault(); alternarPuerta(); return; }
+	}
 	/*
 	 * LOS ATAJOS DEL FRONTAL. Van antes que los del interior porque en el frontal las mismas teclas
 	 * significan otra cosa —Supr quita un piloto de la puerta, no un aparato del carril— y porque
@@ -6245,15 +6644,16 @@ function aplicarVisualizacion(activo: boolean): void {
 		arrastrando = false;
 		permitirOrbita(true);
 	}
-	// Aquí no se trabaja, así que la cámara va SUELTA: se puede dar toda la vuelta al tablero
-	// y mirarlo desde donde se quiera. Al volver a editar se recuperan los topes de trabajo
-	// (que evitan quedar detrás del tablero, donde no se puede cablear).
-	controles.minAzimuthAngle = activo ? -Infinity : -Math.PI * 0.42;
-	controles.maxAzimuthAngle = activo ? Infinity : Math.PI * 0.42;
-	controles.minPolarAngle = activo ? 0.01 : Math.PI * 0.10;
-	controles.maxPolarAngle = activo ? Math.PI - 0.01 : Math.PI * 0.80;
+	/*
+	 * AQUÍ YA NO SE TOCAN LOS TOPES DE LA CÁMARA, y ese era el segundo cerrojo de la pared
+	 * invisible: aunque el bloque de arriba dejara el azimut libre, entrar y salir de
+	 * Visualización volvía a poner los ±0,42 π «de trabajo», y a partir de ahí el tablero no se
+	 * podía rodear hasta reiniciar. Los límites se fijan UNA vez, al construir los controles, y
+	 * son los mismos editando y mirando: no hay ninguna razón para poder rodear el armario solo
+	 * cuando no se puede trabajar en él.
+	 */
 	montarEscenario();
-	escenario.bornes.visible = !activo && modo === 'trabajo';
+	escenario.bornes.visible = bornesALaVista();
 	$('ayuda').textContent = activo
 		? '👁️ VISUALIZACIÓN — Así queda el tablero montado, con la puerta abierta. Gira y acerca la vista; para editar, pulsa «Salir».'
 		: AYUDA[modo];
@@ -6275,9 +6675,14 @@ function aplicarModo(nuevo: Modo): void {
 	// Los bornes clicables solo se ven en Trabajo, y se reconstruyen al entrar para que estén
 	// donde de verdad quedaron los aparatos si se movieron en el Editor.
 	if (modo === 'trabajo') reconstruirBornes();
-	// Los bornes son del interior: en el frontal no se cablea, así que no se enseñan aunque el
-	// modo de dentro siga siendo Trabajo.
-	escenario.bornes.visible = modo === 'trabajo' && espacio !== 'frontal';
+	/*
+	 * Los bornes son del INTERIOR, y aquí se dice con la misma regla que en `aplicarEspacio`.
+	 * Antes cada sitio decía una cosa —«en trabajo y no en el frontal» aquí, «en trabajo y solo
+	 * en el interior» allí— y ganaba el último que se hubiera ejecutado: los terminales aparecían
+	 * o no en el espacio de conjunto según por dónde se hubiera llegado. Con el trazado de rayos
+	 * atado ahora a esa misma visibilidad, la incoherencia dejaba de ser cosmética.
+	 */
+	escenario.bornes.visible = bornesALaVista();
 	// Al pasar a trabajo se cancela cualquier arrastre en curso y se quitan los tiradores.
 	if (modo === 'trabajo') {
 		arrastrando = false;
@@ -6577,7 +6982,7 @@ $('leyenda-voltaje').innerHTML =
 		`<span><i style="background:${hexColor(c as number)}"></i>${v} V</span>`).join('') +
 	'<span><i style="background:#8a929a"></i>otro</span>';
 ($('ver-cables') as HTMLInputElement).onchange = (e) => {
-	escenario.cables.visible = (e.target as HTMLInputElement).checked;
+	mostrarCables((e.target as HTMLInputElement).checked);
 };
 ($('ver-tapas') as HTMLInputElement).onchange = (e) => {
 	const v = (e.target as HTMLInputElement).checked;
@@ -6618,8 +7023,11 @@ $('btn-hue-v').onclick = () => aplicarCambiosFrontal(repartirFrontal(seleccionFr
 ($('ver-gabinete') as HTMLInputElement).onchange = (e) => {
 	escenario.envolvente.visible = (e.target as HTMLInputElement).checked;
 	refrescarEtiquetas();
+	// Sin armario no hay puerta que abrir: el control flotante se va con él.
+	pintarControlPuerta();
 };
-($('btn-puerta') as HTMLButtonElement).onclick = () => moverPuerta(puertaDestino < 0.5);
+($('btn-puerta') as HTMLButtonElement).onclick = () => alternarPuerta();
+($('puerta-flotante') as HTMLButtonElement).onclick = () => alternarPuerta();
 
 /* ----------------- Detalle de la verificación eléctrica (chip DRC) ----------------- */
 
@@ -7170,7 +7578,48 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		const p = v.clone().project(camaraViva());
 		return { x: r.left + (p.x * 0.5 + 0.5) * r.width, y: r.top + (-p.y * 0.5 + 0.5) * r.height };
 	};
+	/*
+	 * EL REGISTRO DE TAREAS LARGAS, para poder ATRIBUIR un tirón en vez de inventarle una causa.
+	 *
+	 * Un fotograma de un segundo puede ser cinco cosas muy distintas: una tarea de JavaScript que
+	 * no suelta el hilo, una recogida de basura, una reconstrucción de geometría, la compilación
+	 * de un shader la primera vez que se dibuja un material, o el propio arnés de medida sacando
+	 * una foto del lienzo. Cada una se arregla de una manera y ninguna se parece a las otras, así
+	 * que adivinar sale caro. El navegador avisa de las tareas de más de 50 ms; los contadores de
+	 * Three dicen si en ese rato nacieron geometrías, texturas o programas. Con las dos cosas al
+	 * lado, un tirón se puede atribuir en vez de discutirse.
+	 */
+	const tareasLargas: { inicio: number; ms: number }[] = [];
+	if (typeof PerformanceObserver !== 'undefined') {
+		try {
+			new PerformanceObserver((lista) => {
+				for (const e of lista.getEntries()) tareasLargas.push({ inicio: Math.round(e.startTime), ms: Math.round(e.duration) });
+				if (tareasLargas.length > 300) tareasLargas.splice(0, tareasLargas.length - 300);
+			}).observe({ entryTypes: ['longtask'] });
+		} catch { /* si el navegador no lo soporta se sigue sin ello: es una sonda, no un requisito */ }
+	}
+
 	(window as unknown as Record<string, unknown>).qa = {
+		/**
+		 * TODO LO QUE HACE FALTA PARA ATRIBUIR UN TIRÓN, en una sola lectura.
+		 *
+		 * `geometrias`, `texturas` y `programas` son acumulativos: si suben entre dos lecturas,
+		 * en medio hubo una reconstrucción o una compilación de shader, y ése es el sospechoso.
+		 * Si NO suben y aun así hubo una tarea larga, el tirón fue de JavaScript o del recolector,
+		 * y ahí es donde hay que mirar. `tareasLargas` son las que el navegador ha marcado por
+		 * encima de 50 ms, con su instante, para poder cruzarlas con lo que estaba pasando.
+		 */
+		contadores: () => ({
+			geometrias: renderer.info.memory.geometries,
+			texturas: renderer.info.memory.textures,
+			programas: renderer.info.programs?.length ?? 0,
+			llamadas: renderer.info.render.calls,
+			triangulos: renderer.info.render.triangles,
+			tareasLargas: tareasLargas.slice(),
+			ahora: Math.round(performance.now()),
+		}),
+		/** Olvida las tareas largas apuntadas: para medir un tramo concreto y no la sesión entera. */
+		olvidarTareasLargas: () => { tareasLargas.length = 0; },
 		/** Bornes clicables con su posición en pantalla. */
 		bornes: () => escenario.bornes.children.map((m) => ({
 			dispositivo: m.userData.borneDispositivoId as string,
@@ -7214,7 +7663,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		autoguardado: () => localStorage.getItem(CLAVE_AUTOSAVE),
 		/** Nº de cables realmente dibujados en 3D (para detectar «cables fantasma»). */
 		cablesDibujados: () => new Set(
-			escenario.cables.children.flatMap((g) => g.children.map((m) => m.userData.conductorId as string)).filter(Boolean),
+			mallasDeCable().flatMap((g) => g.children.map((m) => m.userData.conductorId as string)).filter(Boolean),
 		).size,
 		/**
 		 * Puntos del cable que el usuario VE de verdad: aquellos en los que, al disparar un rayo
@@ -7222,7 +7671,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 * Es la definición honesta de «se puede pinchar aquí».
 		 */
 		puntosVisiblesDeCable: (id: string, muestras = 15) => {
-			const malla = escenario.cables.children
+			const malla = mallasDeCable()
 				.flatMap((g) => g.children)
 				.find((m) => m.userData.conductorId === id) as THREE.Mesh | undefined;
 			if (!malla) return [];
@@ -7235,18 +7684,32 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				const p = aPantalla(mundo);
 				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
 				raycaster.setFromCamera(puntero, camaraViva());
-				const impactos = raycaster.intersectObjects(
-					[...escenario.cables.children, ...escenario.dispositivos.children], true,
-				).filter((h) => h.object.userData.tuboVisible || h.object.userData.dispositivoId);
-				// Solo cuenta si lo primero que se ve es el TUBO VISIBLE de este cable: el tubo
-				// grueso de agarre es invisible y no sirve para decir «aquí se ve el cable».
-				if (impactos[0]?.object.userData.conductorId === id) out.push(p);
+				/*
+				 * LA OCLUSIÓN SE MIDE CONTRA TODA LA ESCENA, no contra media.
+				 *
+				 * Esto miraba solo cables y aparatos, así que la CHAPA DE LA PUERTA no tapaba
+				 * nada: con la puerta abierta, un puente que corre por su cara interior salía
+				 * como «visible» desde delante, y al pinchar ahí se seleccionaba el piloto que
+				 * hay al otro lado. La sonda decía una cosa y la pantalla otra. Ahora se pregunta
+				 * por todo lo que hay en la raíz —chapa incluida—, y solo se descartan las mallas
+				 * invisibles de agarre, que no tapan porque no se ven.
+				 */
+				const impactos = raycaster.intersectObjects(escenario.raiz.children, true)
+					.filter((h) => {
+						const o = h.object as THREE.Mesh;
+						if (!o.visible || o.userData.tuboAgarre || o.userData.agarre) return false;
+						const m = o.material as THREE.Material | undefined;
+						return !m || m.visible !== false;
+					});
+				// Solo cuenta si lo primero que se ve es el TUBO VISIBLE de este cable.
+				if (impactos[0]?.object.userData.conductorId === id
+					&& impactos[0].object.userData.tuboVisible) out.push(p);
 			}
 			return out;
 		},
 		/** Puntos en pantalla repartidos A LO LARGO del tubo de un cable, para poder pincharlo. */
 		puntosDeCable: (id: string, muestras = 9) => {
-			const malla = escenario.cables.children
+			const malla = mallasDeCable()
 				.flatMap((g) => g.children)
 				.find((m) => m.userData.conductorId === id) as THREE.Mesh | undefined;
 			if (!malla) return [];
@@ -7489,7 +7952,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		// Se muestrea generoso: descartar los cruces deja fuera bastantes puntos, y hace falta
 		// recorrer el cable entero para encontrar un tramo suyo y solo suyo.
 		puntoParaAgarrar: (id: string, muestras = 31, zona?: { x0: number; x1: number; y0: number; y1: number }) => {
-			const malla = escenario.cables.children
+			const malla = mallasDeCable()
 				.flatMap((g) => g.children)
 				.find((m) => m.userData.tuboVisible && m.userData.conductorId === id) as THREE.Mesh | undefined;
 			if (!malla) return undefined;
@@ -7506,7 +7969,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				if (zona && (p.x < zona.x0 || p.x > zona.x1 || p.y < zona.y0 || p.y > zona.y1)) continue;
 				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
 				raycaster.setFromCamera(puntero, camaraViva());
-				const impactosCable = raycaster.intersectObjects(escenario.cables.children, true);
+				const impactosCable = raycaster.intersectObjects(mallasDeCable(), true);
 				const cable = impactosCable.find((h) => h.object.userData.tuboVisible);
 				if (cable?.object.userData.conductorId !== id) continue;
 				// Y que no sea un CRUCE: si otro cable pasa prácticamente a la misma profundidad,
@@ -7561,7 +8024,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				raycaster.setFromCamera(puntero, camaraViva());
 				const b = raycaster.intersectObjects(escenario.bornes.children, true).find((h) => h.object.userData.borneId);
 				if (b?.object !== esfera) continue;
-				const cable = raycaster.intersectObjects(escenario.cables.children, true)
+				const cable = raycaster.intersectObjects(mallasDeCable(), true)
 					.find((h) => h.object.userData.tuboVisible);
 				if (cable && cable.distance < b.distance) continue; // hay un cable por delante
 				// Un aparato NO puede tapar su propio terminal: el terminal va dibujado sobre él, y
@@ -8052,6 +8515,62 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 * otra. Y se devuelve la posición en el mundo, para poder verificar que la pieza viaja con
 		 * la puerta.
 		 */
+		/**
+		 * LAS MEDIDAS FÍSICAS de un componente de puerta, tomadas de la MALLA y no del catálogo.
+		 *
+		 * Un piloto Ø22 tiene tres cotas que se pueden discutir con un plano delante —taladro 22,
+		 * embellecedor unos 29, lente de 21 a 23— y una cuarta que se nota con la mano, el vuelo.
+		 * Hasta ahora esas cotas se comprobaban mirando fotos, que es como se coló una lente
+		 * ovalada de 21 × 13. Esto las mide vértice a vértice, en el sistema del propio aparato,
+		 * así que da igual dónde esté la puerta.
+		 */
+		medidasDePiloto: (dispositivoId?: string) => {
+			const g = escenario.aparatos.find((o) => o.userData.montaje === 'puerta'
+				&& (!dispositivoId || o.userData.dispositivoId === dispositivoId));
+			if (!g) return undefined;
+			g.updateMatrixWorld(true);
+			const inv = new THREE.Matrix4().copy(g.matrixWorld).invert();
+			const rel = new THREE.Matrix4();
+			const v = new THREE.Vector3();
+			const piezas: { pieza: string; ancho: number; alto: number; z0: number; z1: number }[] = [];
+			g.traverse((o) => {
+				const m = o as THREE.Mesh;
+				if (!m.isMesh || m.userData.agarre) return;
+				const mat = m.material as THREE.Material;
+				if (!m.visible || (mat as { visible?: boolean }).visible === false) return;
+				m.updateMatrixWorld(true);
+				rel.multiplyMatrices(inv, m.matrixWorld);
+				const caja = new THREE.Box3();
+				const pos = m.geometry.getAttribute('position');
+				for (let i = 0; i < pos.count; i++) caja.expandByPoint(v.fromBufferAttribute(pos, i).applyMatrix4(rel));
+				const r3 = (n: number) => Math.round(n * 100) / 100;
+				piezas.push({
+					pieza: (m.userData.pieza as string) ?? m.geometry.type,
+					ancho: r3(caja.max.x - caja.min.x), alto: r3(caja.max.y - caja.min.y),
+					z0: r3(caja.min.z), z1: r3(caja.max.z),
+				});
+			});
+			return piezas;
+		},
+		/** Las mallas de un aparato tal cual están montadas: para diagnosticar una que no se ve. */
+		mallasDeAparato: (dispositivoId: string) => {
+			const g = escenario.aparatos.find((o) => o.userData.dispositivoId === dispositivoId);
+			if (!g) return undefined;
+			const salida: unknown[] = [];
+			g.traverse((o) => {
+				const m = o as THREE.Mesh;
+				if (!m.isMesh) return;
+				const mat = m.material as THREE.MeshStandardMaterial;
+				salida.push({
+					pieza: (m.userData.pieza as string) ?? m.geometry.type,
+					visible: m.visible, side: mat.side, matVisible: mat.visible,
+					color: mat.color ? `#${mat.color.getHexString()}` : undefined,
+					transparente: !!mat.transparent, opacidad: mat.opacity,
+					caras: m.geometry.index ? m.geometry.index.count / 3 : m.geometry.getAttribute('position').count / 3,
+				});
+			});
+			return salida;
+		},
 		componentesDePuerta: () => escenario.aparatos
 			.filter((g) => g.userData.montaje === 'puerta')
 			.map((g) => {
@@ -8167,6 +8686,78 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			frontal: escenario.frontal.map((f) => `${f.tipo}:${f.id}=${f.grupo.uuid}`),
 			mallasEnEscena: (() => { let n = 0; escenario.raiz.traverse((o) => { if ((o as THREE.Mesh).isMesh) n++; }); return n; })(),
 		}),
+		/**
+		 * QUÉ SELECCIONARÍA UN CLIC EN ESE PÍXEL, por el MISMO camino que el ratón de verdad.
+		 *
+		 * `queHayEnPixel` enseña la lista cruda del rayo, que es útil para ver qué hay delante de
+		 * qué pero NO dice quién gana: eso lo decide la prioridad de la interacción. Preguntarlo
+		 * por separado era comparar dos cosas distintas y sacar conclusiones de la diferencia.
+		 */
+		queSeleccionaEnPixel: (x: number, y: number) => {
+			const r = renderer.domElement.getBoundingClientRect();
+			const ev = new PointerEvent('pointerdown', {
+				clientX: x, clientY: y, bubbles: true, pointerId: 1, buttons: 1,
+			});
+			void r;
+			const s = elementoBajoElPuntero(ev);
+			return s ? `${s.tipo}:${s.id}` : 'nada';
+		},
+		/** Las cajas envolventes de cada tramo del mazo, en mundo, para saber qué está delante de qué. */
+		dondeMazo: () => {
+			const caja = (o: THREE.Object3D) => {
+				const c = new THREE.Box3().setFromObject(o);
+				const r = (v: THREE.Vector3) => ({ x: Math.round(v.x), y: Math.round(v.y), z: Math.round(v.z) });
+				return { min: r(c.min), max: r(c.max) };
+			};
+			return {
+				hoja: caja(escenario.puerta.hoja),
+				enLaPuerta: caja(escenario.mazo.enLaPuerta),
+				flexibles: caja(escenario.mazo.flexibles),
+				// Todos los tramos que van EN la hoja, incluidos los puentes que no tienen lazo.
+				tramosHoja: escenario.mazo.enLaPuerta.children.map((m) => ({
+					id: m.userData.conductorId as string, hoja: caja(m),
+				})),
+				porCable: escenario.mazo.cables.map((c) => ({
+					id: c.conductorId, hoja: caja(c.enLaPuerta), lazo: caja(c.flexible),
+					// Y los puntos con los que se tendió, en coordenadas de la hoja: es lo único
+					// que dice si el problema es dónde se pidió la curva o cómo se dibujó.
+					guia: (c.enLaPuerta.userData.guia as { x: number; y: number; z: number }[] ?? [])
+						.map((q) => `${Math.round(q.x)},${Math.round(q.y)},${Math.round(q.z)}`),
+				})),
+			};
+		},
+		/** El mazo de puerta: cuántas piezas hay, cuánto miden los lazos y dónde cae el tramo de hoja. */
+		mazoPuerta: () => {
+			const m = escenario.mazo;
+			const largos: Record<string, number> = {};
+			const destino = new THREE.Vector3();
+			for (const c of m.cables) {
+				c.entrada.getWorldPosition(destino);
+				const g = c.flexible.geometry as THREE.BufferGeometry;
+				const pos = g.getAttribute('position');
+				// El largo del lazo, recorriendo el eje del tubo por sus anillos de vértices.
+				let largo = 0;
+				const paso = 11;   // radiales + 1
+				const a = new THREE.Vector3(), b = new THREE.Vector3();
+				for (let i = paso; i < pos.count; i += paso) {
+					a.fromBufferAttribute(pos as THREE.BufferAttribute, i - paso);
+					b.fromBufferAttribute(pos as THREE.BufferAttribute, i);
+					largo += a.distanceTo(b);
+				}
+				largos[c.conductorId] = largo;
+			}
+			return {
+				enLaPuerta: m.enLaPuerta.children.length,
+				flexibles: m.flexibles.children.length,
+				conductores: m.cables.map((c) => c.conductorId),
+				largos,
+				enLaHojaMundo: m.cables.map((c) => {
+					const w = c.enLaPuerta.getWorldPosition(new THREE.Vector3());
+					const caja = new THREE.Box3().setFromObject(c.enLaPuerta).getCenter(new THREE.Vector3());
+					return { x: caja.x, y: caja.y, z: caja.z, ox: w.x };
+				}),
+			};
+		},
 		/** Dónde está la cámara ahora mismo: para comprobar que cambiar de espacio no la pierde. */
 		camaraAhora: () => ({
 			espacio,
@@ -8436,7 +9027,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			const r = renderer.domElement.getBoundingClientRect();
 			puntero.set(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1);
 			raycaster.setFromCamera(puntero, camaraViva());
-			const impactos = raycaster.intersectObjects(escenario.cables.children, true);
+			const impactos = raycaster.intersectObjects(mallasDeCable(), true);
 			const visto = impactos.find((i) => i.object.userData.tuboVisible)?.object.userData.conductorId;
 			return (visto ?? impactos.find((i) => i.object.userData.conductorId)?.object.userData.conductorId) as string | undefined;
 		},
@@ -8603,6 +9194,32 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			x: camara.position.x, y: camara.position.y, z: camara.position.z,
 			tx: controles.target.x, ty: controles.target.y, tz: controles.target.z,
 		}),
+		/**
+		 * LA ÓRBITA EN ÁNGULOS, que es como se razona sobre «dar la vuelta al tablero».
+		 *
+		 * `azimut` sale del vector cámara→mira y no del estado interno de los controles, porque lo
+		 * que se quiere comprobar es dónde está la cámara DE VERDAD; y se dan también los topes y
+		 * el reparto de botones, que es lo que provocaba la pared invisible a los setenta y cinco
+		 * grados y la selección accidental al girar.
+		 */
+		orbita: () => {
+			const v = camara.position.clone().sub(controles.target);
+			const b = controles.mouseButtons;
+			return {
+				azimut: Math.atan2(v.x, v.z),
+				polar: Math.acos(Math.max(-1, Math.min(1, v.y / (v.length() || 1)))),
+				distancia: v.length(),
+				arriba: { x: camara.up.x, y: camara.up.y, z: camara.up.z },
+				topes: {
+					azMin: controles.minAzimuthAngle, azMax: controles.maxAzimuthAngle,
+					polMin: controles.minPolarAngle, polMax: controles.maxPolarAngle,
+					dMin: controles.minDistance, dMax: controles.maxDistance,
+				},
+				botones: { izq: b.LEFT, medio: b.MIDDLE, der: b.RIGHT },
+				alCursor: controles.zoomToCursor,
+				amortiguacion: controles.dampingFactor,
+			};
+		},
 		/**
 		 * Pone la vista EXACTAMENTE donde se le diga, sin pasar por el ratón.
 		 *

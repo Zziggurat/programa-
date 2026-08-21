@@ -85,6 +85,49 @@
 
 	body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; background: var(--fondo); color: var(--texto); font-size: 13px; }
 	#escena { position: fixed; inset: 46px 0 0 0; }
+	/*
+	 * El control flotante de puerta. Compacto, pegado a la esquina inferior derecha del visor y
+	 * por encima del lienzo pero por debajo de los modales. Sigue la paleta de los botones de la
+	 * barra para que no parezca pegado de otra aplicación.
+	 */
+	#puerta-flotante {
+		position: fixed; right: 18px; bottom: 18px; z-index: 30;
+		display: inline-flex; align-items: center; gap: 8px;
+		padding: 8px 13px 8px 11px; border-radius: 9px;
+		border: 1px solid #3a444e; background: #1e252cee; color: var(--texto);
+		font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+		box-shadow: 0 6px 18px #0009; backdrop-filter: blur(3px);
+		transition: background .12s, border-color .12s, transform .06s;
+	}
+	#puerta-flotante:hover { background: #27313a; border-color: #4d5b68; }
+	#puerta-flotante:active { transform: translateY(1px); background: #161c22; }
+	#puerta-flotante:focus-visible { outline: 2px solid #7cc0ff; outline-offset: 2px; }
+	#puerta-flotante[hidden] { display: none; }
+	/*
+	 * Y SE APARTA DEL PANEL DE PROPIEDADES. El panel derecho es fijo y de 300 px: con el botón
+	 * anclado al borde de la ventana quedaba encima de él, tapando justo los controles del
+	 * aparato que se acaba de seleccionar. El panel se enseña y se esconde poniéndole el estilo
+	 * en línea, así que basta con mirarlo: cuando está, el botón se corre a su izquierda.
+	 */
+	body:has(#panel-der[style*="block"]) #puerta-flotante { right: 318px; }
+	/*
+	 * EL ICONO ES LA PROPIA PUERTA, dibujada con dos cajas: el armario y la hoja girada. Al
+	 * cambiar de estado gira, así que el botón enseña lo que va a pasar en vez de solo decirlo.
+	 */
+	#puerta-flotante .icono {
+		position: relative; width: 15px; height: 16px;
+		border: 1.5px solid currentColor; border-radius: 2px; opacity: .85;
+	}
+	#puerta-flotante .icono::after {
+		content: ''; position: absolute; left: -1.5px; top: -1.5px; bottom: -1.5px; width: 7px;
+		border: 1.5px solid currentColor; border-radius: 2px 0 0 2px;
+		background: #7cc0ff22;
+		transform-origin: left center; transition: transform .18s ease;
+	}
+	#puerta-flotante.abierta .icono::after { transform: perspective(22px) rotateY(-58deg); }
+	@media (prefers-reduced-motion: reduce) {
+		#puerta-flotante .icono::after, #puerta-flotante { transition: none; }
+	}
 	button { font: inherit; cursor: pointer; }
 	input, select { font: inherit; }
 
@@ -1071,6 +1114,17 @@
 </header>
 
 <div id="escena"></div>
+
+<!--
+	EL CONTROL DE PUERTA, DONDE SE MIRA.
+	Estaba al final del panel izquierdo, dentro de una sección plegable y por debajo del pliegue:
+	para abrir la puerta había que ir a buscarla. Es una acción de VISTA —como girar o acercar— y
+	las acciones de vista viven sobre el visor, no en el inspector de propiedades.
+-->
+<button id="puerta-flotante" type="button" aria-label="Abrir la puerta del armario"
+	title="Abrir o cerrar la puerta del armario (O)">
+	<span class="icono" aria-hidden="true"></span><span class="texto">Abrir puerta</span>
+</button>
 
 <section id="panel-esquema" hidden>
 	<div id="esquema-barra">

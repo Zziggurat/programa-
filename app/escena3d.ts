@@ -8,6 +8,9 @@
 import * as THREE from 'three';
 import { Canaleta, Colocacion, Conductor, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
+import {
+	alturaDeMazo, anclajeFijoDeMazo, carrilDeMazo, construirMazoPuerta, desvioDeCarril, enLaPuerta, Mazo,
+} from './mazo-puerta.js';
 import { posicionesDeTerminales } from '../src/motores/terminales.js';
 import {
 	Banda, carrilesDe, corredoresLibres, mejorCorredor, orthogonalize, Punto, Punto3, tenderCable,
@@ -141,6 +144,8 @@ export interface Escenario {
 	aparatos: THREE.Object3D[];
 	/** Lo montado en la puerta: aparatos y rótulos, que es con lo que trabaja el editor del frontal. */
 	frontal: MontadoEnPuerta[];
+	/** El mazo que cruza de la placa a la hoja: su tramo de puerta y sus lazos de servicio. */
+	mazo: Mazo;
 	tapas: THREE.Object3D[];     // tapas de canaletas (para ocultarlas)
 	etiquetas: THREE.Object3D[]; // sprites de designación
 	centro: THREE.Vector3;
@@ -285,6 +290,25 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	const cables = new THREE.Group();
 	raiz.add(cables);
 
+	/*
+	 * EL MAZO DE PUERTA. Se monta aquí, con la escena ya armada, porque necesita saber DÓNDE cae
+	 * cada terminal, y eso lo dice la geometría que acaba de construir la ficha del aparato, no
+	 * una tabla aparte. Así, el día que haya un pulsador con tres bornes, el mazo encuentra sus
+	 * tres tornillos sin que nadie los declare en ningún sitio.
+	 */
+	const mazo = construirMazoPuerta({
+		proyecto,
+		puerta: envolvente.puerta,
+		aparatos,
+		aEscena,
+		placa: { ancho: g.ancho, alto: g.alto },
+		caja,
+		izquierda: (g.caja?.bisagras ?? 'izquierda') === 'izquierda',
+		color: (c) => colorDeCable(c.color),
+		radio: radioDeCable,
+	});
+	raiz.add(mazo.flexibles);
+
 	const bornes = new THREE.Group();
 	bornes.visible = false;
 	raiz.add(bornes);
@@ -298,7 +322,7 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 
 	return {
 		raiz, dispositivos, cables, bornes, cotas, handles, tapas, etiquetas,
-		envolvente: envolvente.grupo, puerta: envolvente.puerta, aparatos, frontal,
+		envolvente: envolvente.grupo, puerta: envolvente.puerta, aparatos, frontal, mazo,
 		centro: new THREE.Vector3(0, 0, 0), aEscena,
 	};
 }
@@ -1268,6 +1292,16 @@ export function salidasDeCable(
 	conductor: Conductor,
 	abanico = abanicoDeSalida(proyecto),
 ): { de: Anclaje; a: Anclaje; salidaA: Punto3; salidaB: Punto3 } | undefined {
+	/*
+	 * UN PUENTE ENTRE DOS APARATOS DE LA PUERTA NO TIENE RECORRIDO POR EL ARMARIO.
+	 *
+	 * Los dos extremos anclarían al mismo punto de la bisagra y el ruteador tendería un cable de
+	 * longitud cero contra sí mismo. Ese conductor lo dibuja entero `mazo-puerta`, por la cara
+	 * interior de la hoja, que es por donde va de verdad.
+	 */
+	if (enLaPuerta(proyecto, conductor.de.dispositivoId) && enLaPuerta(proyecto, conductor.a.dispositivoId)) {
+		return undefined;
+	}
 	const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
 	const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
 	if (!a || !b) return undefined; // solo si falta el aparato entero (se limpia al eliminarlo)
@@ -2689,23 +2723,37 @@ export function anclajeBorne(
 	borneId: string,
 ): Anclaje | undefined {
 	const d = proyecto.dispositivos.find((x) => x.id === dispositivoId);
-	const col = proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === dispositivoId);
+	const g = proyecto.gabinete;
+	const col = g?.colocaciones.find((c) => c.dispositivoId === dispositivoId);
 	if (!d) return undefined;
 	/*
-	 * APARATO MONTADO EN LA PUERTA: todavía no tiene anclaje para el cable en 3D.
+	 * APARATO MONTADO EN LA PUERTA: EL TRAMO DE PLACA ACABA JUNTO A LA BISAGRA.
 	 *
-	 * Eléctricamente está completo —el simulador, el DRC, los potenciales, el esquema y el dossier
-	 * lo tratan como cualquier otro aparato, porque para ellos lo es—, pero el RECORRIDO del cable
-	 * hasta él es otra cosa: sale de la placa y tiene que llegar a una pieza que gira sobre unas
-	 * bisagras. En un tablero de verdad eso se resuelve con un mazo flexible que va al lado de las
-	 * bisagras y deja seno para que la puerta abra; dibujarlo bien es un trabajo con entidad, y
-	 * dibujarlo mal —un cable recto tendido hasta la puerta cerrada— sería peor que no dibujarlo:
-	 * se estiraría por el aire en cuanto la puerta se abriera.
+	 * Antes esto devolvía `undefined` y el conductor no se dibujaba en absoluto: encendía el
+	 * piloto y no había forma de ver por dónde. La razón era buena —un cable recto tendido hasta
+	 * una puerta cerrada se estira por el aire en cuanto la puerta abre— pero la conclusión era
+	 * demasiado: lo que no se puede tender de una vez es el cable ENTERO, no el tramo que corre
+	 * por dentro del armario.
 	 *
-	 * Sin anclaje, `salidasDeCable` devuelve `undefined` y el conductor simplemente no se dibuja.
-	 * No se pierde: sigue en el proyecto, sigue conduciendo y sigue saliendo en el esquema.
+	 * Así que el aparato de puerta se comporta, para el ruteador de la placa, como si su borne
+	 * estuviera junto a las bisagras. Con eso el tramo de armario recupera TODO lo que ya
+	 * funcionaba —corredores libres, canaletas, capas, puntos de paso, selección, metraje— sin una
+	 * línea nueva. De ahí en adelante se encarga `mazo-puerta`: el lazo de servicio y el tramo que
+	 * viaja con la hoja. Y las dos mitades se encuentran en el mismo punto porque llaman a la
+	 * MISMA función, no porque coincidan los números.
 	 */
-	if (col?.montaje === 'puerta') return undefined;
+	if (col?.montaje === 'puerta' && g) {
+		const caja = cajaDeGabinete(g);
+		const carril = carrilDeMazo(g.colocaciones, dispositivoId);
+		return anclajeFijoDeMazo(
+			{ ancho: g.ancho, alto: g.alto }, caja,
+			(g.caja?.bisagras ?? 'izquierda') === 'izquierda',
+			alturaDeMazo({ alto: g.alto }, caja, col.y),
+			// El mismo carril que usa el mazo. Los tres pilotos de fase están a la misma altura:
+			// sin abanicar, sus tres cables llegarían al mismo milímetro de la bisagra.
+			desvioDeCarril(carril.indice, carril.total),
+		);
+	}
 	// Aparato NO colocado en la placa (red/acometida o aparato de campo): su cable no puede
 	// quedar en el aire («cable fantasma»). Entra por un PRENSAESTOPAS en el borde inferior
 	// del gabinete, igual que en un tablero real, para que el cable tenga un recorrido visible.

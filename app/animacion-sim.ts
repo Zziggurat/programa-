@@ -228,7 +228,18 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		for (const m of p.lente) {
 			const propio = (m.userData.colorPropio as number | undefined) ?? 0xffd54f;
 			const mat = m.material as THREE.MeshStandardMaterial;
-			mat.emissive.setHex(encendida ? propio : 0x000000);
+			/*
+			 * DE QUÉ COLOR EMITE puede no ser de qué color ES.
+			 *
+			 * Los pilotos de puerta llevan un `emissiveMap` que va del blanco en el centro al
+			 * color saturado en el borde —que es lo que hace una lámpara detrás de un plástico
+			 * teñido— y para que ese mapa mande, el material tiene que emitir BLANCO: `emissive`
+			 * multiplica al mapa, y con `emissive` de color no hay mapa en el mundo que pueda
+			 * devolver el blanco del núcleo. Quien no lo declare emite su propio color, como
+			 * siempre, así que ningún aparato de placa cambia.
+			 */
+			const emite = (m.userData.colorEmision as number | undefined) ?? propio;
+			mat.emissive.setHex(encendida ? emite : 0x000000);
 			mat.emissiveIntensity = encendida ? 1.15 : 0;
 			/*
 			 * APAGADO NO ES «EL MISMO COLOR SIN BRILLO».

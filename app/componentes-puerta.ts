@@ -102,72 +102,232 @@ function degradadoDeHalo(): THREE.CanvasTexture | null {
 	return haloCache;
 }
 
-/* ------------------------------- Medidas del piloto ------------------------------- */
+/* ------------------------------- Medidas del piloto -------------------------------
+ *
+ * TODAS SALEN DE UN Ø22 DE VERDAD, no de «qué tal se ve». Un piloto de señalización normalizado
+ * se monta en un taladro de 22 mm, calza un embellecedor de unos 29 mm y enseña una lente de 21
+ * a 23. Ésas son las tres cotas, y lo demás se deduce de ellas: si la pieza parece pequeña en la
+ * puerta es porque una puerta de armario es grande, no porque falte tamaño. En la foto de un
+ * tablero real tres pilotos ocupan un palmo de una hoja de medio metro.
+ */
 
 /** Diámetro del taladro: 22 mm es LA medida de la aparamenta de mando y señalización. */
 const TALADRO = 22;
 /** Radio exterior del aro embellecedor. Un Ø22 real calza un embellecedor de unos 29 mm. */
-const R_ARO = 14.6;
-/** Radio del vidrio. El hueco del aro es un pelo mayor, para que la lente asome por él. */
-const R_LENTE = 10.2;
+const R_ARO = 14.85;
+/**
+ * Radio del vidrio: Ø21, la parte baja de la horquilla de catálogo (21 a 23).
+ *
+ * Se bajó desde Ø22 mirando la primera tanda de fotos: con la lente en el máximo de la horquilla
+ * y el aro en el mínimo, al aro le quedaban tres milímetros y medio de anchura y de frente no se
+ * leía como un embellecedor, sino como un contorno. Con Ø21 de lente y Ø29,7 de aro la corona
+ * pasa a cuatro milímetros y medio, que es lo que hace que la pieza se reconozca a dos metros.
+ */
+const R_LENTE = 10.5;
 /** Lo que sobresale el conjunto por delante de la chapa. Y ahora se cumple: ver `perfilLente`. */
-const VUELO = 7.4;
+const VUELO = 8;
 /** Hasta dónde llega el resplandor sobre la chapa. Poco más que el aro no se ve; ver el halo. */
 const R_HALO = 34;
 /** Fondo de la hoja de la puerta: lo que hay que atravesar para salir por dentro. */
 const CHAPA_PUERTA = 15;
+/** Altura de la boca del aro. La lente asoma justo por encima de ella. */
+const ALTO_ARO = 5.1;
 
 /**
- * EL PERFIL DE LA LENTE, Y POR QUÉ NO ES MEDIA ESFERA APLASTADA.
+ * EL PERFIL DE LA LENTE, Y POR QUÉ AHORA ES CASI PLANA.
  *
- * Aquí había un casquete esférico con `scale.z = 0.62` y el comentario «una lente de piloto es un
- * casquete, no media bola». La intención era buena y el eje estaba equivocado: la malla se gira
- * después con `rotation.x = π/2`, que lleva el eje local +Y —el de la cúpula— a +Z, y el local +Z
- * a −Y. O sea que ese 0,62 no aplastaba la cúpula: APLASTABA LA LENTE EN VERTICAL. Medido sobre
- * la geometría, la lente salía de 21,3 × 13,2 mm —un óvalo— y sobresalía 14,2 mm en vez de los
- * 7,4 mm que promete `VUELO`. De frente se veía un huevo y de canto un caramelo brillante, que es
- * exactamente lo que un piloto industrial no parece.
+ * Aquí hubo primero un casquete esférico aplastado por el eje equivocado —la lente salía ovalada
+ * y sobresalía catorce milímetros— y después una cúpula de revolución correcta pero demasiado
+ * alta: cuatro milímetros y ocho décimas de domo sobre veinte de diámetro seguían leyéndose como
+ * media bola de caramelo. Puesta al lado de la fotografía de un piloto de catálogo la diferencia
+ * es evidente: la lente de un Ø22 es un disco levemente abombado, con un faldón recto que asoma
+ * por la boca del aro y un domo de dos milímetros y pico. Casi todo el vuelo lo pone el aro.
  *
- * Se cambia por un PERFIL DE REVOLUCIÓN, que no tiene ejes que confundir: se dibuja el corte de
- * la lente —el faldón cilíndrico que entra en el aro y la cúpula que asoma— y se hace girar. Lo
- * que mide el dibujo es lo que mide la pieza, y el vuelo sale de la última cota, no de un factor.
+ * Es un PERFIL DE REVOLUCIÓN, que no tiene ejes que confundir: lo que mide el dibujo es lo que
+ * mide la pieza, y el vuelo sale de la última cota y no de un factor de escala.
  *
- * Una sola malla y un solo material, además: la lente tiene que seguir siendo LA pieza que
- * enciende, porque de eso depende que cambiar un piloto no toque a ninguno de sus vecinos.
+ * Y el orden de los puntos importa por partida doble. `LatheGeometry` reparte la coordenada `v`
+ * de la textura a lo largo del perfil —`v = j / (puntos - 1)`—, así que el punto 0 (el asiento,
+ * en el borde) es `v = 0` y el último (el centro del domo) es `v = 1`. Eso convierte una simple
+ * franja vertical en un degradado RADIAL exacto, que es lo que hace falta para que la lente
+ * encendida tenga el centro casi blanco y el borde saturado, como en una foto de verdad, sin
+ * pagar ni una luz ni un shader propio.
  */
 function perfilLente(): THREE.LatheGeometry {
 	const R = R_LENTE;
 	const puntos = [
 		new THREE.Vector2(R, 0),           // asiento, dentro del aro
-		new THREE.Vector2(R, 2.6),         // faldón recto: lo que asoma por el hueco del aro
-		new THREE.Vector2(R * 0.99, 3.4),
-		new THREE.Vector2(R * 0.94, 4.6),
-		new THREE.Vector2(R * 0.83, 5.8),
-		new THREE.Vector2(R * 0.65, 6.7),
-		new THREE.Vector2(R * 0.38, 7.3),
-		new THREE.Vector2(0, VUELO),       // la cúpula acaba EXACTAMENTE en el vuelo prometido
+		new THREE.Vector2(R, 5.2),         // faldón recto: lo que asoma por la boca del aro
+		new THREE.Vector2(R * 0.985, 5.9), // labio: el canto matado del vidrio
+		new THREE.Vector2(R * 0.94, 6.55),
+		new THREE.Vector2(R * 0.84, 7.1),
+		new THREE.Vector2(R * 0.66, 7.55),
+		new THREE.Vector2(R * 0.38, 7.86),
+		new THREE.Vector2(0, VUELO),       // el domo acaba EXACTAMENTE en el vuelo prometido
 	];
-	return new THREE.LatheGeometry(puntos, 28);
+	return new THREE.LatheGeometry(puntos, 32);
 }
 
 /**
- * EL ARO EMBELLECEDOR, que es un ANILLO y no un disco.
+ * EL ARO EMBELLECEDOR: un ANILLO de plástico negro, no una arandela gris.
  *
- * Era un cilindro macizo, así que la lente nacía enterrada dentro de él y lo único que se veía
- * era la cúpula flotando sobre una arandela cromada. Un embellecedor de verdad tiene hueco: por
- * él asoma el faldón de la lente, y esa sombra estrecha entre el vidrio y el metal es la mitad de
- * lo que hace que la pieza se lea como aparamenta montada y no como un botón dibujado encima.
+ * Dos correcciones seguidas. La primera fue de forma: era un cilindro macizo, así que la lente
+ * nacía enterrada y solo se veía la cúpula flotando sobre un disco. Un embellecedor de verdad
+ * tiene hueco, y por él asoma el faldón de la lente; esa sombra estrecha entre el vidrio y el
+ * plástico es la mitad de lo que hace que la pieza se lea como aparamenta montada.
+ *
+ * La segunda es de material, y viene de mirar la fotografía en vez de imaginarla: el aro de un
+ * piloto Ø22 moderno NO es metal satinado. Es plástico negro mate, y contra una hoja clara eso
+ * es lo que dibuja el anillo oscuro que se reconoce a tres metros. En cromado se confundía con
+ * la chapa y desaparecía; en negro, la pieza aparece.
+ *
+ * El perfil lleva pared interior, boca matada, cara superior, chaflán exterior y falda: cinco
+ * cantos que la luz puede coger. Un anillo sin chaflanes es un tubo, y un tubo no tiene volumen.
  */
 function perfilAro(): THREE.LatheGeometry {
+	/*
+	 * EL ORDEN DE LOS PUNTOS DECIDE HACIA DÓNDE MIRA LA PIEZA, y aquí estaba al revés. Ése era
+	 * el motivo real de que el aro se viera «como una arandela gris plana sin volumen»: NO SE
+	 * VEÍA EL ARO. Lo que se veía era su SOMBRA sobre la chapa.
+	 *
+	 * `LatheGeometry` saca la normal de la dirección del perfil —normal = (Δy, −Δx)— así que un
+	 * perfil recorrido de dentro hacia fuera deja la cara superior mirando hacia ABAJO y la falda
+	 * exterior mirando hacia el eje. Con `side: FrontSide`, que es lo normal, el trazado de rayos
+	 * y el dibujado descartan las dos: el anillo desaparecía entero. Seguía proyectando sombra
+	 * —el mapa de sombras usa la cara contraria— y ese cerco oscuro sobre la puerta era todo lo
+	 * que quedaba de él. Se comprobó pintándolo de magenta y a doble cara: aparecía.
+	 *
+	 * Se recorre de FUERA HACIA DENTRO, que es lo que deja las normales hacia el observador.
+	 */
 	const puntos = [
-		new THREE.Vector2(R_LENTE + 0.45, -0.6),   // pared interior, metida en la chapa
-		new THREE.Vector2(R_LENTE + 0.45, 3.6),
-		new THREE.Vector2(R_LENTE + 1.6, 4.4),     // el canto matado de la boca
-		new THREE.Vector2(R_ARO - 1.2, 4.6),       // cara superior
-		new THREE.Vector2(R_ARO, 3.7),             // chaflán exterior
-		new THREE.Vector2(R_ARO, -0.6),            // falda exterior, apoyada en la puerta
+		new THREE.Vector2(R_ARO, -0.8),                    // falda exterior, apoyada en la puerta
+		new THREE.Vector2(R_ARO, ALTO_ARO - 1.9),
+		new THREE.Vector2(R_ARO - 0.25, ALTO_ARO - 0.85),  // chaflán exterior
+		new THREE.Vector2(R_ARO - 1.15, ALTO_ARO),         // cara superior: PLANA y ancha, 2,7 mm
+		new THREE.Vector2(R_LENTE + 1.1, ALTO_ARO),        // el canto matado de la boca
+		new THREE.Vector2(R_LENTE + 0.5, ALTO_ARO - 1.1),
+		new THREE.Vector2(R_LENTE + 0.5, -0.8),            // pared interior, metida en la chapa
 	];
-	return new THREE.LatheGeometry(puntos, 28);
+	return new THREE.LatheGeometry(puntos, 32);
+}
+
+/**
+ * EL DEGRADADO DE LA LENTE ENCENDIDA, en una tira de 4 × 64 píxeles por color.
+ *
+ * Un piloto encendido NO es un disco de color plano. La lámpara está detrás del centro, así que
+ * el centro se quema hacia el blanco y el color solo se reconoce en la corona exterior, donde el
+ * plástico teñido tiene más camino que atravesar. Eso es lo que se ve en cualquier fotografía de
+ * un tablero encendido, y era exactamente lo que faltaba: un rojo uniforme de borde a borde se
+ * lee como una pegatina.
+ *
+ * Se resuelve con un `emissiveMap` y sin tocar la iluminación de la escena. El material emite
+ * BLANCO y la textura pone el color: donde la textura es blanca sale blanco, donde es roja sale
+ * roja. Como `v` recorre el perfil de la lente, la tira vertical se convierte en un degradado
+ * concéntrico perfecto.
+ *
+ * Hay una textura por COLOR, no por piloto: tres pilotos rojos comparten la suya, y el tablero
+ * entero no pasa de cinco.
+ */
+const emisionCache = new Map<number, THREE.CanvasTexture | null>();
+
+function degradadoDeLente(color: number): THREE.CanvasTexture | null {
+	const guardado = emisionCache.get(color);
+	if (guardado !== undefined) return guardado;
+	if (typeof document === 'undefined') { emisionCache.set(color, null); return null; }
+	const lienzo = document.createElement('canvas');
+	lienzo.width = 4; lienzo.height = 64;
+	const ctx = lienzo.getContext('2d')!;
+	const c = new THREE.Color(color);
+	const hsl = { h: 0, s: 0, l: 0 };
+	c.getHSL(hsl);
+	// El borde, a plena saturación; hacia el centro se desatura y sube de luminosidad hasta el
+	// blanco. Se hace en HSL y no interpolando a `#ffffff` porque interpolar en RGB pasa por
+	// rosas y verdes pálidos que no se parecen a una lámpara.
+	const tono = (l: number, sat: number) => `#${new THREE.Color().setHSL(hsl.h, hsl.s * sat, l).getHexString()}`;
+	/*
+	 * `v = 1` es el CENTRO del domo y, con `flipY` puesto, cae en la fila de arriba del lienzo.
+	 *
+	 * Y las paradas NO son proporcionales al radio, porque `v` recorre los PUNTOS del perfil y
+	 * el perfil no reparte el radio a partes iguales. Traducidas: y=0,12 cae a un tercio del
+	 * radio, y=0,26 a dos tercios y y=0,45 ya al 85 %. Con las paradas repartidas «a ojo» sobre
+	 * el lienzo, el núcleo blanco se comía dos tercios de la lente y un piloto rojo encendido se
+	 * veía blanco con un filo rojo; en la fotografía de un tablero de verdad es al revés: rojo
+	 * con un núcleo blanco pequeño.
+	 */
+	const g = ctx.createLinearGradient(0, 0, 0, 64);
+	g.addColorStop(0.00, '#ffffff');                            // centro: el filamento
+	g.addColorStop(0.12, tono(0.88, 0.35));                     // núcleo caliente, hasta 1/3 del radio
+	g.addColorStop(0.26, tono(0.62, 0.9));                      // a dos tercios ya se reconoce el color
+	g.addColorStop(0.45, tono(Math.min(0.46, hsl.l), 1));       // corona saturada
+	g.addColorStop(1.00, tono(Math.min(0.4, hsl.l * 0.85), 1)); // borde, contra el aro
+	ctx.fillStyle = g;
+	ctx.fillRect(0, 0, 4, 64);
+	const tex = new THREE.CanvasTexture(lienzo);
+	tex.colorSpace = THREE.SRGBColorSpace;
+	emisionCache.set(color, tex);
+	return tex;
+}
+
+/**
+ * El degradado del CERCO de contacto: opaco pegado al aro y apagándose enseguida hacia fuera.
+ * Compartido por todos los pilotos, igual que el del halo: un asiento es igual en todos.
+ */
+let cercoCache: THREE.CanvasTexture | null | undefined;
+
+function degradadoDeCerco(): THREE.CanvasTexture | null {
+	if (cercoCache !== undefined) return cercoCache;
+	if (typeof document === 'undefined') { cercoCache = null; return null; }
+	const lienzo = document.createElement('canvas');
+	lienzo.width = lienzo.height = 32;
+	const ctx = lienzo.getContext('2d')!;
+	/*
+	 * `RingGeometry` mapea la textura sobre el CUADRADO que envuelve al anillo, centrada: un
+	 * degradado concéntrico en el lienzo sale concéntrico en la pieza. El anillo va de 14,4 a
+	 * 17,2 mm, o sea del 84 % al 100 % del radio exterior, así que toda la caída tiene que
+	 * ocurrir en ese último dieciséis por ciento del lienzo.
+	 */
+	const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+	g.addColorStop(0, '#ffffff');
+	g.addColorStop(0.84, '#ffffff');   // pegado al aro: la sombra es más densa
+	g.addColorStop(0.92, '#5a5a5a');
+	g.addColorStop(1, '#000000');      // y se ha ido
+	ctx.fillStyle = g;
+	ctx.fillRect(0, 0, 32, 32);
+	cercoCache = new THREE.CanvasTexture(lienzo);
+	return cercoCache;
+}
+
+/**
+ * Y EL MISMO TRUCO PARA LA LENTE APAGADA, en escala de grises y compartido por todos.
+ *
+ * Apagada, una lente de plástico teñido tampoco es plana: el centro deja ver el interior hueco y
+ * se aclara un punto, y el borde —donde el espesor es mayor— queda más denso. Multiplicando el
+ * color por esta tira se consigue ese relieve sin una textura por color, porque es el MISMO
+ * degradado para todos: solo cambia el color que lo multiplica.
+ */
+let densidadCache: THREE.CanvasTexture | null | undefined;
+
+function densidadDeLente(): THREE.CanvasTexture | null {
+	if (densidadCache !== undefined) return densidadCache;
+	if (typeof document === 'undefined') { densidadCache = null; return null; }
+	const lienzo = document.createElement('canvas');
+	lienzo.width = 4; lienzo.height = 64;
+	const ctx = lienzo.getContext('2d')!;
+	/*
+	 * Y VA AL REVÉS QUE EL DE ENCENDIDO, que es lo que se ve en la foto: apagada, la lente deja
+	 * ver por el centro el hueco oscuro donde vive la lámpara, y es el BORDE —donde el plástico
+	 * teñido tiene más espesor y coge luz rasante— el que se ve más claro. Oscuro en el centro,
+	 * pero nunca negro: sigue siendo plástico de color, no un agujero.
+	 */
+	const g = ctx.createLinearGradient(0, 0, 0, 64);
+	g.addColorStop(0, '#b2b2b2');   // centro: el pozo de la lámpara
+	g.addColorStop(0.45, '#d6d6d6');
+	g.addColorStop(1, '#ffffff');   // borde: el canto del vidrio
+	ctx.fillStyle = g;
+	ctx.fillRect(0, 0, 4, 64);
+	densidadCache = new THREE.CanvasTexture(lienzo);
+	densidadCache.colorSpace = THREE.SRGBColorSpace;
+	return densidadCache;
 }
 
 /**
@@ -186,14 +346,43 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 	/* ---------------- Por fuera: aro, lente y rótulo ---------------- */
 
 	/*
-	 * El ARO embellecedor, que es lo que tapa el taladro. Va en cromado mate, como el de una
-	 * botonera industrial: el aro es de metal aunque el cuerpo sea de plástico, y esa diferencia
-	 * de material es la mitad de lo que hace que la pieza se lea como aparamenta.
+	 * El ARO embellecedor, que es lo que tapa el taladro: plástico negro mate, como el de la
+	 * fotografía. Proyecta sombra sobre la chapa a propósito —es lo que le da el asiento— y por
+	 * eso la hoja la recibe: sin esa media luna de sombra al pie del aro, la pieza flota.
 	 */
-	const aro = new THREE.Mesh(perfilAro(), M.metal(0xb6bcc1, 0.44));
+	/*
+	 * El negro no es negro del todo y el satinado no es mate del todo, a propósito: con
+	 * `M.tecnico` puro —rugosidad 0,72 sobre un 0x17— el aro se comía toda la luz y el chaflán
+	 * dejaba de existir, que es justo lo que se quería ganar dándole un chaflán. Con algo más de
+	 * brillo el canto devuelve una línea y la corona se lee como una pieza de plástico moldeado.
+	 */
+	const aro = new THREE.Mesh(perfilAro(), new THREE.MeshStandardMaterial({
+		color: 0x1c1f22, roughness: 0.5, metalness: 0.05,
+	}));
 	aro.rotation.x = Math.PI / 2;
 	aro.castShadow = true;
 	g.add(aro);
+
+	/*
+	 * Y UN CERCO DE CONTACTO, que es sombra dibujada y no calculada.
+	 *
+	 * La sombra proyectada depende de dónde esté el sol de la escena: mirando el tablero de
+	 * frente, con la luz casi de frente también, el aro no proyecta casi nada y vuelve a
+	 * despegarse de la chapa. Este anillo oscurísimo y muy corto, pegado a la puerta, hace el
+	 * papel de la oclusión ambiental del contacto: no se ve como una pieza, se ve como el
+	 * asiento del aro. Es una malla sin sombra ni escritura de profundidad, así que no participa
+	 * en ninguna de las peleas de coplanaridad que costó dos fases dejar limpias.
+	 */
+	const cerco = new THREE.Mesh(
+		new THREE.RingGeometry(R_ARO - 0.2, R_ARO + 2.8, 32),
+		new THREE.MeshBasicMaterial({
+			color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false,
+			alphaMap: degradadoDeCerco() ?? undefined,
+		}),
+	);
+	cerco.position.z = 0.6;
+	cerco.raycast = () => undefined;
+	g.add(cerco);
 
 	/*
 	 * La LENTE. Es la pieza que enciende, y lleva el contrato que espera `animacion-sim`:
@@ -211,14 +400,29 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 			 * desde un lado del pasillo y no como un punto de luz que solo existe de frente. Con
 			 * `roughness` de espejo salía un reflejo blanco duro que la convertía en un caramelo.
 			 */
-			color: colorApagado(color), roughness: 0.42, metalness: 0.0,
-			emissive: new THREE.Color(color), emissiveIntensity: 0,
+			color: colorApagado(color), roughness: 0.4, metalness: 0.0,
+			map: densidadDeLente() ?? undefined,
+			/*
+			 * EMITE BLANCO Y EL COLOR LO PONE LA TEXTURA. Es lo que permite que el centro se
+			 * queme hacia el blanco y el borde se quede saturado: con `emissive` de color, un
+			 * mapa en escala de grises solo puede oscurecer, nunca desaturar, así que un rojo
+			 * encendido no podía tener el núcleo blanco por mucho que se subiera la intensidad
+			 * —lo único que conseguía era un rojo plano más brillante—.
+			 */
+			emissive: new THREE.Color(0xffffff), emissiveIntensity: 0,
+			emissiveMap: degradadoDeLente(color) ?? undefined,
 		}),
 	);
 	lente.rotation.x = Math.PI / 2;
 	lente.userData.pieza = 'lente';
 	lente.userData.colorPropio = color;
 	lente.userData.colorApagado = colorApagado(color);
+	/*
+	 * El contrato con `animacion-sim`: de qué color EMITE. Blanco, porque el color lo lleva el
+	 * `emissiveMap`. Los aparatos que no lo declaran siguen emitiendo su propio color, así que
+	 * ningún piloto de placa cambia de aspecto por esto.
+	 */
+	lente.userData.colorEmision = 0xffffff;
 	g.add(lente);
 
 	/*
@@ -282,26 +486,53 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 	 */
 	const pasante = new THREE.Mesh(
 		new THREE.CylinderGeometry(TALADRO / 2 - 0.4, TALADRO / 2 - 0.4, CHAPA_PUERTA + 8, 20),
-		M.tecnico(0x2b2f33),
+		M.tecnico(0x212427),
 	);
 	pasante.rotation.x = Math.PI / 2;
 	pasante.position.z = -(CHAPA_PUERTA + 8) / 2 + 1;
 	g.add(pasante);
 
-	// La tuerca de apriete, por dentro: es lo que sujeta el piloto a la chapa.
+	/*
+	 * LA TUERCA DE APRIETE, por dentro: es lo que sujeta el piloto a la chapa. En un Ø22 de
+	 * catálogo es de plástico negro con seis caras y no de acero, y de eso hay foto: la única
+	 * pieza metálica que se ve por dentro son los tornillos de los terminales.
+	 */
 	const tuerca = new THREE.Mesh(
-		new THREE.CylinderGeometry(TALADRO / 2 + 2.6, TALADRO / 2 + 2.6, 4, 6),
-		M.metal(0xa9afb4),
+		new THREE.CylinderGeometry(TALADRO / 2 + 2.8, TALADRO / 2 + 2.8, 4.2, 6),
+		M.tecnico(0x26292c),
 	);
 	tuerca.rotation.x = Math.PI / 2;
-	tuerca.position.z = -CHAPA_PUERTA - 2.6;
+	tuerca.position.z = -CHAPA_PUERTA - 2.7;
 	g.add(tuerca);
 
-	// El bloque del portalámparas, con su cuello.
-	const cuerpo = new THREE.Mesh(new THREE.BoxGeometry(26, 26, 17), M.tecnico(0x33383d));
-	cuerpo.position.z = -CHAPA_PUERTA - 12;
+	/*
+	 * EL CUERPO DEL PORTALÁMPARAS, cilíndrico y con nervios.
+	 *
+	 * Era una caja lisa de 26 mm, y una caja lisa negra en la penumbra del armario es una mancha:
+	 * al abrir la puerta no se distinguía de la chapa que tiene detrás. Un piloto de verdad es un
+	 * cilindro con anillos de refuerzo y ventilación, y esos anillos son lo único que hay ahí
+	 * dentro para que la luz rasante marque la pieza. Tres anillos y un cuerpo: cuatro mallas,
+	 * ninguna transparencia y ninguna sombra nueva.
+	 */
+	const cuerpo = new THREE.Mesh(new THREE.CylinderGeometry(12.6, 11.4, 18, 20), M.tecnico(0x232629));
+	cuerpo.rotation.x = Math.PI / 2;
+	cuerpo.position.z = -CHAPA_PUERTA - 12.5;
 	cuerpo.castShadow = true;
 	g.add(cuerpo);
+	for (let i = 0; i < 3; i++) {
+		const nervio = new THREE.Mesh(
+			new THREE.CylinderGeometry(13.4 - i * 0.35, 13.4 - i * 0.35, 1.8, 20),
+			M.tecnico(0x1b1e21),
+		);
+		nervio.rotation.x = Math.PI / 2;
+		nervio.position.z = -CHAPA_PUERTA - 7.5 - i * 4.6;
+		g.add(nervio);
+	}
+	// El zócalo donde apoyan los terminales, un poco más estrecho que el cuerpo.
+	const zocalo = new THREE.Mesh(new THREE.BoxGeometry(24, 20, 7), M.tecnico(0x1f2225));
+	zocalo.position.z = -CHAPA_PUERTA - 24;
+	zocalo.castShadow = true;
+	g.add(zocalo);
 
 	/*
 	 * LOS TERMINALES, uno por borne del aparato. Salen de `d.bornes`, no de una lista escrita
@@ -310,20 +541,23 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 	 * cuál es cuál sin adivinar.
 	 */
 	const bornes = d.bornes.length ? d.bornes : [{ id: 'X1' }, { id: 'X2' }];
-	const paso = 26 / (bornes.length + 1);
+	const paso = 24 / (bornes.length + 1);
+	// La cara trasera del zócalo: de ahí para atrás salen las regletas, y de ahí sale también la
+	// cota de los cables del mazo. Una sola cota, para que nada quede enterrado en el plástico.
+	const zBorne = -CHAPA_PUERTA - 28.5;
 	bornes.forEach((b, i) => {
-		const x = -13 + paso * (i + 1);
-		const base = new THREE.Mesh(new THREE.BoxGeometry(paso * 0.8, 9, 6), M.baquelita(0x1d2124));
-		base.position.set(x, 0, -CHAPA_PUERTA - 22.5);
+		const x = -12 + paso * (i + 1);
+		const base = new THREE.Mesh(new THREE.BoxGeometry(paso * 0.82, 9, 6), M.baquelita(0x15181a));
+		base.position.set(x, 0, zBorne);
 		base.userData.borneId = b.id;
 		g.add(base);
 		const tornillo = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 2.6, 10), M.metal(0xc2c8cd));
-		tornillo.position.set(x, 0, -CHAPA_PUERTA - 25.4);
+		tornillo.position.set(x, 0, zBorne - 3.4);
 		tornillo.rotation.x = Math.PI / 2;
 		g.add(tornillo);
 		const rot = marca(b.id, 2.6);
 		if (rot) {
-			rot.position.set(x, -6.6, -CHAPA_PUERTA - 25.6);
+			rot.position.set(x, -6.6, zBorne - 3.2);
 			rot.rotation.y = Math.PI;   // se lee desde dentro del armario, que es de donde se cablea
 			g.add(rot);
 		}
@@ -342,6 +576,16 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 	agarre.rotation.x = Math.PI / 2;
 	agarre.position.z = VUELO / 2 - 2;
 	agarre.userData.dispositivoId = d.id;
+	/*
+	 * ES UNA ZONA DE AGARRE, NO UNA PIEZA: se marca como tal para que no le robe el clic a nada
+	 * que se vea. Es un cilindro INVISIBLE y bastante más gordo que la lente, así que sin esta
+	 * marca tapaba —para el ratón, no para los ojos— todo lo que pasara por detrás. Y por detrás
+	 * pasa ahora el mazo: los puentes que unen dos pilotos por la cara interior de la hoja no se
+	 * podían seleccionar desde ningún ángulo, porque a treinta y cuatro milímetros por delante
+	 * había un cilindro que nadie ve. Misma regla que el tubo de agarre de los cables: gana
+	 * siempre lo visible.
+	 */
+	agarre.userData.agarre = true;
 	g.add(agarre);
 
 	// Medidas declaradas, para que el editor sepa cuánto ocupa sin tener que medir la malla.
