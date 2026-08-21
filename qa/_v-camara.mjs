@@ -33,8 +33,9 @@ const grados = (r) => (r * 180) / Math.PI;
 {
 	const o = await orbita();
 	ok(o.botones.izq === null, `el botón izquierdo NO gira la cámara (${o.botones.izq})`);
-	ok(o.botones.medio === 1, `la rueda pulsada gira (${o.botones.medio})`);
-	ok(o.botones.der === 2, `el derecho desplaza (${o.botones.der})`);
+	// `THREE.MOUSE.ROTATE` vale 0 y `PAN` vale 2; no son los números del botón, son las acciones.
+	ok(o.botones.medio === 0, `la rueda pulsada GIRA (acción ${o.botones.medio})`);
+	ok(o.botones.der === 2, `el derecho DESPLAZA (acción ${o.botones.der})`);
 	ok(o.alCursor === true, 'el zoom va hacia el cursor');
 	ok(o.topes.azMin === null || o.topes.azMin === undefined || !Number.isFinite(o.topes.azMin),
 		`el azimut no tiene tope por abajo (${o.topes.azMin})`);
@@ -75,9 +76,13 @@ async function arrastrar(boton, dx, dy, { shift = false, pasos = 12 } = {}) {
 	await p.evaluate(() => window.qa.congelarCamara(true));
 
 	const serie = [await orbita()];
-	// Treinta tirones iguales: si la vuelta es de verdad, el azimut avanza siempre lo mismo.
-	for (let i = 0; i < 30; i++) {
-		await arrastrar('middle', 150, 0, { pasos: 6 });
+	/*
+	 * Doce tirones iguales, largos. Si la vuelta es de verdad, el azimut avanza siempre lo mismo
+	 * y en total pasa de los 360°. Eran treinta tirones de seis pasos cada uno: cuatrocientos
+	 * viajes al navegador para comprobar lo mismo, y la prueba se comía su propio tiempo.
+	 */
+	for (let i = 0; i < 12; i++) {
+		await arrastrar('middle', 340, 0, { pasos: 4 });
 		serie.push(await orbita());
 	}
 	// Se desenrolla el ángulo para poder hablar de «cuánto ha girado en total».
@@ -103,13 +108,19 @@ async function arrastrar(boton, dx, dy, { shift = false, pasos = 12 } = {}) {
 
 /* ---------------- 4. Arriba y abajo, hasta el techo y hasta el suelo ---------------- */
 {
-	const alto = [];
-	for (let i = 0; i < 14; i++) { await arrastrar('middle', 0, -70, { pasos: 5 }); alto.push((await orbita()).polar); }
-	const bajo = [];
-	for (let i = 0; i < 28; i++) { await arrastrar('middle', 0, 70, { pasos: 5 }); bajo.push((await orbita()).polar); }
-	console.log(`   vertical alcanzada: ${grados(Math.min(...alto)).toFixed(1)}° .. ${grados(Math.max(...bajo)).toFixed(1)}°`);
-	ok(grados(Math.min(...alto)) < 10, 'se llega a mirar el armario desde arriba');
-	ok(grados(Math.max(...bajo)) > 170, 'y desde abajo');
+	/*
+	 * SE MIDE EL RECORRIDO, NO EL SENTIDO. Arrastrar hacia arriba baja la cámara y al revés —es
+	 * la convención de «arrastro el objeto», la de cualquier visor 3D— y la primera versión de
+	 * esta prueba daba por hecho lo contrario y luego se quedaba con la primera muestra de la
+	 * serie en vez de con el extremo. Lo que importa es que se llegue a los DOS topes.
+	 */
+	const polares = [];
+	for (let i = 0; i < 7; i++) { await arrastrar('middle', 0, -150, { pasos: 3 }); polares.push((await orbita()).polar); }
+	for (let i = 0; i < 14; i++) { await arrastrar('middle', 0, 150, { pasos: 3 }); polares.push((await orbita()).polar); }
+	const masArriba = grados(Math.min(...polares)), masAbajo = grados(Math.max(...polares));
+	console.log(`   vertical alcanzada: ${masArriba.toFixed(1)}° .. ${masAbajo.toFixed(1)}°`);
+	ok(masArriba < 10, `se llega a mirar el armario desde arriba (${masArriba.toFixed(1)}°)`);
+	ok(masAbajo > 170, `y desde abajo (${masAbajo.toFixed(1)}°)`);
 	const o = await orbita();
 	ok(o.arriba.y > 0.99, 'sin quedar del revés en ninguno de los dos extremos');
 }
@@ -121,9 +132,9 @@ async function arrastrar(boton, dx, dy, { shift = false, pasos = 12 } = {}) {
 	await p.evaluate(() => window.qa.congelarCamara(true));
 	await p.mouse.move(CX, CY);
 	const d = [(await orbita()).distancia];
-	for (let i = 0; i < 12; i++) {
+	for (let i = 0; i < 10; i++) {
 		await p.mouse.wheel(0, -120);
-		await p.waitForTimeout(70);
+		await p.waitForTimeout(60);
 		d.push((await orbita()).distancia);
 	}
 	const razones = [];
@@ -291,6 +302,23 @@ async function arrastrar(boton, dx, dy, { shift = false, pasos = 12 } = {}) {
 		`tras pasar por Visualización el azimut sigue libre (${o.topes.azMin}..${o.topes.azMax})`);
 	console.log(`   topes verticales tras Visualización: ${grados(o.topes.polMin).toFixed(1)}°..${grados(o.topes.polMax).toFixed(1)}°`);
 	ok(grados(o.topes.polMax) > 174, 'y los verticales tampoco se estrechan');
+}
+
+/* ---------------- 8 bis. Por detrás no se leen los rótulos de dentro ---------------- */
+{
+	const etiquetas = () => p.evaluate(() => {
+		const g = window.qa.proyecto().gabinete;
+		return { visibles: window.qa.etiquetasVisibles?.() };
+	});
+	await p.evaluate(() => window.qa.verDesde({ x: 0, y: 0, z: 1400, tx: 0, ty: 0, tz: 60 }));
+	await p.waitForTimeout(500);
+	const delante = await etiquetas();
+	await p.evaluate(() => window.qa.verDesde({ x: 0, y: 0, z: -1400, tx: 0, ty: 0, tz: 60 }));
+	await p.waitForTimeout(500);
+	const detras = await etiquetas();
+	console.log(`   rótulos visibles: de frente ${delante.visibles} · por detrás ${detras.visibles}`);
+	ok(delante.visibles > 0, `de frente se leen los rótulos (${delante.visibles})`);
+	ok(detras.visibles === 0, `y por detrás no atraviesan la chapa del fondo (${detras.visibles})`);
 }
 
 /* ---------------- 9. La vuelta, en fotos ---------------- */

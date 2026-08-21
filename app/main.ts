@@ -1146,8 +1146,19 @@ function encuadrar(): void {
 	const mundoPorPixel = (2 * distancia * Math.tan(fovV / 2)) / alto;
 	const desvio = ((tapaIzq - tapaDer) / 2) * mundoPorPixel;
 
-	controles.target.set(-desvio, 0, 0);
-	camara.position.set(-desvio, 0, distancia);
+	/*
+	 * EL PIVOTE VA AL CENTRO DEL ARMARIO, no al plano de la placa.
+	 *
+	 * Con el tablero desnudo, z = 0 —la chapa de montaje— era el centro de todo y no había más
+	 * que hablar. Con armario, ese plano es el FONDO: la caja se extiende hacia el observador
+	 * hasta la hoja de la puerta, así que girar alrededor de z = 0 es girar alrededor de la
+	 * trasera. Al dar la vuelta entera —que ahora se puede— el armario describía un arco enorme
+	 * y se salía del encuadre por un lado antes de aparecer por el otro. Pivotando en el centro
+	 * de la caja, la vuelta es una vuelta y el armario se queda donde está.
+	 */
+	const zPivote = escenario?.envolvente?.visible ? Math.max(0, (caja.profundidad ?? 0) / 2 - 5) : 0;
+	controles.target.set(-desvio, 0, zPivote);
+	camara.position.set(-desvio, 0, zPivote + distancia);
 	controles.update();
 
 	// El alzado se encuadra por su cuenta: en ortográfica el tamaño no lo da la distancia
@@ -2122,8 +2133,30 @@ function refrescarEtiquetas(): void {
 	const hayArmario = escenario.envolvente.visible;
 	// 0,15 ≈ 18°: en cuanto la puerta despega, lo de dentro ya se ve.
 	const seVeDentro = !hayArmario || puertaAhora > 0.15;
-	const v = casilla && !visualizacion && seVeDentro;
+	const v = casilla && !visualizacion && seVeDentro && !mirandoPorDetras;
 	for (const t of escenario.etiquetas) t.visible = v;
+}
+
+/**
+ * ¿LA CÁMARA ESTÁ POR DETRÁS DEL TABLERO? Y por qué hace falta saberlo ahora y antes no.
+ *
+ * Los sprites de designación se dibujan a propósito SIN comprobar profundidad, para que no los
+ * tape el aparato al que nombran. Mientras la cámara no podía pasar de los setenta y cinco grados
+ * eso no tenía consecuencias. Con la vuelta completa sí: desde la trasera del armario se leía
+ * «-KM1», «-KM2» y media docena más flotando sobre la chapa del fondo, sobre aparatos que están
+ * al otro lado y no se ven. Un rótulo que atraviesa dos milímetros de acero no informa: confunde.
+ *
+ * Se mira UNA vez por fotograma —una comparación, no un recorrido— y solo se toca la escena
+ * cuando el lado cambia de verdad.
+ */
+let mirandoPorDetras = false;
+
+function vigilarLadoDeLaCamara(): void {
+	// El fondo interior del armario está en z = −11; veinte milímetros por detrás no hay duda.
+	const detras = camaraViva().position.z < -20;
+	if (detras === mirandoPorDetras) return;
+	mirandoPorDetras = detras;
+	refrescarEtiquetas();
 }
 
 /** Un paso de la animación. Devuelve verdadero mientras siga moviéndose. */
@@ -7481,6 +7514,7 @@ renderer.setAnimationLoop(() => {
 	});
 	animarPuerta(dt);
 	(vista2D ? controlesOrto : controles).update();
+	vigilarLadoDeLaCamara();
 	ajustarRotulos();
 	pintar();
 });
@@ -8571,6 +8605,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			});
 			return salida;
 		},
+		/** Cuántos rótulos de designación se están dibujando ahora mismo. */
+		etiquetasVisibles: () => escenario.etiquetas.filter((t) => t.visible).length,
 		componentesDePuerta: () => escenario.aparatos
 			.filter((g) => g.userData.montaje === 'puerta')
 			.map((g) => {
@@ -8682,6 +8718,12 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			puerta: escenario.puerta.pivote.uuid,
 			raiz: escenario.raiz.uuid,
 			cables: escenario.cables.uuid,
+			// El mazo de puerta, aparte: abrir la hoja no puede rehacerlo, solo volver a tender
+			// los lazos. Si estos identificadores cambian, es que se ha montado otra vez.
+			mazoEnLaPuerta: escenario.mazo?.enLaPuerta.uuid,
+			mazoFlexibles: escenario.mazo?.flexibles.uuid,
+			tubosDeMazo: (escenario.mazo?.enLaPuerta.children.length ?? 0)
+				+ (escenario.mazo?.flexibles.children.length ?? 0),
 			dispositivos: escenario.dispositivos.uuid,
 			frontal: escenario.frontal.map((f) => `${f.tipo}:${f.id}=${f.grupo.uuid}`),
 			mallasEnEscena: (() => { let n = 0; escenario.raiz.traverse((o) => { if ((o as THREE.Mesh).isMesh) n++; }); return n; })(),
