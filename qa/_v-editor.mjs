@@ -158,7 +158,10 @@ if (vecinas.length) {
 	await p.waitForTimeout(300);
 	const trasSoltar = await una('aparato', aparato.id);
 	ok(Math.abs(trasSoltar.x - objetivo.x) <= 1, `el imantado engancha la X de la vecina (${trasSoltar.x} vs ${objetivo.x})`);
-	ok(/imantado a/.test(ayuda), `la barra avisa del imantado mientras se arrastra: «${ayuda.slice(0, 90)}»`);
+	// La guía dejó de ser una frase y pasó a ser pastillas —«imantado · rotAviso y rotT»— así que
+	// se comprueba lo que de verdad importa: que avisa, y que dice CON QUIÉN se ha enganchado.
+	ok(/imantado/.test(ayuda) && ayuda.includes(objetivo.id),
+		`la barra avisa del imantado y con quién, mientras se arrastra: «${ayuda.slice(0, 90)}»`);
 	ok(trasSoltar.x === antesDeSoltar.x && trasSoltar.y === antesDeSoltar.y, 'soltar no añade ninguna corrección extra');
 
 	/* ---- 7. Alt: ninguna ayuda ---- */
