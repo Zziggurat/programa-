@@ -63,7 +63,14 @@ const elegido = await p.evaluate(() => {
 		 * solo los vecinos y el canto de la placa, la prueba elegía un contactor que tenía
 		 * trescientos milímetros «libres» y no se movía ni uno, porque su riel acababa ahí.
 		 */
-		const riel = (g.rieles ?? []).find((r) => r.id === c.rielId && r.orientacion !== 'v');
+		const riel = (g.rieles ?? []).find((r) => r.id === c.rielId);
+		/*
+		 * Y UN APARATO EN CARRIL VERTICAL NO SE MUEVE EN HORIZONTAL, punto: el imantado le clava
+		 * la x al eje del perfil. Tirando de él a la derecha no se mueve ni un milímetro, y eso
+		 * es lo correcto —está atornillado a un riel— pero no sirve para probar el gesto. Se
+		 * descarta al elegir, en vez de descubrirlo midiendo cero.
+		 */
+		if (riel?.orientacion === 'v') continue;
 		const topeDer = riel ? Math.min(g.ancho, riel.x + riel.largo) : g.ancho;
 		const topeIzq = riel ? Math.max(0, riel.x) : 0;
 		const der = vecinos.filter((k) => k.x > c.x)

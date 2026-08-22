@@ -158,10 +158,17 @@ if (vecinas.length) {
 	await p.waitForTimeout(300);
 	const trasSoltar = await una('aparato', aparato.id);
 	ok(Math.abs(trasSoltar.x - objetivo.x) <= 1, `el imantado engancha la X de la vecina (${trasSoltar.x} vs ${objetivo.x})`);
-	// La guía dejó de ser una frase y pasó a ser pastillas —«imantado · rotAviso y rotT»— así que
-	// se comprueba lo que de verdad importa: que avisa, y que dice CON QUIÉN se ha enganchado.
-	ok(/imantado/.test(ayuda) && ayuda.includes(objetivo.id),
-		`la barra avisa del imantado y con quién, mientras se arrastra: «${ayuda.slice(0, 90)}»`);
+	/*
+	 * La guía dejó de ser una frase y pasó a ser pastillas: «imantado · rotAviso y rotT».
+	 *
+	 * Y con quién se engancha NO es siempre el vecino al que se apunta: el imantado mira todas
+	 * las piezas quietas, así que al pasar cerca de un rótulo se engancha a su eje antes de
+	 * llegar al aparato de destino. Exigir un nombre concreto era exigir un detalle del ejemplo.
+	 * Lo que tiene que cumplirse es que avise mientras se arrastra y que diga a qué.
+	 */
+	const conQuien = /imantado\s*(.+?)(?:Alt|Flechas|Arrastrar|$)/.exec(ayuda)?.[1]?.trim();
+	ok(/imantado/.test(ayuda) && !!conQuien,
+		`la barra avisa del imantado y con quién, mientras se arrastra: «imantado ${conQuien ?? '¿?'}»`);
 	ok(trasSoltar.x === antesDeSoltar.x && trasSoltar.y === antesDeSoltar.y, 'soltar no añade ninguna corrección extra');
 
 	/* ---- 7. Alt: ninguna ayuda ---- */
