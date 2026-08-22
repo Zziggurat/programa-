@@ -2688,7 +2688,9 @@ export function construirEntradasCampo(
 	 * No es adorno: sin una superficie de referencia, el ojo no sabe a qué altura está cada cosa y
 	 * todo el conjunto parece un montaje pegado.
 	 */
-	const bancada = new THREE.Group();
+	// LA BANCADA SOLO SI HAY APARATOS QUE APOYAR. Con entradas declaradas y ningún aparato de
+	// campo, dibujarla sería poner una mesa vacía debajo del armario.
+	const bancada = campo.length ? new THREE.Group() : undefined;
 	const grisBanco = new THREE.MeshStandardMaterial({ color: 0x2b3138, roughness: 0.85, metalness: 0.05 });
 	const cantoBanco = new THREE.MeshStandardMaterial({ color: 0x3a424b, roughness: 0.7, metalness: 0.2 });
 	const anchoBanco = anchoGab + 90;
@@ -2696,16 +2698,16 @@ export function construirEntradasCampo(
 	const tablero = new THREE.Mesh(new THREE.BoxGeometry(anchoBanco, 14, 96), grisBanco);
 	tablero.position.copy(aEscena(anchoGab / 2, y + 78, 6));
 	tablero.receiveShadow = true;
-	bancada.add(tablero);
+	bancada?.add(tablero);
 	const canto = new THREE.Mesh(new THREE.BoxGeometry(anchoBanco, 5, 4), cantoBanco);
 	canto.position.copy(aEscena(anchoGab / 2, y + 70, 54));
-	bancada.add(canto);
+	bancada?.add(canto);
 	// Zócalo: da fondo y evita que la bancada parezca a su vez una tabla en el aire.
 	const zocalo = new THREE.Mesh(new THREE.BoxGeometry(anchoBanco - 40, 26, 70),
 		new THREE.MeshStandardMaterial({ color: 0x22272d, roughness: 0.9 }));
 	zocalo.position.copy(aEscena(anchoGab / 2, y + 98, 0));
-	bancada.add(zocalo);
-	grupo.add(bancada);
+	bancada?.add(zocalo);
+	if (bancada) grupo.add(bancada);
 
 	/*
 	 * LAS ENTRADAS DECLARADAS QUE NO USA NADIE. Un prensaestopas previsto y todavía sin cable es

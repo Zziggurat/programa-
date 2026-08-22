@@ -827,6 +827,27 @@
 	}
 	#panel-der { right: 0; width: 300px; border-left: 1px solid var(--borde); display: none; padding: 14px; }
 
+	/*
+	 * EN PANTALLAS ESTRECHAS, LOS PANELES ADELGAZAN; EL VISOR NO.
+	 *
+	 * Con el cajón y el inspector abiertos, 62 + 306 + 300 son 668 px de bordes. En un monitor de
+	 * 2560 eso es un 26 % y no se nota; en un portátil de 1366 es la MITAD de la pantalla, y lo
+	 * que queda para el tablero —lo único que el usuario está mirando— es una franja. Los paneles
+	 * son listas y campos: aguantan estrecharse. El visor no: un tablero pequeño no se puede
+	 * inspeccionar. `--tapa-izq`, que coloca la guía de abajo, sale de medir el ancho REAL, así
+	 * que sigue solo a estas reglas sin repetir el número en ningún sitio.
+	 */
+	@media (max-width: 1500px) {
+		.panel { width: 268px; }
+		#panel-der { width: 268px; }
+		#panel-izq { left: 56px; }
+		#rail { width: 56px; }
+	}
+	@media (max-width: 1280px) {
+		.panel { width: 238px; }
+		#panel-der { width: 238px; }
+	}
+
 	details { border-bottom: 1px solid var(--borde); }
 	details summary {
 		list-style: none; cursor: pointer; padding: 10px 14px; font-size: 11px;
