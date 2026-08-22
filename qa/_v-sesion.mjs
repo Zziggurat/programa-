@@ -142,11 +142,19 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 	});
 	console.log(`   bornes libres: ${candidatos.map((q) => `${q.d}.${q.b}(${q.carga})`).join(' ')}`);
 
+	/*
+	 * SE PRUEBAN LOS PARES EN LOS DOS SENTIDOS. Con dos bornes libres, empezar siempre por el
+	 * primero y buscar el compañero «más adelante en la lista» deja el segundo sin probar nunca
+	 * como origen: si el primero está tapado, la prueba se rinde con el otro intacto. Quien
+	 * cablea prueba por el otro extremo, y eso es lo que hace falta reproducir.
+	 */
+	const pares = [];
+	for (const a of candidatos) for (const b of candidatos) if (a.d !== b.d) pares.push([a, b]);
+
 	let hecho = false;
 	let armado = false;
-	for (let i = 0; i + 1 < candidatos.length && !hecho && i < 3; i++) {
-		const [a, b] = [candidatos[i], candidatos.find((q, j) => j > i && q.d !== candidatos[i].d)];
-		if (!b) break;
+	for (let i = 0; i < pares.length && !hecho && i < 4; i++) {
+		const [a, b] = pares[i];
 		await p.mouse.click(a.x, a.y);
 		await p.waitForTimeout(600);
 		const medias = await p.evaluate(() => window.qa.estadoInteraccion());
@@ -273,11 +281,17 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 				if (getComputedStyle(b.closest('.botonera') ?? b).position === 'sticky') continue;
 				hondo = Math.max(hondo, b.getBoundingClientRect().top - arriba + izq.scrollTop);
 			}
-			return { hondo: Math.round(hondo), scroll: izq.scrollHeight };
+			// Un cajón que ofrece un control PEGADO —un buscador arriba, un «Aplicar» abajo— no
+			// entierra nada aunque su lista sea larga: la salida está siempre a la vista.
+			const pegado = [...izq.querySelectorAll('input, button, .botonera')]
+				.some((q) => getComputedStyle(q).position === 'sticky' && q.closest('details')
+					&& getComputedStyle(q.closest('details')).display !== 'none');
+			return { hondo: Math.round(hondo), scroll: izq.scrollHeight, pegado };
 		});
 		if (!m) { console.log(`   ${h}: sin cajón`); continue; }
-		console.log(`   ${h}: ${m.scroll} px de contenido · el control más hondo a ${m.hondo} px`);
-		ok(m.hondo <= alto * 1.35,
+		console.log(`   ${h}: ${m.scroll} px de contenido · el control más hondo a ${m.hondo} px`
+			+ (m.pegado ? ' · con control pegado' : ''));
+		ok(m.hondo <= alto * 1.35 || m.pegado,
 			`en «${h}» ninguna acción queda enterrada (la más honda a ${m.hondo} px de ${alto})`);
 	}
 

@@ -870,7 +870,16 @@
 
 	/* Catálogo */
 	.grupo-catalogo { margin: 6px 0 2px; color: var(--texto-suave); font-size: 11px; }
-	#buscar-catalogo { width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 6px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 12.5px; }
+	/*
+	 * EL BUSCADOR DEL CATÁLOGO NO SE VA CON EL SCROLL.
+	 *
+	 * Medido: el catálogo entero ocupa 2.151 px y el último aparato cae a 2.109. El buscador ya
+	 * estaba —escribir «contactor» deja tres— pero se quedaba arriba del todo: quien había bajado
+	 * a mirar tenía que volver a subir para poder filtrar, que es justo cuando hace falta. Pegado
+	 * al borde del cajón, la lista larga deja de ser un problema: se recorre o se filtra, y las
+	 * dos cosas están siempre a mano.
+	 */
+	#buscar-catalogo { position: sticky; top: 0; z-index: 2; width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 6px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 12.5px; }
 	#buscar-catalogo::placeholder { color: var(--texto-suave); }
 	.catalogo-vacio { color: var(--texto-suave); font-size: 12px; padding: 8px 2px; }
 	.item-catalogo {
