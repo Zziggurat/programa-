@@ -950,8 +950,25 @@ function camaraViva(): THREE.Camera { return vista2D ? camaraOrto : camara; }
  * añadir el alzado se seguía bloqueando solo el de la perspectiva, así que en 2D —donde el botón
  * izquierdo desplaza la hoja— arrastrar una unión de cable movía la vista entera en vez del punto.
  */
+/**
+ * Deja (o quita) la cámara al gesto que está en marcha.
+ *
+ * Y CON ELLO SE ACABA LA NAVEGACIÓN, QUE ES LA MITAD QUE FALTABA.
+ *
+ * `navegando` existe para que, mientras se gira la vista, no se resalte ni se busque nada bajo
+ * el puntero: sesenta trazados de rayos por segundo para iluminar cosas que nadie mira. Lo
+ * levanta `OrbitControls` al empezar un gesto de cámara y lo baja al acabarlo.
+ *
+ * Con el botón izquierdo repartido entre girar y arrastrar, el gesto EMPIEZA como cámara —los
+ * controles siguen activos cuando llega el `pointerdown`— y se lo queda un aparato un instante
+ * después. Los controles se apagan aquí, pero `OrbitControls` ya no va a mandar su `end`: nadie
+ * bajaba `navegando`, y entonces el `pointermove` se iba por el atajo del principio y el aparato
+ * no se movía. Medido: la cámara quieta a 0°, el aparato quieto en 410 mm y ni un solo paso de
+ * deshacer. Quitarle la cámara al gesto es exactamente decir que ya no se está navegando.
+ */
 function permitirOrbita(permitir: boolean): void {
 	(vista2D ? controlesOrto : controles).enabled = permitir;
+	if (!permitir) navegando = false;
 }
 
 const pmrem = new THREE.PMREMGenerator(renderer);
