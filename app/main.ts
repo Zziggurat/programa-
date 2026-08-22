@@ -554,7 +554,6 @@ function avisarQueEsEjemplo(): void {
  */
 function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void): void {
 	const anterior = proyecto;
-	const instantanea = JSON.stringify(proyecto);
 	const pilaAntes = [...pila];
 	const rehacerAntes = [...rehacerPila];
 	const congeladoAntes = guardadoCongelado;
@@ -600,8 +599,25 @@ function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void): void {
 	 * pestaña el navegador preguntaría por un tablero que no es del usuario.
 	 */
 	if (!proyecto.esEjemplo) senalarTrabajoSinExportar();
-	pila.push(instantanea);
-	if (pila.length > 60) pila.shift();
+	/*
+	 * EL HISTORIAL ES DEL DOCUMENTO ABIERTO, Y AQUÍ SE ABRE OTRO.
+	 *
+	 * Antes se apilaba `instantanea` —el tablero de antes— como si cambiar de proyecto fuera una
+	 * edición más. Medido con el estrella-triángulo: al abrirlo desde la biblioteca el historial
+	 * quedaba en «deshacer: 1», y ese único Ctrl+Z no deshacía ninguna edición, devolvía la placa
+	 * EN BLANCO del arranque. O sea que abrías un ejemplo, pulsabas deshacer para ver si habías
+	 * tocado algo sin querer, y el tablero desaparecía entero.
+	 *
+	 * No es un caso raro: es lo primero que hace cualquiera que no está seguro de haber cambiado
+	 * algo. Y no se arregla escondiendo el botón, porque el atajo sigue ahí. Se arregla diciendo
+	 * lo que es verdad: en un editor no se deshace hasta llegar a OTRO documento. Abrir un
+	 * archivo, empezar de cero o cargar un ejemplo empiezan con el historial limpio.
+	 *
+	 * Lo que NO cambia es el fracaso: si el montaje revienta, el `catch` devuelve el proyecto
+	 * anterior y sus dos pilas exactamente como estaban. Cambiar de documento sigue siendo todo
+	 * o nada.
+	 */
+	pila.length = 0;
 	rehacerPila.length = 0;
 	actualizarBotonesHistorial();
 	autoguardar();
@@ -3538,10 +3554,6 @@ function pintarPanelCable(id: string): void {
 		if (v) c.clase = v as ClaseConductor; else delete c.clase;
 		recalcular(); reconstruirCables(); pintarPaneles();
 	};
-	// La ayuda de edición vive en la guía de abajo, no en un párrafo dentro del inspector: es la
-	// misma información y estaba escrita dos veces, con dos redacciones distintas.
-	ayudaDeEstado(['Doble clic · nueva unión', 'Arrastrar unión · moverla',
-		'Doble clic en la unión · quitarla', 'X/Y/Z · fijar eje']);
 	(panel.querySelector('#cbl-auto') as HTMLButtonElement | null)?.addEventListener('click', () => {
 		if (!capturar()) return;
 		delete c.trazado;
@@ -4119,6 +4131,18 @@ function aplicarSeleccion(nueva: Seleccion | undefined): void {
 	construirHandles();
 	pintarPaneles();
 	pintarSeleccion();
+	/*
+	 * LA GUÍA DE ABAJO CUENTA LO QUE SE PUEDE HACER CON LO ELEGIDO, y se decide AQUÍ.
+	 *
+	 * Estaba escrita como un párrafo dentro del inspector del cable —la misma información dos
+	 * veces, con dos redacciones distintas— y desde el inspector no hay manera de enterarse de
+	 * que ya se eligió otra cosa: la guía se quedaba explicando cómo mover una unión con un
+	 * contactor seleccionado. Este es el único sitio que sabe qué está elegido.
+	 */
+	ayudaDeEstado(sel?.tipo === 'cable'
+		? ['Doble clic · nueva unión', 'Arrastrar unión · moverla',
+			'Doble clic en la unión · quitarla', 'X/Y/Z · fijar eje']
+		: undefined);
 }
 
 /**
@@ -6814,8 +6838,11 @@ interface FichaHerramienta {
 	ayuda: string[];
 	/** En qué espacios tiene sentido. */
 	espacios: Espacio[];
-	/** Cursor sobre el visor, para que el estado se note también con la mano. */
-	cursor?: string;
+	/*
+	 * EL CURSOR NO VA AQUÍ. Lo pone quien sabe qué hay debajo del puntero —un borne, un cable,
+	 * una pieza agarrable— y tener además un cursor «de la herramienta» daba dos sitios que
+	 * decidían lo mismo y podían discrepar. Manda el contexto, que es el que tiene el dato.
+	 */
 }
 
 const HERRAMIENTAS: Record<Herramienta, FichaHerramienta> = {
@@ -6833,7 +6860,6 @@ const HERRAMIENTAS: Record<Herramienta, FichaHerramienta> = {
 		modo: 'trabajo',
 		espacios: ['interior', 'conjunto'],
 		ayuda: ['Clic en un borne · origen', 'Clic en otro borne · destino', 'Doble clic en un cable · unión', 'Esc · cancelar'],
-		cursor: 'crosshair',
 	},
 	estructura: {
 		modo: 'editor',
@@ -7802,6 +7828,12 @@ function aplicarVista2D(activar: boolean): void {
 	encuadrar();
 }
 ($('btn-2d') as HTMLButtonElement).onclick = () => aplicarVista2D(!vista2D);
+/*
+ * CENTRAR. Es el mismo `encuadrar` de siempre y la misma acción que hace F: hay UN botón y UN
+ * atajo, no dos maneras de encuadrar que puedan acabar divergiendo. Con la órbita en el botón
+ * izquierdo es fácil acabar mirando el tablero de canto, y entonces esto es lo que se busca.
+ */
+($('btn-centrar') as HTMLButtonElement).onclick = () => { encuadrar(); };
 /**
  * Aprieta la barra de herramientas hasta que quepa, MIDIENDO en cada paso.
  *
@@ -9199,6 +9231,25 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			};
 		},
 		/** El mazo de puerta: cuántas piezas hay, cuánto miden los lazos y dónde cae el tramo de hoja. */
+		/**
+		 * LA TRENZA DE MASA: si está tendida, y por dónde va. Se pregunta aparte porque en el
+		 * modelo va aparte: no es un conductor del esquema y no se cuenta con ellos.
+		 */
+		trenza: () => {
+			const t = escenario.mazo.bonding;
+			if (!t) return undefined;
+			const caja = t.flexible.geometry.boundingBox
+				?? (t.flexible.geometry.computeBoundingBox(), t.flexible.geometry.boundingBox!);
+			const destino = t.entrada.getWorldPosition(new THREE.Vector3());
+			return {
+				radio: t.radio,
+				reserva: t.reserva,
+				fijo: { x: t.fijo.x, y: t.fijo.y, z: t.fijo.z },
+				entrada: { x: destino.x, y: destino.y, z: destino.z },
+				zMax: caja.max.z,
+				pinchable: t.flexible.raycast !== THREE.Mesh.prototype.raycast,
+			};
+		},
 		mazoPuerta: () => {
 			const m = escenario.mazo;
 			const largos: Record<string, number> = {};

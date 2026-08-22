@@ -449,6 +449,12 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 	puerta.frente.add(enPuerta);
 
 	const g = proyecto.gabinete;
+	// La trenza NO depende de que haya aparatos en la puerta: es del armario. Por eso se tiende
+	// también en los caminos cortos, que es donde se quedaba sin dibujar.
+	const conTrenza = () => {
+		const b = tenderTrenza(o, enPuerta, flexibles);
+		return { enLaPuerta: enPuerta, flexibles, cables, ...(b ? { bonding: b } : {}) };
+	};
 	if (!g) return { enLaPuerta: enPuerta, flexibles, cables };
 
 	// Las matrices tienen que estar al día ANTES de preguntar dónde cae un terminal: si no,
@@ -458,7 +464,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 	const conductores = proyecto.conductores.filter(
 		(c) => enLaPuerta(proyecto, c.de.dispositivoId) || enLaPuerta(proyecto, c.a.dispositivoId),
 	);
-	if (!conductores.length) return { enLaPuerta: enPuerta, flexibles, cables };
+	if (!conductores.length) return conTrenza();
 
 	/*
 	 * A QUÉ ALTURA ENTRA EL MAZO. A la del aparato al que sirve, no a una altura fija: si los
@@ -483,7 +489,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		// primero y el cable se dibujaba dos veces contra el mismo punto.
 		if (p) terminales.set(`${d.conductorId}|${d.dispositivoId}|${d.borneId}`, p);
 	}
-	if (!terminales.size) return { enLaPuerta: enPuerta, flexibles, cables };
+	if (!terminales.size) return conTrenza();
 
 	const signo = o.izquierda ? -1 : 1;
 	const ajustes = ajustesDeMazo(proyecto);
@@ -705,64 +711,82 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		cables.push(cable);
 	}
 
-	/*
-	 * LA TRENZA DE MASA, si el proyecto la pide.
-	 *
-	 * Es el mismo problema físico que un conductor de puerta —algo flexible que cruza una bisagra
-	 * y no puede quedar tirante— así que reutiliza exactamente la misma maquinaria: punto fijo en
-	 * el cuerpo, entrada solidaria con la hoja, lazo con reserva. Lo que NO comparte es el
-	 * recorrido: sale del canto de bisagra por el camino más corto y no sube por el tronco de
-	 * mando. Ésa es la diferencia entre una masa y un hilo de control, y se ve.
-	 *
-	 * Que esté puesta no dice que el tablero cumpla nada. Dice que está dibujada, que está
-	 * contada y que quien lo monte sabe de dónde a dónde va.
-	 */
-	const bond = g.caja?.bonding;
-	if (bond?.puesto) {
-		const radioB = o.radio(bond.seccion ?? 6);
-		const matB = new THREE.MeshStandardMaterial({ color: 0x2fa84f, roughness: 0.72, metalness: 0.12 });
-		// Abajo del todo del canto de bisagras: es donde se atornilla, lejos de los aparatos.
-		const yB = -o.caja.alto / 2 + 90;
-		const entradaB = new THREE.Vector3(xEntrada, yB, Z_CARA_INTERIOR + 4);
-		const marcadorB = new THREE.Object3D();
-		marcadorB.position.copy(entradaB);
-		puerta.frente.add(marcadorB);
-		marcadorB.updateMatrixWorld(true);
-		const destinoB = marcadorB.getWorldPosition(new THREE.Vector3());
-		const anclaB = anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, o.caja.alto / 2 - yB, 0, ajustes.desdeBisagra);
-		const fijoB = o.aEscena(anclaB.x, anclaB.y, anclaB.z);
-		const dentroB = new THREE.Vector3(-signo, 0, 0);
-		const bonding: CablePuerta = {
-			conductorId: '',
-			enLaPuerta: new THREE.Mesh(),
-			flexible: undefined as unknown as THREE.Mesh,
-			entrada: marcadorB,
-			fijo: fijoB,
-			// Una trenza de masa se pone corta y holgada, no larga: cuanto menos cable, menos
-			// impedancia, y por eso lleva menos reserva que un hilo de mando.
-			reserva: Math.max(20, fijoB.distanceTo(destinoB) + 46),
-			radio: radioB,
-			caida: new THREE.Vector3(0, -1, 0).addScaledVector(dentroB, 0.25).normalize(),
-			salida,
-			segmentos: 22,
-			radiales: 8,
-			trazaLazo: [],
-		};
-		const curvaB = curvaFlexible(bonding, destinoB);
-		bonding.flexible = tubo(curvaB, bonding.segmentos, radioB, bonding.radiales, matB, '');
-		// No se puede pinchar: no es un conductor del esquema y no debe robarle el clic a uno.
-		bonding.flexible.raycast = () => undefined;
-		bonding.flexible.userData.conductorId = undefined;
-		bonding.trazaLazo = curvaB.getPoints(16);
-		flexibles.add(bonding.flexible);
-		// Y sus dos amarres, uno a cada lado de la bisagra: sin ellos la trenza sería una línea.
-		const amarreHoja = sujecion(radioB * 2 + 4);
-		amarreHoja.position.set(xEntrada, yB, Z_CARA_INTERIOR + 1.5);
-		amarreHoja.rotation.y = Math.PI;
-		enPuerta.add(amarreHoja);
-		return { enLaPuerta: enPuerta, flexibles, cables, bonding };
-	}
-	return { enLaPuerta: enPuerta, flexibles, cables };
+	const bonding = tenderTrenza(o, enPuerta, flexibles);
+	return { enLaPuerta: enPuerta, flexibles, cables, ...(bonding ? { bonding } : {}) };
+}
+
+/**
+ * LA TRENZA DE MASA DE LA HOJA, si el proyecto la pide.
+ *
+ * Es el mismo problema físico que un conductor de puerta —algo flexible que cruza una bisagra y
+ * no puede quedar tirante— así que reutiliza exactamente la misma maquinaria: punto fijo en el
+ * cuerpo, entrada solidaria con la hoja, lazo con reserva. Lo que NO comparte es el recorrido:
+ * sale del canto de bisagra por el camino más corto y no sube por el tronco de mando. Ésa es la
+ * diferencia entre una masa y un hilo de control, y se ve.
+ *
+ * Va en su propia función, y no dentro del bucle de conductores, porque NO depende de ellos: un
+ * armario puede llevar trenza y no llevar un solo aparato en la puerta.
+ *
+ * Que esté puesta no dice que el tablero cumpla nada. Dice que está dibujada, que está contada y
+ * que quien lo monte sabe de dónde a dónde va.
+ */
+function tenderTrenza(
+	o: OpcionesMazo,
+	enPuerta: THREE.Group,
+	flexibles: THREE.Group,
+): CablePuerta | undefined {
+	const bond = o.proyecto.gabinete?.caja?.bonding;
+	if (!bond?.puesto) return undefined;
+	const ajustes = ajustesDeMazo(o.proyecto);
+	const signo = o.izquierda ? -1 : 1;
+	const xEntrada = signo * (o.puerta.ancho / 2 - ajustes.desdeBisagra);
+	const radio = o.radio(bond.seccion ?? 6);
+	const material = new THREE.MeshStandardMaterial({ color: 0x2fa84f, roughness: 0.72, metalness: 0.12 });
+
+	// Abajo del todo del canto de bisagras: es donde se atornilla, lejos de los aparatos.
+	const yB = -o.caja.alto / 2 + 90;
+	const marcador = new THREE.Object3D();
+	marcador.position.set(xEntrada, yB, Z_CARA_INTERIOR + 4);
+	o.puerta.frente.add(marcador);
+	marcador.updateMatrixWorld(true);
+	const destino = marcador.getWorldPosition(new THREE.Vector3());
+
+	const ancla = anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, o.caja.alto / 2 - yB, 0, ajustes.desdeBisagra);
+	const fijo = o.aEscena(ancla.x, ancla.y, ancla.z);
+	const dentro = new THREE.Vector3(-signo, 0, 0);
+	const salida = new THREE.Vector3(0, 0, -1)
+		.applyQuaternion(o.puerta.frente.getWorldQuaternion(new THREE.Quaternion())).normalize();
+
+	const trenza: CablePuerta = {
+		conductorId: '',
+		enLaPuerta: new THREE.Mesh(),
+		flexible: undefined as unknown as THREE.Mesh,
+		entrada: marcador,
+		fijo,
+		// Una trenza de masa se pone corta y holgada, no larga: cuanto menos cable, menos
+		// impedancia, y por eso lleva menos reserva que un hilo de mando.
+		reserva: Math.max(20, fijo.distanceTo(destino) + 46),
+		radio,
+		caida: new THREE.Vector3(0, -1, 0).addScaledVector(dentro, 0.25).normalize(),
+		salida,
+		segmentos: 22,
+		radiales: 8,
+		trazaLazo: [],
+	};
+	const curva = curvaFlexible(trenza, destino);
+	trenza.flexible = tubo(curva, trenza.segmentos, radio, trenza.radiales, material, '');
+	// No se puede pinchar: no es un conductor del esquema y no debe robarle el clic a uno.
+	trenza.flexible.raycast = () => undefined;
+	trenza.flexible.userData.conductorId = undefined;
+	trenza.trazaLazo = curva.getPoints(16);
+	flexibles.add(trenza.flexible);
+
+	// Y su amarre en la hoja: sin él la trenza sería una línea, no una trenza atornillada.
+	const amarre = sujecion(radio * 2 + 4);
+	amarre.position.set(xEntrada, yB, Z_CARA_INTERIOR + 1.5);
+	amarre.rotation.y = Math.PI;
+	enPuerta.add(amarre);
+	return trenza;
 }
 
 /**

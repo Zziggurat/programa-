@@ -163,23 +163,23 @@ const donde = () => p.evaluate((i) => {
 	// Un tirón corto no sirve: al soltar, el editor corre el aparato al hueco libre más cercano
 	// —que sería el suyo— si se ha quedado encimado con el vecino. Se mueve lo bastante.
 	for (let i = 1; i <= 8; i++) await p.mouse.move(pix.x + i * 9, pix.y);
+	/*
+	 * SE MIRA CON EL BOTÓN TODAVÍA APRETADO, y no después de soltar.
+	 *
+	 * Al soltar manda el editor: corre el aparato al hueco libre más cercano si se ha encimado
+	 * con el vecino, y lo devuelve a su sitio si no cabe. Eso está bien y lo comprueban
+	 * `_v-picking` y `_v-editor`. Lo que esta prueba tiene que saber es a QUIÉN fue el gesto, y
+	 * eso se ve mientras el gesto está pasando: si el aparato se está moviendo, el arrastre es
+	 * suyo y no de la cámara.
+	 */
+	const enVuelo = await donde();
 	await p.mouse.up();
 	await p.waitForTimeout(350);
 	const s2 = await donde();
 	const giro = Math.abs(gr((await orbita()).azimut - antes.azimut));
-	const hist = await p.evaluate(() => window.qa.historial());
-	console.log(`   historial: ${JSON.stringify(hist)} · ${sitio.x} → ${s2.x}`);
-	/*
-	 * LO QUE COMPRUEBA ESTA PRUEBA ES A QUIÉN VA EL GESTO, no adónde acaba el aparato.
-	 *
-	 * Arrastrando un aparato ya elegido, el gesto tiene que ir a él y NO a la cámara: eso son las
-	 * dos líneas de abajo —se abrió un paso de deshacer, o sea que hubo edición, y la vista no se
-	 * movió—. Dónde queda al soltar lo decide el editor, que lo corre al hueco libre más cercano
-	 * si se ha encimado con el vecino y lo devuelve a su sitio si no cabe; eso ya lo comprueban
-	 * `_v-picking` y `_v-editor`, y exigirlo aquí sería hacer depender esta prueba de cuánto sitio
-	 * libre tenga el ejemplo a la derecha del contactor de turno.
-	 */
-	ok(hist.deshacer > 0, `en Editor, arrastrar lo elegido edita el tablero (${hist.deshacer} pasos de deshacer)`);
+	console.log(`   ${sitio.x} → (arrastrando ${enVuelo.x}) → ${s2.x}`);
+	// A quién fue el gesto: al aparato, y no a la cámara. Las dos cosas, o no prueba nada.
+	ok(enVuelo.x !== sitio.x, `en Editor, arrastrar lo elegido lo mueve a él (${sitio.x} → ${enVuelo.x} mm)`);
 	ok(giro < 0.5, `y la cámara se queda quieta (${giro.toFixed(2)}°)`);
 	await p.keyboard.press('Control+z');
 	await p.waitForTimeout(400);
