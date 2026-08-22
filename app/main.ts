@@ -793,7 +793,21 @@ controles.maxPolarAngle = Math.PI * 0.978;
  * desplazar, que no estorba a nadie y salva a quien tenga un ratón sin botón central.
  */
 controles.mouseButtons = {
-	LEFT: null,
+	/*
+	 * EL IZQUIERDO GIRA Y ADEMÁS SELECCIONA, Y NO ES UNA CONTRADICCIÓN: LAS SEPARA UN UMBRAL.
+	 *
+	 * Con el giro en la rueda pulsada, navegar exigía un ratón de tres botones y una postura
+	 * incómoda; se probó y no compensa. Vuelve al izquierdo, pero sin la ambigüedad de antes: la
+	 * SELECCIÓN ya no ocurre al apretar, ocurre al SOLTAR y solo si el puntero no se movió más de
+	 * `UMBRAL_ARRASTRE` píxeles. Girar y soltar encima de un cable ya no puede seleccionarlo,
+	 * porque para entonces el gesto dejó de ser un clic.
+	 *
+	 * Y si al apretar hay algo que SE PUEDE ARRASTRAR debajo —un aparato en el Editor, una unión
+	 * de cable, una pieza del frontal— manda el arrastre y la cámara se queda quieta: es la regla
+	 * de cualquier editor 3D, y es la que hace que el izquierdo pueda con las dos cosas.
+	 */
+	LEFT: THREE.MOUSE.ROTATE,
+	// La rueda pulsada se queda como alias de girar: no estorba a nadie y hay quien ya la usa.
 	MIDDLE: THREE.MOUSE.ROTATE,
 	RIGHT: THREE.MOUSE.PAN,
 };
@@ -1500,9 +1514,9 @@ function moverArrastreFrontal(ev: MouseEvent): void {
 	}
 	mostrarGuiasFrontal(imantado.guias);
 	a.movido = true;
-	$('ayuda').textContent = `🎛️ ${Math.round(sitio.x)} · ${Math.round(sitio.y)} mm`
-		+ (imantado.guias.length ? ` · imantado a ${imantado.guias.map((g) => g.con).join(' y ')}` : '')
-		+ ' · Alt para colocar al milímetro';
+	ayudaDeEstado([`${Math.round(sitio.x)} · ${Math.round(sitio.y)} mm`,
+		...(imantado.guias.length ? [`imantado · ${imantado.guias.map((g) => g.con).join(' y ')}`] : []),
+		'Alt · sin ayudas', 'Flechas · 1 mm', 'Mayús+flechas · 10 mm']);
 }
 
 /** Soltar. Aquí NO se recoloca nada: la pieza se queda exactamente donde se dejó. */
@@ -1552,10 +1566,7 @@ function soltarArrastreFrontal(): void {
 		pintarListaFrontal();
 		pintarSeleccion();
 	}
-	$('ayuda').textContent = espacio === 'frontal'
-		? '🎛️ FRONTAL — Arrastra los mandos y los rótulos sobre la puerta · Mayúsculas para elegir varios · '
-			+ 'Alt mientras arrastras coloca al milímetro sin ayudas · Supr quita · Ctrl+D duplica'
-		: AYUDA[modo];
+	ayudaDeEstado(undefined);
 }
 
 /* ------------------- La ficha de un componente de puerta ------------------- */
@@ -1794,12 +1805,8 @@ function aplicarEspacio(nuevo: Espacio): void {
 	refrescarRejillaFrontal();
 	pintarListaFrontal();
 	pintarSeleccion();
-	$('ayuda').textContent = espacio === 'frontal'
-		? '🎛️ FRONTAL — Arrastra los mandos y los rótulos sobre la puerta · Mayúsculas para elegir varios · '
-			+ 'Alt mientras arrastras coloca al milímetro sin ayudas · Supr quita · Ctrl+D duplica'
-		: espacio === 'conjunto'
-			? '🧊 CONJUNTO — El armario entero. Gira y acerca la vista; para editar, entra en Interior o Frontal.'
-			: AYUDA[modo];
+	herramientaValida();
+	encajarPaneles();
 }
 
 /* ------------------------- La lista y las órdenes ------------------------- */
@@ -2111,8 +2118,6 @@ function aplicarPuerta(): void {
 		p.pivote.updateMatrixWorld(true);
 		actualizarMazoPuerta(escenario.mazo);
 	}
-	const b = $('btn-puerta') as HTMLButtonElement | null;
-	if (b) b.textContent = puertaDestino > 0.5 ? 'Cerrar la puerta' : 'Abrir la puerta';
 	pintarControlPuerta();
 	refrescarEtiquetas();
 }
@@ -2585,8 +2590,8 @@ function colocarPlantilla(plantilla: PlantillaAparato): void {
 	seleccionar(d.id);
 	colocando = { id: d.id };
 	renderer.domElement.style.cursor = 'copy';
-	$('ayuda').textContent = `📦 ${d.designacion ?? plantilla.nombre} va pegado al ratón — `
-		+ 'muévelo por la placa y haz clic para soltarlo · Esc lo cancela.';
+	ayudaDeEstado([`${d.designacion ?? plantilla.nombre} · pegado al puntero`,
+		'Clic · soltarlo en la placa', 'Esc · cancelar']);
 }
 
 /**
@@ -2618,7 +2623,7 @@ function moverColocacionAlCursor(ev: MouseEvent): void {
 	grupoDe(colocando.id)?.position.set(c.x, c.y, 0);
 	// Rojo si cae encima de otro aparato: se ve antes de soltar, no después.
 	const choca = solapaCon(col.x, col.y, col.ancho, col.alto, colocando.id);
-	for (const m of resaltados) m.emissive.setHex(choca ? 0xff3b3b : 0x1d4ed8);
+	for (const r of resaltados) r.clon.emissive.setHex(choca ? 0xff3b3b : 0x1d4ed8);
 }
 
 /** Suelta el aparato donde esté. Si choca con otro, no se suelta y se avisa. */
@@ -2636,7 +2641,7 @@ function soltarColocacion(): boolean {
 	if (rielTocado) reconstruirEstructuraUno({ tipo: 'riel', id: rielTocado });
 	actualizarConservandoAparatos();
 	seleccionar(id);
-	$('ayuda').textContent = '';
+	ayudaDeEstado(undefined);
 	return true;
 }
 
@@ -2650,7 +2655,7 @@ function cancelarColocacion(): void {
 	proyecto.gabinete!.colocaciones = proyecto.gabinete!.colocaciones.filter((c) => c.dispositivoId !== id);
 	aplicarSeleccion(undefined);
 	actualizarTodo();
-	$('ayuda').textContent = '';
+	ayudaDeEstado(undefined);
 	avisar('Colocación cancelada.', 'info');
 }
 
@@ -3183,9 +3188,7 @@ function pintarSeleccion(): void {
 		};
 		(panel.querySelector('#btn-elegir-destino') as HTMLButtonElement).onclick = () => {
 			eligiendoDestino = !eligiendoDestino;
-			$('ayuda').textContent = eligiendoDestino
-				? '🎯 Haz clic sobre el aparato de destino en el tablero…'
-				: AYUDA[modo];
+			ayudaDeEstado(eligiendoDestino ? ['Clic · el aparato de destino en el tablero', 'Esc · cancelar'] : undefined);
 			pintarSeleccion();
 		};
 	}
@@ -3671,7 +3674,31 @@ function aplicarEstructura(): void {
 const raycaster = new THREE.Raycaster();
 const puntero = new THREE.Vector2();
 let sel: Seleccion | undefined;
-let resaltados: THREE.MeshStandardMaterial[] = [];
+/**
+ * LO QUE ESTÁ RESALTADO AHORA MISMO, y con qué material estaba antes.
+ *
+ * Resaltar clona el material del objeto para no encender de paso a todos sus hermanos, que
+ * comparten instancia. Hasta ahora, al limpiar solo se apagaba el `emissive` del clon y el clon
+ * se quedaba puesto para siempre: cada selección dejaba atrás una copia huérfana de cada malla
+ * del aparato —y de cada malla de cada canaleta, y de cada tramo de cable— hasta que el escenario
+ * se reconstruía por otro motivo. No se veía; se acumulaba.
+ *
+ * Guardando la pareja se puede devolver el original y tirar el clon, que es lo que hay que hacer
+ * con una copia de trabajo cuando se acaba el trabajo.
+ */
+interface Resaltado { malla: THREE.Mesh; original: THREE.Material | THREE.Material[]; clon: THREE.MeshStandardMaterial; }
+let resaltados: Resaltado[] = [];
+
+/** Clona el material de una malla para poder encenderla sin encender a sus hermanas. */
+function resaltarMalla(m: THREE.Mesh, color: number, intensidad: number): THREE.MeshStandardMaterial {
+	const original = m.material;
+	const clon = (original as THREE.MeshStandardMaterial).clone();
+	m.material = clon;
+	clon.emissive.setHex(color);
+	clon.emissiveIntensity = intensidad;
+	resaltados.push({ malla: m, original, clon });
+	return clon;
+}
 let modoPin = false; // añadiendo un punto de conexión sobre una imagen de referencia
 let eligiendoDestino = false; // esperando un clic en 3D para elegir el aparato de destino del cable
 
@@ -3708,7 +3735,13 @@ let marcoHover: THREE.LineSegments | undefined;
 let hoverDispositivo: string | undefined;
 
 function limpiarResaltado(): void {
-	for (const m of resaltados) m.emissive.setHex(0x000000);
+	for (const r of resaltados) {
+		// Se devuelve el material de verdad y se tira el clon. Si entretanto alguien le cambió el
+		// material a la malla (una reconstrucción parcial, por ejemplo), no se pisa: manda el que
+		// haya puesto el último.
+		if (r.malla.material === r.clon) r.malla.material = r.original;
+		r.clon.dispose();
+	}
 	resaltados = [];
 	if (marcoSeleccion) {
 		marcoSeleccion.parent?.remove(marcoSeleccion);
@@ -3814,10 +3847,7 @@ function resaltarObjeto(raiz: THREE.Object3D | undefined, color = 0x1d4ed8, inte
 		// manchas de color justo cuando el usuario se ha acercado a leerlos.
 		if (o.userData.esMarca) return;
 		if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
-			o.material = o.material.clone();
-			o.material.emissive.setHex(color);
-			o.material.emissiveIntensity = intensidad;
-			resaltados.push(o.material);
+			resaltarMalla(o, color, intensidad);
 		}
 	});
 	marcarVolumen(raiz, color === 0xff3b3b ? 0xff7a7a : 0x8fd4ff);
@@ -3826,10 +3856,7 @@ function resaltarObjeto(raiz: THREE.Object3D | undefined, color = 0x1d4ed8, inte
 function resaltarPorUserData(clave: 'canaletaId' | 'rielId', id: string): void {
 	escenario.raiz.traverse((o) => {
 		if (o.userData[clave] === id && o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
-			o.material = o.material.clone();
-			o.material.emissive.setHex(0x1d4ed8);
-			o.material.emissiveIntensity = 0.2;
-			resaltados.push(o.material);
+			resaltarMalla(o, 0x1d4ed8, 0.2);
 		}
 	});
 }
@@ -3972,10 +3999,7 @@ function resaltarSeleccionExtra(): void {
 		if (!g) continue;
 		g.traverse((o) => {
 			if (o instanceof THREE.Mesh && o.material instanceof THREE.MeshStandardMaterial) {
-				o.material = o.material.clone();
-				o.material.emissive.setHex(0x1d4ed8);
-				o.material.emissiveIntensity = 0.45;
-				resaltados.push(o.material);
+				resaltarMalla(o, 0x1d4ed8, 0.45);
 			}
 		});
 	}
@@ -4020,14 +4044,7 @@ function porCadaMallaDeCable(f: (m: THREE.Mesh, cid: string) => void): void {
 }
 
 function resaltarCable(id: string): void {
-	porCadaMallaDeCable((m, cid) => {
-		if (cid !== id) return;
-		const mat = (m.material as THREE.MeshStandardMaterial).clone();
-		m.material = mat;
-		mat.emissive.setHex(0x2ea3ff);
-		mat.emissiveIntensity = 0.7;
-		resaltados.push(mat);
-	});
+	porCadaMallaDeCable((m, cid) => { if (cid === id) resaltarMalla(m, 0x2ea3ff, 0.7); });
 }
 
 /** Atenúa (baja opacidad) todos los cables salvo el resaltado; sin argumento, los devuelve a opacos. */
@@ -4753,7 +4770,7 @@ let capturadoEsteArrastre = false;
  * que «seleccionar» y «mover un poquito» eran el mismo gesto. Cuatro píxeles separan las dos
  * cosas sin que se note al arrastrar.
  */
-const UMBRAL_ARRASTRE = 4;
+const UMBRAL_ARRASTRE = 5;
 let origenPuntero: { x: number; y: number } | undefined;
 let superadoUmbral = false;
 function seMovioDeVerdad(ev: MouseEvent): boolean {
@@ -4762,6 +4779,20 @@ function seMovioDeVerdad(ev: MouseEvent): boolean {
 	superadoUmbral = true;
 	return true;
 }
+
+/**
+ * LO QUE HARÍA ESTE GESTO SI ACABA SIENDO UN CLIC, guardado hasta que se sepa.
+ *
+ * Con el botón izquierdo girando la cámara, apretar ya no puede significar «selecciona esto»:
+ * hasta que no se suelta no se sabe si el gesto era un clic o el principio de una vuelta al
+ * armario. Lo que antes se hacía en el `pointerdown` —seleccionar, deseleccionar, accionar un
+ * pulsador del tablero energizado— se apunta aquí y se ejecuta en el `pointerup`, y solo si el
+ * puntero no se movió más que el umbral.
+ *
+ * Es lo que garantiza la regla que se pidió: una vez que el gesto se convierte en órbita, al
+ * soltar NO se selecciona nada.
+ */
+let clicPendiente: (() => void) | undefined;
 let handleArrastrado: DatosHandle | undefined;
 let arrastrandoCable: { id: string; indice: number } | undefined; // conductor y punto de quiebre que se arrastra
 /** Cable agarrado a la espera de que el ratón se mueva para empezar a arrastrarlo de verdad. */
@@ -5228,7 +5259,8 @@ function mostrarPistaArrastre(): void {
 	const aviso = motivoInvalido ? ` · ⚠ ${motivoInvalido}` : '';
 	// Una ayuda que mueve el punto se DICE. Lo que no se puede es corregir en silencio.
 	const ayuda = pistaArrastre.alineado ? ' · alineado con el vecino (Alt lo desactiva)' : '';
-	$('ayuda').textContent = `↕ ${como} · Z: ${pistaArrastre.z} mm${dentro}${ayuda}${aviso}${suelta}`;
+	ayudaDeEstado([`Z · ${pistaArrastre.z} mm`, `${como}${dentro}`, 'X/Y/Z · fijar eje', 'Alt · sin imantar',
+		...(aviso ? [aviso.replace(/^\s*·\s*/, '')] : [])]);
 }
 
 /**
@@ -5539,6 +5571,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	if (ev.button !== 0) return;
 	origenPuntero = { x: ev.clientX, y: ev.clientY };
 	superadoUmbral = false;
+	clicPendiente = undefined;
 	if (visualizacion) return; // en Visualización solo se mira: nada se selecciona ni se mueve
 	/*
 	 * EN EL FRONTAL SE TRABAJA SOBRE LA PUERTA, y nada más. Aquí no se cablea, no se mueven
@@ -5548,11 +5581,20 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	if (espacio === 'frontal' && ev.button === 0) {
 		const pieza = piezaFrontalBajoElPuntero(ev);
 		if (!pieza) {
-			if (!ev.shiftKey) { frontalExtra = []; aplicarSeleccion(undefined); pintarListaFrontal(); }
+			// Sobre chapa desnuda no se hace nada todavía: si el gesto acaba siendo un clic se
+			// deselecciona, y si acaba siendo un arrastre es que el usuario está girando la vista.
+			if (!ev.shiftKey) {
+				clicPendiente = () => { frontalExtra = []; aplicarSeleccion(undefined); pintarListaFrontal(); };
+			}
 			return;
 		}
 		if (ev.shiftKey) { alternarFrontalExtra(pieza.clase, pieza.id); return; }
-		if (!frontalMarcado(pieza.clase, pieza.id)) seleccionarFrontal(pieza.clase, pieza.id);
+		// Misma regla que dentro del armario: sobre una pieza que aún no está elegida, el clic la
+		// elige y el arrastre gira la vista. Ya elegida, el arrastre la mueve.
+		if (!frontalMarcado(pieza.clase, pieza.id)) {
+			clicPendiente = () => seleccionarFrontal(pieza.clase, pieza.id);
+			return;
+		}
 		const p = puntoEnLaPuerta(ev);
 		if (!p) return;
 		// Se agarran TODAS las marcadas, cada una con su desfase: mover un grupo alineado no puede
@@ -5568,14 +5610,14 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		renderer.domElement.style.cursor = 'grabbing';
 		return;
 	}
-	// Aparato pegado al ratón: el clic lo suelta y no hace nada más.
-	if (colocando && ev.button === 0) { soltarColocacion(); return; }
+	// Aparato pegado al ratón: el CLIC lo suelta. Arrastrando se gira la vista para buscarle sitio.
+	if (colocando && ev.button === 0) { clicPendiente = () => soltarColocacion(); return; }
 	// Cablear por clic: si estamos eligiendo destino, el próximo clic sobre otro aparato
 	// lo fija como destino en el formulario (funciona en cualquier modo). Se actualiza el
 	// DOM en el sitio para no perder la selección de destino al re-renderizar.
 	if (eligiendoDestino) {
 		eligiendoDestino = false;
-		$('ayuda').textContent = AYUDA[modo];
+		ayudaDeEstado(undefined);
 		const origenId = idDispositivoSel();
 		const clic = elementoBajoElPuntero(ev);
 		const selDestino = document.getElementById('cable-destino') as HTMLSelectElement | null;
@@ -5593,8 +5635,10 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	// está editando el tablero, se está probando.
 	if (panelSim.energizado() && ev.button === 0) {
 		const clic = elementoBajoElPuntero(ev);
-		if (clic?.tipo === 'dispositivo' && panelSim.accionar(clic.id)) {
-			seleccionar(clic.id);
+		if (clic?.tipo === 'dispositivo' && panelSim.puedeAccionar(clic.id)) {
+			// Accionar es un CLIC, no un apretón: girando la vista desde encima de un pulsador
+			// no se arranca el motor.
+			clicPendiente = () => { if (panelSim.accionar(clic.id)) seleccionar(clic.id); };
 			return;
 		}
 	}
@@ -5610,7 +5654,9 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		// su contorno, y de ahí venía el «a veces no puedo agarrar los cables».
 		// Tendiendo un cable el borne manda siempre: hay que poder rematarlo donde sea.
 		if (golpe && (cableandoDesde || !cableTapaAlBorne(ev, golpe.distancia))) {
-			if (cableandoDesde) completarCableado(golpe.borne);
+			// Rematar el cable en el borne de destino es un CLIC: si el gesto acaba siendo una
+			// órbita que pasa por encima de un borne, no se conecta nada.
+			if (cableandoDesde) { const destino = golpe.borne; clicPendiente = () => completarCableado(destino); }
 			else {
 				iniciarCableado(golpe.borne);
 				// Queda anotado que el botón está apretado: si se arrastra hasta el otro borne y
@@ -5621,10 +5667,13 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 			}
 			return;
 		}
-		// Tendiendo un cable: cada clic en un punto libre marca un CODO (como en Tinkercad).
+		// Tendiendo un cable: cada clic en un punto libre marca un CODO (como en Tinkercad). Y
+		// «clic» quiere decir clic: girando la vista mientras se tiende no se marcan codos.
 		if (cableandoDesde) {
-			const p = puntoCable(ev);
-			if (p) anadirCodoCableado(p.x, p.y);
+			clicPendiente = () => {
+				const q = puntoCable(ev);
+				if (q) anadirCodoCableado(q.x, q.y);
+			};
 			return;
 		}
 	}
@@ -5670,27 +5719,39 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		const golpe = cableSenalado(ev);
 		const cid = golpe?.id;
 		if (golpe && cid && (elem?.tipo !== 'dispositivo' || cableEstaDelante(ev, golpe))) {
-			if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: cid });
 			const c = proyecto.conductores.find((x) => x.id === cid);
 			const p = golpe.punto;
-			if (c) {
-				/*
-				 * Se mide en 3D contra el punto tal como está DIBUJADO, no contra sus coordenadas
-				 * guardadas: una unión metida en una canaleta está a 30 mm de profundidad y el clic
-				 * aterriza ahí, no en el plano del frente. Midiéndolo en planta, como antes,
-				 * agarrar una unión hundida era cuestión de suerte.
-				 */
-				const idx = (c.trazado ?? []).findIndex((w, i) => {
-					const q = puntoDibujado(c, i) ?? { x: w.x, y: w.y, z: Z_FRENTE };
-					return Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) < 26;
-				});
-				// Se anota la intención de arrastre; el punto no se crea hasta que el ratón se mueve.
+			/*
+			 * Se mide en 3D contra el punto tal como está DIBUJADO, no contra sus coordenadas
+			 * guardadas: una unión metida en una canaleta está a 30 mm de profundidad y el clic
+			 * aterriza ahí, no en el plano del frente. Midiéndolo en planta, como antes,
+			 * agarrar una unión hundida era cuestión de suerte.
+			 */
+			const idx = c ? (c.trazado ?? []).findIndex((w, i) => {
+				const q = puntoDibujado(c, i) ?? { x: w.x, y: w.y, z: Z_FRENTE };
+				return Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) < 26;
+			}) : -1;
+			/*
+			 * UN CABLE SOLO SE AGARRA DONDE HAY UNA UNIÓN QUE MOVER.
+			 *
+			 * Antes, apretar en cualquier punto de cualquier cable bloqueaba la cámara y, si no
+			 * había unión ahí, lo único que salía era un aviso diciendo que hiciera doble clic.
+			 * Con el giro en el botón izquierdo eso es mucho peor: los cables cruzan medio
+			 * tablero, así que media pantalla dejaba de servir para girar y encima seleccionaba
+			 * al apretar. Ahora, sobre una unión se agarra —y la cámara se queda quieta, porque
+			 * hay algo que arrastrar—; sobre el resto del cable el gesto es libre: clic corto lo
+			 * selecciona, arrastre gira la vista.
+			 */
+			if (c && idx >= 0) {
+				if (!(sel?.tipo === 'cable' && sel.id === cid)) aplicarSeleccion({ tipo: 'cable', id: cid });
 				pendienteCable = { id: cid, indice: idx, x: p.x, y: p.y };
 				arrastrando = true;
 				handleArrastrado = undefined;
 				capturadoEsteArrastre = false;
 				permitirOrbita(false);
 				renderer.domElement.style.cursor = 'grabbing';
+			} else if (!(sel?.tipo === 'cable' && sel.id === cid)) {
+				clicPendiente = () => aplicarSeleccion({ tipo: 'cable', id: cid });
 			}
 			return;
 		}
@@ -5701,7 +5762,23 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	if (modo === 'trabajo' && elem && elem.tipo !== 'dispositivo') elem = undefined;
 	if (modo === 'editor' && elem && elem.tipo === 'cable') elem = undefined;
 	const mismo = elem && sel && elem.tipo === sel.tipo && elem.id === sel.id;
-	if (!mismo) aplicarSeleccion(elem);
+	/*
+	 * SE ARRASTRA LO QUE YA ESTÁ ELEGIDO. Ésta es la regla que hace que el botón izquierdo pueda
+	 * girar la cámara y mover aparatos sin pelearse consigo mismo.
+	 *
+	 * Si arrastrar cualquier cosa la moviera, en el Editor no quedaría sitio para girar: la placa
+	 * está llena de aparatos y el gesto principal de navegación moriría en cuanto el tablero
+	 * tiene algo dentro. Con la regla de «primero elegir, después mover», arrastrar sobre lo que
+	 * no está elegido SIEMPRE gira, y mover sigue estando a un clic de distancia. Es lo que dice
+	 * la ayuda de abajo —«Arrastrar · mover lo elegido»— y ahora es literal.
+	 */
+	const g0 = proyecto.gabinete;
+	const arrastrable = !!elem && !!mismo && modo === 'editor'
+		&& (elem.tipo !== 'dispositivo' || !!g0?.colocaciones.some((c) => c.dispositivoId === elem!.id));
+	if (!arrastrable) {
+		if (!mismo) { const q = elem; clicPendiente = () => aplicarSeleccion(q); }
+		return;
+	}
 	if (!elem || modo !== 'editor') return;
 
 	// Preparar arrastre (mover). Los aparatos normales y las imágenes/canaletas/rieles
@@ -5729,6 +5806,14 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 
 renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (crono.activo) { const e = crono.etapas.get('0 pointermove') ?? { n: 0, ms: 0 }; e.n++; crono.etapas.set('0 pointermove', e); }
+	/*
+	 * EL UMBRAL SE MIDE ANTES QUE NADA, y en cada movimiento con el botón apretado.
+	 *
+	 * Girando, este manejador se va por el atajo de `navegando` y no llega al fondo; si el umbral
+	 * se evaluara ahí abajo, una vuelta entera al armario no lo cruzaría nunca y al soltar se
+	 * seleccionaría lo que hubiera debajo. Se evalúa arriba y una sola vez por movimiento.
+	 */
+	if (origenPuntero) seMovioDeVerdad(ev);
 	if (visualizacion) return;
 	if (espacio === 'frontal') {
 		if (arrastreFrontal && !seMovioDeVerdad(ev)) return;
@@ -5787,12 +5872,6 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			arrastrandoCable = { id: pendienteCable.id, indice: pendienteCable.indice };
 			capturadoEsteArrastre = true;
 			motivoInvalido = undefined;
-		} else {
-			// Sin unión donde se pinchó no hay nada que mover: se avisa una sola vez.
-			avisar('Haz doble clic sobre el cable para crear una unión y poder moverlo ahí.', 'info');
-			permitirOrbita(true);
-			arrastrando = false;
-			renderer.domElement.style.cursor = '';
 		}
 		pendienteCable = undefined;
 	}
@@ -5911,7 +5990,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 			const o = g.colocaciones.find((x) => x.dispositivoId === id);
 			return o && solapaCon(o.x, o.y, o.ancho, o.alto, id);
 		});
-		for (const m of resaltados) m.emissive.setHex(solapa ? 0xff3b3b : 0x1d4ed8);
+		for (const r of resaltados) r.clon.emissive.setHex(solapa ? 0xff3b3b : 0x1d4ed8);
 	} else if (sel.tipo === 'canaleta') {
 		const can = g.canaletas.find((c) => c.id === sel!.id)!;
 		can.x = Math.round((p.x - desfase.x) / 5) * 5;
@@ -5932,7 +6011,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		reconstruirEstructuraUno(sel);
 		refrescarAparatosDelRiel(riel.id);
 		const ok = rielValido(riel.id);
-		for (const m of resaltados) m.emissive.setHex(ok ? 0x1d4ed8 : 0xff3b3b);
+		for (const r of resaltados) r.clon.emissive.setHex(ok ? 0x1d4ed8 : 0xff3b3b);
 	}
 	construirHandles();
 });
@@ -5940,6 +6019,18 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 renderer.domElement.addEventListener('pointerleave', () => mostrarTipBorne(undefined));
 
 renderer.domElement.addEventListener('pointerup', (ev) => {
+	/*
+	 * AQUÍ SE DECIDE SI EL GESTO FUE UN CLIC. Si el puntero no pasó del umbral, lo que quedó
+	 * apuntado en `clicPendiente` se ejecuta; si lo pasó, el gesto fue una órbita y no se
+	 * selecciona nada. Se limpia siempre, pasara lo que pasara.
+	 */
+	const pendiente = clicPendiente;
+	clicPendiente = undefined;
+	if (ev.button === 0 && pendiente && !superadoUmbral) pendiente();
+	if (ev.button === 0) origenPuntero = undefined;
+	// Y la cámara vuelve a estar viva pase lo que pase: varios caminos la apagaban al empezar un
+	// gesto y salían de aquí por un `return` temprano, dejándola muerta hasta el arrastre siguiente.
+	if (ev.button === 0) permitirOrbita(true);
 	if (arrastreFrontal) { soltarArrastreFrontal(); return; }
 	/*
 	 * TENDER EL CABLE ARRASTRANDO, no solo a dos clics.
@@ -5970,7 +6061,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 	arrastrandoCable = undefined;
 	pendienteCable = undefined; // si no llegó a moverse, fue solo un clic de selección
 	// La barra vuelve a lo suyo: la profundidad solo interesa mientras se está moviendo el punto.
-	if (pistaArrastre) { pistaArrastre = undefined; $('ayuda').textContent = AYUDA[modo]; }
+	if (pistaArrastre) { pistaArrastre = undefined; ayudaDeEstado(undefined); }
 	ejeArrastre = undefined;
 	quitarGuiaEje();
 	permitirOrbita(true);
@@ -5984,7 +6075,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 			avisar('Ahí no cabe: chocaba con otro aparato, así que el riel volvió a su sitio', 'error');
 		}
 		estadoRielArrastre = undefined;
-		for (const m of resaltados) m.emissive.setHex(0x1d4ed8);
+		for (const r of resaltados) r.clon.emissive.setHex(0x1d4ed8);
 		avisarSiSeMovioAlgunCable(contarTrazadosInvadidos());
 		actualizarTodo();
 		pintarEstructura();
@@ -6047,7 +6138,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 			const c = escenario.aEscena(col.x + col.ancho / 2, col.y + col.alto / 2, 0);
 			grupoDe(sel.id)?.position.set(c.x, c.y, 0);
 		}
-		for (const m of resaltados) m.emissive.setHex(0x1d4ed8); // restaurar color de selección
+		for (const r of resaltados) r.clon.emissive.setHex(0x1d4ed8); // restaurar color de selección
 	}
 	arrastreInicio = undefined;
 	avisarSiSeMovioAlgunCable(contarTrazadosInvadidos());
@@ -6143,6 +6234,16 @@ window.addEventListener('keydown', (ev) => {
 	if (!tecleando && !conDialogo && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
 		if (ev.key.toLowerCase() === 'f') { ev.preventDefault(); enfocarSeleccion(); return; }
 		if (ev.key.toLowerCase() === 'o') { ev.preventDefault(); alternarPuerta(); return; }
+		/*
+		 * Y LAS HERRAMIENTAS, con la inicial de lo que hacen. Van aquí arriba, con los atajos de
+		 * vista, porque significan lo mismo se esté donde se esté; la que no tenga sentido en el
+		 * espacio actual sencillamente no entra (lo decide `aplicarHerramienta`).
+		 */
+		const atajos: Record<string, Herramienta> = {
+			v: 'seleccionar', a: 'anadir', c: 'conectar', s: 'estructura', p: 'proyecto',
+		};
+		const h = atajos[ev.key.toLowerCase()];
+		if (h) { ev.preventDefault(); aplicarHerramienta(h); return; }
 	}
 	/*
 	 * LOS ATAJOS DEL FRONTAL. Van antes que los del interior porque en el frontal las mismas teclas
@@ -6478,7 +6579,8 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 			});
 			actualizarTodo();
 			seleccionar(id);
-			$('ayuda').textContent = '🖼️ Imagen añadida — con ella seleccionada, pulsa «➕ Añadir punto de conexión» y haz clic sobre la imagen para marcar cada punto; luego cámbiate a modo Trabajo para cablearlos.';
+			ayudaDeEstado(['Imagen añadida', '«Añadir punto de conexión» · marcar bornes sobre ella',
+				'Cablear · para conectarlos']);
 		};
 		img.src = url;
 	};
@@ -6593,10 +6695,148 @@ const panelDossier = instalarDossier({
 
 /* ------------------------------- Modos ------------------------------- */
 
-const AYUDA: Record<Modo, string> = {
-	editor: '🔧 EDITOR (armar) — Añade aparatos del catálogo (van sobre un riel) · arrástralos · edita caja, placa, rieles y canaletas (botón «Girar H↔V») · Duplicar/Eliminar · Supr borra · Ctrl+Z deshace',
-	trabajo: '🔌 TRABAJO (conexiones) — Cablea tocando un borne (punto naranja) y luego otro · doble clic sobre un cable crea una unión y el clic izquierdo la arrastra · Esc cancela · DRC en vivo. La estructura está bloqueada.',
+/* ==================================================================================
+ * HERRAMIENTAS: QUÉ SIGNIFICA EL CLIC AHORA MISMO
+ *
+ * El editor ya tenía un estado que decidía eso —`modo`, con Editor y Trabajo— pero se enseñaba
+ * como un conmutador de dos pastillas en la barra superior, pegado y calcado al de espacios, y
+ * las cosas que se pueden hacer en cada modo estaban repartidas por nueve secciones plegables de
+ * un panel con dos mil trescientos píxeles de scroll. La herramienta existía; no se veía.
+ *
+ * Aquí no se inventa un estado nuevo: se le pone cara. Cada herramienta dice tres cosas —qué
+ * modo exige, qué cajón abre y qué explica la barra de ayuda— y todo lo demás sigue igual. El
+ * cambio de modo sigue pasando por `aplicarModo`, que es el único sitio donde `modo` se toca.
+ * ================================================================================== */
+
+type Herramienta = 'seleccionar' | 'anadir' | 'conectar' | 'estructura' | 'proyecto';
+
+interface FichaHerramienta {
+	/** El modo del editor que exige. `undefined` = no lo cambia (es un panel, no una herramienta). */
+	modo?: Modo;
+	/** Qué explica la barra de ayuda mientras está activa. */
+	ayuda: string[];
+	/** En qué espacios tiene sentido. */
+	espacios: Espacio[];
+	/** Cursor sobre el visor, para que el estado se note también con la mano. */
+	cursor?: string;
+}
+
+const HERRAMIENTAS: Record<Herramienta, FichaHerramienta> = {
+	seleccionar: {
+		modo: 'editor',
+		espacios: ['interior', 'frontal', 'conjunto'],
+		ayuda: ['Clic · elegir', 'Arrastrar · mover lo elegido', 'Supr · quitar', 'Ctrl+D · duplicar'],
+	},
+	anadir: {
+		modo: 'editor',
+		espacios: ['interior', 'frontal', 'conjunto'],
+		ayuda: ['Elige en la lista · lo pega al puntero', 'Clic en el tablero · lo suelta', 'Esc · cancelar'],
+	},
+	conectar: {
+		modo: 'trabajo',
+		espacios: ['interior', 'conjunto'],
+		ayuda: ['Clic en un borne · origen', 'Clic en otro borne · destino', 'Doble clic en un cable · unión', 'Esc · cancelar'],
+		cursor: 'crosshair',
+	},
+	estructura: {
+		modo: 'editor',
+		espacios: ['interior', 'conjunto'],
+		ayuda: ['Clic · elegir carril o canaleta', 'Arrastrar · moverlo', 'Tiradores · alargar'],
+	},
+	proyecto: {
+		espacios: ['interior', 'frontal', 'conjunto'],
+		ayuda: ['Clic en la lista · localizarlo en el tablero'],
+	},
 };
+
+/** Los atajos de navegación, que valen siempre y no dependen de la herramienta. */
+const AYUDA_CAMARA = ['Arrastrar · girar', 'Derecho · desplazar', 'Rueda · acercar', 'F · enfocar', 'O · puerta'];
+
+let herramienta: Herramienta = 'seleccionar';
+
+/**
+ * Pone una herramienta. Es el ÚNICO camino: el rail, los atajos y el resto del programa entran
+ * por aquí, y de aquí sale el cambio de modo, el cajón y la ayuda. No hay dos sitios que puedan
+ * discrepar sobre qué está activo.
+ */
+function aplicarHerramienta(h: Herramienta, forzar = false): void {
+	if (h === herramienta && !forzar) return;
+	const ficha = HERRAMIENTAS[h];
+	if (!ficha.espacios.includes(espacio)) return;
+	herramienta = h;
+	if (ficha.modo && ficha.modo !== modo) aplicarModo(ficha.modo);
+	pintarRail();
+	pintarAyuda();
+}
+
+/** Devuelve la herramienta a una que tenga sentido en el espacio actual. */
+function herramientaValida(): void {
+	if (!HERRAMIENTAS[herramienta].espacios.includes(espacio)) aplicarHerramienta('seleccionar', true);
+	else aplicarHerramienta(herramienta, true);
+}
+
+/** Enciende el botón que toca y enseña el cajón de esa herramienta. */
+function pintarRail(): void {
+	for (const b of document.querySelectorAll<HTMLElement>('#rail .hta[data-hta]')) {
+		const h = b.dataset.hta as Herramienta;
+		b.classList.toggle('activo', h === herramienta);
+		b.hidden = !HERRAMIENTAS[h].espacios.includes(espacio);
+	}
+	const izq = $('panel-izq');
+	let algo = false;
+	for (const d of izq.querySelectorAll<HTMLDetailsElement>('details[data-cajon]')) {
+		// Dos condiciones y ninguna más: la herramienta a la que pertenece y el espacio en el que
+		// tiene sentido. La simulación manda sobre las dos: con el tablero energizado se enseña.
+		const suyo = d.dataset.cajon === herramienta
+			&& (!d.dataset.espacio || d.dataset.espacio.split(' ').includes(espacio));
+		const forzada = d.id === 'seccion-simulacion' && !d.hasAttribute('hidden');
+		d.style.display = suyo || forzada ? '' : 'none';
+		if (suyo || forzada) algo = true;
+	}
+	const titulo = $('cajon-titulo');
+	if (titulo) titulo.textContent = TITULO_CAJON[herramienta];
+	izq.hidden = !algo;
+	encajarPaneles();
+}
+
+/** El encabezado del cajón: recuerda en qué herramienta se está sin tener que mirar el rail. */
+const TITULO_CAJON: Record<Herramienta, string> = {
+	seleccionar: 'Lo que hay puesto',
+	anadir: 'Añadir al tablero',
+	conectar: 'Cables del tablero',
+	estructura: 'Gabinete y montaje',
+	proyecto: 'El tablero',
+};
+
+/**
+ * LA AYUDA DE ABAJO: chips cortos, no un párrafo.
+ *
+ * Se arma de dos trozos —lo que hace la herramienta y cómo se mueve la cámara— y se vuelve a
+ * pintar SOLO cuando cambia el estado, nunca por fotograma ni al pasar el ratón. Cuando una
+ * operación está a medias (tendiendo un cable, arrastrando un punto) el estado manda y sustituye
+ * a la ayuda de la herramienta, que es cuando de verdad hacen falta instrucciones.
+ */
+let ayudaExtra: string[] | undefined;
+
+function pintarAyuda(): void {
+	const caja = $('ayuda');
+	const partes = ayudaExtra ?? HERRAMIENTAS[herramienta].ayuda;
+    const chip = (t: string): string => {
+		const i = t.indexOf(' · ');
+		return i < 0 ? `<span class="chip">${escaparHtml(t)}</span>`
+			: `<span class="chip"><b>${escaparHtml(t.slice(0, i))}</b>${escaparHtml(t.slice(i + 2))}</span>`;
+	};
+	caja.innerHTML = `<span class="grupo">${partes.map(chip).join('')}</span>`
+		+ `<span class="grupo camara">${AYUDA_CAMARA.map(chip).join('')}</span>`;
+}
+
+/** Pone (o quita) una ayuda de estado, que manda sobre la de la herramienta mientras dure. */
+function ayudaDeEstado(partes: string[] | undefined): void {
+	const antes = ayudaExtra?.join('|');
+	if ((partes?.join('|') ?? '') === (antes ?? '')) return;   // ni un repintado de más
+	ayudaExtra = partes;
+	pintarAyuda();
+}
 
 /* ------------------------------- Modo Energizar ------------------------------- */
 
@@ -6708,9 +6948,9 @@ function aplicarVisualizacion(activo: boolean): void {
 	 */
 	montarEscenario();
 	escenario.bornes.visible = bornesALaVista();
-	$('ayuda').textContent = activo
-		? '👁️ VISUALIZACIÓN — Así queda el tablero montado, con la puerta abierta. Gira y acerca la vista; para editar, pulsa «Salir».'
-		: AYUDA[modo];
+	ayudaDeEstado(activo
+		? ['Visualización · el tablero como quedaría montado', 'Gira y acerca la vista', '«Salir» · volver a editar']
+		: undefined);
 	pintarSeleccion();
 	encuadrar();
 }
@@ -6722,7 +6962,16 @@ function aplicarModo(nuevo: Modo): void {
 	document.body.classList.toggle('modo-trabajo', modo === 'trabajo');
 	$('modo-editor').classList.toggle('activo', modo === 'editor');
 	$('modo-trabajo').classList.toggle('activo', modo === 'trabajo');
-	$('ayuda').textContent = AYUDA[modo];
+	/*
+	 * Y LA HERRAMIENTA ACOMPAÑA AL MODO. Los botones de modo siguen existiendo —escondidos, pero
+	 * son el punto único por el que pasa el cambio— así que si alguien entra por ahí (un atajo,
+	 * una prueba, `aplicarEspacio`) el rail tiene que enterarse. Si el modo que llega no encaja
+	 * con la herramienta activa, se cambia a la que le corresponde.
+	 */
+	if (HERRAMIENTAS[herramienta].modo && HERRAMIENTAS[herramienta].modo !== modo) {
+		herramienta = modo === 'trabajo' ? 'conectar' : 'seleccionar';
+	}
+	ayudaDeEstado(undefined);
 	eligiendoDestino = false;
 	cancelarCableado();
 	mostrarTipBorne(undefined);
@@ -7049,6 +7298,55 @@ $('esp-interior').onclick = () => aplicarEspacio('interior');
 $('esp-frontal').onclick = () => aplicarEspacio('frontal');
 $('esp-conjunto').onclick = () => aplicarEspacio('conjunto');
 
+/* ---------------- El rail de herramientas ---------------- */
+for (const b of document.querySelectorAll<HTMLElement>('#rail .hta[data-hta]')) {
+	b.onclick = () => aplicarHerramienta(b.dataset.hta as Herramienta);
+}
+
+/*
+ * EL MENÚ DE VISTA, sobre el visor.
+ *
+ * Las casillas son las mismas de siempre —se han mudado, no se han reescrito— así que sus
+ * manejadores no cambian. Lo único nuevo es que ahora se llega a ellas en un clic desde
+ * cualquier sitio, en vez de bajando dos mil píxeles por el panel izquierdo.
+ */
+{
+	const boton = $('btn-vista') as HTMLButtonElement;
+	const lista = $('lista-vista');
+	const cerrar = (): void => {
+		lista.hidden = true;
+		boton.setAttribute('aria-expanded', 'false');
+		boton.classList.remove('activo');
+	};
+	boton.onclick = (ev) => {
+		ev.stopPropagation();
+		const abrir = lista.hidden;
+		lista.hidden = !abrir;
+		boton.setAttribute('aria-expanded', String(abrir));
+		boton.classList.toggle('activo', abrir);
+	};
+	// Se cierra al pinchar fuera y con Escape, como cualquier menú.
+	document.addEventListener('pointerdown', (ev) => {
+		if (!lista.hidden && !lista.contains(ev.target as Node) && ev.target !== boton) cerrar();
+	});
+	document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') cerrar(); });
+}
+
+/**
+ * DEJA AL VISOR TODO EL SITIO QUE PUEDA.
+ *
+ * El lienzo ocupa la ventana entera y los paneles flotan encima; lo que hace falta es decirle
+ * cuánto le tapan por cada lado para que encuadre sobre la parte que se ve de verdad. Con el
+ * cajón cerrado —la herramienta de elegir no necesita ninguno— el tablero se queda con casi
+ * toda la pantalla, que es lo que se pedía.
+ */
+function encajarPaneles(): void {
+	const izq = $('panel-izq');
+	const rail = $('rail');
+	const tapa = (rail.getBoundingClientRect().width || 0) + (izq.hidden ? 0 : izq.getBoundingClientRect().width);
+	document.documentElement.style.setProperty('--tapa-izq', `${Math.round(tapa)}px`);
+}
+
 $('btn-add-piloto').onclick = () => anadirPilotoFrontal();
 $('btn-add-rotulo').onclick = () => anadirRotuloFrontal('grabado');
 $('btn-add-placa').onclick = () => anadirRotuloFrontal('placa');
@@ -7080,7 +7378,6 @@ $('btn-hue-v').onclick = () => aplicarCambiosFrontal(repartirFrontal(seleccionFr
 	// Sin armario no hay puerta que abrir: el control flotante se va con él.
 	pintarControlPuerta();
 };
-($('btn-puerta') as HTMLButtonElement).onclick = () => alternarPuerta();
 ($('puerta-flotante') as HTMLButtonElement).onclick = () => alternarPuerta();
 
 /* ----------------- Detalle de la verificación eléctrica (chip DRC) ----------------- */
@@ -7486,7 +7783,9 @@ pintarEstructura();
 reconstruirCables();
 reconstruirCotas();
 aplicarModo('editor');
+aplicarHerramienta('seleccionar', true);
 actualizarBotonesHistorial();
+addEventListener('resize', () => encajarPaneles());
 
 /**
  * Fotogramas dibujados por el editor. Lo lee la sonda de QA para comprobar que, con la Planta
@@ -8790,9 +9089,9 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				enLaPuerta: caja(escenario.mazo.enLaPuerta),
 				flexibles: caja(escenario.mazo.flexibles),
 				// Todos los tramos que van EN la hoja, incluidos los puentes que no tienen lazo.
-				tramosHoja: escenario.mazo.enLaPuerta.children.map((m) => ({
-					id: m.userData.conductorId as string, hoja: caja(m),
-				})),
+				tramosHoja: escenario.mazo.enLaPuerta.children
+					.filter((m) => m.userData.conductorId)
+					.map((m) => ({ id: m.userData.conductorId as string, hoja: caja(m) })),
 				porCable: escenario.mazo.cables.map((c) => ({
 					id: c.conductorId, hoja: caja(c.enLaPuerta), lazo: caja(c.flexible),
 					// Y los puntos con los que se tendió, en coordenadas de la hoja: es lo único
@@ -8823,8 +9122,12 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				largos[c.conductorId] = largo;
 			}
 			return {
-				enLaPuerta: m.enLaPuerta.children.length,
-				flexibles: m.flexibles.children.length,
+				// Solo los TUBOS: del grupo cuelgan además las bases de amarra y sus bridas, que son
+				// sujeción y no conductor. Contarlas daría «doce tramos» donde hay seis.
+				enLaPuerta: m.enLaPuerta.children.filter((k) => k.userData.conductorId).length,
+				flexibles: m.flexibles.children.filter((k) => k.userData.conductorId).length,
+				sujeciones: m.enLaPuerta.children.filter((k) => !k.userData.conductorId).length
+					+ m.flexibles.children.filter((k) => !k.userData.conductorId).length,
 				conductores: m.cables.map((c) => c.conductorId),
 				largos,
 				enLaHojaMundo: m.cables.map((c) => {

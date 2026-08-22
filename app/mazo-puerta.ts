@@ -125,11 +125,30 @@ export function anclajeFijoDeMazo(
 		// En el modelo la Y crece hacia ABAJO, al revés que en la escena: por eso el desvío del
 		// carril se resta aquí y se suma allí. Es la misma separación vista desde los dos lados.
 		y: alturaModelo - desvio,
-		// Delante del bloque de cableado pero sin llegar al marco: el lazo tiene que salir hacia
-		// la puerta sin rozar la pestaña sobre la que cierra la hoja.
-		z: Math.min(zBoca - 40, 96),
+		/*
+		 * EN EL PLANO POR EL QUE CORRE EL CABLEADO, y aquí estaba el «cable flotando».
+		 *
+		 * El anclaje estaba a media boca del armario —cuarenta milímetros por detrás del marco—,
+		 * o sea en el aire, delante de todo. El trazado de placa sale de la canaleta por donde
+		 * sale siempre, en el plano de los cables expuestos, y para llegar a un punto que está
+		 * ocho centímetros más adelante no le queda más remedio que cruzar el hueco en diagonal.
+		 * Eso es exactamente lo que se veía: un hilo tenso atravesando el vano hasta la puerta.
+		 *
+		 * Un soporte de amarra de verdad va atornillado a algo: al costado, al canto de la placa
+		 * o al final de la canaleta. Poniéndolo en el mismo plano por el que ya viaja el cable,
+		 * el trazado llega a él sin salirse de su capa y la diagonal desaparece. Quien sube al
+		 * plano de la puerta es el LAZO, que para eso está.
+		 */
+		z: Math.min(zBoca - 40, Z_CABLE_EXPUESTO),
 	};
 }
+
+/**
+ * La cota a la que corren los cables que no van por canaleta. Es la misma que usa `escena3d`;
+ * está aquí repetida como constante con nombre para que el anclaje del mazo no pueda separarse
+ * de ella por accidente, y `test/mazo-puerta.test.ts` comprueba que siguen valiendo lo mismo.
+ */
+export const Z_CABLE_EXPUESTO = 66;
 
 /**
  * A QUÉ ALTURA DEL MODELO SUBE EL MAZO PARA ESTE APARATO.
@@ -200,10 +219,38 @@ export function flechaDeLazo(reserva: number, distancia: number): number {
 	return distancia * Math.sqrt((3 / 8) * (reserva / Math.max(1, distancia) - 1));
 }
 
-/** La curva del lazo de servicio, en coordenadas de mundo. */
+/**
+ * EL RADIO MÍNIMO DE CURVATURA, en milímetros.
+ *
+ * Un conductor flexible no admite doblarse tanto como uno quiera: pasado cierto punto el
+ * aislamiento se pellizca y el cobre se fatiga, y en un lazo que se dobla cada vez que se abre la
+ * puerta eso es la avería con el tiempo. La referencia conservadora que se usa en obra para un
+ * lazo móvil es diez veces el diámetro exterior; aquí se toma como MÍNIMO FÍSICO —el lazo nunca
+ * se cierra más que eso— y no como una cifra a la que haya que ajustar todos los recorridos.
+ */
+function radioMinimo(radioCable: number): number {
+	return 10 * (radioCable * 2);
+}
+
+/**
+ * La curva del lazo de servicio, en coordenadas de mundo.
+ *
+ * La panza no baja solo lo que sobra de cable: baja, como mínimo, lo que hace falta para que el
+ * doblez de la panza no cierre por debajo del radio mínimo. Con la puerta cerrada, los dos
+ * anclajes están casi encima uno del otro y la panza sería un pliegue en horquilla si nadie lo
+ * impidiera.
+ */
 function curvaFlexible(c: CablePuerta, destino: THREE.Vector3): THREE.CubicBezierCurve3 {
 	const d = c.fijo.distanceTo(destino);
-	const h = Math.min(flechaDeLazo(c.reserva, d), c.reserva * 0.5);
+	/*
+	 * De dónde sale el mínimo: en una curva de Bézier cúbica simétrica con la flecha `h` sobre
+	 * una cuerda `d`, el radio en el vértice vale del orden de `d² / (6h)`. Despejando `h` para
+	 * que ese radio no baje del mínimo sale `h ≥ d² / (6·Rmin)`, y además la propia panza no
+	 * puede ser más corta que el radio mínimo o el pliegue de arriba sería el que se cierra.
+	 */
+	const rmin = radioMinimo(c.radio);
+	const porRadio = Math.max(rmin * 0.75, (d * d) / (6 * rmin));
+	const h = Math.min(Math.max(flechaDeLazo(c.reserva, d), porRadio), c.reserva * 0.5);
 	const p1 = c.fijo.clone()
 		.addScaledVector(c.caida, h)
 		.addScaledVector(destino.clone().sub(c.fijo).normalize(), d * 0.25);
@@ -275,6 +322,56 @@ function tubo(
 	m.castShadow = true;
 	m.receiveShadow = true;
 	return m;
+}
+
+/* ==================================================================================
+ * LOS PUNTOS DE FIJACIÓN
+ *
+ * Un cable que cambia de dirección en el aire no se sostiene solo: en un tablero cada quiebre
+ * está sujeto por algo —una base de amarra pegada a la chapa, un clip, la boca de una canaleta,
+ * un soporte atornillado—. Sin ellos el mazo se lee como una línea dibujada encima de la puerta;
+ * con ellos se lee como cable INSTALADO, que es de lo que iba esta pasada.
+ *
+ * No se modelan accesorios de catálogo: una base baja y una brida por encima bastan para que la
+ * lectura sea la correcta, y son dos geometrías compartidas por todo el tablero.
+ * ================================================================================== */
+
+/** Medidas de una base de amarra corriente, en milímetros. */
+const BASE_AMARRA = { ancho: 19, fondo: 19, alto: 4 };
+
+let geomBase: THREE.BoxGeometry | undefined;
+let geomBrida: THREE.TorusGeometry | undefined;
+let matBase: THREE.MeshStandardMaterial | undefined;
+
+/**
+ * UNA SUJECIÓN DEL MAZO: base pegada a la chapa y brida abrazando el haz.
+ *
+ * `grosor` es lo que abraza, o sea el ancho del mazo en ese punto: una brida que abraza un solo
+ * hilo y otra que abraza seis no pueden dibujarse iguales.
+ */
+function sujecion(grosor: number): THREE.Group {
+	geomBase ??= new THREE.BoxGeometry(BASE_AMARRA.ancho, BASE_AMARRA.fondo, BASE_AMARRA.alto);
+	geomBrida ??= new THREE.TorusGeometry(1, 0.75, 5, 18);
+	matBase ??= new THREE.MeshStandardMaterial({ color: 0x2b2f34, roughness: 0.78, metalness: 0.03 });
+	const g = new THREE.Group();
+	const base = new THREE.Mesh(geomBase, matBase);
+	base.position.z = BASE_AMARRA.alto / 2;
+	base.castShadow = true;
+	g.add(base);
+	// La brida: un aro achatado alrededor del haz, tumbado sobre la base.
+	const brida = new THREE.Mesh(geomBrida, matBase);
+	const r = Math.max(2.2, grosor / 2 + 1.1);
+	brida.scale.set(r, r, 1);
+	brida.rotation.y = Math.PI / 2;
+	brida.position.z = BASE_AMARRA.alto + r - 0.6;
+	g.add(brida);
+	/*
+	 * No estorba al ratón: lo que se pincha son los cables, no sus bridas. Sin esto, una base de
+	 * amarra de diecinueve milímetros taparía justo el punto donde el mazo cambia de dirección,
+	 * que es donde uno pincha para entenderlo.
+	 */
+	g.traverse((o) => { (o as THREE.Mesh).raycast = () => undefined; });
+	return g;
 }
 
 /**
@@ -353,6 +450,65 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 
 	const signo = o.izquierda ? -1 : 1;
 	const xEntrada = signo * (puerta.ancho / 2 - DESDE_BISAGRA);
+
+	/*
+	 * EL MAZO TRONCAL. Y por qué no vale que cada hilo vaya por su cuenta.
+	 *
+	 * Antes, cada conductor entraba en la hoja a la altura de SU aparato y cruzaba en horizontal
+	 * hasta él. Con tres pilotos en fila salían tres carreras paralelas sueltas por la chapa, que
+	 * no es como se cablea una puerta: se sube UN mazo pegado al canto de las bisagras y de él se
+	 * derivan los hilos, cada uno a la altura de lo suyo.
+	 *
+	 * El tronco entra a la altura del aparato más alto y baja hasta el más bajo; cada conductor
+	 * lo acompaña con su carril —unos milímetros de separación para que se distingan los seis— y
+	 * se separa en horizontal cuando llega a su altura.
+	 */
+	const alturasHoja = destinos.map((d) => o.caja.alto / 2 - d.col.y);
+	const yTronco = alturasHoja.length ? Math.max(...alturasHoja) : 0;
+	const yTroncoBajo = alturasHoja.length ? Math.min(...alturasHoja) : 0;
+	const grosorMazo = Math.max(6, destinos.length * 2.6);
+
+	/*
+	 * LAS SUJECIONES DEL TRONCO. Una en el punto de transferencia —junto a las bisagras, que es
+	 * donde el mazo pasa de la puerta al lazo— y las demás repartidas a lo largo del tronco, cada
+	 * `PASO_SUJECION` milímetros. Un cable fuera de canaleta no puede colgar medio metro sin nada
+	 * que lo sujete, y sin la sujeción de arriba el borne del aparato acabaría aguantando el
+	 * movimiento de la puerta, que es justo lo que no debe pasar.
+	 */
+	const PASO_SUJECION = 110;
+	const zSujecion = Z_CARA_INTERIOR + 1.5;
+	/** Pone una sujeción en la cara interior de la hoja, mirando hacia dentro del armario. */
+	const amarrar = (x: number, y: number, grosor: number): void => {
+		const sj = sujecion(grosor);
+		sj.position.set(x, y, zSujecion);
+		sj.rotation.y = Math.PI;
+		enPuerta.add(sj);
+	};
+	{
+		const alto = Math.max(0, yTronco - yTroncoBajo);
+		const cuantas = Math.max(1, Math.round(alto / PASO_SUJECION));
+		for (let i = 0; i <= cuantas; i++) amarrar(xEntrada, yTronco - (alto * i) / cuantas, grosorMazo);
+		/*
+		 * Y A LO LARGO DE CADA DERIVACIÓN. Un hilo que cruza veinte centímetros de chapa desde el
+		 * tronco hasta su piloto no puede ir suelto: se amarra cada palmo, que es lo que impide
+		 * que se descuelgue y lo que hace que se lea como cable instalado y no como una línea
+		 * dibujada por encima. Se amarra por APARATO, no por conductor: lo que se sujeta es el
+		 * haz que va a ese aparato, no cada hilo por separado.
+		 */
+		const porAparato = new Map<string, { y: number; x: number; n: number }>();
+		for (const d of destinos) {
+			const t = terminales.get(`${d.conductorId}|${d.dispositivoId}|${d.borneId}`);
+			if (!t) continue;
+			const antes = porAparato.get(d.dispositivoId);
+			porAparato.set(d.dispositivoId, { y: t.y, x: t.x, n: (antes?.n ?? 0) + 1 });
+		}
+		for (const [, q] of porAparato) {
+			const largo = Math.abs(q.x - xEntrada);
+			const cuantos = Math.floor(largo / PASO_SUJECION);
+			const paso = (q.x - xEntrada) / (cuantos + 1);
+			for (let i = 1; i <= cuantos; i++) amarrar(xEntrada + paso * i, q.y, Math.max(6, q.n * 2.6));
+		}
+	}
 	// La normal exterior de la hoja en coordenadas de mundo: por ahí sale el cable de la puerta.
 	const salida = new THREE.Vector3(0, 0, -1)
 		.applyQuaternion(puerta.frente.getWorldQuaternion(new THREE.Quaternion())).normalize();
@@ -398,8 +554,13 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		if (!t) continue;
 		const carril = carrilDeMazo(g.colocaciones, d.dispositivoId);
 		const desvio = desvioDeCarril(carril.indice, carril.total);
-		const alturaModelo = alturaDeMazo(o.placa, o.caja, d.col.y);
-		const yEntrada = o.caja.alto / 2 - d.col.y + desvio;
+		/*
+		 * EL PUNTO DE TRANSFERENCIA ES UNO PARA TODO EL MAZO, a la altura por la que entra el
+		 * tronco. Antes cada conductor tenía el suyo a la altura de su aparato, así que con los
+		 * pilotos repartidos por la puerta salían anclajes sueltos por media bisagra. En un
+		 * tablero, el mazo cruza por UN sitio.
+		 */
+		const alturaModelo = alturaDeMazo(o.placa, o.caja, o.caja.alto / 2 - yTronco);
 		const zCarril = Z_CARA_INTERIOR - Math.abs(desvio) * 0.2;
 
 		/*
@@ -412,11 +573,33 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		 * cara exterior de la hoja en 162. Con el último tramo yendo siempre hacia dentro, lo que
 		 * se pasa de largo se mete en el cuerpo del piloto, que es opaco y lo tapa.
 		 */
-		const entradaLocal = new THREE.Vector3(xEntrada, yEntrada, zCarril);
+		/*
+		 * ENTRA POR EL TRONCO, BAJA CON ÉL Y SE DERIVA A SU ALTURA. Tres tramos rectos con las
+		 * esquinas redondeadas por el spline: es lo que se ve en la cara interior de una puerta
+		 * cableada, y no una diagonal de esquina a esquina.
+		 *
+		 * El carril del conductor se reparte entre la X —para que dentro del tronco los seis
+		 * hilos se distingan— y la Z, para que la derivación de uno no se meta dentro de la del
+		 * de al lado cuando dos aparatos están a la misma altura.
+		 */
+		const xCarril = xEntrada + desvio * 0.32;
+		const haciaAparato = Math.sign(t.x - xEntrada) || 1;
+		const yDerivacion = t.y + desvio * 0.22;
+		const entradaLocal = new THREE.Vector3(xCarril, yTronco, zCarril);
+		/*
+		 * El punto de «acabar de bajar» solo se pone si el tronco TIENE largo. Con los tres
+		 * pilotos a la misma altura, meterlo igualmente dibujaba un escalón de un centímetro
+		 * arriba y otro abajo justo al salir de la sujeción: un rizo que no venía de ninguna
+		 * parte y que delataba que la ruta se había escrito sin mirar el caso fácil.
+		 */
+		const bajaElTronco = Math.abs(yTronco - yDerivacion) > 25;
 		const puntos = [
 			entradaLocal,
-			new THREE.Vector3(xEntrada, t.y + desvio * 0.4, zCarril),
-			new THREE.Vector3(t.x - signo * 20, t.y, zCarril),
+			...(bajaElTronco
+				? [new THREE.Vector3(xCarril, yDerivacion + Math.sign(yTronco - yDerivacion) * 16, zCarril)]
+				: []),
+			new THREE.Vector3(xCarril + haciaAparato * 16, yDerivacion, zCarril),
+			new THREE.Vector3(t.x - haciaAparato * 20, yDerivacion, zCarril),
 			new THREE.Vector3(t.x, t.y, zCarril),
 			t.clone(),
 		];
@@ -435,6 +618,23 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 
 		const anclaModelo = anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, desvio);
 		const fijo = o.aEscena(anclaModelo.x, anclaModelo.y, anclaModelo.z);
+		/*
+		 * Y SU SOPORTE, una sola vez. El lazo tiene que salir de algo atornillado al armario: si
+		 * naciera del aire, quien estaría aguantando el tirón de abrir y cerrar la puerta sería
+		 * el borne del aparato, que es la avería clásica de un mazo mal amarrado.
+		 */
+		if (!flexibles.children.length) {
+			const centro = o.aEscena(
+				anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, 0).x,
+				anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, 0).y,
+				anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, 0).z,
+			);
+			const sj = sujecion(grosorMazo);
+			sj.position.copy(centro);
+			// Atornillado al costado: la base mira hacia el interior del armario.
+			sj.rotation.y = signo * Math.PI / 2;
+			flexibles.add(sj);
+		}
 
 		/*
 		 * LA PANZA CAE HACIA ABAJO Y UN POCO HACIA DENTRO DEL ARMARIO. Hacia abajo porque un lazo

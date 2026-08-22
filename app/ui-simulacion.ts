@@ -42,6 +42,15 @@ export interface PanelSimulacion {
 	 * para que el clic no siga su camino normal (seleccionar para editar).
 	 */
 	accionar: (dispositivoId: string) => boolean;
+	/**
+	 * ¿Este aparato se accionaría si se pinchara en él?
+	 *
+	 * Hace falta porque, con la cámara en el botón izquierdo, el editor tiene que decidir al
+	 * APRETAR si el gesto puede acabar accionando algo, y accionarlo de verdad solo al soltar.
+	 * Preguntar `accionar()` para averiguarlo sería accionarlo: la pregunta y el acto tienen que
+	 * ser dos cosas distintas. Lee la misma tabla que `accionar`, así que no pueden separarse.
+	 */
+	puedeAccionar: (dispositivoId: string) => boolean;
 	/** El último resultado de la simulación, para las pruebas y el panel. */
 	resultado: () => ResultadoSimulacion | undefined;
 	/** La posición de cada mando, para las pruebas. */
@@ -596,6 +605,10 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		alternar: () => aplicarEnergizado(!energizado),
 		recalcular: recalcularSimulacion,
 		accionar: accionarEnSimulacion,
+		puedeAccionar: (id: string) => {
+			const d = proyecto().dispositivos.find((x) => x.id === id);
+			return !!d && esMando(d);
+		},
 		resultado: () => ultimaSim,
 		estadoDeLosMandos: () => estadoSim,
 		reiniciar: () => { volverAReposo(); pintarSimulacion(); },

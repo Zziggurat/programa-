@@ -907,8 +907,19 @@ export function construirDispositivo(
 	 * tensión, que es información de estado y va detrás.
 	 */
 	if (d.designacion) {
+		/*
+		 * EL RÓTULO RESPETA LA CHAPA. Iba con `depthTest: false` para que no lo tapara el aparato
+		 * al que nombra —un cartel escondido detrás de su propio contactor no sirve de nada— pero
+		 * eso no distingue entre «lo tapa el aparato» y «lo tapa un armario de acero»: desde
+		 * cualquier ángulo en el que la hoja o el costado se cruzaran, «-KM1» seguía leyéndose a
+		 * través de la chapa. Y no era teórico: mirando el armario por detrás salían diecisiete.
+		 *
+		 * Con la prueba de profundidad puesta, la ocultación la decide la geometría. El cartel no
+		 * se pierde detrás de su aparato porque no está detrás: cuelga por encima de él, en aire
+		 * libre, y ahí no hay nada que lo tape salvo algo que de verdad esté delante.
+		 */
 		const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-			map: textura(d.designacion), depthTest: false, transparent: true,
+			map: textura(d.designacion), depthTest: true, transparent: true,
 		}));
 		sprite.userData.rotulo = { base: 44, proporcion: 16.5 / 44, altura: col.alto / 2 + 13, rango: 'identificador' };
 		sprite.position.set(0, col.alto / 2 + 13, profundidad);
@@ -918,7 +929,7 @@ export function construirDispositivo(
 
 	if (d.tensionNominal !== undefined && !d.imagen) {
 		const badge = new THREE.Sprite(new THREE.SpriteMaterial({
-			map: badgeVoltaje(d.tensionNominal), depthTest: false, transparent: true,
+			map: badgeVoltaje(d.tensionNominal), depthTest: true, transparent: true,
 		}));
 		badge.userData.rotulo = { base: 22, proporcion: 0.5, altura: col.alto / 2 + 24, rango: 'estado' };
 		badge.position.set(0, col.alto / 2 + 24, profundidad);
