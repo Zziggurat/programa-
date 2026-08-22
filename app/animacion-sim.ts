@@ -133,8 +133,15 @@ export interface EntradaAnimacion {
 	dt: number;
 	/** Segundos desde que arrancó el editor, para los latidos lentos (el refresco de un display). */
 	reloj: number;
-	/** El grupo de los cables, para encenderlos según la corriente que llevan. */
-	cables?: THREE.Object3D;
+	/**
+	 * LOS GRUPOS de cables, para encenderlos según la corriente que llevan.
+	 *
+	 * Es una lista y no un grupo suelto porque los conductores no viven todos en el mismo sitio:
+	 * los de la placa cuelgan de la raíz y los que van a la puerta tienen su tramo colgado de la
+	 * hoja, que gira con ella. Con un solo grupo, un conductor de puerta conducía en la
+	 * simulación —y el piloto del otro extremo se encendía— pero él se quedaba apagado.
+	 */
+	cables?: THREE.Object3D | THREE.Object3D[];
 }
 
 /**
@@ -161,7 +168,7 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 	 */
 	if (e.cables) {
 		const corrientes = e.energizado ? e.resultado?.corrientePorConductor : undefined;
-		e.cables.traverse((o) => {
+		for (const grupoDeCables of (Array.isArray(e.cables) ? e.cables : [e.cables])) grupoDeCables.traverse((o) => {
 			if (!(o instanceof THREE.Mesh)) return;
 			// Solo el TUBO. Del cable cuelgan además el tubo de agarre invisible y las punteras de
 			// las dos puntas, y una puntera de plástico blanco encendiéndose no es un cable con
@@ -228,7 +235,18 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		for (const m of p.lente) {
 			const propio = (m.userData.colorPropio as number | undefined) ?? 0xffd54f;
 			const mat = m.material as THREE.MeshStandardMaterial;
-			mat.emissive.setHex(encendida ? propio : 0x000000);
+			/*
+			 * DE QUÉ COLOR EMITE puede no ser de qué color ES.
+			 *
+			 * Los pilotos de puerta llevan un `emissiveMap` que va del blanco en el centro al
+			 * color saturado en el borde —que es lo que hace una lámpara detrás de un plástico
+			 * teñido— y para que ese mapa mande, el material tiene que emitir BLANCO: `emissive`
+			 * multiplica al mapa, y con `emissive` de color no hay mapa en el mundo que pueda
+			 * devolver el blanco del núcleo. Quien no lo declare emite su propio color, como
+			 * siempre, así que ningún aparato de placa cambia.
+			 */
+			const emite = (m.userData.colorEmision as number | undefined) ?? propio;
+			mat.emissive.setHex(encendida ? emite : 0x000000);
 			mat.emissiveIntensity = encendida ? 1.15 : 0;
 			/*
 			 * APAGADO NO ES «EL MISMO COLOR SIN BRILLO».

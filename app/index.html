@@ -85,6 +85,132 @@
 
 	body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; background: var(--fondo); color: var(--texto); font-size: 13px; }
 	#escena { position: fixed; inset: 46px 0 0 0; }
+
+	/* ==========================================================================
+	 * EL RAIL DE HERRAMIENTAS
+	 *
+	 * Estrecho, fijo y siempre a la vista. Iconos grandes con su nombre debajo: un icono solo,
+	 * sin rótulo, es un jeroglífico —así estaban los cinco botones de la barra superior, que a
+	 * 1920 px perdían el texto y se quedaban en 🏠 📏 👁️ 📐 🖼️— y un rótulo solo ocupa demasiado.
+	 * ========================================================================== */
+	#rail {
+		position: fixed; top: 46px; bottom: 0; left: 0; width: 62px; z-index: 12;
+		display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 8px 6px;
+		background: var(--panel); border-right: 1px solid var(--borde);
+	}
+	#rail .hta {
+		display: flex; flex-direction: column; align-items: center; gap: 3px;
+		padding: 7px 2px 6px; border-radius: 8px; border: 1px solid transparent;
+		background: none; color: var(--texto-suave); cursor: pointer; font: inherit;
+	}
+	#rail .hta .ico { font-size: 17px; line-height: 1; }
+	#rail .hta .txt { font-size: 10.5px; letter-spacing: .01em; }
+	#rail .hta:hover { background: var(--panel-2); color: var(--texto); }
+	#rail .hta.activo {
+		background: #1d4ed8; border-color: #3b6cf0; color: #fff;
+		box-shadow: inset 0 0 0 1px #ffffff1a;
+	}
+	#rail .hta:focus-visible { outline: 2px solid var(--acento); outline-offset: 1px; }
+	#rail .hta[hidden] { display: none; }
+	#rail .raya { height: 1px; background: var(--borde); margin: 7px 4px; }
+	#rail .empuje { flex: 1; }
+
+	/* El cajón de la herramienta: pegado al rail, no a la ventana. */
+	#panel-izq { left: 62px; }
+	#panel-izq[hidden] { display: none; }
+
+	/* ==========================================================================
+	 * LOS CONTROLES DE VISTA, SOBRE EL VISOR
+	 * ========================================================================== */
+	#visor-vista {
+		/*
+		 * SE APARTAN DEL INSPECTOR. Estaban clavados al borde derecho de la ventana con
+		 * `right: 12px`, así que en cuanto se elegía un aparato el panel salía DEBAJO y los
+		 * cuatro botones quedaban encima de su título. `--tapa-der` es el ancho medido del
+		 * inspector: cero cuando no está.
+		 */
+		position: fixed; top: 56px; right: calc(var(--tapa-der, 0px) + 12px); z-index: 14;
+		display: flex; gap: 6px;
+	}
+	body.modo-visualizacion #visor-vista { display: none; }
+	#visor-vista .vbtn {
+		width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
+		border-radius: 9px; border: 1px solid #3a444e; background: #1e252cee; color: var(--texto);
+		font: inherit; font-size: 15px; cursor: pointer; backdrop-filter: blur(3px);
+		box-shadow: 0 4px 12px #0007;
+	}
+	#visor-vista .vbtn:hover { background: #27313a; border-color: #4d5b68; }
+	#visor-vista .vbtn.activo { background: #1d4ed8; border-color: #3b6cf0; color: #fff; }
+	#visor-vista .vbtn:focus-visible { outline: 2px solid #7cc0ff; outline-offset: 2px; }
+	#visor-vista .vmenu { position: relative; }
+	#visor-vista .vlista {
+		position: absolute; top: 40px; right: 0; width: 246px; z-index: 15;
+		background: var(--panel); border: 1px solid var(--borde); border-radius: 10px;
+		padding: 10px 12px; box-shadow: 0 12px 30px #000a;
+		display: flex; flex-direction: column; gap: 7px;
+	}
+	#visor-vista .vlista[hidden] { display: none; }
+	#visor-vista .vlista .toggle { margin: 0; }
+
+	/* ==========================================================================
+	 * LA AYUDA DE ABAJO: chips, no un párrafo centrado
+	 * ========================================================================== */
+	#ayuda .grupo { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+	#ayuda .grupo + .grupo { margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--borde); }
+	#ayuda .grupo.camara { opacity: .72; }
+	#ayuda .chip {
+		display: inline-flex; gap: 5px; align-items: baseline; white-space: nowrap;
+		background: var(--panel-2); border: 1px solid var(--borde); border-radius: 6px;
+		padding: 2px 7px; font-size: 11.5px; color: var(--texto-suave);
+	}
+	#ayuda .chip b { color: var(--texto); font-weight: 600; }
+	/*
+	 * El control flotante de puerta. Compacto, pegado a la esquina inferior derecha del visor y
+	 * por encima del lienzo pero por debajo de los modales. Sigue la paleta de los botones de la
+	 * barra para que no parezca pegado de otra aplicación.
+	 */
+	#puerta-flotante {
+		position: fixed; right: calc(var(--tapa-der, 0px) + 18px); bottom: 18px; z-index: 30;
+		display: inline-flex; align-items: center; gap: 8px;
+		padding: 8px 13px 8px 11px; border-radius: 9px;
+		border: 1px solid #3a444e; background: #1e252cee; color: var(--texto);
+		font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+		box-shadow: 0 6px 18px #0009; backdrop-filter: blur(3px);
+		transition: background .12s, border-color .12s, transform .06s;
+	}
+	#puerta-flotante:hover { background: #27313a; border-color: #4d5b68; }
+	#puerta-flotante:active { transform: translateY(1px); background: #161c22; }
+	#puerta-flotante:focus-visible { outline: 2px solid #7cc0ff; outline-offset: 2px; }
+	#puerta-flotante[hidden] { display: none; }
+	/*
+	 * Y SE APARTA DEL PANEL DE PROPIEDADES. El panel derecho es fijo y de 300 px: con el botón
+	 * anclado al borde de la ventana quedaba encima de él, tapando justo los controles del
+	 * aparato que se acaba de seleccionar. El panel se enseña y se esconde poniéndole el estilo
+	 * en línea, así que basta con mirarlo: cuando está, el botón se corre a su izquierda.
+	 */
+	/*
+	 * Aquí había un `right: 318px` a mano para apartarse del inspector. Con dos anchos de panel
+	 * distintos según el tamaño de pantalla, un número escrito a mano no puede acertar en los
+	 * dos: ahora lo dice `--tapa-der`, que se mide.
+	 */
+	/*
+	 * EL ICONO ES LA PROPIA PUERTA, dibujada con dos cajas: el armario y la hoja girada. Al
+	 * cambiar de estado gira, así que el botón enseña lo que va a pasar en vez de solo decirlo.
+	 */
+	#puerta-flotante .icono {
+		position: relative; width: 15px; height: 16px;
+		border: 1.5px solid currentColor; border-radius: 2px; opacity: .85;
+	}
+	#puerta-flotante .icono::after {
+		content: ''; position: absolute; left: -1.5px; top: -1.5px; bottom: -1.5px; width: 7px;
+		border: 1.5px solid currentColor; border-radius: 2px 0 0 2px;
+		background: #7cc0ff22;
+		transform-origin: left center; transition: transform .18s ease;
+	}
+	#puerta-flotante.abierta .icono::after { transform: perspective(22px) rotateY(-58deg); }
+	@media (prefers-reduced-motion: reduce) {
+		#puerta-flotante .icono::after, #puerta-flotante { transition: none; }
+	}
 	button { font: inherit; cursor: pointer; }
 	input, select { font: inherit; }
 
@@ -701,8 +827,36 @@
 	}
 	.panel::-webkit-scrollbar { width: 8px; }
 	.panel::-webkit-scrollbar-thumb { background: #333c45; border-radius: 4px; }
-	#panel-izq { left: 0; border-right: 1px solid var(--borde); }
+	/* El cajón arranca donde acaba el rail: son dos piezas de la misma columna. */
+	#panel-izq { left: 62px; border-right: 1px solid var(--borde); }
+	#cajon-titulo {
+		margin: 0; position: sticky; top: 0; z-index: 2;
+		padding: 11px 14px 9px; font-size: 11px; font-weight: 600;
+		text-transform: uppercase; letter-spacing: .09em; color: var(--texto-suave);
+		background: var(--panel); border-bottom: 1px solid var(--borde);
+	}
 	#panel-der { right: 0; width: 300px; border-left: 1px solid var(--borde); display: none; padding: 14px; }
+
+	/*
+	 * EN PANTALLAS ESTRECHAS, LOS PANELES ADELGAZAN; EL VISOR NO.
+	 *
+	 * Con el cajón y el inspector abiertos, 62 + 306 + 300 son 668 px de bordes. En un monitor de
+	 * 2560 eso es un 26 % y no se nota; en un portátil de 1366 es la MITAD de la pantalla, y lo
+	 * que queda para el tablero —lo único que el usuario está mirando— es una franja. Los paneles
+	 * son listas y campos: aguantan estrecharse. El visor no: un tablero pequeño no se puede
+	 * inspeccionar. `--tapa-izq`, que coloca la guía de abajo, sale de medir el ancho REAL, así
+	 * que sigue solo a estas reglas sin repetir el número en ningún sitio.
+	 */
+	@media (max-width: 1500px) {
+		.panel { width: 268px; }
+		#panel-der { width: 268px; }
+		#panel-izq { left: 56px; }
+		#rail { width: 56px; }
+	}
+	@media (max-width: 1280px) {
+		.panel { width: 238px; }
+		#panel-der { width: 238px; }
+	}
 
 	details { border-bottom: 1px solid var(--borde); }
 	details summary {
@@ -716,7 +870,16 @@
 
 	/* Catálogo */
 	.grupo-catalogo { margin: 6px 0 2px; color: var(--texto-suave); font-size: 11px; }
-	#buscar-catalogo { width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 6px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 12.5px; }
+	/*
+	 * EL BUSCADOR DEL CATÁLOGO NO SE VA CON EL SCROLL.
+	 *
+	 * Medido: el catálogo entero ocupa 2.151 px y el último aparato cae a 2.109. El buscador ya
+	 * estaba —escribir «contactor» deja tres— pero se quedaba arriba del todo: quien había bajado
+	 * a mirar tenía que volver a subir para poder filtrar, que es justo cuando hace falta. Pegado
+	 * al borde del cajón, la lista larga deja de ser un problema: se recorre o se filtra, y las
+	 * dos cosas están siempre a mano.
+	 */
+	#buscar-catalogo { position: sticky; top: 0; z-index: 2; width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 6px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 12.5px; }
 	#buscar-catalogo::placeholder { color: var(--texto-suave); }
 	.catalogo-vacio { color: var(--texto-suave); font-size: 12px; padding: 8px 2px; }
 	.item-catalogo {
@@ -761,10 +924,28 @@
 	.fila-estructura button:hover { color: var(--error); }
 	.botonera { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 	.botonera .boton { padding: 4px 9px; font-size: 12px; }
+	/*
+	 * «APLICAR» NO PUEDE ESTAR AL FINAL DE MIL PÍXELES DE SCROLL.
+	 *
+	 * El cajón de montaje reúne la caja, la placa, el perfil de canaleta, la puerta, el mazo, las
+	 * entradas de cable, los rieles y las canaletas: es largo por buenas razones, y todo lo que se
+	 * teclea ahí no vale nada hasta que se pulsa Aplicar. Dejar ese botón donde acabe el contenido
+	 * significa que cuanto más largo es el formulario, más lejos está la acción que lo cierra.
+	 * Se queda pegado al fondo del cajón, siempre a la vista y siempre en el mismo sitio.
+	 */
+	#seccion-estructura .botonera {
+		position: sticky; bottom: 0; margin: 10px -14px -12px; padding: 9px 14px;
+		background: color-mix(in srgb, var(--panel) 96%, transparent);
+		border-top: 1px solid var(--borde); backdrop-filter: blur(4px);
+	}
 
 	/* Panel derecho (propiedades) */
 	#panel-der h1 { font-size: 17px; margin: 0; }
 	#panel-der .sub { color: var(--texto-suave); margin: 2px 0 10px; }
+	/* El recuento de cableado lleva el reparto por clases en su propia línea. */
+	#resumen-cables { color: var(--texto-suave); white-space: pre-line; }
+	/* Una pista es un dato de segunda: acompaña al valor, nunca compite con él. */
+	.pista { color: var(--texto-suave); font-size: 12px; margin: 4px 0; }
 	#panel-der dl { margin: 0 0 6px; }
 	#panel-der dt { color: var(--texto-suave); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-top: 10px; }
 	#panel-der dd { margin: 3px 0 0; }
@@ -782,14 +963,31 @@
 	.form-cable select { width: 100%; }
 	.form-cable .ancho-total { grid-column: 1 / -1; }
 
+	/*
+	 * LA GUÍA DE CONTROLES vive abajo a la IZQUIERDA, no centrada.
+	 *
+	 * Centrada quedaba justo delante del tablero y, siendo un párrafo largo, tapaba lo que se
+	 * estaba mirando. Pegada a la esquina del visor y partida en chips cortos se lee de un
+	 * vistazo, ocupa una línea y deja el centro libre. Se corre a la derecha del cajón con
+	 * `--tapa-izq`, que es lo que mide lo que hay tapado por ese lado.
+	 */
 	#ayuda {
-		position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 10;
+		/*
+		 * Y la guía se para ANTES del botón de puerta. Con un `max-width` calculado sobre el
+		 * ancho de la ventana, las pastillas seguían pasando por debajo del botón en cuanto la
+		 * ayuda tenía cuatro o cinco: se ve en la captura de 1366, con «Esc cancelar» medio
+		 * tapado. Poniendo el borde derecho donde empieza el botón, no hay manera de que se
+		 * solapen, mida lo que mida la ayuda.
+		 */
+		position: fixed; bottom: 10px; left: calc(var(--tapa-izq, 62px) + 12px);
+		right: calc(var(--tapa-der, 0px) + 190px); z-index: 10;
 		/* Es un rótulo informativo: NUNCA debe comerse un clic del tablero que tiene detrás. */
 		pointer-events: none;
-		color: var(--texto-suave); font-size: 12px; text-align: center;
+		color: var(--texto-suave); font-size: 12px;
 		background: color-mix(in srgb, var(--panel) 88%, transparent);
-		padding: 6px 14px; border-radius: 9px; border: 1px solid var(--borde);
+		padding: 5px 9px; border-radius: 9px; border: 1px solid var(--borde);
 	}
+	body.modo-visualizacion #ayuda, body.modo-visualizacion #rail { display: none; }
 
 	/* Estado vacío (bienvenida) */
 	#bienvenida { position: fixed; inset: 46px 306px 0 306px; display: flex; align-items: center; justify-content: center; z-index: 5; pointer-events: none; }
@@ -905,10 +1103,12 @@
 	#espacios button.activo { background: #2f5c46; color: var(--texto); }
 	/* En el frontal no se arma la estructura ni se cablea: los modos del interior no pintan nada. */
 	body.espacio-frontal #modos { display: none; }
-	body.espacio-frontal #seccion-catalogo,
-	body.espacio-frontal #seccion-cables,
-	body.espacio-frontal #seccion-estructura { display: none; }
-	body:not(.espacio-frontal) #seccion-frontal { display: none; }
+	/*
+	 * Qué sección se ve NO se decide aquí. Se decidía en tres sitios —estas reglas por espacio,
+	 * otras por modo, y el `open`/`hidden` de cada `details`— y bastaba con que dos discreparan
+	 * para que una sección quedara escondida sin que nadie supiera por qué. Ahora lo dice el rail
+	 * de herramientas, en `pintarRail`, leyendo `data-cajon` y `data-espacio`.
+	 */
 	#lista-frontal { max-height: 240px; overflow-y: auto; margin: 4px 0; }
 	#lista-frontal li { display: flex; gap: 8px; align-items: center; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
 	#lista-frontal li:hover { background: var(--panel-2); }
@@ -920,10 +1120,7 @@
 	#modos button { background: var(--panel-2); border: none; color: var(--texto-suave); padding: 6px 13px; }
 	#modos button.activo { background: #2b4a6f; color: var(--texto); }
 	#modos #modo-editor.activo { background: #5d4a1f; }
-	body.modo-trabajo #seccion-catalogo,
-	body.modo-trabajo #seccion-estructura { display: none; }
-	/* La lista de cables solo tiene sentido en modo Trabajo (conexiones). */
-	body:not(.modo-trabajo) #seccion-cables { display: none; }
+
 	/* Vista de esquema: se superpone al lienzo 3D, como el modo Visualización. */
 	/* Justo por debajo de la barra (46 px): 2 px de más dejaban asomar el lienzo 3D. */
 	#panel-esquema { position: fixed; inset: 46px 0 0 0; z-index: var(--capa-herramienta); background: #11151a; display: flex; flex-direction: column; }
@@ -1003,40 +1200,44 @@
 	<p class="pie-inicio aviso-ancho" id="inicio-aviso-ancho" hidden></p>
 </div>
 
+<!--
+	LA BARRA SUPERIOR ES SOLO PARA LO GLOBAL.
+	Llegó a tener veinte botones mezclando cuatro cosas que no se parecen: acciones del proyecto,
+	el espacio de trabajo, el modo de edición y ajustes de la VISTA. Aquí se queda lo que afecta
+	al proyecto o a la aplicación entera; las herramientas bajan al rail de la izquierda y todo
+	lo que solo cambia lo que se ve sube al propio visor.
+-->
 <header id="barra">
 	<button class="marca" id="btn-inicio" title="Volver a la ventana de inicio">⚡ Tablero<span>Studio</span></button>
 	<input id="nombre-proyecto" title="Nombre del proyecto">
 	<span id="estado-guardado" title="Estado del guardado automático">Guardado</span>
-	<!--
-		AVISO DE TABLERO DE EJEMPLO. Sale solo cuando lo que hay abierto es uno de la biblioteca:
-		se mira y se energiza, pero no se edita. El botón es la salida para quien quiera cambiarlo.
-	-->
 	<span id="chip-ejemplo" hidden>📚 Ejemplo — solo lectura
 		<button id="btn-copiar-ejemplo" title="Crea un tablero tuyo, igual a este, que sí puedes modificar y se guarda con tu trabajo">Hacer una copia para trabajar</button>
 	</span>
+	<button class="boton icono" id="btn-deshacer" aria-label="Deshacer" title="Deshacer (Ctrl+Z)">↶</button>
+	<button class="boton icono" id="btn-rehacer" aria-label="Rehacer" title="Rehacer (Ctrl+Y)">↷</button>
+	<div class="sep"></div>
 	<div id="espacios" title="Dónde estás trabajando: dentro del tablero, sobre su frontal, o mirándolo entero">
 		<button id="esp-interior" class="activo">🧰 Interior</button>
 		<button id="esp-frontal">🎛️ Frontal</button>
 		<button id="esp-conjunto">🧊 Conjunto</button>
 	</div>
-	<div id="modos" title="Editor: armar y modificar la caja. Trabajo: solo cablear y verificar (nada se mueve).">
+	<!--
+		EDITOR / TRABAJO SIGUE EXISTIENDO, pero ya no como un segundo conmutador idéntico al de
+		espacios y pegado a él —dos pastillas iguales al lado que significaban cosas distintas—.
+		Ahora lo manda el rail de herramientas, y estos botones quedan como el punto ÚNICO por el
+		que pasa el cambio de modo: los atajos y las pruebas siguen pulsándolos.
+	-->
+	<div id="modos" hidden>
 		<button id="modo-editor" class="activo">🔧 Editor</button>
 		<button id="modo-trabajo">🔌 Trabajo</button>
 	</div>
-	<button class="boton icono" id="btn-deshacer" aria-label="Deshacer" title="Deshacer (Ctrl+Z)">↶</button>
-	<button class="boton icono" id="btn-rehacer" aria-label="Rehacer" title="Rehacer (Ctrl+Y)">↷</button>
-	<div class="sep"></div>
-	<button class="boton" id="btn-centrar" aria-label="Centrar la vista" title="Centrar la vista (si te pierdes girando la cámara)">🏠<span class="rotulo-boton">Centrar</span></button>
-	<button class="boton" id="btn-2d" aria-label="Ver el tablero en 2D" title="Ver el tablero en 2D: alzado de frente, a escala y sin perspectiva">📏<span class="rotulo-boton" id="btn-2d-texto">2D</span></button>
-	<button class="boton" id="btn-ver" aria-label="Modo Visualización" title="Modo Visualización: ver el tablero como quedaría de verdad, con la puerta abierta y sin transparencias (no se puede editar)">👁️<span class="rotulo-boton">Ver</span></button>
-	<button class="boton" id="btn-esquema" aria-label="Esquema eléctrico" title="Esquema eléctrico (mando y potencia): el plano que se entrega al cliente y usa el electricista">📐<span class="rotulo-boton">Esquema</span></button>
-	<button class="boton" id="btn-imagen" aria-label="Añadir imagen de referencia" title="Añadir una imagen (foto de gabinete, controlador, motor…) como referencia visual para cablear sobre ella">🖼️<span class="rotulo-boton">Imagen</span></button>
-	<input type="file" id="archivo-imagen" accept="image/*" hidden>
-	<div class="sep"></div>
+	<button class="boton" id="btn-energizar" aria-label="Energizar el tablero y simularlo" title="Dar tensión al tablero y verlo funcionar: pulsa los pulsadores, abre las protecciones y mira qué se enciende">⚡<span class="rotulo-boton">Energizar</span></button>
 	<button id="chip-drc" title="Verificación eléctrica en vivo — clic para ver el detalle"><span class="punto"></span><span id="chip-drc-texto">DRC</span></button>
 
 	<div class="empuje"></div>
 
+	<button class="boton" id="btn-esquema" aria-label="Esquema eléctrico" title="Esquema eléctrico (mando y potencia): el plano que se entrega al cliente y usa el electricista">📐<span class="rotulo-boton">Esquema</span></button>
 	<div class="menu" id="menu-archivo">
 		<button class="boton" id="btn-archivo" aria-label="Archivo" title="Nuevo, abrir, guardar y plantillas">📁<span class="rotulo-boton">Archivo</span> ▾</button>
 		<div class="lista">
@@ -1066,11 +1267,66 @@
 		</div>
 	</div>
 	<button class="boton" id="btn-planta" aria-label="Abrir el visor 3D de la planta" title="Visor 3D de la planta: recorrer la cubierta del aeropuerto con sus UMAs, conductos y puntos de control del BMS">🏗️<span class="rotulo-boton">Planta 3D</span></button>
-	<button class="boton" id="btn-energizar" aria-label="Energizar el tablero y simularlo" title="Dar tensión al tablero y verlo funcionar: pulsa los pulsadores, abre las protecciones y mira qué se enciende">⚡<span class="rotulo-boton">Energizar</span></button>
 	<button class="boton primario" id="btn-pdf" aria-label="Ver y editar el dossier antes de exportarlo" title="Ver el dossier antes de descargarlo: se puede quitar apartados y añadir textos e imágenes">📄<span class="rotulo-boton">Ver</span> dossier</button>
 </header>
 
+<!--
+	EL RAIL DE HERRAMIENTAS: QUÉ QUIERO HACER.
+	Una columna estrecha y siempre visible. Arriba las herramientas —lo que decide qué significa
+	el clic izquierdo— y abajo, separados por una línea, los paneles que solo enseñan cosas. La
+	herramienta activa se ve de un vistazo, que era justo lo que no pasaba: se pulsaba «Trabajo»
+	en la barra y visualmente no cambiaba casi nada.
+-->
+<nav id="rail" aria-label="Herramientas">
+	<button class="hta" id="hta-seleccionar" data-hta="seleccionar" title="Seleccionar y mover (V)">
+		<span class="ico">➚</span><span class="txt">Elegir</span></button>
+	<button class="hta" id="hta-anadir" data-hta="anadir" title="Añadir aparatos al tablero (A)">
+		<span class="ico">＋</span><span class="txt">Añadir</span></button>
+	<button class="hta" id="hta-conectar" data-hta="conectar" title="Cablear: borne de origen y borne de destino (C)">
+		<span class="ico">⌁</span><span class="txt">Cablear</span></button>
+	<button class="hta" id="hta-estructura" data-hta="estructura" title="Gabinete, carriles y canaletas (S)">
+		<span class="ico">▤</span><span class="txt">Montaje</span></button>
+	<div class="raya"></div>
+	<button class="hta" id="hta-proyecto" data-hta="proyecto" title="Lo que hay en el tablero: aparatos, cables y verificación (P)">
+		<span class="ico">☰</span><span class="txt">Tablero</span></button>
+	<div class="empuje"></div>
+	<button class="hta" id="btn-imagen" aria-label="Añadir imagen de referencia" title="Añadir una imagen (foto de gabinete, controlador, motor…) como referencia visual para cablear sobre ella"><span class="ico">🖼</span><span class="txt">Imagen</span></button>
+	<input type="file" id="archivo-imagen" accept="image/*" hidden>
+</nav>
+
 <div id="escena"></div>
+
+<!--
+	LOS CONTROLES DE VISTA VIVEN SOBRE EL VISOR, que es lo que afectan. Estaban repartidos entre
+	la barra superior y el fondo de un panel con dos mil píxeles de scroll.
+-->
+<div id="visor-vista">
+	<button class="vbtn" id="btn-centrar" aria-label="Centrar la vista" title="Centrar la vista (si te pierdes girando la cámara)">🏠</button>
+	<button class="vbtn" id="btn-2d" aria-label="Ver el tablero en 2D" title="Ver el tablero en 2D: alzado de frente, a escala y sin perspectiva"><span id="btn-2d-texto">📏</span></button>
+	<button class="vbtn" id="btn-ver" aria-label="Modo Visualización" title="Modo Visualización: ver el tablero como quedaría de verdad, con la puerta abierta y sin transparencias (no se puede editar)">👁️</button>
+	<div class="vmenu">
+		<button class="vbtn" id="btn-vista" aria-haspopup="true" aria-expanded="false"
+			title="Qué se ve en la escena: cotas, cables, tapas, designaciones y armario">◍</button>
+		<div class="vlista" id="lista-vista" hidden><label class="toggle"><input type="checkbox" id="ver-cotas"> <b>Ver tamaños</b> (cotas en cm)</label>
+			<label class="toggle"><input type="checkbox" id="ver-voltaje"> <b>Colorear por voltaje</b></label>
+			<div id="leyenda-voltaje" hidden></div>
+			<label class="toggle"><input type="checkbox" id="ver-cables" checked> Cables</label>
+			<label class="toggle"><input type="checkbox" id="ver-tapas" checked> Tapas de canaletas</label>
+			<label class="toggle"><input type="checkbox" id="ver-etiquetas" checked> Designaciones</label>
+			<label class="toggle"><input type="checkbox" id="ver-gabinete" checked> Armario (chapa y puerta)</label></div>
+	</div>
+</div>
+
+<!--
+	EL CONTROL DE PUERTA, DONDE SE MIRA.
+	Estaba al final del panel izquierdo, dentro de una sección plegable y por debajo del pliegue:
+	para abrir la puerta había que ir a buscarla. Es una acción de VISTA —como girar o acercar— y
+	las acciones de vista viven sobre el visor, no en el inspector de propiedades.
+-->
+<button id="puerta-flotante" type="button" aria-label="Abrir la puerta del armario"
+	title="Abrir o cerrar la puerta del armario (O)">
+	<span class="icono" aria-hidden="true"></span><span class="texto">Abrir puerta</span>
+</button>
 
 <section id="panel-esquema" hidden>
 	<div id="esquema-barra">
@@ -1150,7 +1406,8 @@
 </section>
 
 <aside id="panel-izq" class="panel">
-	<details open id="seccion-catalogo">
+	<h2 id="cajon-titulo"></h2>
+	<details open id="seccion-catalogo" data-espacio="interior conjunto" data-cajon="anadir">
 		<summary>Catálogo — clic para añadir</summary>
 		<div class="contenido">
 			<input id="buscar-catalogo" type="search" placeholder="Buscar aparato… (contactor, 3P, 24 V)" autocomplete="off">
@@ -1158,28 +1415,34 @@
 			<button class="boton" id="btn-controlador-medida" style="width:100%;margin-top:8px">🧩 Controlador a medida…</button>
 		</div>
 	</details>
-	<details open>
+	<!--
+		LA LISTA DE APARATOS ES EL CAJÓN DE «ELEGIR», y no un apartado del panel del proyecto.
+		Estaba en «El tablero» junto al DRC y el balance térmico, así que la herramienta de elegir
+		se quedaba con un cajón VACÍO en Interior y en Conjunto: un título —«Lo que hay puesto»—
+		sin nada debajo. Y es justo la lista que hace falta para llegar a un aparato que queda
+		detrás de una canaleta o fuera de la vista.
+	-->
+	<details open id="seccion-dispositivos" data-cajon="seleccionar">
 		<summary>Dispositivos <span id="contador-dispositivos"></span></summary>
 		<div class="contenido"><ul id="lista-dispositivos"></ul></div>
 	</details>
-	<details open id="seccion-cables">
+	<details open id="seccion-cables" data-espacio="interior conjunto" data-cajon="conectar">
 		<summary>Cables <span id="contador-cables"></span></summary>
 		<div class="contenido">
-			<div class="sub" style="color:var(--texto-suave);margin-bottom:6px">Como en Tinkercad: <b>doble clic</b> sobre un cable (con el botón izquierdo o el derecho) crea una <b>unión</b> · <b>arrastra</b> la unión con el clic izquierdo para llevar el cable por ahí · <b>doble clic</b> sobre la unión la quita. Pasa el ratón por la lista para resaltar.</div>
 			<ul id="lista-cables"></ul>
 		</div>
 	</details>
-	<details open>
+	<details open id="seccion-verificacion" data-cajon="proyecto">
 		<summary>Verificación eléctrica</summary>
 		<div class="contenido"><ul id="lista-drc"></ul></div>
 	</details>
-	<details>
+	<details id="seccion-resumen-cables" data-cajon="proyecto">
 		<summary>Cableado</summary>
 		<div class="contenido">
-			<div id="resumen-cables" style="color:var(--texto-suave)"></div>
+			<div id="resumen-cables"></div>
 		</div>
 	</details>
-	<details id="seccion-simulacion" open hidden>
+	<details id="seccion-simulacion" data-cajon="proyecto" open hidden>
 		<summary>⚡ Tablero energizado</summary>
 		<div class="contenido">
 			<div class="sub" style="color:var(--texto-suave);margin-bottom:8px">Acciona los mandos
@@ -1211,7 +1474,7 @@
 			</div>
 		</div>
 	</details>
-	<details id="seccion-termico">
+	<details id="seccion-termico" data-cajon="proyecto">
 		<summary>Balance térmico</summary>
 		<div class="contenido">
 			<div id="termico-veredicto" class="veredicto-termico"></div>
@@ -1221,18 +1484,27 @@
 			afinarla, y el montaje del armario en Archivo → Datos del proyecto.</div>
 		</div>
 	</details>
-	<details open id="seccion-frontal">
-		<summary>Frontal de la puerta</summary>
+	<!--
+		AÑADIR ES UNA HERRAMIENTA; la lista de lo puesto, el alineado y la precisión son otra
+		cosa. Estaban los tres en la misma sección, al final de un panel de mil trescientos
+		píxeles: para poner un piloto había que pasar por delante de la lista de aparatos del
+		interior, que en el Frontal no pinta nada.
+	-->
+	<details open id="seccion-frontal-anadir" data-espacio="frontal" data-cajon="anadir">
+		<summary>Añadir a la puerta</summary>
 		<div class="contenido">
-			<div class="grupo-catalogo" style="color:#7cc0ff">Montado en la puerta</div>
-			<ul id="lista-frontal"></ul>
-			<div class="grupo-catalogo" style="color:#7ee2a1">Añadir</div>
 			<div class="botonera">
 				<button class="boton" id="btn-add-piloto" title="Piloto de 22 mm en el centro de la puerta">+ Piloto</button>
 				<button class="boton" id="btn-add-rotulo" title="Rótulo grabado sobre la chapa">+ Rótulo</button>
 				<button class="boton" id="btn-add-placa" title="Placa de identificación atornillada">+ Placa</button>
 				<button class="boton" id="btn-add-aviso" title="Placa de aviso de riesgo eléctrico">+ Aviso</button>
 			</div>
+		</div>
+	</details>
+	<details open id="seccion-frontal" data-espacio="frontal" data-cajon="seleccionar">
+		<summary>Montado en la puerta</summary>
+		<div class="contenido">
+			<ul id="lista-frontal"></ul>
 			<div class="grupo-catalogo" style="color:#ffe58f">Alinear y repartir <span style="color:var(--texto-suave);font-weight:400">(elige varios con Mayúsculas)</span></div>
 			<div class="botonera">
 				<button class="boton" id="btn-al-izq" title="Alinear por la izquierda">⇤</button>
@@ -1259,7 +1531,7 @@
 			ayudas solo actúan mientras mueves: nada se recoloca después de soltarlo.</div>
 		</div>
 	</details>
-	<details id="seccion-estructura">
+	<details id="seccion-estructura" data-espacio="interior conjunto" data-cajon="estructura">
 		<summary>Gabinete y estructura</summary>
 		<div class="contenido">
 			<div class="grupo-catalogo" style="color:#7cc0ff">Caja eléctrica (envolvente)</div>
@@ -1277,6 +1549,19 @@
 					<option value="80">80 × 80 mm</option>
 				</select>
 			</div>
+			<div class="grupo-catalogo" style="color:#b8a6ff">Puerta y mazo</div>
+			<div class="campo"><label for="caja-bisagras">Bisagras</label>
+				<select id="caja-bisagras">
+					<option value="izquierda">A la izquierda</option>
+					<option value="derecha">A la derecha</option>
+				</select>
+			</div>
+			<div class="campo"><label for="mazo-bisagra" title="A qué distancia del canto de bisagras sube el mazo por la hoja. Cuanto más cerca, menos se estira al abrir.">Entrada del mazo</label><span><input type="number" id="mazo-bisagra" min="12" max="160" step="2"> mm</span></div>
+			<div class="campo"><label for="mazo-holgura" title="Cable de más para el lazo de servicio. Positivo da más panza; negativo lo aprieta.">Holgura del lazo</label><span><input type="number" id="mazo-holgura" min="-30" max="200" step="5"> mm</span></div>
+			<div class="campo"><label for="mazo-paso" title="Cada cuántos milímetros se amarra el mazo a la chapa de la puerta.">Amarres cada</label><span><input type="number" id="mazo-paso" min="40" max="400" step="10"> mm</span></div>
+			<div class="campo"><label for="caja-bonding" title="Dibuja y cuenta la trenza de masa entre la hoja y el cuerpo. Es un elemento de diseño: TableroStudio no certifica conformidad.">Trenza de masa</label><span><input type="checkbox" id="caja-bonding"> <input type="number" id="bonding-seccion" min="1" max="35" step="0.5" style="width:56px"> mm²</span></div>
+			<div class="grupo-catalogo" style="color:#8fd4ff">Entradas de cable — x (mm) · rosca · Ø</div>
+			<div id="lista-entradas"></div>
 			<div class="grupo-catalogo" style="color:#ffe58f">Rieles DIN — x · y · largo (mm)</div>
 			<div id="lista-rieles"></div>
 			<div class="grupo-catalogo" style="color:#ffc069">Canaletas — x · y · largo (mm)</div>
@@ -1285,21 +1570,9 @@
 				<button class="boton" id="btn-add-riel">+ Riel</button>
 				<button class="boton" id="btn-add-can-h">+ Canaleta ─</button>
 				<button class="boton" id="btn-add-can-v">+ Canaleta │</button>
+				<button class="boton" id="btn-add-entrada">+ Entrada</button>
 				<button class="boton primario" id="aplicar-dim">Aplicar</button>
 			</div>
-		</div>
-	</details>
-	<details open>
-		<summary>Vista</summary>
-		<div class="contenido">
-			<label class="toggle"><input type="checkbox" id="ver-cotas"> <b>Ver tamaños</b> (cotas en cm)</label>
-			<label class="toggle"><input type="checkbox" id="ver-voltaje"> <b>Colorear por voltaje</b></label>
-			<div id="leyenda-voltaje" hidden></div>
-			<label class="toggle"><input type="checkbox" id="ver-cables" checked> Cables</label>
-			<label class="toggle"><input type="checkbox" id="ver-tapas" checked> Tapas de canaletas</label>
-			<label class="toggle"><input type="checkbox" id="ver-etiquetas" checked> Designaciones</label>
-			<label class="toggle"><input type="checkbox" id="ver-gabinete" checked> Armario (chapa y puerta)</label>
-			<button id="btn-puerta" class="boton" type="button" style="margin-top:6px; padding:4px 9px; font-size:12px">Cerrar la puerta</button>
 		</div>
 	</details>
 </aside>
@@ -1780,7 +2053,12 @@
 			<li><kbd>Ctrl</kbd>+<kbd>C</kbd> copiar · <kbd>Ctrl</kbd>+<kbd>V</kbd> pegar · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicar</li>
 			<li><kbd>Shift</kbd>+clic añadir a la selección</li>
 			<li><kbd>Esc</kbd> cancelar lo que estés haciendo, y cerrar ventanas</li>
-			<li>Botón 🏠 centrar la vista si te pierdes girando la cámara</li>
+			<li><b>Herramientas:</b> <kbd>V</kbd> elegir · <kbd>A</kbd> añadir · <kbd>C</kbd> cablear ·
+			<kbd>S</kbd> montaje · <kbd>P</kbd> el tablero</li>
+			<li><b>Cámara:</b> arrastrar con el izquierdo gira · el derecho desplaza · la rueda acerca ·
+			<kbd>F</kbd> enfoca lo elegido · <kbd>O</kbd> abre y cierra la puerta</li>
+			<li>Un <b>clic corto</b> elige; para <b>mover</b> algo, elígelo y arrástralo</li>
+			<li>Botón 🏠 del visor: centrar la vista si te pierdes girando la cámara</li>
 			<li>En la Planta 3D: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> andar,
 			<kbd>Shift</kbd> correr, botón derecho apretado para mirar, <kbd>H</kbd> esconder los paneles</li>
 		</ul>

@@ -178,11 +178,18 @@ const ap = lista.filter((q) => q.clase === 'aparato');
 	 * entre 22 y 31. También se probó apagando sombras (la mediana cae a la mitad: ahí está el
 	 * grueso del coste), quitando la serigrafía, vaciando la puerta y escondiendo el armario.
 	 *
-	 * O sea: ningún estado al que llega el programa produce ese pico. Lo produce medir noventa
-	 * dibujados al final de una sesión instrumentada, y no se ha conseguido reducirlo con pausas
-	 * ni corriendo la suite sola. Así que aquí se afirma lo que esta medida SÍ sostiene —la
-	 * mediana— y el peor caso se imprime como dato, con su contraste, en vez de fingir un umbral.
-	 * Quien quiera vigilar el peor fotograma tiene `_v-tiron2.mjs`, que lo mide donde se puede.
+	 * O sea: ningún estado al que llega el programa produce ese pico.
+	 *
+	 * YA SE SABE DE DÓNDE SALE, y se puede reproducir a voluntad: `qa/_v-perfil.mjs` lo mide a
+	 * solas, abre una SEGUNDA escena de Three dibujando a la vez y lo vuelve a medir. Este
+	 * contenedor dibuja por software y todas las pestañas comparten un único proceso de GPU: con
+	 * vecino, el peor fotograma pasó de 30 ms a 7.253 ms, y al cerrar el vecino volvió a 24 ms.
+	 * El pico es de contención en el banco de pruebas —dos suites de QA corriendo a la vez, que
+	 * es como se corren— y no de nada que haga el programa. Medido dentro de una sola tarea de
+	 * JavaScript, dibujar el tablero cuesta entre 15 y 20 ms de principio a fin de la sesión.
+	 *
+	 * Por eso aquí se afirma lo que esta medida SÍ sostiene —la mediana— y el peor caso se
+	 * imprime como dato. Quien quiera vigilarlo tiene `_v-tiron2.mjs` y `_v-perfil.mjs`.
 	 */
 	const tandas = [];
 	for (let i = 0; i < 3; i++) {
@@ -190,7 +197,7 @@ const ap = lista.filter((q) => q.clase === 'aparato');
 		tandas.push(await p.evaluate(() => window.qa.medirDibujado(30)));
 	}
 	for (let i = 0; i < 3; i++) console.log(`   dibujado, tanda ${i + 1}: mediana ${tandas[i].mediana} ms · peor ${tandas[i].peor} ms`);
-	console.log('   (el peor caso de esta prueba no es comparable: ver el comentario y _v-tiron2.mjs)');
+	console.log('   (el peor caso no es comparable: es contención del banco, demostrada en _v-perfil.mjs)');
 	for (let i = 0; i < 3; i++) {
 		ok(tandas[i].mediana < 60, `tanda ${i + 1}: mediana de dibujado razonable (${tandas[i].mediana} ms en SwiftShader por software)`);
 	}

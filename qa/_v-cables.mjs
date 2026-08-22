@@ -32,12 +32,12 @@ console.log(`   ${conductores.length} conductores`);
 ok(conductores.length > 0, 'el tablero trae cables');
 
 /*
- * LOS CONDUCTORES QUE LLEGAN A LA PUERTA NO SE DIBUJAN TODAVÍA, y es a propósito.
+ * LOS CONDUCTORES QUE LLEGAN A LA PUERTA YA SE DIBUJAN.
  *
- * El mazo flexible que cruza la bisagra está pendiente, así que un hilo que va de la placa a un
- * piloto de la puerta existe eléctricamente —enciende el piloto— pero no tiene recorrido dibujado.
- * Se cuentan aparte en vez de dar la cifra por mala: si algún día se dibujan, este número sube
- * solo y la prueba sigue valiendo sin tocarla.
+ * Cuando se escribió esto, el mazo flexible que cruza la bisagra estaba pendiente: un hilo que
+ * iba de la placa a un piloto existía eléctricamente —encendía el piloto— y no tenía recorrido.
+ * Ahora lo tiene, en tres tramos, así que se dibujan TODOS. Se siguen contando aparte porque
+ * saber cuántos cruzan a la hoja es un dato útil por sí mismo.
  */
 const aLaPuerta = await p.evaluate(() => {
 	const pr = window.qa.proyecto();
@@ -45,13 +45,15 @@ const aLaPuerta = await p.evaluate(() => {
 	return pr.conductores.filter((c) => enPuerta.has(c.de.dispositivoId) || enPuerta.has(c.a.dispositivoId)).length;
 });
 const dePlaca = conductores.length - aLaPuerta;
-console.log(`   ${aLaPuerta} de ellos llegan a la puerta (sin recorrido dibujado, por ahora)`);
+console.log(`   ${aLaPuerta} de ellos llegan a la puerta, y también se dibujan`);
 
 /* ---- 1. Se ven dibujados ---- */
 {
 	// `cablesDibujados()` devuelve CUÁNTOS, no cuáles: es un número.
 	const dibujados = await p.evaluate(() => window.qa.cablesDibujados());
-	ok(dibujados === dePlaca, `se dibujan todos los conductores de placa (${dibujados}/${dePlaca})`);
+	ok(dibujados === conductores.length,
+		`se dibujan TODOS los conductores, los de placa y los de puerta (${dibujados}/${conductores.length}`
+		+ `, de los cuales ${dePlaca} de placa y ${aLaPuerta} de puerta)`);
 }
 
 /* ---- 2. Se pueden pinchar con el ratón, sin puntería ---- */
@@ -114,13 +116,20 @@ console.log(`   ${aLaPuerta} de ellos llegan a la puerta (sin recorrido dibujado
 	const amontonado = await p.evaluate(() => window.qa.amontonamiento());
 	console.log(`   amontonamiento: ${amontonado.mismaCapaMm} mm en la misma capa de ${amontonado.pares} pares`);
 	/*
-	 * El ruteo conoce todos los cables DE PLACA. Los que llegan a un aparato montado en la puerta
-	 * no tienen recorrido dibujado todavía —el mazo flexible de puerta está pendiente a propósito—
-	 * así que se descuentan en vez de dar la cifra por mala. Si algún día se dibujan, este número
-	 * subirá solo y la prueba seguirá valiendo.
+	 * EL RUTEO POR LA PLACA CONOCE TODOS LOS QUE PASAN POR ELLA, y solo se le descuentan los
+	 * PUENTES: un hilo que une dos aparatos de la misma puerta va de un borne al de al lado por
+	 * la cara interior de la hoja y no pisa la placa en ningún momento, así que no tiene por qué
+	 * aparecer en el reparto por capas. Los que sí cruzan —placa, lazo de servicio y hoja— sí.
 	 */
-	ok(amontonado.cables === dePlaca,
-		`el ruteo conoce todos los cables de placa (${amontonado.cables} de ${dePlaca})`);
+	const puentesDePuerta = await p.evaluate(() => {
+		const pr = window.qa.proyecto();
+		const enP = new Set(pr.gabinete.colocaciones.filter((c) => c.montaje === 'puerta').map((c) => c.dispositivoId));
+		return pr.conductores.filter((c) => enP.has(c.de.dispositivoId) && enP.has(c.a.dispositivoId)).length;
+	});
+	const porLaPlaca = conductores.length - puentesDePuerta;
+	ok(amontonado.cables === porLaPlaca,
+		`el ruteo conoce todos los que pasan por la placa (${amontonado.cables} de ${porLaPlaca};`
+		+ ` ${puentesDePuerta} puentes van solo por la hoja)`);
 	const rutas = await p.evaluate(() => window.qa.rutas());
 	console.log(`   ${rutas.length} rutas calculadas`);
 	ok(rutas.length > 0, 'hay rutas de cable calculadas');
@@ -157,7 +166,7 @@ console.log(`   ${aLaPuerta} de ellos llegan a la puerta (sin recorrido dibujado
 	const despues = await p.evaluate(() => JSON.stringify(window.qa.proyecto().conductores));
 	ok(antes === despues, 'los conductores sobreviven al ida y vuelta con su trazado');
 	const dibujados = await p.evaluate(() => window.qa.cablesDibujados());
-	ok(dibujados === dePlaca, `y se vuelven a dibujar todos (${dibujados}/${dePlaca})`);
+	ok(dibujados === conductores.length, `y se vuelven a dibujar todos (${dibujados}/${conductores.length})`);
 }
 
 console.log(errores.length ? `ERRORES JS: ${errores.join(' | ')}` : 'sin errores de JavaScript');

@@ -319,7 +319,28 @@ export interface Conductor {
 	 * siguen abriéndose y viéndose como estaban.
 	 */
 	trazado?: { x: number; y: number; z?: number }[];
+	/**
+	 * A QUÉ PARTE DE LA INSTALACIÓN PERTENECE EL CONDUCTOR.
+	 *
+	 * En un tablero real no todo el cable es el mismo cable, y la diferencia no es estética: el
+	 * cableado interno se tiende rígido y peinado en canaleta, el de puerta va flexible y con
+	 * lazo de servicio, el de campo NO se dibuja dentro del armario porque lo trae el instalador
+	 * y muere en una bornera, y el de protección tiene su propia identidad —verde-amarillo,
+	 * continuidad propia— y no viaja dentro del mazo de mando.
+	 *
+	 * Es OPCIONAL a propósito. Si falta, `claseDeConductor` la deduce de dónde están sus dos
+	 * extremos, que es información que el proyecto ya tiene; guardarla sirve para el caso en que
+	 * el usuario quiera decir otra cosa. Un proyecto viejo se abre sin este campo y se comporta
+	 * exactamente igual que antes.
+	 */
+	clase?: ClaseConductor;
 }
+
+/**
+ * Las cuatro clases de cable de un tablero. No es una taxonomía normativa: es la distinción
+ * mínima que cambia cómo se tiende, cómo se dibuja y quién lo monta.
+ */
+export type ClaseConductor = 'interno' | 'puerta' | 'campo' | 'proteccion';
 
 /** Folio del esquema. Rejilla al estilo QET: columnas numeradas y filas con letra. */
 export interface Hoja {
@@ -410,6 +431,51 @@ export interface RotuloFrontal {
 	ancho?: number;
 }
 
+/** Cómo se resuelve el paso de un cable por la chapa. */
+export type TipoEntrada = 'prensaestopas' | 'placa-pasacables' | 'conduit';
+
+/**
+ * UNA ENTRADA DE CABLE EN LA ENVOLVENTE: el prensaestopas, la placa pasacables o el conduit por
+ * donde el cable de campo cruza la chapa. No es un aparato —no tiene bornes ni sale en el
+ * esquema— pero sí es material, sí ocupa sitio y sí decide por dónde llega la acometida.
+ */
+export interface EntradaCable {
+	id: string;
+	/** En qué cara de la envolvente está. Lo normal, y por eso el valor por defecto, es abajo. */
+	cara: 'inferior' | 'superior' | 'izquierda' | 'derecha';
+	/**
+	 * Posición sobre esa cara, en mm. `x` corre a lo largo de la cara vista de frente y `y` a lo
+	 * ancho —en las caras horizontales es la profundidad, en las verticales la altura—.
+	 */
+	x: number;
+	y: number;
+	tipo: TipoEntrada;
+	/** Diámetro del agujero en la chapa, en mm. */
+	diametro?: number;
+	/** Rosca del prensaestopas, tal como se pide al proveedor: M16, M20, M25… */
+	rosca?: string;
+	nombre?: string;
+}
+
+/**
+ * Lo que el usuario decide sobre el mazo de puerta. Cada campo sustituye a un valor que el
+ * programa calcularía solo; ninguno es obligatorio.
+ */
+export interface AjustesMazo {
+	/**
+	 * Holgura EXTRA del lazo de servicio, en mm, sobre la que el programa calcula. Positiva da
+	 * más panza —más cómodo de montar, peor de ordenar—; negativa la aprieta.
+	 */
+	holgura?: number;
+	/** Cada cuántos mm se amarra el mazo a la chapa de la hoja. Por defecto, 110. */
+	pasoSujecion?: number;
+	/**
+	 * A qué distancia del canto de bisagras entra el mazo en la hoja, en mm. Cuanto más cerca,
+	 * menos se entera el cable de que la puerta se abre; por eso el valor propuesto es pequeño.
+	 */
+	desdeBisagra?: number;
+}
+
 export interface Gabinete {
 	/** Dimensiones útiles de la placa de montaje, en mm. */
 	ancho: number;
@@ -424,7 +490,30 @@ export interface Gabinete {
 	caja?: {
 		ancho: number; alto: number; profundidad: number;
 		bisagras?: 'izquierda' | 'derecha';
+		/**
+		 * LA TRENZA DE MASA DE LA HOJA. Une la puerta al cuerpo del armario para que la chapa de
+		 * la puerta —que lleva aparatos con tensión detrás— no quede aislada del resto.
+		 *
+		 * ESTO NO ES UNA DECLARACIÓN DE CONFORMIDAD. TableroStudio es una herramienta de diseño:
+		 * marcar la casilla dibuja la trenza, la cuenta en el material y deja constancia de la
+		 * intención, y nada más. Que el conjunto cumpla depende del montaje real, de la sección,
+		 * del punto de amarre y de la verificación en fábrica, y eso no lo puede firmar un
+		 * programa.
+		 */
+		bonding?: { puesto?: boolean; seccion?: number };
 	};
+	/**
+	 * POR DÓNDE ENTRA EL CABLE DE FUERA. La frontera entre lo que dibuja este programa y lo que
+	 * trae el instalador: aquí acaba el cable de campo y empieza el tablero.
+	 */
+	entradas?: EntradaCable[];
+	/**
+	 * AJUSTES DEL MAZO DE PUERTA. Todos opcionales, y ésa es la idea: el programa PROPONE un
+	 * mazo completo a partir de la geometría del armario, y estos campos son lo que el usuario
+	 * DECIDE cambiar. Un campo ausente no es un cero, es «como tú lo veas»; no hay ningún
+	 * solver que vuelva a mover lo que la persona ya movió.
+	 */
+	mazoPuerta?: AjustesMazo;
 	/**
 	 * SEÑALÉTICA DEL FRONTAL: las placas y los rótulos grabados de la puerta.
 	 *

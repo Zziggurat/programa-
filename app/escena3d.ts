@@ -6,8 +6,12 @@
  * hacia el frente. Todo se centra en el origen para orbitar cómodo.
  */
 import * as THREE from 'three';
-import { Canaleta, Colocacion, Conductor, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
+import { Canaleta, Colocacion, Conductor, Dispositivo, EntradaCable, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
+import {
+	ajustesDeMazo, alturaDeMazo, anclajeFijoDeMazo, carrilDeMazo, construirMazoPuerta, desvioDeCarril,
+	enLaPuerta, Mazo,
+} from './mazo-puerta.js';
 import { posicionesDeTerminales } from '../src/motores/terminales.js';
 import {
 	Banda, carrilesDe, corredoresLibres, mejorCorredor, orthogonalize, Punto, Punto3, tenderCable,
@@ -141,6 +145,8 @@ export interface Escenario {
 	aparatos: THREE.Object3D[];
 	/** Lo montado en la puerta: aparatos y rótulos, que es con lo que trabaja el editor del frontal. */
 	frontal: MontadoEnPuerta[];
+	/** El mazo que cruza de la placa a la hoja: su tramo de puerta y sus lazos de servicio. */
+	mazo: Mazo;
 	tapas: THREE.Object3D[];     // tapas de canaletas (para ocultarlas)
 	etiquetas: THREE.Object3D[]; // sprites de designación
 	centro: THREE.Vector3;
@@ -285,6 +291,25 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	const cables = new THREE.Group();
 	raiz.add(cables);
 
+	/*
+	 * EL MAZO DE PUERTA. Se monta aquí, con la escena ya armada, porque necesita saber DÓNDE cae
+	 * cada terminal, y eso lo dice la geometría que acaba de construir la ficha del aparato, no
+	 * una tabla aparte. Así, el día que haya un pulsador con tres bornes, el mazo encuentra sus
+	 * tres tornillos sin que nadie los declare en ningún sitio.
+	 */
+	const mazo = construirMazoPuerta({
+		proyecto,
+		puerta: envolvente.puerta,
+		aparatos,
+		aEscena,
+		placa: { ancho: g.ancho, alto: g.alto },
+		caja,
+		izquierda: (g.caja?.bisagras ?? 'izquierda') === 'izquierda',
+		color: (c) => colorDeCable(c.color),
+		radio: radioDeCable,
+	});
+	raiz.add(mazo.flexibles);
+
 	const bornes = new THREE.Group();
 	bornes.visible = false;
 	raiz.add(bornes);
@@ -298,7 +323,7 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 
 	return {
 		raiz, dispositivos, cables, bornes, cotas, handles, tapas, etiquetas,
-		envolvente: envolvente.grupo, puerta: envolvente.puerta, aparatos, frontal,
+		envolvente: envolvente.grupo, puerta: envolvente.puerta, aparatos, frontal, mazo,
 		centro: new THREE.Vector3(0, 0, 0), aEscena,
 	};
 }
@@ -883,8 +908,19 @@ export function construirDispositivo(
 	 * tensión, que es información de estado y va detrás.
 	 */
 	if (d.designacion) {
+		/*
+		 * EL RÓTULO RESPETA LA CHAPA. Iba con `depthTest: false` para que no lo tapara el aparato
+		 * al que nombra —un cartel escondido detrás de su propio contactor no sirve de nada— pero
+		 * eso no distingue entre «lo tapa el aparato» y «lo tapa un armario de acero»: desde
+		 * cualquier ángulo en el que la hoja o el costado se cruzaran, «-KM1» seguía leyéndose a
+		 * través de la chapa. Y no era teórico: mirando el armario por detrás salían diecisiete.
+		 *
+		 * Con la prueba de profundidad puesta, la ocultación la decide la geometría. El cartel no
+		 * se pierde detrás de su aparato porque no está detrás: cuelga por encima de él, en aire
+		 * libre, y ahí no hay nada que lo tape salvo algo que de verdad esté delante.
+		 */
 		const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-			map: textura(d.designacion), depthTest: false, transparent: true,
+			map: textura(d.designacion), depthTest: true, transparent: true,
 		}));
 		sprite.userData.rotulo = { base: 44, proporcion: 16.5 / 44, altura: col.alto / 2 + 13, rango: 'identificador' };
 		sprite.position.set(0, col.alto / 2 + 13, profundidad);
@@ -894,7 +930,7 @@ export function construirDispositivo(
 
 	if (d.tensionNominal !== undefined && !d.imagen) {
 		const badge = new THREE.Sprite(new THREE.SpriteMaterial({
-			map: badgeVoltaje(d.tensionNominal), depthTest: false, transparent: true,
+			map: badgeVoltaje(d.tensionNominal), depthTest: true, transparent: true,
 		}));
 		badge.userData.rotulo = { base: 22, proporcion: 0.5, altura: col.alto / 2 + 24, rango: 'estado' };
 		badge.position.set(0, col.alto / 2 + 24, profundidad);
@@ -1268,6 +1304,16 @@ export function salidasDeCable(
 	conductor: Conductor,
 	abanico = abanicoDeSalida(proyecto),
 ): { de: Anclaje; a: Anclaje; salidaA: Punto3; salidaB: Punto3 } | undefined {
+	/*
+	 * UN PUENTE ENTRE DOS APARATOS DE LA PUERTA NO TIENE RECORRIDO POR EL ARMARIO.
+	 *
+	 * Los dos extremos anclarían al mismo punto de la bisagra y el ruteador tendería un cable de
+	 * longitud cero contra sí mismo. Ese conductor lo dibuja entero `mazo-puerta`, por la cara
+	 * interior de la hoja, que es por donde va de verdad.
+	 */
+	if (enLaPuerta(proyecto, conductor.de.dispositivoId) && enLaPuerta(proyecto, conductor.a.dispositivoId)) {
+		return undefined;
+	}
 	const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
 	const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
 	if (!a || !b) return undefined; // solo si falta el aparato entero (se limpia al eliminarlo)
@@ -2447,8 +2493,30 @@ export function yEntradasCampo(proyecto: Proyecto): number {
 	return (proyecto.gabinete?.alto ?? 0) + 26;
 }
 
+/**
+ * LA ENTRADA DECLARADA que le toca a un aparato de campo, si el proyecto declara alguna.
+ *
+ * Aquí está la frontera del tablero. Lo que entra por un prensaestopas ya no lo tiende este
+ * programa: lo trae el instalador y muere en una bornera. Mientras el proyecto no diga por dónde
+ * entra, se reparten a ojo a lo ancho de la envolvente —que es una propuesta razonable y no una
+ * decisión—; en cuanto declara entradas, mandan las suyas, con su diámetro y su rosca, porque
+ * dónde se taladra la chapa no lo decide un reparto automático.
+ */
+export function entradaDeCampo(proyecto: Proyecto, dispositivoId: string): EntradaCable | undefined {
+	const abajo = (proyecto.gabinete?.entradas ?? []).filter((e) => e.cara === 'inferior');
+	if (!abajo.length) return undefined;
+	const campo = aparatosDeCampo(proyecto);
+	const i = campo.findIndex((d) => d.id === dispositivoId);
+	if (i < 0) return undefined;
+	// Más aparatos que entradas es el caso normal: por un prensaestopas de M25 pasa más de un
+	// cable. Se reparten en orden, y al que no le toca entrada propia comparte la última.
+	return abajo[Math.min(i, abajo.length - 1)];
+}
+
 /** Centro X (mm) del prensaestopas de un aparato de campo, repartidos a lo ancho del gabinete. */
 function xEntradaCampo(proyecto: Proyecto, dispositivoId: string): number | undefined {
+	const declarada = entradaDeCampo(proyecto, dispositivoId);
+	if (declarada) return Math.round(declarada.x);
 	const campo = aparatosDeCampo(proyecto);
 	const i = campo.findIndex((d) => d.id === dispositivoId);
 	if (i < 0) return undefined;
@@ -2603,7 +2671,8 @@ export function construirEntradasCampo(
 ): THREE.Group {
 	const grupo = new THREE.Group();
 	const campo = aparatosDeCampo(proyecto);
-	if (campo.length === 0) return grupo;
+	const declaradas = (proyecto.gabinete?.entradas ?? []).filter((e) => e.cara === 'inferior');
+	if (campo.length === 0 && declaradas.length === 0) return grupo;
 	const y = yEntradasCampo(proyecto);
 	const anchoGab = proyecto.gabinete?.ancho ?? 600;
 
@@ -2619,7 +2688,9 @@ export function construirEntradasCampo(
 	 * No es adorno: sin una superficie de referencia, el ojo no sabe a qué altura está cada cosa y
 	 * todo el conjunto parece un montaje pegado.
 	 */
-	const bancada = new THREE.Group();
+	// LA BANCADA SOLO SI HAY APARATOS QUE APOYAR. Con entradas declaradas y ningún aparato de
+	// campo, dibujarla sería poner una mesa vacía debajo del armario.
+	const bancada = campo.length ? new THREE.Group() : undefined;
 	const grisBanco = new THREE.MeshStandardMaterial({ color: 0x2b3138, roughness: 0.85, metalness: 0.05 });
 	const cantoBanco = new THREE.MeshStandardMaterial({ color: 0x3a424b, roughness: 0.7, metalness: 0.2 });
 	const anchoBanco = anchoGab + 90;
@@ -2627,21 +2698,46 @@ export function construirEntradasCampo(
 	const tablero = new THREE.Mesh(new THREE.BoxGeometry(anchoBanco, 14, 96), grisBanco);
 	tablero.position.copy(aEscena(anchoGab / 2, y + 78, 6));
 	tablero.receiveShadow = true;
-	bancada.add(tablero);
+	bancada?.add(tablero);
 	const canto = new THREE.Mesh(new THREE.BoxGeometry(anchoBanco, 5, 4), cantoBanco);
 	canto.position.copy(aEscena(anchoGab / 2, y + 70, 54));
-	bancada.add(canto);
+	bancada?.add(canto);
 	// Zócalo: da fondo y evita que la bancada parezca a su vez una tabla en el aire.
 	const zocalo = new THREE.Mesh(new THREE.BoxGeometry(anchoBanco - 40, 26, 70),
 		new THREE.MeshStandardMaterial({ color: 0x22272d, roughness: 0.9 }));
 	zocalo.position.copy(aEscena(anchoGab / 2, y + 98, 0));
-	bancada.add(zocalo);
-	grupo.add(bancada);
+	bancada?.add(zocalo);
+	if (bancada) grupo.add(bancada);
+
+	/*
+	 * LAS ENTRADAS DECLARADAS QUE NO USA NADIE. Un prensaestopas previsto y todavía sin cable es
+	 * información: dice dónde se taladra la chapa y qué rosca hay que pedir. Si no se dibujara,
+	 * declarar una entrada de reserva no serviría de nada.
+	 */
+	const usadas = new Set(campo.map((d) => entradaDeCampo(proyecto, d.id)?.id).filter(Boolean));
+	for (const e of declaradas) {
+		if (usadas.has(e.id)) continue;
+		const d0 = Math.max(12, e.diametro ?? 20);
+		const vacio = new THREE.Mesh(
+			new THREE.CylinderGeometry(d0 / 2, d0 / 2 + 2, 16, 16),
+			new THREE.MeshStandardMaterial({ color: 0x6f7883, roughness: 0.65, metalness: 0.3 }),
+		);
+		vacio.position.copy(aEscena(e.x, y, 10));
+		grupo.add(vacio);
+		const rot = etiquetaCota(e.rosca ?? e.nombre ?? 'reserva', '#9aa4b0');
+		rot.position.copy(aEscena(e.x, y + 24, 26));
+		rot.scale.set(38, 12.6, 1);
+		grupo.add(rot);
+	}
 
 	for (const d of campo) {
 		const cx = xEntradaCampo(proyecto, d.id);
 		if (cx === undefined) continue;
-		const ancho = Math.max(26, d.bornes.length * 13 + 10);
+		const decl = entradaDeCampo(proyecto, d.id);
+		// El ancho lo manda el agujero declarado si lo hay: un M20 y un M32 no se ven igual.
+		const ancho = decl?.diametro
+			? Math.max(20, decl.diametro + 8)
+			: Math.max(26, d.bornes.length * 13 + 10);
 		// Cuerpo del prensaestopas (regleta pasamuros).
 		const cuerpo = new THREE.Mesh(
 			new THREE.BoxGeometry(ancho, 16, 20),
@@ -2689,23 +2785,40 @@ export function anclajeBorne(
 	borneId: string,
 ): Anclaje | undefined {
 	const d = proyecto.dispositivos.find((x) => x.id === dispositivoId);
-	const col = proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === dispositivoId);
+	const g = proyecto.gabinete;
+	const col = g?.colocaciones.find((c) => c.dispositivoId === dispositivoId);
 	if (!d) return undefined;
 	/*
-	 * APARATO MONTADO EN LA PUERTA: todavía no tiene anclaje para el cable en 3D.
+	 * APARATO MONTADO EN LA PUERTA: EL TRAMO DE PLACA ACABA JUNTO A LA BISAGRA.
 	 *
-	 * Eléctricamente está completo —el simulador, el DRC, los potenciales, el esquema y el dossier
-	 * lo tratan como cualquier otro aparato, porque para ellos lo es—, pero el RECORRIDO del cable
-	 * hasta él es otra cosa: sale de la placa y tiene que llegar a una pieza que gira sobre unas
-	 * bisagras. En un tablero de verdad eso se resuelve con un mazo flexible que va al lado de las
-	 * bisagras y deja seno para que la puerta abra; dibujarlo bien es un trabajo con entidad, y
-	 * dibujarlo mal —un cable recto tendido hasta la puerta cerrada— sería peor que no dibujarlo:
-	 * se estiraría por el aire en cuanto la puerta se abriera.
+	 * Antes esto devolvía `undefined` y el conductor no se dibujaba en absoluto: encendía el
+	 * piloto y no había forma de ver por dónde. La razón era buena —un cable recto tendido hasta
+	 * una puerta cerrada se estira por el aire en cuanto la puerta abre— pero la conclusión era
+	 * demasiado: lo que no se puede tender de una vez es el cable ENTERO, no el tramo que corre
+	 * por dentro del armario.
 	 *
-	 * Sin anclaje, `salidasDeCable` devuelve `undefined` y el conductor simplemente no se dibuja.
-	 * No se pierde: sigue en el proyecto, sigue conduciendo y sigue saliendo en el esquema.
+	 * Así que el aparato de puerta se comporta, para el ruteador de la placa, como si su borne
+	 * estuviera junto a las bisagras. Con eso el tramo de armario recupera TODO lo que ya
+	 * funcionaba —corredores libres, canaletas, capas, puntos de paso, selección, metraje— sin una
+	 * línea nueva. De ahí en adelante se encarga `mazo-puerta`: el lazo de servicio y el tramo que
+	 * viaja con la hoja. Y las dos mitades se encuentran en el mismo punto porque llaman a la
+	 * MISMA función, no porque coincidan los números.
 	 */
-	if (col?.montaje === 'puerta') return undefined;
+	if (col?.montaje === 'puerta' && g) {
+		const caja = cajaDeGabinete(g);
+		const carril = carrilDeMazo(g.colocaciones, dispositivoId);
+		return anclajeFijoDeMazo(
+			{ ancho: g.ancho, alto: g.alto }, caja,
+			(g.caja?.bisagras ?? 'izquierda') === 'izquierda',
+			alturaDeMazo({ alto: g.alto }, caja, col.y),
+			// El mismo carril que usa el mazo. Los tres pilotos de fase están a la misma altura:
+			// sin abanicar, sus tres cables llegarían al mismo milímetro de la bisagra.
+			desvioDeCarril(carril.indice, carril.total),
+			// Y el mismo ajuste que usa el mazo: si el usuario acerca la entrada a la bisagra, el
+			// tramo de placa tiene que ir a buscarla ahí, no al sitio de fábrica.
+			ajustesDeMazo(proyecto).desdeBisagra,
+		);
+	}
 	// Aparato NO colocado en la placa (red/acometida o aparato de campo): su cable no puede
 	// quedar en el aire («cable fantasma»). Entra por un PRENSAESTOPAS en el borde inferior
 	// del gabinete, igual que en un tablero real, para que el cable tenga un recorrido visible.
