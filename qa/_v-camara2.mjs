@@ -57,10 +57,19 @@ const elegido = await p.evaluate(() => {
 	let mejor = { id: cols[0].dispositivoId, sitio: -1, hacia: 1 };
 	for (const c of cols) {
 		const vecinos = cols.filter((k) => k !== c && Math.abs(k.y - c.y) < c.alto * 0.6);
+		/*
+		 * Y EL CARRIL TAMBIÉN ES UN TOPE. Un aparato pegado a un riel no se sale de él por mucho
+		 * hueco que quede a su lado: el editor lo recorta a los extremos del perfil. Contando
+		 * solo los vecinos y el canto de la placa, la prueba elegía un contactor que tenía
+		 * trescientos milímetros «libres» y no se movía ni uno, porque su riel acababa ahí.
+		 */
+		const riel = (g.rieles ?? []).find((r) => r.id === c.rielId && r.orientacion !== 'v');
+		const topeDer = riel ? Math.min(g.ancho, riel.x + riel.largo) : g.ancho;
+		const topeIzq = riel ? Math.max(0, riel.x) : 0;
 		const der = vecinos.filter((k) => k.x > c.x)
-			.reduce((m, k) => Math.min(m, k.x - (c.x + c.ancho)), g.ancho - (c.x + c.ancho));
+			.reduce((m, k) => Math.min(m, k.x - (c.x + c.ancho)), topeDer - (c.x + c.ancho));
 		const izq = vecinos.filter((k) => k.x < c.x)
-			.reduce((m, k) => Math.min(m, c.x - (k.x + k.ancho)), c.x);
+			.reduce((m, k) => Math.min(m, c.x - (k.x + k.ancho)), c.x - topeIzq);
 		for (const [sitio, hacia] of [[der, 1], [izq, -1]]) {
 			if (sitio > mejor.sitio) mejor = { id: c.dispositivoId, sitio, hacia };
 		}
@@ -226,6 +235,14 @@ const donde = () => p.evaluate((i) => {
 	await p.evaluate(() => document.getElementById('esp-conjunto')?.click());
 	await p.waitForTimeout(700);
 	await p.evaluate(() => window.qa.congelarCamara(true));
+	/*
+	 * SIN NADA ELEGIDO. La regla del programa es que se arrastra lo que ya está elegido, así que
+	 * si el aparato de la sección anterior sigue seleccionado y ha quedado bajo el punto desde el
+	 * que se tira, el gesto va a él y la cámara no se mueve: la prueba medía 129° donde tenía que
+	 * medir dos vueltas. Lo que se comprueba aquí es la órbita, y se comprueba con la mano libre.
+	 */
+	await p.evaluate(() => window.qa.elegir(undefined));
+	await p.waitForTimeout(300);
 	let anterior = (await orbita()).azimut;
 	let total = 0;
 	const arriba = [];

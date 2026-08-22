@@ -6390,7 +6390,7 @@ window.addEventListener('keydown', (ev) => {
 			v: 'seleccionar', a: 'anadir', c: 'conectar', s: 'estructura', p: 'proyecto',
 		};
 		const h = atajos[ev.key.toLowerCase()];
-		if (h) { ev.preventDefault(); aplicarHerramienta(h); return; }
+		if (h) { ev.preventDefault(); herramientaAMano(h); return; }
 	}
 	/*
 	 * LOS ATAJOS DEL FRONTAL. Van antes que los del interior porque en el frontal las mismas teclas
@@ -6918,10 +6918,38 @@ function aplicarHerramienta(h: Herramienta, forzar = false): void {
 	pintarAyuda();
 }
 
-/** Devuelve la herramienta a una que tenga sentido en el espacio actual. */
+/**
+ * LA HERRAMIENTA QUE NO CABE EN ESTE ESPACIO SE APARCA; NO SE PIERDE.
+ *
+ * En el Frontal no se cablea, así que al entrar hay que soltar «Cablear». El problema es lo que
+ * pasaba al volver: como el rail manda sobre el modo, quedarse en «Elegir» devolvía el tablero al
+ * Editor, y quien estaba cableando, se asomó al frontal y volvió, se encontraba con que los
+ * bornes ya no respondían. No había ningún aviso: simplemente había dejado de estar en Trabajo.
+ *
+ * Se aparca y se recupera. Y si mientras tanto la persona elige otra herramienta a mano, lo
+ * aparcado se tira: manda lo último que pidió ella, no lo que estaba haciendo antes.
+ */
+let herramientaAparcada: Herramienta | undefined;
+
 function herramientaValida(): void {
-	if (!HERRAMIENTAS[herramienta].espacios.includes(espacio)) aplicarHerramienta('seleccionar', true);
-	else aplicarHerramienta(herramienta, true);
+	if (!HERRAMIENTAS[herramienta].espacios.includes(espacio)) {
+		herramientaAparcada = herramienta;
+		aplicarHerramienta('seleccionar', true);
+		return;
+	}
+	if (herramientaAparcada && HERRAMIENTAS[herramientaAparcada].espacios.includes(espacio)) {
+		const vuelve = herramientaAparcada;
+		herramientaAparcada = undefined;
+		aplicarHerramienta(vuelve, true);
+		return;
+	}
+	aplicarHerramienta(herramienta, true);
+}
+
+/** La herramienta que pide la persona, por el rail o por el teclado. Tira lo aparcado. */
+function herramientaAMano(h: Herramienta): void {
+	herramientaAparcada = undefined;
+	aplicarHerramienta(h);
 }
 
 /** Enciende el botón que toca y enseña el cajón de esa herramienta. */
@@ -7449,7 +7477,7 @@ $('esp-conjunto').onclick = () => aplicarEspacio('conjunto');
 
 /* ---------------- El rail de herramientas ---------------- */
 for (const b of document.querySelectorAll<HTMLElement>('#rail .hta[data-hta]')) {
-	b.onclick = () => aplicarHerramienta(b.dataset.hta as Herramienta);
+	b.onclick = () => herramientaAMano(b.dataset.hta as Herramienta);
 }
 
 /*
