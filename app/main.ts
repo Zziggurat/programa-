@@ -2957,7 +2957,21 @@ function pintarPanelGrupo(): void {
 	}
 }
 
+/**
+ * Pinta la ficha de lo elegido Y coloca lo que flota sobre el visor.
+ *
+ * La ficha tiene media docena de caminos —estructura, rótulo, componente de puerta, cable,
+ * aparato— y cada uno acaba en su propio `return`. La medida de cuánto tapa el inspector tiene
+ * que tomarse DESPUÉS de todos ellos, y por eso el reparto está aquí fuera: si estuviera dentro
+ * habría que acordarse de repetirlo en cada salida, y bastaría olvidarse de una para que el
+ * botón de puerta se quedara debajo del panel.
+ */
 function pintarSeleccion(): void {
+	pintarFichaDeLoElegido();
+	encajarPaneles();
+}
+
+function pintarFichaDeLoElegido(): void {
 	const panel = $('panel-der');
 	if (!sel) {
 		panel.style.display = 'none';
@@ -7475,11 +7489,25 @@ for (const b of document.querySelectorAll<HTMLElement>('#rail .hta[data-hta]')) 
  * cajón cerrado —la herramienta de elegir no necesita ninguno— el tablero se queda con casi
  * toda la pantalla, que es lo que se pedía.
  */
+/**
+ * CUÁNTO TAPAN LOS PANELES, MEDIDO. De aquí salen las dos variables que colocan todo lo que
+ * flota sobre el visor: la guía de abajo, los botones de vista y el botón de puerta.
+ *
+ * Se MIDE en vez de escribirse. Antes el botón de puerta llevaba `right: 318px` a mano para
+ * apartarse del inspector, y los controles de vista no llevaban nada: se quedaban encima del
+ * título del inspector, tapándolo. Con dos anchos de panel distintos según el tamaño de
+ * pantalla, un número escrito a mano no puede estar bien en los dos.
+ */
 function encajarPaneles(): void {
 	const izq = $('panel-izq');
+	const der = $('panel-der');
 	const rail = $('rail');
 	const tapa = (rail.getBoundingClientRect().width || 0) + (izq.hidden ? 0 : izq.getBoundingClientRect().width);
+	// El inspector se enseña y se esconde con `display`, así que su ancho medido ya es 0 cuando
+	// no está: no hace falta preguntar aparte si se ve.
+	const derecha = der.getBoundingClientRect().width;
 	document.documentElement.style.setProperty('--tapa-izq', `${Math.round(tapa)}px`);
+	document.documentElement.style.setProperty('--tapa-der', `${Math.round(derecha)}px`);
 }
 
 $('btn-add-piloto').onclick = () => anadirPilotoFrontal();
@@ -9250,8 +9278,11 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		trenza: () => {
 			const t = escenario.mazo.bonding;
 			if (!t) return undefined;
-			const caja = t.flexible.geometry.boundingBox
-				?? (t.flexible.geometry.computeBoundingBox(), t.flexible.geometry.boundingBox!);
+			// LA CAJA SE RECALCULA SIEMPRE. La trenza se vuelve a tender cada vez que la puerta se
+			// mueve, y `boundingBox` es un dato cacheado: preguntarlo sin recalcular devolvía la
+			// forma que tenía la trenza con la puerta cerrada mientras se miraba abierta.
+			t.flexible.geometry.computeBoundingBox();
+			const caja = t.flexible.geometry.boundingBox!;
 			const destino = t.entrada.getWorldPosition(new THREE.Vector3());
 			return {
 				radio: t.radio,
@@ -9259,7 +9290,24 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				fijo: { x: t.fijo.x, y: t.fijo.y, z: t.fijo.z },
 				entrada: { x: destino.x, y: destino.y, z: destino.z },
 				zMax: caja.max.z,
-				pinchable: t.flexible.raycast !== THREE.Mesh.prototype.raycast,
+				/*
+				 * A QUIÉN SE LO LLEVA UN CLIC. El señalado de cables va por `conductorId`: sin él
+				 * no hay nada que seleccionar por mucho que el tubo esté ahí. Se devuelve el dato
+				 * crudo, no un veredicto, para que la prueba diga qué considera correcto.
+				 */
+				conductor: t.flexible.userData.conductorId,
+				raycastPropio: t.flexible.raycast !== THREE.Mesh.prototype.raycast,
+				/*
+				 * DÓNDE ESTÁ LA CHAPA, medido y no calculado por la prueba.
+				 *
+				 * `frente` es el grupo de montaje de la cara exterior de la hoja, así que su z de
+				 * mundo ES el plano de la chapa. Rehacer esa cuenta en la prueba —fondo interior,
+				 * solape, profundidad, holgura de puerta, fondo de hoja— es copiar cinco
+				 * constantes a un sitio donde nadie las va a actualizar: la primera versión daba
+				 * 161 donde había 174 porque el ejemplo no declara envolvente y la profundidad
+				 * efectiva la calcula el programa.
+				 */
+				caraHoja: escenario.puerta.frente.getWorldPosition(new THREE.Vector3()).z,
 			};
 		},
 		mazoPuerta: () => {

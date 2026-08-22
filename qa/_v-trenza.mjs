@@ -93,12 +93,11 @@ await abrirMontaje();
 	ok(!!t, 'marcada la casilla, la trenza está tendida');
 	if (t) {
 		console.log(`   trenza Ø${(t.radio * 2).toFixed(1)} · reserva ${t.reserva.toFixed(0)} mm · zMax ${t.zMax.toFixed(0)}`);
-		ok(!t.pinchable, 'no le roba el clic a ningún conductor del esquema');
-		const cara = await p.evaluate(() => {
-			const g = window.qa.proyecto().gabinete;
-			return (g.caja?.profundidad ?? 160) - 11 - 3 + 15;
-		});
-		ok(t.zMax < cara + 8, `y no asoma por delante de la hoja (z ${t.zMax.toFixed(0)} < ${(cara + 8).toFixed(0)})`);
+		ok(t.conductor === undefined && t.raycastPropio,
+			`no le roba el clic a ningún conductor del esquema (conductor ${t.conductor} · rayos apagados ${t.raycastPropio})`);
+		// La cara EXTERIOR de la hoja, medida por el programa: por delante de ahí ya se ve desde
+		// fuera del armario con la puerta cerrada.
+		ok(t.zMax <= t.caraHoja, `y no asoma por delante de la hoja (z ${t.zMax.toFixed(0)} ≤ ${t.caraHoja.toFixed(0)})`);
 		// No se cuenta con los conductores: el mazo de mando sigue teniendo los suyos.
 		const m = await p.evaluate(() => window.qa.mazoPuerta());
 		ok(m.conductores.length === 4, `y no se cuela en el mazo de mando (${m.conductores.length} lazos)`);
@@ -112,8 +111,7 @@ await abrirMontaje();
 		await puerta(p, t);
 		const q = await p.evaluate(() => window.qa.trenza());
 		largos.push(q ? q.reserva : 0);
-		const z = q ? q.zMax : 0;
-		if (t === 1) console.log(`   con la puerta abierta del todo, zMax de la trenza ${z.toFixed(0)}`);
+		if (t === 1 && q) console.log(`   con la puerta abierta del todo, zMax de la trenza ${q.zMax.toFixed(0)}`);
 	}
 	// La reserva es lo que hay CORTADO: no cambia al abrir. Si cambiara, el cable se estaría
 	// estirando, que es exactamente lo que un lazo de servicio existe para evitar.

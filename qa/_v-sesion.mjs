@@ -13,7 +13,8 @@
  * está haciendo, y el cajón abierto tiene que ser el de la herramienta activa.
  */
 import { chromium } from 'playwright-core';
-import { servir, abrirEjemplo, lamina, navegadorDelSistema } from './lib/mirar.mjs';
+import { join } from 'node:path';
+import { servir, abrirEjemplo, SALIDA, navegadorDelSistema } from './lib/mirar.mjs';
 
 const sv = await servir();
 const b = await chromium.launch({
@@ -35,8 +36,10 @@ const guia = () => p.evaluate(() => document.getElementById('ayuda')?.textConten
 /** Qué cajón está abierto y cómo se titula. */
 const cajon = () => p.evaluate(() => ({
 	titulo: document.getElementById('cajon-titulo')?.textContent?.trim(),
+	// El rail esconde los cajones con `display`, no con `hidden`: mirar `hidden` decía que
+	// estaban todos abiertos cuando en pantalla solo se veía uno.
 	visibles: [...document.querySelectorAll('#panel-izq details[data-cajon]')]
-		.filter((d) => !d.hidden).map((d) => d.id),
+		.filter((d) => getComputedStyle(d).display !== 'none').map((d) => d.id),
 	herramienta: document.querySelector('#rail .hta.activo')?.dataset.hta,
 }));
 const herramienta = async (h) => {
@@ -104,15 +107,31 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 	ok(/borne/i.test(g), 'y la guía habla de bornes, que es lo que hay que pinchar ahora');
 
 	const antes = (await pr()).conductores.length;
-	// Dos bornes de dos aparatos distintos, pinchados sobre el visor como haría cualquiera.
+	/*
+	 * DOS BORNES LIBRES, y ésa es la parte que importa.
+	 *
+	 * La primera versión cogía el primer borne de los dos primeros aparatos del ejemplo. En un
+	 * tablero ya cableado —sesenta y un conductores— casi todos los bornes tienen un cable por
+	 * delante, y ahí manda la regla del programa: lo que se ve encima se lleva el clic, así que
+	 * el clic agarraba el cable en vez de empezar uno nuevo. Es el comportamiento correcto y la
+	 * prueba estaba mal planteada: para comprobar que se puede cablear hay que ir a bornes que
+	 * estén libres, que es lo que hace quien está cableando.
+	 */
 	const puntos = await p.evaluate(() => {
 		const pro = window.qa.proyecto();
+		const ocupado = new Set();
+		for (const c of pro.conductores) {
+			ocupado.add(`${c.de.dispositivoId}|${c.de.borneId}`);
+			ocupado.add(`${c.a.dispositivoId}|${c.a.borneId}`);
+		}
 		const cols = pro.gabinete.colocaciones.filter((c) => c.montaje !== 'puerta');
 		const sitios = [];
 		for (const c of cols) {
 			const d = pro.dispositivos.find((k) => k.id === c.dispositivoId);
 			if (!d?.bornes?.length) continue;
+			if (sitios.some((q) => q.d === d.id)) continue;
 			for (const bo of d.bornes) {
+				if (ocupado.has(`${d.id}|${bo.id}`)) continue;
 				const q = window.qa.puntoParaBorne(d.id, bo.id);
 				if (q) { sitios.push({ d: d.id, b: bo.id, x: q.x, y: q.y }); break; }
 			}
@@ -121,12 +140,16 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 		return sitios;
 	});
 	if (puntos.length === 2) {
+		console.log(`   bornes: ${puntos.map((q) => `${q.d}.${q.b} en ${q.x},${q.y}`).join(' → ')}`);
 		await p.mouse.click(puntos[0].x, puntos[0].y);
-		await p.waitForTimeout(500);
-		const medias = await guia();
-		ok(/destino|otro borne/i.test(medias), `elegido el origen, la guía pide el destino (${medias.replace(/\s+/g, ' ')})`);
+		await p.waitForTimeout(600);
+		// Lo que hay que comprobar es que el programa se ha quedado ESPERANDO el otro extremo, no
+		// que la ayuda contenga la palabra: la ayuda de la herramienta ya la trae escrita.
+		const medias = await p.evaluate(() => window.qa.estadoInteraccion());
+		console.log(`   tras el primer clic: cableando=${medias.cableando} · goma=${JSON.stringify(medias.goma)}`);
+		ok(!!medias.cableando, `el primer clic deja el cable esperando destino (${medias.cableando})`);
 		await p.mouse.click(puntos[1].x, puntos[1].y);
-		await p.waitForTimeout(900);
+		await p.waitForTimeout(1000);
 		const desp = (await pr()).conductores.length;
 		ok(desp === antes + 1, `el cable queda hecho con dos clics (${antes} → ${desp})`);
 	} else {
@@ -180,7 +203,7 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 	await p.waitForTimeout(1400);
 	ok(await p.evaluate(() => document.getElementById('puerta-flotante')?.textContent.trim()) === boton,
 		'y la tecla O hace exactamente lo mismo, no otra cosa parecida');
-	await lamina(p, 'sesion-conjunto.png');
+	await p.screenshot({ path: join(SALIDA, 'sesion-conjunto.png') });
 }
 
 /* ---- 7. Deshacer y rehacer devuelven el tablero ---- */

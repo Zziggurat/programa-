@@ -123,7 +123,13 @@
 	 * LOS CONTROLES DE VISTA, SOBRE EL VISOR
 	 * ========================================================================== */
 	#visor-vista {
-		position: fixed; top: 56px; right: 12px; z-index: 14;
+		/*
+		 * SE APARTAN DEL INSPECTOR. Estaban clavados al borde derecho de la ventana con
+		 * `right: 12px`, así que en cuanto se elegía un aparato el panel salía DEBAJO y los
+		 * cuatro botones quedaban encima de su título. `--tapa-der` es el ancho medido del
+		 * inspector: cero cuando no está.
+		 */
+		position: fixed; top: 56px; right: calc(var(--tapa-der, 0px) + 12px); z-index: 14;
 		display: flex; gap: 6px;
 	}
 	body.modo-visualizacion #visor-vista { display: none; }
@@ -164,7 +170,7 @@
 	 * barra para que no parezca pegado de otra aplicación.
 	 */
 	#puerta-flotante {
-		position: fixed; right: 18px; bottom: 18px; z-index: 30;
+		position: fixed; right: calc(var(--tapa-der, 0px) + 18px); bottom: 18px; z-index: 30;
 		display: inline-flex; align-items: center; gap: 8px;
 		padding: 8px 13px 8px 11px; border-radius: 9px;
 		border: 1px solid #3a444e; background: #1e252cee; color: var(--texto);
@@ -182,7 +188,11 @@
 	 * aparato que se acaba de seleccionar. El panel se enseña y se esconde poniéndole el estilo
 	 * en línea, así que basta con mirarlo: cuando está, el botón se corre a su izquierda.
 	 */
-	body:has(#panel-der[style*="block"]) #puerta-flotante { right: 318px; }
+	/*
+	 * Aquí había un `right: 318px` a mano para apartarse del inspector. Con dos anchos de panel
+	 * distintos según el tamaño de pantalla, un número escrito a mano no puede acertar en los
+	 * dos: ahora lo dice `--tapa-der`, que se mide.
+	 */
 	/*
 	 * EL ICONO ES LA PROPIA PUERTA, dibujada con dos cajas: el armario y la hoja girada. Al
 	 * cambiar de estado gira, así que el botón enseña lo que va a pasar en vez de solo decirlo.
@@ -939,8 +949,15 @@
 	 * `--tapa-izq`, que es lo que mide lo que hay tapado por ese lado.
 	 */
 	#ayuda {
+		/*
+		 * Y la guía se para ANTES del botón de puerta. Con un `max-width` calculado sobre el
+		 * ancho de la ventana, las pastillas seguían pasando por debajo del botón en cuanto la
+		 * ayuda tenía cuatro o cinco: se ve en la captura de 1366, con «Esc cancelar» medio
+		 * tapado. Poniendo el borde derecho donde empieza el botón, no hay manera de que se
+		 * solapen, mida lo que mida la ayuda.
+		 */
 		position: fixed; bottom: 10px; left: calc(var(--tapa-izq, 62px) + 12px);
-		max-width: calc(100vw - var(--tapa-izq, 62px) - 260px); z-index: 10;
+		right: calc(var(--tapa-der, 0px) + 190px); z-index: 10;
 		/* Es un rótulo informativo: NUNCA debe comerse un clic del tablero que tiene detrás. */
 		pointer-events: none;
 		color: var(--texto-suave); font-size: 12px;
@@ -1375,7 +1392,14 @@
 			<button class="boton" id="btn-controlador-medida" style="width:100%;margin-top:8px">🧩 Controlador a medida…</button>
 		</div>
 	</details>
-	<details open id="seccion-dispositivos" data-cajon="proyecto">
+	<!--
+		LA LISTA DE APARATOS ES EL CAJÓN DE «ELEGIR», y no un apartado del panel del proyecto.
+		Estaba en «El tablero» junto al DRC y el balance térmico, así que la herramienta de elegir
+		se quedaba con un cajón VACÍO en Interior y en Conjunto: un título —«Lo que hay puesto»—
+		sin nada debajo. Y es justo la lista que hace falta para llegar a un aparato que queda
+		detrás de una canaleta o fuera de la vista.
+	-->
+	<details open id="seccion-dispositivos" data-cajon="seleccionar">
 		<summary>Dispositivos <span id="contador-dispositivos"></span></summary>
 		<div class="contenido"><ul id="lista-dispositivos"></ul></div>
 	</details>

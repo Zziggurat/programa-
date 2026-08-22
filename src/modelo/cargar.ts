@@ -394,8 +394,10 @@ function leerCaja(bruto: unknown, anchoPlaca: number, altoPlaca: number): Gabine
 }
 
 /**
- * LAS ENTRADAS DE CABLE de la envolvente. Un agujero en la chapa en un sitio imposible no se
- * arregla solo: se recorta al ancho del armario, que es donde puede estar.
+ * LAS ENTRADAS DE CABLE de la envolvente. Un agujero en la chapa fuera del armario no es una
+ * entrada mal puesta, es un dato roto: se descarta y la entrada nace en el centro de su cara,
+ * que es donde se puede ver y arrastrar hasta donde toque. Dejarla en la coordenada imposible
+ * sería dibujar un prensaestopas flotando a cinco metros del tablero.
  */
 function leerEntradas(bruto: unknown, ancho: number, alto: number): EntradaCable[] | undefined {
 	if (!Array.isArray(bruto)) return undefined;
