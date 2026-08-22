@@ -165,10 +165,20 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 			continue;
 		}
 		armado = true;
-		await p.mouse.click(b.x, b.y);
-		await p.waitForTimeout(1000);
-		hecho = (await pr()).conductores.length === antes + 1;
-		console.log(`   ${a.d}.${a.b} → ${b.d}.${b.b}: ${hecho ? 'cable hecho' : 'no cuajó'}`);
+		/*
+		 * Y EL DESTINO SE BUSCA ENTRE VARIOS. Un borne puede estar en pantalla y aun así tener
+		 * medio aparato por delante; con el cable ya empezado, quien cablea prueba en el
+		 * siguiente terminal en vez de rendirse. Se rematan hasta cuatro candidatos, y basta con
+		 * que uno acepte.
+		 */
+		for (const q of pares.map(([, y]) => y).concat(candidatos).slice(0, 4)) {
+			if (q.d === a.d) continue;
+			await p.mouse.click(q.x, q.y);
+			await p.waitForTimeout(900);
+			hecho = (await pr()).conductores.length === antes + 1;
+			console.log(`   ${a.d}.${a.b} → ${q.d}.${q.b}: ${hecho ? 'cable hecho' : 'no cuajó'}`);
+			if (hecho) break;
+		}
 		if (!hecho) { await p.keyboard.press('Escape'); await p.waitForTimeout(200); }
 	}
 	ok(armado, 'pinchar un borne libre deja el cable esperando destino');
@@ -198,7 +208,10 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 	await p.evaluate((i) => window.qa.seleccionarPorId(i), otro);
 	await p.waitForTimeout(500);
 	const g2 = await guia();
-	ok(!/uni[oó]n/i.test(g2), `y al elegir otra cosa deja de hablar de uniones (${g2.replace(/\s+/g, ' ')})`);
+	// La herramienta de cablear tiene «doble clic en un cable · unión» escrito en su ayuda fija,
+	// y ahí es verdad. Lo que no puede quedarse es la ayuda del CABLE elegido —mover la unión,
+	// quitarla— cuando lo elegido ya no es un cable.
+	ok(!/Arrastrar unión/i.test(g2), `y al elegir otra cosa deja de explicar cómo mover uniones (${g2.replace(/\s+/g, ' ')})`);
 }
 
 /* ---- 6. Cambiar de espacio y abrir la puerta desde donde se mira ---- */
