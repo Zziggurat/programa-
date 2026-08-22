@@ -888,6 +888,8 @@
 	/* Panel derecho (propiedades) */
 	#panel-der h1 { font-size: 17px; margin: 0; }
 	#panel-der .sub { color: var(--texto-suave); margin: 2px 0 10px; }
+	/* Una pista es un dato de segunda: acompaña al valor, nunca compite con él. */
+	.pista { color: var(--texto-suave); font-size: 12px; margin: 4px 0; }
 	#panel-der dl { margin: 0 0 6px; }
 	#panel-der dt { color: var(--texto-suave); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; margin-top: 10px; }
 	#panel-der dd { margin: 3px 0 0; }
@@ -1477,6 +1479,19 @@
 					<option value="80">80 × 80 mm</option>
 				</select>
 			</div>
+			<div class="grupo-catalogo" style="color:#b8a6ff">Puerta y mazo</div>
+			<div class="campo"><label for="caja-bisagras">Bisagras</label>
+				<select id="caja-bisagras">
+					<option value="izquierda">A la izquierda</option>
+					<option value="derecha">A la derecha</option>
+				</select>
+			</div>
+			<div class="campo"><label for="mazo-bisagra" title="A qué distancia del canto de bisagras sube el mazo por la hoja. Cuanto más cerca, menos se estira al abrir.">Entrada del mazo</label><span><input type="number" id="mazo-bisagra" min="12" max="160" step="2"> mm</span></div>
+			<div class="campo"><label for="mazo-holgura" title="Cable de más para el lazo de servicio. Positivo da más panza; negativo lo aprieta.">Holgura del lazo</label><span><input type="number" id="mazo-holgura" min="-30" max="200" step="5"> mm</span></div>
+			<div class="campo"><label for="mazo-paso" title="Cada cuántos milímetros se amarra el mazo a la chapa de la puerta.">Amarres cada</label><span><input type="number" id="mazo-paso" min="40" max="400" step="10"> mm</span></div>
+			<div class="campo"><label for="caja-bonding" title="Dibuja y cuenta la trenza de masa entre la hoja y el cuerpo. Es un elemento de diseño: TableroStudio no certifica conformidad.">Trenza de masa</label><span><input type="checkbox" id="caja-bonding"> <input type="number" id="bonding-seccion" min="1" max="35" step="0.5" style="width:56px"> mm²</span></div>
+			<div class="grupo-catalogo" style="color:#8fd4ff">Entradas de cable — x (mm) · rosca · Ø</div>
+			<div id="lista-entradas"></div>
 			<div class="grupo-catalogo" style="color:#ffe58f">Rieles DIN — x · y · largo (mm)</div>
 			<div id="lista-rieles"></div>
 			<div class="grupo-catalogo" style="color:#ffc069">Canaletas — x · y · largo (mm)</div>
@@ -1485,6 +1500,7 @@
 				<button class="boton" id="btn-add-riel">+ Riel</button>
 				<button class="boton" id="btn-add-can-h">+ Canaleta ─</button>
 				<button class="boton" id="btn-add-can-v">+ Canaleta │</button>
+				<button class="boton" id="btn-add-entrada">+ Entrada</button>
 				<button class="boton primario" id="aplicar-dim">Aplicar</button>
 			</div>
 		</div>
@@ -1967,7 +1983,12 @@
 			<li><kbd>Ctrl</kbd>+<kbd>C</kbd> copiar · <kbd>Ctrl</kbd>+<kbd>V</kbd> pegar · <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicar</li>
 			<li><kbd>Shift</kbd>+clic añadir a la selección</li>
 			<li><kbd>Esc</kbd> cancelar lo que estés haciendo, y cerrar ventanas</li>
-			<li>Botón 🏠 centrar la vista si te pierdes girando la cámara</li>
+			<li><b>Herramientas:</b> <kbd>V</kbd> elegir · <kbd>A</kbd> añadir · <kbd>C</kbd> cablear ·
+			<kbd>S</kbd> montaje · <kbd>P</kbd> el tablero</li>
+			<li><b>Cámara:</b> arrastrar con el izquierdo gira · el derecho desplaza · la rueda acerca ·
+			<kbd>F</kbd> enfoca lo elegido · <kbd>O</kbd> abre y cierra la puerta</li>
+			<li>Un <b>clic corto</b> elige; para <b>mover</b> algo, elígelo y arrástralo</li>
+			<li>Botón 🏠 del visor: centrar la vista si te pierdes girando la cámara</li>
 			<li>En la Planta 3D: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> andar,
 			<kbd>Shift</kbd> correr, botón derecho apretado para mirar, <kbd>H</kbd> esconder los paneles</li>
 		</ul>

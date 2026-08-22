@@ -10,8 +10,8 @@
  * sanos y se deja escrito dónde va la migración de la próxima versión.
  */
 import {
-	BloqueTerminales, Borne, Canaleta, Colocacion, Conductor, Dispositivo, Gabinete, Hoja,
-	LadoAparato, OpcionesProyecto, RotuloFrontal, Posicion, Proyecto, Riel, Rol,
+	AjustesMazo, BloqueTerminales, Borne, Canaleta, Colocacion, Conductor, Dispositivo, EntradaCable,
+	Gabinete, Hoja, LadoAparato, OpcionesProyecto, RotuloFrontal, Posicion, Proyecto, Riel, Rol,
 } from './tipos.js';
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 
@@ -293,6 +293,8 @@ function leerGabinete(bruto: Record<string, unknown>, arreglos: string[]): Gabin
 		ancho,
 		alto,
 		caja: leerCaja(bruto.caja, ancho, alto),
+		entradas: leerEntradas(bruto.entradas, ancho, alto),
+		mazoPuerta: leerMazoPuerta(bruto.mazoPuerta),
 		// Un riel sin `largo` o con el largo en negativo se deja del ancho de la placa: así se ve
 		// y se puede arrastrar hasta donde toque, en vez de desaparecer sin explicación.
 		rieles: lista<Riel>(bruto.rieles, 'rieles', (r, i) => ({
@@ -376,7 +378,61 @@ function leerCaja(bruto: unknown, anchoPlaca: number, altoPlaca: number): Gabine
 	// armario sin puerta.
 	const bisagras = bruto.bisagras === 'derecha' ? 'derecha' as const
 		: bruto.bisagras === 'izquierda' ? 'izquierda' as const : undefined;
-	return { ancho, alto, profundidad, ...(bisagras ? { bisagras } : {}) };
+	/*
+	 * LA TRENZA DE MASA. Es una casilla y una sección, y se lee como tal. Que venga puesta en el
+	 * archivo no significa que el conjunto cumpla nada: significa que quien dibujó el tablero
+	 * quiso que la trenza saliera dibujada y contada.
+	 */
+	const bonding = esObjeto(bruto.bonding)
+		? { puesto: bruto.bonding.puesto === true, seccion: enRango(bruto.bonding.seccion, 0.5, 120) }
+		: undefined;
+	return {
+		ancho, alto, profundidad,
+		...(bisagras ? { bisagras } : {}),
+		...(bonding?.puesto ? { bonding } : {}),
+	};
+}
+
+/**
+ * LAS ENTRADAS DE CABLE de la envolvente. Un agujero en la chapa en un sitio imposible no se
+ * arregla solo: se recorta al ancho del armario, que es donde puede estar.
+ */
+function leerEntradas(bruto: unknown, ancho: number, alto: number): EntradaCable[] | undefined {
+	if (!Array.isArray(bruto)) return undefined;
+	const caras = ['inferior', 'superior', 'izquierda', 'derecha'] as const;
+	const tipos = ['prensaestopas', 'placa-pasacables', 'conduit'] as const;
+	const salida: EntradaCable[] = [];
+	for (const [i, b] of bruto.slice(0, 64).entries()) {
+		if (!esObjeto(b)) continue;
+		const cara = caras.find((c) => c === b.cara) ?? 'inferior';
+		salida.push({
+			id: texto(b.id) || `ent${i + 1}`,
+			cara,
+			x: conReserva(b.x, 0, ancho, Math.round(ancho / 2)),
+			y: conReserva(b.y, 0, alto, 0),
+			tipo: tipos.find((t) => t === b.tipo) ?? 'prensaestopas',
+			diametro: enRango(b.diametro, 4, 120),
+			rosca: (texto(b.rosca) ?? "").slice(0, 12) || undefined,
+			nombre: (texto(b.nombre) ?? "").slice(0, 60) || undefined,
+		});
+	}
+	return salida.length ? salida : undefined;
+}
+
+/**
+ * AJUSTES DEL MAZO DE PUERTA. Solo se guarda lo que el usuario apartó de lo propuesto, así que
+ * aquí no hay valores por defecto que inventar: lo que no venga, no venía.
+ */
+function leerMazoPuerta(bruto: unknown): AjustesMazo | undefined {
+	if (!esObjeto(bruto)) return undefined;
+	const a: AjustesMazo = {};
+	const holgura = enRango(bruto.holgura, -30, 200);
+	const paso = enRango(bruto.pasoSujecion, 40, 400);
+	const desde = enRango(bruto.desdeBisagra, 12, 160);
+	if (holgura !== undefined) a.holgura = holgura;
+	if (paso !== undefined) a.pasoSujecion = paso;
+	if (desde !== undefined) a.desdeBisagra = desde;
+	return Object.keys(a).length ? a : undefined;
 }
 
 /**
@@ -931,6 +987,10 @@ function leerConductores(
 			numero: oQuitado(c.numero, texto(c.numero),
 				`conductores[${c.id}].numero`, 'el número de hilo no era un texto'),
 			color: oQuitado(c.color, texto(c.color), `conductores[${c.id}].color`, 'el color no era un texto'),
+			// La clase la fija el usuario cuando quiere apartarse de lo que se deduce sola. Un valor
+			// que no sea una de las cuatro se tira y vuelve a deducirse: es mejor que arrastrar un
+			// nombre inventado hasta el inspector y el listado de material.
+			clase: (['interno', 'puerta', 'campo', 'proteccion'] as const).find((k) => k === c.clase),
 			/*
 			 * El trazado son los puntos por los que el usuario llevó el cable a mano. Un punto con
 			 * una coordenada que no es número sale como NaN en la geometría del tubo, y en Three.js

@@ -6,10 +6,11 @@
  * hacia el frente. Todo se centra en el origen para orbitar cómodo.
  */
 import * as THREE from 'three';
-import { Canaleta, Colocacion, Conductor, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
+import { Canaleta, Colocacion, Conductor, Dispositivo, EntradaCable, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
 import {
-	alturaDeMazo, anclajeFijoDeMazo, carrilDeMazo, construirMazoPuerta, desvioDeCarril, enLaPuerta, Mazo,
+	ajustesDeMazo, alturaDeMazo, anclajeFijoDeMazo, carrilDeMazo, construirMazoPuerta, desvioDeCarril,
+	enLaPuerta, Mazo,
 } from './mazo-puerta.js';
 import { posicionesDeTerminales } from '../src/motores/terminales.js';
 import {
@@ -2492,8 +2493,30 @@ export function yEntradasCampo(proyecto: Proyecto): number {
 	return (proyecto.gabinete?.alto ?? 0) + 26;
 }
 
+/**
+ * LA ENTRADA DECLARADA que le toca a un aparato de campo, si el proyecto declara alguna.
+ *
+ * Aquí está la frontera del tablero. Lo que entra por un prensaestopas ya no lo tiende este
+ * programa: lo trae el instalador y muere en una bornera. Mientras el proyecto no diga por dónde
+ * entra, se reparten a ojo a lo ancho de la envolvente —que es una propuesta razonable y no una
+ * decisión—; en cuanto declara entradas, mandan las suyas, con su diámetro y su rosca, porque
+ * dónde se taladra la chapa no lo decide un reparto automático.
+ */
+export function entradaDeCampo(proyecto: Proyecto, dispositivoId: string): EntradaCable | undefined {
+	const abajo = (proyecto.gabinete?.entradas ?? []).filter((e) => e.cara === 'inferior');
+	if (!abajo.length) return undefined;
+	const campo = aparatosDeCampo(proyecto);
+	const i = campo.findIndex((d) => d.id === dispositivoId);
+	if (i < 0) return undefined;
+	// Más aparatos que entradas es el caso normal: por un prensaestopas de M25 pasa más de un
+	// cable. Se reparten en orden, y al que no le toca entrada propia comparte la última.
+	return abajo[Math.min(i, abajo.length - 1)];
+}
+
 /** Centro X (mm) del prensaestopas de un aparato de campo, repartidos a lo ancho del gabinete. */
 function xEntradaCampo(proyecto: Proyecto, dispositivoId: string): number | undefined {
+	const declarada = entradaDeCampo(proyecto, dispositivoId);
+	if (declarada) return Math.round(declarada.x);
 	const campo = aparatosDeCampo(proyecto);
 	const i = campo.findIndex((d) => d.id === dispositivoId);
 	if (i < 0) return undefined;
@@ -2648,7 +2671,8 @@ export function construirEntradasCampo(
 ): THREE.Group {
 	const grupo = new THREE.Group();
 	const campo = aparatosDeCampo(proyecto);
-	if (campo.length === 0) return grupo;
+	const declaradas = (proyecto.gabinete?.entradas ?? []).filter((e) => e.cara === 'inferior');
+	if (campo.length === 0 && declaradas.length === 0) return grupo;
 	const y = yEntradasCampo(proyecto);
 	const anchoGab = proyecto.gabinete?.ancho ?? 600;
 
@@ -2683,10 +2707,35 @@ export function construirEntradasCampo(
 	bancada.add(zocalo);
 	grupo.add(bancada);
 
+	/*
+	 * LAS ENTRADAS DECLARADAS QUE NO USA NADIE. Un prensaestopas previsto y todavía sin cable es
+	 * información: dice dónde se taladra la chapa y qué rosca hay que pedir. Si no se dibujara,
+	 * declarar una entrada de reserva no serviría de nada.
+	 */
+	const usadas = new Set(campo.map((d) => entradaDeCampo(proyecto, d.id)?.id).filter(Boolean));
+	for (const e of declaradas) {
+		if (usadas.has(e.id)) continue;
+		const d0 = Math.max(12, e.diametro ?? 20);
+		const vacio = new THREE.Mesh(
+			new THREE.CylinderGeometry(d0 / 2, d0 / 2 + 2, 16, 16),
+			new THREE.MeshStandardMaterial({ color: 0x6f7883, roughness: 0.65, metalness: 0.3 }),
+		);
+		vacio.position.copy(aEscena(e.x, y, 10));
+		grupo.add(vacio);
+		const rot = etiquetaCota(e.rosca ?? e.nombre ?? 'reserva', '#9aa4b0');
+		rot.position.copy(aEscena(e.x, y + 24, 26));
+		rot.scale.set(38, 12.6, 1);
+		grupo.add(rot);
+	}
+
 	for (const d of campo) {
 		const cx = xEntradaCampo(proyecto, d.id);
 		if (cx === undefined) continue;
-		const ancho = Math.max(26, d.bornes.length * 13 + 10);
+		const decl = entradaDeCampo(proyecto, d.id);
+		// El ancho lo manda el agujero declarado si lo hay: un M20 y un M32 no se ven igual.
+		const ancho = decl?.diametro
+			? Math.max(20, decl.diametro + 8)
+			: Math.max(26, d.bornes.length * 13 + 10);
 		// Cuerpo del prensaestopas (regleta pasamuros).
 		const cuerpo = new THREE.Mesh(
 			new THREE.BoxGeometry(ancho, 16, 20),
@@ -2763,6 +2812,9 @@ export function anclajeBorne(
 			// El mismo carril que usa el mazo. Los tres pilotos de fase están a la misma altura:
 			// sin abanicar, sus tres cables llegarían al mismo milímetro de la bisagra.
 			desvioDeCarril(carril.indice, carril.total),
+			// Y el mismo ajuste que usa el mazo: si el usuario acerca la entrada a la bisagra, el
+			// tramo de placa tiene que ir a buscarla ahí, no al sitio de fábrica.
+			ajustesDeMazo(proyecto).desdeBisagra,
 		);
 	}
 	// Aparato NO colocado en la placa (red/acometida o aparato de campo): su cable no puede

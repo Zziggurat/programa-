@@ -34,8 +34,30 @@ import { Puerta } from './gabinete3d.js';
 
 /** Separación entre conductores dentro del mazo, en mm. */
 const SEP_MAZO = 8;
-/** A qué distancia del canto de bisagras entra el mazo en la hoja. */
+/** A qué distancia del canto de bisagras entra el mazo en la hoja, si nadie dice otra cosa. */
 const DESDE_BISAGRA = 26;
+/** Cada cuántos mm se amarra el mazo a la chapa, si nadie dice otra cosa. */
+const PASO_SUJECION = 110;
+
+/**
+ * LO QUE EL PROGRAMA PROPONE Y LO QUE EL USUARIO DECIDE.
+ *
+ * Los tres números que gobiernan el mazo salen de aquí, y ésta es la única puerta por la que
+ * entran: si el gabinete trae `mazoPuerta`, mandan sus valores; si no, los de fábrica. No hay
+ * ningún cálculo que vuelva a pisarlos después, que es justo lo que hace insoportable una
+ * herramienta con solver: mueves algo, y el programa te lo devuelve a su sitio.
+ *
+ * Los límites no son gusto: un lazo con holgura negativa se tensaría al abrir y tiraría del
+ * borne, y una sujeción cada dos metros es lo mismo que no tener sujeciones.
+ */
+export function ajustesDeMazo(proyecto: Proyecto): { holgura: number; pasoSujecion: number; desdeBisagra: number } {
+	const a = proyecto.gabinete?.mazoPuerta;
+	return {
+		holgura: Math.min(Math.max(a?.holgura ?? 0, -30), 200),
+		pasoSujecion: Math.min(Math.max(a?.pasoSujecion ?? PASO_SUJECION, 40), 400),
+		desdeBisagra: Math.min(Math.max(a?.desdeBisagra ?? DESDE_BISAGRA, 12), 160),
+	};
+}
 /** Profundidad a la que corre el mazo por la cara interior de la puerta, desde su cara exterior. */
 const Z_CARA_INTERIOR = -9;
 
@@ -87,6 +109,13 @@ export interface Mazo {
 	/** Los lazos de servicio. Cuelgan del mundo fijo. */
 	flexibles: THREE.Group;
 	cables: CablePuerta[];
+	/**
+	 * LA TRENZA DE MASA DE LA HOJA, si el proyecto la pide. Va aparte de `cables` a propósito: no
+	 * es un conductor del esquema, no se numera, no se energiza y —sobre todo— NO viaja dentro
+	 * del mazo de mando. En un tablero es la única cosa verde-amarilla que cruza la bisagra, y se
+	 * amarra por su cuenta para que no dependa de que el mazo de control siga ahí mañana.
+	 */
+	bonding?: CablePuerta;
 }
 
 /**
@@ -114,10 +143,12 @@ export function anclajeFijoDeMazo(
 	izquierda: boolean,
 	alturaModelo: number,
 	desvio = 0,
+	/** A qué distancia de la bisagra entra el mazo. La decide el usuario; aquí solo se recibe. */
+	desdeBisagra = DESDE_BISAGRA,
 ): { x: number; y: number; z: number } {
 	const signo = izquierda ? -1 : 1;
 	// De escena a modelo: x_modelo = x_escena + placa.ancho/2.
-	const xEscena = signo * (caja.ancho / 2 - DESDE_BISAGRA);
+	const xEscena = signo * (caja.ancho / 2 - desdeBisagra);
 	// La boca del armario, la misma cota que usa `construirEnvolvente`.
 	const zBoca = -11 - 3 + caja.profundidad;
 	return {
@@ -243,14 +274,20 @@ function radioMinimo(radioCable: number): number {
 function curvaFlexible(c: CablePuerta, destino: THREE.Vector3): THREE.CubicBezierCurve3 {
 	const d = c.fijo.distanceTo(destino);
 	/*
-	 * De dónde sale el mínimo: en una curva de Bézier cúbica simétrica con la flecha `h` sobre
-	 * una cuerda `d`, el radio en el vértice vale del orden de `d² / (6h)`. Despejando `h` para
-	 * que ese radio no baje del mínimo sale `h ≥ d² / (6·Rmin)`, y además la propia panza no
-	 * puede ser más corta que el radio mínimo o el pliegue de arriba sería el que se cierra.
+	 * EL RADIO MÍNIMO ES UN SUELO, NO UNA FÓRMULA QUE MANDE.
+	 *
+	 * La primera versión sacaba la flecha de la curvatura —`h ≥ d²/(6·Rmin)`, que es el radio en
+	 * el vértice de una Bézier simétrica— y eso hacía crecer la panza con el CUADRADO de la
+	 * cuerda: al abrir la puerta el lazo se alargaba en vez de estirarse, justo al revés que un
+	 * lazo de servicio, donde el cable cortado es el que es. Medido: el largo pasaba de 142 a 195
+	 * mm entre cerrada y abierta, casi el 40 %.
+	 *
+	 * Quien manda es la RESERVA: el cable mide lo que mide y la panza es la que hace falta para
+	 * que quepa. El radio mínimo solo impide el caso degenerado —una panza tan plana que el
+	 * doblez se convierte en un pliegue— y para eso basta con un suelo.
 	 */
 	const rmin = radioMinimo(c.radio);
-	const porRadio = Math.max(rmin * 0.75, (d * d) / (6 * rmin));
-	const h = Math.min(Math.max(flechaDeLazo(c.reserva, d), porRadio), c.reserva * 0.5);
+	const h = Math.min(Math.max(flechaDeLazo(c.reserva, d), rmin * 0.6), c.reserva * 0.5);
 	const p1 = c.fijo.clone()
 		.addScaledVector(c.caida, h)
 		.addScaledVector(destino.clone().sub(c.fijo).normalize(), d * 0.25);
@@ -449,7 +486,8 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 	if (!terminales.size) return { enLaPuerta: enPuerta, flexibles, cables };
 
 	const signo = o.izquierda ? -1 : 1;
-	const xEntrada = signo * (puerta.ancho / 2 - DESDE_BISAGRA);
+	const ajustes = ajustesDeMazo(proyecto);
+	const xEntrada = signo * (puerta.ancho / 2 - ajustes.desdeBisagra);
 
 	/*
 	 * EL MAZO TRONCAL. Y por qué no vale que cada hilo vaya por su cuenta.
@@ -471,11 +509,11 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 	/*
 	 * LAS SUJECIONES DEL TRONCO. Una en el punto de transferencia —junto a las bisagras, que es
 	 * donde el mazo pasa de la puerta al lazo— y las demás repartidas a lo largo del tronco, cada
-	 * `PASO_SUJECION` milímetros. Un cable fuera de canaleta no puede colgar medio metro sin nada
+	 * `pasoSujecion` milímetros. Un cable fuera de canaleta no puede colgar medio metro sin nada
 	 * que lo sujete, y sin la sujeción de arriba el borne del aparato acabaría aguantando el
 	 * movimiento de la puerta, que es justo lo que no debe pasar.
 	 */
-	const PASO_SUJECION = 110;
+	const pasoSujecion = ajustes.pasoSujecion;
 	const zSujecion = Z_CARA_INTERIOR + 1.5;
 	/** Pone una sujeción en la cara interior de la hoja, mirando hacia dentro del armario. */
 	const amarrar = (x: number, y: number, grosor: number): void => {
@@ -486,7 +524,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 	};
 	{
 		const alto = Math.max(0, yTronco - yTroncoBajo);
-		const cuantas = Math.max(1, Math.round(alto / PASO_SUJECION));
+		const cuantas = Math.max(1, Math.round(alto / pasoSujecion));
 		for (let i = 0; i <= cuantas; i++) amarrar(xEntrada, yTronco - (alto * i) / cuantas, grosorMazo);
 		/*
 		 * Y A LO LARGO DE CADA DERIVACIÓN. Un hilo que cruza veinte centímetros de chapa desde el
@@ -504,7 +542,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		}
 		for (const [, q] of porAparato) {
 			const largo = Math.abs(q.x - xEntrada);
-			const cuantos = Math.floor(largo / PASO_SUJECION);
+			const cuantos = Math.floor(largo / pasoSujecion);
 			const paso = (q.x - xEntrada) / (cuantos + 1);
 			for (let i = 1; i <= cuantos; i++) amarrar(xEntrada + paso * i, q.y, Math.max(6, q.n * 2.6));
 		}
@@ -616,7 +654,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		marcador.updateMatrixWorld(true);
 		const destinoMundo = marcador.getWorldPosition(new THREE.Vector3());
 
-		const anclaModelo = anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, desvio);
+		const anclaModelo = anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, desvio, ajustes.desdeBisagra);
 		const fijo = o.aEscena(anclaModelo.x, anclaModelo.y, anclaModelo.z);
 		/*
 		 * Y SU SOPORTE, una sola vez. El lazo tiene que salir de algo atornillado al armario: si
@@ -625,9 +663,9 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		 */
 		if (!flexibles.children.length) {
 			const centro = o.aEscena(
-				anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, 0).x,
-				anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, 0).y,
-				anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, 0).z,
+				anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, 0, ajustes.desdeBisagra).x,
+				anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, 0, ajustes.desdeBisagra).y,
+				anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, alturaModelo, 0, ajustes.desdeBisagra).z,
 			);
 			const sj = sujecion(grosorMazo);
 			sj.position.copy(centro);
@@ -650,7 +688,9 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 			flexible: undefined as unknown as THREE.Mesh,
 			entrada: marcador,
 			fijo,
-			reserva: fijo.distanceTo(destinoMundo) + 74,
+			// LA RESERVA ES LO QUE HAY CORTADO: la distancia en recto más lo que sobra para el
+			// lazo. Ese sobrante es lo que el usuario sube o baja cuando quiere más panza.
+			reserva: Math.max(20, fijo.distanceTo(destinoMundo) + 74 + ajustes.holgura),
 			radio,
 			caida,
 			salida,
@@ -664,6 +704,64 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		flexibles.add(cable.flexible);
 		cables.push(cable);
 	}
+
+	/*
+	 * LA TRENZA DE MASA, si el proyecto la pide.
+	 *
+	 * Es el mismo problema físico que un conductor de puerta —algo flexible que cruza una bisagra
+	 * y no puede quedar tirante— así que reutiliza exactamente la misma maquinaria: punto fijo en
+	 * el cuerpo, entrada solidaria con la hoja, lazo con reserva. Lo que NO comparte es el
+	 * recorrido: sale del canto de bisagra por el camino más corto y no sube por el tronco de
+	 * mando. Ésa es la diferencia entre una masa y un hilo de control, y se ve.
+	 *
+	 * Que esté puesta no dice que el tablero cumpla nada. Dice que está dibujada, que está
+	 * contada y que quien lo monte sabe de dónde a dónde va.
+	 */
+	const bond = g.caja?.bonding;
+	if (bond?.puesto) {
+		const radioB = o.radio(bond.seccion ?? 6);
+		const matB = new THREE.MeshStandardMaterial({ color: 0x2fa84f, roughness: 0.72, metalness: 0.12 });
+		// Abajo del todo del canto de bisagras: es donde se atornilla, lejos de los aparatos.
+		const yB = -o.caja.alto / 2 + 90;
+		const entradaB = new THREE.Vector3(xEntrada, yB, Z_CARA_INTERIOR + 4);
+		const marcadorB = new THREE.Object3D();
+		marcadorB.position.copy(entradaB);
+		puerta.frente.add(marcadorB);
+		marcadorB.updateMatrixWorld(true);
+		const destinoB = marcadorB.getWorldPosition(new THREE.Vector3());
+		const anclaB = anclajeFijoDeMazo(o.placa, o.caja, o.izquierda, o.caja.alto / 2 - yB, 0, ajustes.desdeBisagra);
+		const fijoB = o.aEscena(anclaB.x, anclaB.y, anclaB.z);
+		const dentroB = new THREE.Vector3(-signo, 0, 0);
+		const bonding: CablePuerta = {
+			conductorId: '',
+			enLaPuerta: new THREE.Mesh(),
+			flexible: undefined as unknown as THREE.Mesh,
+			entrada: marcadorB,
+			fijo: fijoB,
+			// Una trenza de masa se pone corta y holgada, no larga: cuanto menos cable, menos
+			// impedancia, y por eso lleva menos reserva que un hilo de mando.
+			reserva: Math.max(20, fijoB.distanceTo(destinoB) + 46),
+			radio: radioB,
+			caida: new THREE.Vector3(0, -1, 0).addScaledVector(dentroB, 0.25).normalize(),
+			salida,
+			segmentos: 22,
+			radiales: 8,
+			trazaLazo: [],
+		};
+		const curvaB = curvaFlexible(bonding, destinoB);
+		bonding.flexible = tubo(curvaB, bonding.segmentos, radioB, bonding.radiales, matB, '');
+		// No se puede pinchar: no es un conductor del esquema y no debe robarle el clic a uno.
+		bonding.flexible.raycast = () => undefined;
+		bonding.flexible.userData.conductorId = undefined;
+		bonding.trazaLazo = curvaB.getPoints(16);
+		flexibles.add(bonding.flexible);
+		// Y sus dos amarres, uno a cada lado de la bisagra: sin ellos la trenza sería una línea.
+		const amarreHoja = sujecion(radioB * 2 + 4);
+		amarreHoja.position.set(xEntrada, yB, Z_CARA_INTERIOR + 1.5);
+		amarreHoja.rotation.y = Math.PI;
+		enPuerta.add(amarreHoja);
+		return { enLaPuerta: enPuerta, flexibles, cables, bonding };
+	}
 	return { enLaPuerta: enPuerta, flexibles, cables };
 }
 
@@ -673,7 +771,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
  */
 export function actualizarMazoPuerta(mazo: Mazo): void {
 	const destino = new THREE.Vector3();
-	for (const c of mazo.cables) {
+	for (const c of mazo.bonding ? [...mazo.cables, mazo.bonding] : mazo.cables) {
 		c.entrada.getWorldPosition(destino);
 		const curva = curvaFlexible(c, destino);
 		reescribirTubo(c.flexible, curva, c.radio, c.segmentos, c.radiales);

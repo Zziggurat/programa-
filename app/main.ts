@@ -16,7 +16,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-import { BloqueTerminales, CLASE_POR_TIPO, Colocacion, Conductor, Dispositivo, OpcionesProyecto, Proyecto } from '../src/modelo/tipos.js';
+import { BloqueTerminales, ClaseConductor, CLASE_POR_TIPO, Colocacion, Conductor, Dispositivo, OpcionesProyecto, Proyecto } from '../src/modelo/tipos.js';
 import { cajaDeGabinete, crearProyecto, declarado, extremoTexto, opcionesDe } from '../src/modelo/proyecto.js';
 import {
 	AjustesDossier, BloqueDossier, FUENTES, SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion,
@@ -37,7 +37,7 @@ import {
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
 import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, RedCanaletas } from './canaletas-red.js';
-import { actualizarMazoPuerta, trazasDeMazo } from './mazo-puerta.js';
+import { actualizarMazoPuerta, ajustesDeMazo, trazasDeMazo } from './mazo-puerta.js';
 import {
 	Bloqueo, distanciaASegmento, Eje, indiceDeInsercion, normalDeArrastre, P3,
 	proyectarEnPolilinea, respetarBloqueo,
@@ -53,6 +53,7 @@ import {
 } from './edicion-frontal.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
+import { claseDeConductor, NOMBRE_CLASE } from '../src/motores/clases-cable.js';
 import { huellaMinima, leerRotulos } from '../src/motores/terminales.js';
 import { calcularBalanceTermico } from '../src/motores/termico.js';
 import { comoSeConecta } from './como-se-conecta.js';
@@ -788,9 +789,10 @@ controles.maxPolarAngle = Math.PI * 0.978;
  * el resultado era el de siempre: giras la vista y sueltas encima de un cable, y acabas de
  * seleccionar un cable que no querías.
  *
- * Se pasa al reparto de las herramientas 3D: izquierdo para los objetos, RUEDA PULSADA para
- * girar, Mayúsculas+rueda pulsada para desplazar. Se conserva además el botón derecho para
- * desplazar, que no estorba a nadie y salva a quien tenga un ratón sin botón central.
+ * Se probó llevando el giro a la rueda pulsada y el izquierdo solo a los objetos. Quitaba la
+ * ambigüedad, sí, pero a costa de exigir un ratón de tres botones para lo más frecuente que se
+ * hace en un visor 3D. La solución definitiva deja el giro donde la mano lo busca —el izquierdo—
+ * y separa los dos significados por un UMBRAL: ver `UMBRAL_ARRASTRE` y `clicPendiente`.
  */
 controles.mouseButtons = {
 	/*
@@ -840,7 +842,7 @@ controles.dampingFactor = 0.17;
 /*
  * MIENTRAS SE NAVEGA NO SE BUSCA NADA BAJO EL PUNTERO.
  *
- * Girar el tablero con la rueda pulsada lanza un `pointermove` por fotograma, y cada uno de ellos
+ * Girar el tablero lanza un `pointermove` por fotograma, y cada uno de ellos
  * disparaba el resaltado: un trazado de rayos contra los bornes, otro contra los cables y otro
  * contra los aparatos, sesenta veces por segundo, para iluminar cosas que nadie está mirando
  * porque está moviendo la cámara. Y además hacía parpadear el resaltado durante el giro.
@@ -3501,11 +3503,16 @@ function pintarPanelCable(id: string): void {
 		<div class="sub">${escaparHtml(`${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}`)}</div>
 		<dl>
 			<dt>Recorrido</dt><dd>${manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : '↳ directo (en L, automático)'}</dd>
+			<dt>Clase</dt><dd>${escaparHtml(NOMBRE_CLASE[claseDeConductor(proyecto, c)])}${c.clase ? '' : ' <span class="pista">(deducida)</span>'}</dd>
 		</dl>
-		<div class="sub" style="margin-top:6px"><b>Doble clic</b> sobre el cable (botón izquierdo o derecho) crea una <b>unión</b> · <b>arrastra</b> las esferas azules con el clic izquierdo para mover cada unión · <b>doble clic</b> en una esfera la quita.</div>
 		<div class="form-cable" style="margin-top:10px">
 			<select id="cbl-seccion">${SECCIONES.map((s) => `<option value="${s}" ${s === c.seccion ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
 			<select id="cbl-color">${COLORES.map((col) => `<option ${col === c.color ? 'selected' : ''}>${col}</option>`).join('')}</select>
+			<select id="cbl-clase" title="Cómo se tiende este cable. Lo normal es dejar que lo deduzca de dónde están sus extremos.">
+				<option value="">Clase automática</option>
+				${(Object.keys(NOMBRE_CLASE) as (keyof typeof NOMBRE_CLASE)[]).map((k) =>
+					`<option value="${k}" ${k === c.clase ? 'selected' : ''}>${escaparHtml(NOMBRE_CLASE[k])}</option>`).join('')}
+			</select>
 		</div>
 		<div class="botonera">
 			${manual ? '<button class="boton" id="cbl-auto">Trazado automático</button>' : ''}
@@ -3523,6 +3530,18 @@ function pintarPanelCable(id: string): void {
 		reconstruirCables();
 		marcarSucio();   // cambiar el color no recalcula nada, pero SÍ hay que guardarlo
 	};
+	(panel.querySelector('#cbl-clase') as HTMLSelectElement).onchange = (e) => {
+		if (!capturar()) return;
+		const v = (e.target as HTMLSelectElement).value;
+		// Vacío NO es una clase: es «vuelve a deducirla». Guardar un valor cuando el usuario pide
+		// automático sería congelar hoy una respuesta que mañana cambia al mover el aparato.
+		if (v) c.clase = v as ClaseConductor; else delete c.clase;
+		recalcular(); reconstruirCables(); pintarPaneles();
+	};
+	// La ayuda de edición vive en la guía de abajo, no en un párrafo dentro del inspector: es la
+	// misma información y estaba escrita dos veces, con dos redacciones distintas.
+	ayudaDeEstado(['Doble clic · nueva unión', 'Arrastrar unión · moverla',
+		'Doble clic en la unión · quitarla', 'X/Y/Z · fijar eje']);
 	(panel.querySelector('#cbl-auto') as HTMLButtonElement | null)?.addEventListener('click', () => {
 		if (!capturar()) return;
 		delete c.trazado;
@@ -3554,8 +3573,33 @@ function pintarEstructura(): void {
 			<button title="Quitar" data-quitar>✕</button>
 		</div>`).join('');
 
+	($('caja-bisagras') as HTMLSelectElement).value = g.caja?.bisagras ?? 'izquierda';
+	/*
+	 * EL MAZO SE PRESENTA CON LO QUE EL PROGRAMA PROPONE, no en blanco.
+	 *
+	 * Un campo vacío obliga a adivinar qué pasa si lo dejas así, y a teclear un número que ya
+	 * estaba decidido. Se muestran los valores en vigor —los de fábrica mientras nadie los toque—
+	 * y el usuario cambia el que quiera: eso es «el programa propone y tú decides», y no una
+	 * pantalla de ajustes que exige rellenarla antes de servir de nada.
+	 */
+	const aj = ajustesDeMazo(proyecto);
+	($('mazo-bisagra') as HTMLInputElement).value = String(Math.round(aj.desdeBisagra));
+	($('mazo-holgura') as HTMLInputElement).value = String(Math.round(aj.holgura));
+	($('mazo-paso') as HTMLInputElement).value = String(Math.round(aj.pasoSujecion));
+	($('caja-bonding') as HTMLInputElement).checked = !!g.caja?.bonding?.puesto;
+	($('bonding-seccion') as HTMLInputElement).value = String(g.caja?.bonding?.seccion ?? 6);
+
 	$('lista-rieles').innerHTML = filas(g.rieles, 'riel');
 	$('lista-canaletas').innerHTML = filas(g.canaletas, 'canaleta');
+	$('lista-entradas').innerHTML = (g.entradas ?? []).map((e) => `
+		<div class="fila-estructura" data-tipo="entrada" data-id="${escaparHtml(e.id)}">
+			<span class="id">${escaparHtml(e.nombre ?? e.id)}</span>
+			<input type="number" data-campo="x" value="${Math.round(e.x)}">
+			<input type="text" data-campo="rosca" value="${escaparHtml(e.rosca ?? '')}" placeholder="M20">
+			<input type="number" data-campo="diametro" value="${Math.round(e.diametro ?? 20)}">
+			<button title="Quitar" data-quitar>✕</button>
+		</div>`).join('')
+		|| '<div class="pista">Sin entradas declaradas: los prensaestopas se reparten solos por debajo.</div>';
 
 	for (const btn of document.querySelectorAll('[data-quitar]')) {
 		(btn as HTMLButtonElement).onclick = (ev) => {
@@ -3563,6 +3607,7 @@ function pintarEstructura(): void {
 			const fila = (ev.target as HTMLElement).closest('.fila-estructura') as HTMLElement;
 			const id = fila.dataset.id!;
 			if (fila.dataset.tipo === 'riel') g.rieles = g.rieles.filter((r) => r.id !== id);
+			else if (fila.dataset.tipo === 'entrada') g.entradas = (g.entradas ?? []).filter((e) => e.id !== id);
 			else g.canaletas = g.canaletas.filter((c) => c.id !== id);
 			actualizarTodo();
 			pintarEstructura();
@@ -3580,16 +3625,48 @@ function aplicarEstructura(): void {
 	if (!capturar()) return;
 	const g = proyecto.gabinete!;
 	// 0. Caja envolvente (dimensiones propias, independientes de la placa).
+	const seccionBond = Math.min(Math.max(Number(($('bonding-seccion') as HTMLInputElement).value) || 6, 1), 35);
 	g.caja = {
 		ancho: Math.min(Math.max(Number(($('caja-ancho') as HTMLInputElement).value) || 66, 20), 200) * 10,
 		alto: Math.min(Math.max(Number(($('caja-alto') as HTMLInputElement).value) || 86, 30), 240) * 10,
 		profundidad: Math.min(Math.max(Number(($('caja-prof') as HTMLInputElement).value) || 16, 10), 60) * 10,
+		bisagras: ($('caja-bisagras') as HTMLSelectElement).value === 'derecha' ? 'derecha' : 'izquierda',
+		bonding: { puesto: ($('caja-bonding') as HTMLInputElement).checked, seccion: seccionBond },
 	};
+	/*
+	 * EL MAZO. Solo se guarda lo que se APARTA de lo propuesto: si el número coincide con el de
+	 * fábrica, el campo no se escribe. Así un proyecto no se llena de ajustes que nadie eligió, y
+	 * el día que cambie el valor propuesto los proyectos que no opinaban se benefician del cambio.
+	 */
+	const propuesto = { desdeBisagra: 26, holgura: 0, pasoSujecion: 110 };
+	const leerMazo = (campo: keyof typeof propuesto, id: string, min: number, max: number) => {
+		const v = Math.min(Math.max(Number(($(id) as HTMLInputElement).value), min), max);
+		if (!Number.isFinite(v) || v === propuesto[campo]) return undefined;
+		return Math.round(v);
+	};
+	const mazo = {
+		desdeBisagra: leerMazo('desdeBisagra', 'mazo-bisagra', 12, 160),
+		holgura: leerMazo('holgura', 'mazo-holgura', -30, 200),
+		pasoSujecion: leerMazo('pasoSujecion', 'mazo-paso', 40, 400),
+	};
+	if (mazo.desdeBisagra === undefined && mazo.holgura === undefined && mazo.pasoSujecion === undefined) {
+		delete g.mazoPuerta;
+	} else {
+		g.mazoPuerta = mazo;
+	}
 	// 1. Leer las filas editadas.
 	for (const fila of document.querySelectorAll('.fila-estructura')) {
 		const el = fila as HTMLElement;
 		const leer = (campo: string) =>
 			Number((el.querySelector(`[data-campo="${campo}"]`) as HTMLInputElement).value) || 0;
+		if (el.dataset.tipo === 'entrada') {
+			const e = (g.entradas ?? []).find((k) => k.id === el.dataset.id);
+			if (!e) continue;
+			e.x = Math.min(Math.max(leer('x'), 0), g.ancho);
+			e.diametro = Math.min(Math.max(leer('diametro'), 8), 80);
+			e.rosca = (el.querySelector('[data-campo="rosca"]') as HTMLInputElement).value.trim() || undefined;
+			continue;
+		}
 		const destino = el.dataset.tipo === 'riel'
 			? g.rieles.find((r) => r.id === el.dataset.id)
 			: g.canaletas.find((c) => c.id === el.dataset.id);
@@ -3634,13 +3711,33 @@ function aplicarEstructura(): void {
 	 * térmico, y `pintarEstructura` la devuelve al campo. Así lo que se lee es lo que hay.
 	 */
 	const efectiva = cajaDeGabinete(g);
-	g.caja = { ancho: efectiva.ancho, alto: efectiva.alto, profundidad: efectiva.profundidad };
+	// Se corrigen LAS MEDIDAS, no la caja entera: reescribirla de cero borraba de qué lado abre la
+	// puerta cada vez que se tocaba una cota, y con ella se iba también la trenza de masa.
+	g.caja = { ...g.caja, ancho: efectiva.ancho, alto: efectiva.alto, profundidad: efectiva.profundidad };
 	actualizarTodo();
 	pintarEstructura();
 	encuadrar();
 }
 
 ($('aplicar-dim') as HTMLButtonElement).onclick = aplicarEstructura;
+($('btn-add-entrada') as HTMLButtonElement).onclick = () => {
+	if (!capturar()) return;
+	const g = proyecto.gabinete!;
+	g.entradas = g.entradas ?? [];
+	// Se pone donde queda sitio: repartidas a lo ancho, que es por donde entran de verdad.
+	const n = g.entradas.length;
+	g.entradas.push({
+		id: siguienteId('ent', g.entradas),
+		cara: 'inferior',
+		x: Math.round(((n + 1) * g.ancho) / (n + 2)),
+		y: 0,
+		tipo: 'prensaestopas',
+		diametro: 20,
+		rosca: 'M20',
+	});
+	actualizarTodo();
+	pintarEstructura();
+};
 ($('btn-add-riel') as HTMLButtonElement).onclick = () => {
 	if (!capturar()) return;
 	const g = proyecto.gabinete!;
@@ -5563,10 +5660,10 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	const foco = document.activeElement as HTMLElement | null;
 	if (foco && /^(INPUT|SELECT|TEXTAREA)$/.test(foco.tagName)) foco.blur();
 	/*
-	 * LOS BOTONES DE CÁMARA NO SELECCIONAN. Girar es rueda pulsada y desplazar es botón derecho;
-	 * este manejador seguía corriendo entero con cualquiera de los dos, así que EMPEZAR a girar
-	 * seleccionaba lo que hubiera bajo el puntero —y de paso preparaba su arrastre—. Era la misma
-	 * ambigüedad que se acaba de quitar del botón izquierdo, colada por la puerta de atrás.
+	 * SOLO EL IZQUIERDO TOCA OBJETOS. El derecho desplaza la vista y la rueda pulsada gira, y
+	 * este manejador seguía corriendo entero con cualquiera de los dos: empezar a desplazar
+	 * seleccionaba lo que hubiera debajo y de paso le preparaba el arrastre. Lo que hace el
+	 * izquierdo —elegir o girar— lo decide el umbral, más abajo.
 	 */
 	if (ev.button !== 0) return;
 	origenPuntero = { x: ev.clientX, y: ev.clientY };

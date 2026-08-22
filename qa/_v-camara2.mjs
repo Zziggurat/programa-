@@ -167,8 +167,19 @@ const donde = () => p.evaluate((i) => {
 	await p.waitForTimeout(350);
 	const s2 = await donde();
 	const giro = Math.abs(gr((await orbita()).azimut - antes.azimut));
-	console.log(`   historial: ${JSON.stringify(await p.evaluate(() => window.qa.historial()))}`);
-	ok(s2.x !== sitio.x, `en Editor, arrastrar el aparato lo mueve (${sitio.x} → ${s2.x})`);
+	const hist = await p.evaluate(() => window.qa.historial());
+	console.log(`   historial: ${JSON.stringify(hist)} · ${sitio.x} → ${s2.x}`);
+	/*
+	 * LO QUE COMPRUEBA ESTA PRUEBA ES A QUIÉN VA EL GESTO, no adónde acaba el aparato.
+	 *
+	 * Arrastrando un aparato ya elegido, el gesto tiene que ir a él y NO a la cámara: eso son las
+	 * dos líneas de abajo —se abrió un paso de deshacer, o sea que hubo edición, y la vista no se
+	 * movió—. Dónde queda al soltar lo decide el editor, que lo corre al hueco libre más cercano
+	 * si se ha encimado con el vecino y lo devuelve a su sitio si no cabe; eso ya lo comprueban
+	 * `_v-picking` y `_v-editor`, y exigirlo aquí sería hacer depender esta prueba de cuánto sitio
+	 * libre tenga el ejemplo a la derecha del contactor de turno.
+	 */
+	ok(hist.deshacer > 0, `en Editor, arrastrar lo elegido edita el tablero (${hist.deshacer} pasos de deshacer)`);
 	ok(giro < 0.5, `y la cámara se queda quieta (${giro.toFixed(2)}°)`);
 	await p.keyboard.press('Control+z');
 	await p.waitForTimeout(400);
@@ -233,9 +244,19 @@ const donde = () => p.evaluate((i) => {
 
 /* ---- 8. F y O ---- */
 {
+	// Se vuelve a Interior y se descongela: la sección anterior dejó la cámara dando vueltas en
+	// Conjunto, y desde ahí el aparato puede quedar fuera de imagen.
+	await p.evaluate(() => document.getElementById('esp-interior')?.click());
+	await p.waitForTimeout(700);
+	await p.evaluate(() => window.qa.congelarCamara(true));
 	await p.evaluate(() => document.querySelector('canvas').focus());
 	const pixq = await deFrente();
-	await p.mouse.click(pixq.x, pixq.y);
+	if (!pixq) {
+		fallos.push('el aparato de prueba no cae en la imagen para F/O');
+		console.log(`MAL  no se localiza ${quien} en pantalla · colocaciones `
+			+ await p.evaluate(() => window.qa.proyecto().gabinete.colocaciones.length));
+	}
+	await p.mouse.click(pixq?.x ?? 700, pixq?.y ?? 450);
 	await p.waitForTimeout(250);
 	const antes = await p.evaluate(() => window.qa.camaraAhora());
 	await p.keyboard.press('f');

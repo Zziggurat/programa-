@@ -8,3 +8,4 @@ export * from './motores/bornes.js';
 export * from './motores/ruteo.js';
 export * from './motores/sincronizacion.js';
 export * from './motores/documentacion.js';
+export * from './motores/clases-cable.js';

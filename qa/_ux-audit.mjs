@@ -80,6 +80,20 @@ console.log('   secciones: ' + t.secciones.join(' | '));
 console.log(`   ${t.controlesVisibles} controles visibles`);
 await p.screenshot({ path: join(SALIDA, 'ux-trabajo.png') });
 
+/* ---- Y a otros tamaños de pantalla ---- */
+for (const [w, h] of [[2560, 1440], [1366, 768]]) {
+	await p.setViewportSize({ width: w, height: h });
+	await p.waitForTimeout(700);
+	await p.evaluate(() => document.getElementById('hta-conectar')?.click());
+	await p.waitForTimeout(500);
+	const m = await medir();
+	console.log(`\n=== ${w}×${h} (con el cajón de cables abierto) ===`);
+	console.log(`   lienzo ${m.lienzo.w}×${m.lienzo.h} · paneles tapan el ${m.tapado} % del ancho`);
+	console.log(`   ${m.barraBotones} botones visibles en la barra`);
+	await p.screenshot({ path: join(SALIDA, `ux-${w}.png`) });
+}
+await p.setViewportSize({ width: 1920, height: 1080 });
+
 writeFileSync(join(SALIDA, 'ux-controles.txt'), t.visibles.join('\n'));
 console.log(`\n   lista completa en qa/capturas/ux-controles.txt`);
 await b.close(); sv.close(); process.exit(0);
