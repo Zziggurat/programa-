@@ -915,6 +915,20 @@
 	.fila-estructura button:hover { color: var(--error); }
 	.botonera { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 	.botonera .boton { padding: 4px 9px; font-size: 12px; }
+	/*
+	 * «APLICAR» NO PUEDE ESTAR AL FINAL DE MIL PÍXELES DE SCROLL.
+	 *
+	 * El cajón de montaje reúne la caja, la placa, el perfil de canaleta, la puerta, el mazo, las
+	 * entradas de cable, los rieles y las canaletas: es largo por buenas razones, y todo lo que se
+	 * teclea ahí no vale nada hasta que se pulsa Aplicar. Dejar ese botón donde acabe el contenido
+	 * significa que cuanto más largo es el formulario, más lejos está la acción que lo cierra.
+	 * Se queda pegado al fondo del cajón, siempre a la vista y siempre en el mismo sitio.
+	 */
+	#seccion-estructura .botonera {
+		position: sticky; bottom: 0; margin: 10px -14px -12px; padding: 9px 14px;
+		background: color-mix(in srgb, var(--panel) 96%, transparent);
+		border-top: 1px solid var(--borde); backdrop-filter: blur(4px);
+	}
 
 	/* Panel derecho (propiedades) */
 	#panel-der h1 { font-size: 17px; margin: 0; }
