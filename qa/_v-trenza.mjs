@@ -10,7 +10,8 @@
  * Se toca todo por la interfaz, con los mismos campos que tiene delante el usuario.
  */
 import { chromium } from 'playwright-core';
-import { servir, abrirEjemplo, lamina, puerta, navegadorDelSistema } from './lib/mirar.mjs';
+import { join } from 'node:path';
+import { servir, abrirEjemplo, SALIDA, puerta, navegadorDelSistema } from './lib/mirar.mjs';
 
 const sv = await servir();
 const b = await chromium.launch({
@@ -89,6 +90,9 @@ await abrirMontaje();
 {
 	await p.evaluate(() => { document.getElementById('caja-bonding').checked = true; });
 	await aplicar();
+	// CON LA PUERTA CERRADA, que es cuando «no asomar por delante de la chapa» significa algo:
+	// abierta, la hoja se ha ido de sitio y su cara exterior ya no es la frontera de nada.
+	await puerta(p, 0);
 	const t = await p.evaluate(() => window.qa.trenza());
 	ok(!!t, 'marcada la casilla, la trenza está tendida');
 	if (t) {
@@ -117,9 +121,9 @@ await abrirMontaje();
 	// estirando, que es exactamente lo que un lazo de servicio existe para evitar.
 	ok(largos.every((l) => Math.abs(l - largos[0]) < 0.5), `la trenza no se estira al abrir (${largos.map((l) => l.toFixed(0)).join(' · ')})`);
 	await puerta(p, 1);
-	await lamina(p, 'v-trenza-abierta.png');
+	await p.screenshot({ path: join(SALIDA, 'v-trenza-abierta.png') });
 	await puerta(p, 0);
-	await lamina(p, 'v-trenza-cerrada.png');
+	await p.screenshot({ path: join(SALIDA, 'v-trenza-cerrada.png') });
 }
 
 /* ---- 6. Entradas de cable declaradas ---- */

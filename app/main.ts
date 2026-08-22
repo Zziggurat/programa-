@@ -4616,13 +4616,38 @@ function borneBajoElPuntero(ev: MouseEvent): RefBorne | undefined {
  * para empezar un cableado desde un borne que en realidad está tapado. Era una de las causas de
  * «a veces no puedo agarrar los cables».
  */
+/**
+ * ¿Le quita el clic al borne el cable que le pasa por delante?
+ *
+ * SOLO SI ESE CLIC LE SIRVE DE ALGO AL CABLE. Ésta es la parte que faltaba.
+ *
+ * La regla «manda lo que se ve encima» está para poder agarrar un cable que cruza justo por
+ * delante de un terminal, y para eso sigue estando. Pero un cable solo se agarra donde tiene una
+ * UNIÓN que mover: en el resto de su recorrido, ganar el clic no le sirve para nada y en cambio
+ * le quita al borne el suyo. Y eso, en un tablero ya cableado, es constante: se ve en la sesión
+ * de prueba, donde pinchar un terminal LIBRE de una bornera seleccionaba el cable del vecino en
+ * vez de empezar a cablear. La persona estaba en la herramienta de cablear, tenía el terminal
+ * delante, y el programa le devolvía otra cosa.
+ *
+ * Con esto, cada clic va a quien puede hacer algo con él: sobre una unión, al cable; sobre el
+ * resto del cable, al borne que haya detrás; y donde no hay borne, al cable, como siempre.
+ */
 function cableTapaAlBorne(ev: MouseEvent, distanciaBorne: number): boolean {
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camaraViva());
-	const d = raycaster.intersectObjects(mallasDeCable(), true)
-		.find((i) => i.object.userData.tuboVisible)?.distance;
-	return d !== undefined && d < distanciaBorne;
+	const impacto = raycaster.intersectObjects(mallasDeCable(), true)
+		.find((i) => i.object.userData.tuboVisible);
+	if (impacto === undefined || impacto.distance >= distanciaBorne) return false;
+	const cid = impacto.object.userData.conductorId as string | undefined;
+	const c = cid ? proyecto.conductores.find((x) => x.id === cid) : undefined;
+	if (!c) return false;
+	// ¿Hay una unión de ese cable justo ahí? Se mide contra el punto DIBUJADO, igual que al
+	// agarrarla: una unión metida en canaleta está a treinta milímetros del plano del frente.
+	return (c.trazado ?? []).some((w, i) => {
+		const q = puntoDibujado(c, i) ?? { x: w.x, y: w.y, z: Z_FRENTE };
+		return Math.hypot(q.x - impacto.point.x, q.y - impacto.point.y, q.z - impacto.point.z) < 26;
+	});
 }
 
 /** Resalta el borne bajo el ratón (y el de origen si se está cableando); pone el cursor de mira. */

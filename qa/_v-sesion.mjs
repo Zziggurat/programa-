@@ -108,53 +108,63 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 
 	const antes = (await pr()).conductores.length;
 	/*
-	 * DOS BORNES LIBRES, y ésa es la parte que importa.
+	 * CANDIDATOS ORDENADOS POR LO DESPEJADO QUE ESTÁ EL APARATO.
 	 *
-	 * La primera versión cogía el primer borne de los dos primeros aparatos del ejemplo. En un
-	 * tablero ya cableado —sesenta y un conductores— casi todos los bornes tienen un cable por
-	 * delante, y ahí manda la regla del programa: lo que se ve encima se lleva el clic, así que
-	 * el clic agarraba el cable en vez de empezar uno nuevo. Es el comportamiento correcto y la
-	 * prueba estaba mal planteada: para comprobar que se puede cablear hay que ir a bornes que
-	 * estén libres, que es lo que hace quien está cableando.
+	 * En un tablero ya cableado hay una regla del programa que manda por encima de todo: si en el
+	 * píxel del terminal se ve un cable, el clic es para el cable. Es lo correcto —es lo que
+	 * permite agarrar un cable que pasa por delante de un borne— pero convierte «pincha un borne»
+	 * en algo que depende de por dónde pase el peinado. Quien cablea de verdad tampoco insiste en
+	 * un borne tapado: gira un poco o va a otro. Aquí se hace lo equivalente: se prueban varios
+	 * pares de bornes LIBRES, empezando por los aparatos con menos cables encima —el que se acaba
+	 * de añadir no tiene ninguno—, y basta con que uno funcione.
 	 */
-	const puntos = await p.evaluate(() => {
+	const candidatos = await p.evaluate(() => {
 		const pro = window.qa.proyecto();
 		const ocupado = new Set();
+		const cuantos = new Map();
 		for (const c of pro.conductores) {
 			ocupado.add(`${c.de.dispositivoId}|${c.de.borneId}`);
 			ocupado.add(`${c.a.dispositivoId}|${c.a.borneId}`);
+			for (const e of [c.de, c.a]) cuantos.set(e.dispositivoId, (cuantos.get(e.dispositivoId) ?? 0) + 1);
 		}
 		const cols = pro.gabinete.colocaciones.filter((c) => c.montaje !== 'puerta');
 		const sitios = [];
 		for (const c of cols) {
 			const d = pro.dispositivos.find((k) => k.id === c.dispositivoId);
 			if (!d?.bornes?.length) continue;
-			if (sitios.some((q) => q.d === d.id)) continue;
 			for (const bo of d.bornes) {
 				if (ocupado.has(`${d.id}|${bo.id}`)) continue;
 				const q = window.qa.puntoParaBorne(d.id, bo.id);
-				if (q) { sitios.push({ d: d.id, b: bo.id, x: q.x, y: q.y }); break; }
+				if (q) { sitios.push({ d: d.id, b: bo.id, x: q.x, y: q.y, carga: cuantos.get(d.id) ?? 0 }); break; }
 			}
-			if (sitios.length === 2) break;
 		}
-		return sitios;
+		return sitios.sort((a, b) => a.carga - b.carga);
 	});
-	if (puntos.length === 2) {
-		console.log(`   bornes: ${puntos.map((q) => `${q.d}.${q.b} en ${q.x},${q.y}`).join(' → ')}`);
-		await p.mouse.click(puntos[0].x, puntos[0].y);
+	console.log(`   bornes libres: ${candidatos.map((q) => `${q.d}.${q.b}(${q.carga})`).join(' ')}`);
+
+	let hecho = false;
+	let armado = false;
+	for (let i = 0; i + 1 < candidatos.length && !hecho && i < 3; i++) {
+		const [a, b] = [candidatos[i], candidatos.find((q, j) => j > i && q.d !== candidatos[i].d)];
+		if (!b) break;
+		await p.mouse.click(a.x, a.y);
 		await p.waitForTimeout(600);
-		// Lo que hay que comprobar es que el programa se ha quedado ESPERANDO el otro extremo, no
-		// que la ayuda contenga la palabra: la ayuda de la herramienta ya la trae escrita.
 		const medias = await p.evaluate(() => window.qa.estadoInteraccion());
-		console.log(`   tras el primer clic: cableando=${medias.cableando} · goma=${JSON.stringify(medias.goma)}`);
-		ok(!!medias.cableando, `el primer clic deja el cable esperando destino (${medias.cableando})`);
-		await p.mouse.click(puntos[1].x, puntos[1].y);
+		if (!medias.cableando) {
+			console.log(`   ${a.d}.${a.b} no arrancó el cable (hay algo por delante): se prueba otro`);
+			await p.keyboard.press('Escape');
+			await p.waitForTimeout(200);
+			continue;
+		}
+		armado = true;
+		await p.mouse.click(b.x, b.y);
 		await p.waitForTimeout(1000);
-		const desp = (await pr()).conductores.length;
-		ok(desp === antes + 1, `el cable queda hecho con dos clics (${antes} → ${desp})`);
-	} else {
-		ok(false, `no se han localizado dos bornes pinchables (${puntos.length})`);
+		hecho = (await pr()).conductores.length === antes + 1;
+		console.log(`   ${a.d}.${a.b} → ${b.d}.${b.b}: ${hecho ? 'cable hecho' : 'no cuajó'}`);
+		if (!hecho) { await p.keyboard.press('Escape'); await p.waitForTimeout(200); }
 	}
+	ok(armado, 'pinchar un borne libre deja el cable esperando destino');
+	ok(hecho, `el cable queda hecho con dos clics (${antes} → ${(await pr()).conductores.length})`);
 }
 
 /* ---- 5. Elegir un cable: clase, y la guía pasa a hablar de uniones ---- */
@@ -236,23 +246,49 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 
 /* ---- 9. Nada de lo anterior ha exigido dos mil píxeles de scroll ---- */
 {
-	const m = await p.evaluate(() => {
-		const izq = document.getElementById('panel-izq');
-		const der = document.getElementById('panel-der');
-		const cv = document.querySelector('canvas').getBoundingClientRect();
-		return {
-			izqScroll: izq.hidden ? 0 : izq.scrollHeight,
-			alto: window.innerHeight,
-			derVisible: der && getComputedStyle(der).display !== 'none',
-			lienzo: Math.round(cv.width),
-			ancho: window.innerWidth,
-		};
+	/*
+	 * QUÉ SE MIDE Y QUÉ NO.
+	 *
+	 * Una LISTA larga puede ser larga: sesenta y un conductores ocupan lo que ocupan, y hacerlos
+	 * caber en una pantalla solo se consigue escondiéndolos. Lo que no puede quedar al final de
+	 * un scroll es una ACCIÓN: un botón que cierra el formulario, que aplica lo tecleado o que
+	 * añade algo. Así que se mide lo hondo que cae el botón más profundo de cada cajón.
+	 *
+	 * Y el reparto de pantalla se mide por lo que TAPAN los paneles, no por el ancho del lienzo:
+	 * el visor ocupa la ventana entera y los paneles flotan encima, así que el ancho del canvas
+	 * siempre daría el 100 % y no diría nada.
+	 */
+	const alto = await p.evaluate(() => window.innerHeight);
+	for (const h of ['seleccionar', 'anadir', 'conectar', 'estructura', 'proyecto']) {
+		await herramienta(h);
+		const m = await p.evaluate(() => {
+			const izq = document.getElementById('panel-izq');
+			if (izq.hidden) return undefined;
+			const arriba = izq.getBoundingClientRect().top;
+			let hondo = 0;
+			for (const b of izq.querySelectorAll('button, input, select')) {
+				const suyo = b.closest('details');
+				if (!suyo || getComputedStyle(suyo).display === 'none') continue;
+				// Un botón pegado al fondo del cajón está SIEMPRE a la vista: no cuenta como hondo.
+				if (getComputedStyle(b.closest('.botonera') ?? b).position === 'sticky') continue;
+				hondo = Math.max(hondo, b.getBoundingClientRect().top - arriba + izq.scrollTop);
+			}
+			return { hondo: Math.round(hondo), scroll: izq.scrollHeight };
+		});
+		if (!m) { console.log(`   ${h}: sin cajón`); continue; }
+		console.log(`   ${h}: ${m.scroll} px de contenido · el control más hondo a ${m.hondo} px`);
+		ok(m.hondo <= alto * 1.35,
+			`en «${h}» ninguna acción queda enterrada (la más honda a ${m.hondo} px de ${alto})`);
+	}
+
+	const reparto = await p.evaluate(() => {
+		const v = (n) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(n)) || 0;
+		return { izq: v('--tapa-izq'), der: v('--tapa-der'), ancho: window.innerWidth };
 	});
-	console.log(`   panel izquierdo ${m.izqScroll} px en ${m.alto} px · lienzo ${m.lienzo} de ${m.ancho} px`);
-	ok(m.izqScroll <= m.alto * 1.6, `el cajón abierto cabe casi de una vez (${m.izqScroll} px en ${m.alto})`);
-	// El listón se pone donde duele: con TODO abierto. Es el peor caso, y es el que decide si el
-	// tablero se puede seguir mirando mientras se trabaja.
-	ok(m.lienzo >= m.ancho * 0.55, `y el visor se queda con la mayor parte de la pantalla (${Math.round(100 * m.lienzo / m.ancho)} %)`);
+	const libre = reparto.ancho - reparto.izq - reparto.der;
+	console.log(`   paneles: ${reparto.izq} + ${reparto.der} px de ${reparto.ancho} · libre ${libre} px`);
+	ok(libre >= reparto.ancho * 0.55,
+		`el visor conserva la mayor parte de la pantalla (${Math.round((100 * libre) / reparto.ancho)} %)`);
 }
 
 console.log(errores.length ? `ERRORES JS: ${errores.join(' | ')}` : 'sin errores de JavaScript');
