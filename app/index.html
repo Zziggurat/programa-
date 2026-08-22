@@ -888,6 +888,8 @@
 	/* Panel derecho (propiedades) */
 	#panel-der h1 { font-size: 17px; margin: 0; }
 	#panel-der .sub { color: var(--texto-suave); margin: 2px 0 10px; }
+	/* El recuento de cableado lleva el reparto por clases en su propia línea. */
+	#resumen-cables { color: var(--texto-suave); white-space: pre-line; }
 	/* Una pista es un dato de segunda: acompaña al valor, nunca compite con él. */
 	.pista { color: var(--texto-suave); font-size: 12px; margin: 4px 0; }
 	#panel-der dl { margin: 0 0 6px; }
@@ -1369,7 +1371,7 @@
 	<details id="seccion-resumen-cables" data-cajon="proyecto">
 		<summary>Cableado</summary>
 		<div class="contenido">
-			<div id="resumen-cables" style="color:var(--texto-suave)"></div>
+			<div id="resumen-cables"></div>
 		</div>
 	</details>
 	<details id="seccion-simulacion" data-cajon="proyecto" open hidden>

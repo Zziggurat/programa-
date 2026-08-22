@@ -41,16 +41,35 @@ const gr = (r) => (r * 180) / Math.PI;
  * centímetro los hace chocar y el editor los devuelve a su sitio —que es lo correcto y lo que
  * hace otra prueba—. Aquí lo que se comprueba es el GESTO, así que hace falta uno que quepa.
  */
-const quien = await p.evaluate(() => {
-	const cols = window.qa.proyecto().gabinete.colocaciones.filter((k) => k.montaje !== 'puerta');
-	let mejor = cols[0], hueco = -1;
+const elegido = await p.evaluate(() => {
+	const g = window.qa.proyecto().gabinete;
+	const cols = g.colocaciones.filter((k) => k.montaje !== 'puerta');
+	/*
+	 * SITIO LIBRE A LOS DOS LADOS, Y CONTANDO EL BORDE DE LA PLACA.
+	 *
+	 * La primera versión miraba solo el hueco a la derecha y solo hasta el vecino, así que
+	 * elegía el aparato MÁS A LA DERECHA de todos —cuyo hueco llegaba hasta el infinito— y
+	 * resultaba ser el que ya estaba tocando el canto: el editor recorta la posición al ancho de
+	 * la placa, o sea que arrastrarlo a la derecha no podía moverlo ni un milímetro. La prueba
+	 * decía «el arrastre no llega al aparato» cuando lo que pasaba es que el aparato no tenía
+	 * adónde ir.
+	 */
+	let mejor = { id: cols[0].dispositivoId, sitio: -1, hacia: 1 };
 	for (const c of cols) {
-		const der = cols.filter((k) => k !== c && Math.abs(k.y - c.y) < c.alto * 0.6 && k.x > c.x)
-			.reduce((m, k) => Math.min(m, k.x - (c.x + c.ancho)), 400);
-		if (der > hueco) { hueco = der; mejor = c; }
+		const vecinos = cols.filter((k) => k !== c && Math.abs(k.y - c.y) < c.alto * 0.6);
+		const der = vecinos.filter((k) => k.x > c.x)
+			.reduce((m, k) => Math.min(m, k.x - (c.x + c.ancho)), g.ancho - (c.x + c.ancho));
+		const izq = vecinos.filter((k) => k.x < c.x)
+			.reduce((m, k) => Math.min(m, c.x - (k.x + k.ancho)), c.x);
+		for (const [sitio, hacia] of [[der, 1], [izq, -1]]) {
+			if (sitio > mejor.sitio) mejor = { id: c.dispositivoId, sitio, hacia };
+		}
 	}
-	return mejor.dispositivoId;
+	return mejor;
 });
+const quien = elegido.id;
+console.log(`   se prueba con ${quien}: ${Math.round(elegido.sitio)} mm libres hacia `
+	+ (elegido.hacia > 0 ? 'la derecha' : 'la izquierda'));
 const bulto = await p.evaluate((i) => window.qa.bulto(i), quien);
 async function deFrente() {
 	await p.evaluate((k) => window.qa.verDesde({ x: k.x, y: k.y, z: k.z + 620, tx: k.x, ty: k.y, tz: k.z }), bulto);
@@ -150,7 +169,7 @@ const donde = () => p.evaluate((i) => {
 	const pix = await deFrente();
 	await p.evaluate(() => window.qa.congelarCamara(true));
 	// Primero se ELIGE —esa es la regla: se arrastra lo que ya está elegido— y después se mueve
-	// un poco, lo justo para que no choque con el aparato de al lado y el editor lo devuelva.
+	// hacia el lado por donde tiene sitio.
 	await p.mouse.click(pix.x, pix.y);
 	await p.waitForTimeout(250);
 	console.log(`   aparato ${quien} · píxel ${pix.x},${pix.y} · elegiría `
@@ -160,9 +179,13 @@ const donde = () => p.evaluate((i) => {
 	const sitio = await donde();
 	await p.mouse.move(pix.x, pix.y);
 	await p.mouse.down();
-	// Un tirón corto no sirve: al soltar, el editor corre el aparato al hueco libre más cercano
-	// —que sería el suyo— si se ha quedado encimado con el vecino. Se mueve lo bastante.
-	for (let i = 1; i <= 8; i++) await p.mouse.move(pix.x + i * 9, pix.y);
+	/*
+	 * Y SE TIRA LARGO. Un contactor imanta al carril en pasos de módulo, así que un tirón de
+	 * setenta píxeles —unos cuarenta milímetros a esta distancia— se redondeaba a la misma
+	 * ranura y el aparato se quedaba clavado en su sitio: la prueba decía «no se mueve» cuando
+	 * lo que pasaba era que se movía menos de un escalón del imantado.
+	 */
+	for (let i = 1; i <= 16; i++) await p.mouse.move(pix.x + elegido.hacia * i * 12, pix.y);
 	/*
 	 * SE MIRA CON EL BOTÓN TODAVÍA APRETADO, y no después de soltar.
 	 *

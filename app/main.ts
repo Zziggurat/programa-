@@ -53,7 +53,7 @@ import {
 } from './edicion-frontal.js';
 import { PLANTILLAS, PlantillaAparato, crearDesdePlantilla } from './catalogo.js';
 import { CONTROLADORES, naturalezaTerminal } from './controladores.js';
-import { claseDeConductor, NOMBRE_CLASE } from '../src/motores/clases-cable.js';
+import { claseDeConductor, NOMBRE_CLASE, recuentoPorClase } from '../src/motores/clases-cable.js';
 import { huellaMinima, leerRotulos } from '../src/motores/terminales.js';
 import { calcularBalanceTermico } from '../src/motores/termico.js';
 import { comoSeConecta } from './como-se-conecta.js';
@@ -2826,9 +2826,21 @@ function pintarPaneles(): void {
 
 	const total = proyecto.conductores.reduce((s, c) => s + longitudCableMm(c), 0);
 	const nc = proyecto.conductores.length;
+	/*
+	 * EL RECUENTO VA POR CLASES, y no es un adorno del resumen: son cuatro trabajos distintos.
+	 * El interno lo peina quien arma el tablero, el de puerta se tiende flexible y con lazo, el
+	 * de campo lo trae el instalador y muere en una bornera, y la protección va por su cuenta.
+	 * Un total de metros que los mezcla no le sirve a ninguno de los tres.
+	 */
+	const porClase = recuentoPorClase(proyecto);
+	const reparto = (Object.keys(NOMBRE_CLASE) as (keyof typeof NOMBRE_CLASE)[])
+		.filter((k) => porClase[k] > 0)
+		.map((k) => `${porClase[k]} ${NOMBRE_CLASE[k].toLowerCase()}`)
+		.join(' · ');
 	$('resumen-cables').textContent = nc === 0
 		? 'Todavía no hay cables.'
-		: `${nc} ${nc === 1 ? 'conductor' : 'conductores'} · ~${(total / 1000).toFixed(1)} m de cable`;
+		: `${nc} ${nc === 1 ? 'conductor' : 'conductores'} · ~${(total / 1000).toFixed(1)} m de cable`
+			+ (reparto ? `\n${reparto}` : '');
 
 	pintarListaCables();
 	pintarBalanceTermico();
