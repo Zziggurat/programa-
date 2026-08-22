@@ -151,6 +151,26 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 	const pares = [];
 	for (const a of candidatos) for (const b of candidatos) if (a.d !== b.d) pares.push([a, b]);
 
+	/*
+	 * PARA REMATAR VALE CUALQUIER TERMINAL DE OTRO APARATO, esté libre u ocupado: en una bornera
+	 * llegan varios hilos al mismo borne, y quien cablea remata donde alcanza. El ejemplo solo
+	 * tiene dos bornes libres y uno de ellos es del aparato recién puesto, así que limitarse a
+	 * ésos dejaba la prueba a merced de que ese aparato cayera despejado.
+	 */
+	const destinos = (origen) => p.evaluate((oid) => {
+		const pro = window.qa.proyecto();
+		const salida = [];
+		for (const c of pro.gabinete.colocaciones.filter((k) => k.montaje !== 'puerta')) {
+			if (c.dispositivoId === oid) continue;
+			const d = pro.dispositivos.find((k) => k.id === c.dispositivoId);
+			for (const bo of d?.bornes ?? []) {
+				const q = window.qa.puntoParaBorne(d.id, bo.id);
+				if (q) salida.push({ d: d.id, b: bo.id, x: q.x, y: q.y });
+			}
+		}
+		return salida;
+	}, origen);
+
 	let hecho = false;
 	let armado = false;
 	for (let i = 0; i < pares.length && !hecho && i < 4; i++) {
@@ -171,8 +191,7 @@ console.log(await abrirEjemplo(p, sv.address().port, 2));
 		 * siguiente terminal en vez de rendirse. Se rematan hasta cuatro candidatos, y basta con
 		 * que uno acepte.
 		 */
-		for (const q of pares.map(([, y]) => y).concat(candidatos).slice(0, 4)) {
-			if (q.d === a.d) continue;
+		for (const q of (await destinos(a.d)).slice(0, 6)) {
 			await p.mouse.click(q.x, q.y);
 			await p.waitForTimeout(900);
 			hecho = (await pr()).conductores.length === antes + 1;
