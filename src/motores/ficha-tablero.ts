@@ -7,6 +7,7 @@
  * pantalla digan exactamente lo mismo y se pueda comprobar sin renderizar nada.
  */
 import { Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tipos.js';
+import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { cajaDeGabinete } from '../modelo/proyecto.js';
 import { ResultadoRuteo } from './ruteo.js';
 
@@ -75,7 +76,7 @@ const etiqueta = (d: Dispositivo): string => d.designacion ?? d.id;
 /** Fondo de un aparato: el de su ficha si lo trae, o una estimación por tipo. */
 export function fondoDe(d: Dispositivo): number {
 	if (d.profundidad) return d.profundidad;
-	if (d.imagen) return 6;
+	if (esReferenciaVisualInerte(d)) return 6;
 	switch (d.tipo) {
 		case 'variador': return 120;
 		case 'fuente': return 100;
@@ -95,7 +96,7 @@ export function generarFichaTablero(proyecto: Proyecto, ruteo?: ResultadoRuteo):
 	const g = proyecto.gabinete;
 	const colocados = new Set((g?.colocaciones ?? []).map((c) => c.dispositivoId));
 	// Las imágenes de referencia son una ayuda visual, no material del tablero.
-	const aparatos = proyecto.dispositivos.filter((d) => !d.imagen && d.tipo !== 'cable');
+	const aparatos = proyecto.dispositivos.filter((d) => !esReferenciaVisualInerte(d) && d.tipo !== 'cable');
 
 	const familias = new Map<string, RecuentoFamilia>();
 	for (const d of aparatos) {

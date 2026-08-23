@@ -11,6 +11,8 @@ import {
 	validarDefinicionComponente,
 } from '../src/componentes/personalizados.js';
 import { crearProyecto } from '../src/modelo/proyecto.js';
+import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
+import { generarFichaTablero } from '../src/motores/ficha-tablero.js';
 
 const definicionContactor = (): DefinicionComponentePersonalizado => ({
 	formato: 'tablero-studio-componente',
@@ -103,6 +105,23 @@ test('colocar una definición toma un snapshot estable del perfil y los terminal
 		? colocado.comportamiento.bobina.entrada : '', 'A1');
 	assert.deepEqual(colocado.componentePersonalizado, { definicionId: 'cmp-k1', revision: 1 });
 	assert.match(colocado.assetId, /^sha256:/);
+});
+
+test('una imagen con perfil es aparato; una imagen legacy sin perfil sigue siendo referencia inerte', () => {
+	const personalizado = instanciarComponentePersonalizado(definicionContactor(), 'k-img');
+	assert.equal(esReferenciaVisualInerte(personalizado), false);
+	assert.equal(esReferenciaVisualInerte({
+		id: 'foto', tipo: 'otro', bornes: [], imagen: 'data:image/png;base64,AQID', campo: true,
+	}), true);
+
+	const proyecto = crearProyecto('Apariencia no es semántica');
+	proyecto.gabinete = {
+		ancho: 400, alto: 500, rieles: [], canaletas: [],
+		colocaciones: [{ dispositivoId: personalizado.id, x: 10, y: 10, ancho: 45, alto: 85 }],
+	};
+	proyecto.dispositivos = [personalizado];
+	assert.equal(generarFichaTablero(proyecto).aparatos.total, 1,
+		'un aparato importado no puede desaparecer de la ficha por tener asset de imagen');
 });
 
 test('editar la biblioteca crea una revisión nueva sin alterar la definición anterior', () => {

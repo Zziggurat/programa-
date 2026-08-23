@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 
 import { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
+import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { MemoriaLogica, memoriaLogicaVacia } from '../src/motores/logica.js';
 import {
 	EstadoAparato, EstadoTablero, MemoriaTiempos, ResultadoSimulacion, formatearA, memoriaVacia, simular,
@@ -318,7 +319,8 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		 */
 		const cableado = (d: Dispositivo) =>
 			proyecto().conductores.some((c) => c.de.dispositivoId === d.id || c.a.dispositivoId === d.id);
-		const posiblesSondas = proyecto().dispositivos.filter((d) => d.tipo === 'sensor' && !d.imagen && cableado(d));
+		const posiblesSondas = proyecto().dispositivos.filter((d) =>
+			d.tipo === 'sensor' && !esReferenciaVisualInerte(d) && cableado(d));
 		/*
 		 * Una SONDA es la que declara su rango de medida; lo demás son contactos de campo —un
 		 * presostato, una boya, un final de carrera— que se accionan con su interruptor, no con un

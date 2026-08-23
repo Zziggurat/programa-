@@ -15,6 +15,7 @@
  *  - Los contactos de un aparato llevan la referencia cruzada de dónde está su bobina.
  */
 import { Dispositivo, Proyecto } from '../modelo/tipos.js';
+import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { ResultadoPotenciales } from './potenciales.js';
 
 /* --------------------------------- Geometría --------------------------------- */
@@ -435,7 +436,7 @@ export function montarEsquema(
 	const columnas = Math.max(4, Math.min(20,
 		opciones.columnasPorHoja ?? proyecto.esquema?.columnasPorHoja ?? 10));
 	const paso = anchoColumna(papel, columnas);
-	const aparatos = proyecto.dispositivos.filter((d) => !d.imagen);
+	const aparatos = proyecto.dispositivos.filter((d) => !esReferenciaVisualInerte(d));
 	if (aparatos.length === 0) return [];
 
 	// Fuerza y mando van en hojas distintas, como en cualquier esquema profesional.

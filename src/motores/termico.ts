@@ -12,6 +12,7 @@
  * Es una estimación de proyecto, no un ensayo, y el resultado lo dice.
  */
 import { Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tipos.js';
+import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { cajaDeGabinete, opcionesDe } from '../modelo/proyecto.js';
 
 /**
@@ -115,7 +116,7 @@ export function calcularBalanceTermico(proyecto: Proyecto, montajeForzado?: Mont
 	const porAparato: { designacion: string; watts: number; estimado: boolean }[] = [];
 	for (const d of proyecto.dispositivos) {
 		// Solo calienta lo que está DENTRO del armario.
-		if (!colocados.has(d.id) || d.imagen) continue;
+		if (!colocados.has(d.id) || esReferenciaVisualInerte(d)) continue;
 		const { watts, estimado } = disipacionDe(d);
 		disipacionW += watts;
 		if (!estimado) declaradaW += watts;

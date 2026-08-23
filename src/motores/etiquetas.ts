@@ -6,6 +6,7 @@
  * El motor decide QUÉ dice cada etiqueta a partir del modelo; quién imprime decide el tamaño.
  */
 import { Proyecto } from '../modelo/tipos.js';
+import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { ResultadoPotenciales } from './potenciales.js';
 
 export interface Etiqueta {
@@ -34,7 +35,7 @@ function extremo(proyecto: Proyecto, dispositivoId: string, borneId: string): st
 export function tirasDeBorneros(proyecto: Proyecto, potenciales?: ResultadoPotenciales): TiraEtiquetas[] {
 	const tiras: TiraEtiquetas[] = [];
 	for (const d of proyecto.dispositivos) {
-		if (d.tipo !== 'bornero' || d.imagen) continue;
+		if (d.tipo !== 'bornero' || esReferenciaVisualInerte(d)) continue;
 		const etiquetas: Etiqueta[] = d.bornes.map((b) => {
 			// A dónde va esta borna: el otro extremo de sus conductores, sin contar el bornero mismo.
 			const destinos = proyecto.conductores
@@ -63,7 +64,7 @@ export function tirasDeBorneros(proyecto: Proyecto, potenciales?: ResultadoPoten
  */
 export function tiraDeAparatos(proyecto: Proyecto): TiraEtiquetas {
 	const etiquetas = proyecto.dispositivos
-		.filter((d) => !d.imagen && !d.campo)
+		.filter((d) => !esReferenciaVisualInerte(d) && !d.campo)
 		.map((d) => ({ principal: d.designacion ?? d.id, secundaria: d.descripcion }))
 		.sort((a, b) => a.principal.localeCompare(b.principal, 'es', { numeric: true }));
 	return { titulo: 'Aparatos del tablero', etiquetas };

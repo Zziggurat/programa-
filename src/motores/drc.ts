@@ -5,6 +5,7 @@
  * y el resultado del motor de potenciales.
  */
 import { Conductor, Dispositivo, Proyecto } from '../modelo/tipos.js';
+import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { conductoresEn, dispositivo, opcionesDe } from '../modelo/proyecto.js';
 import { ResultadoPotenciales } from './potenciales.js';
 import {
@@ -55,7 +56,7 @@ export function verificarProyecto(
 		return d.designacion ?? d.id;
 	};
 	// Las imágenes de referencia son puramente visuales: no se verifican eléctricamente.
-	const aparatos = proyecto.dispositivos.filter((d) => !d.imagen);
+	const aparatos = proyecto.dispositivos.filter((d) => !esReferenciaVisualInerte(d));
 	const conductorDe = new Map(proyecto.conductores.map((c) => [c.id, c]));
 
 	// R1 — Designaciones duplicadas.
@@ -446,7 +447,7 @@ export function verificarProyecto(
 			if (largo === undefined || largo > LARGO_MAX_DERIVACION_MM) return false;
 			return [c.de.dispositivoId, c.a.dispositivoId].some((id) => {
 				const d = proyecto.dispositivos.find((x) => x.id === id);
-				return !!d && !d.imagen && protegeContraSobreintensidad(d)
+				return !!d && !esReferenciaVisualInerte(d) && protegeContraSobreintensidad(d)
 					&& !!d.corrienteNominal && d.corrienteNominal < inArriba;
 			});
 		};
@@ -537,7 +538,7 @@ export function verificarProyecto(
 			let trifasico = false;
 			for (const clave of pot?.bornes ?? []) {
 				const d = proyecto.dispositivos.find((x) => x.id === clave.split('::')[0]);
-				if (!d || d.imagen) continue;
+				if (!d || esReferenciaVisualInerte(d)) continue;
 				if (d.corrienteNominal && d.corrienteNominal > corriente) corriente = d.corrienteNominal;
 				if (d.tensionNominal && d.tensionNominal > tension) tension = d.tensionNominal;
 				if ((d.polos ?? 0) >= 3) trifasico = true;

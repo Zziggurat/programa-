@@ -4,6 +4,7 @@
  */
 import { jsPDF } from 'jspdf';
 import { Proyecto } from '../src/modelo/tipos.js';
+import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { todasLasTiras } from '../src/motores/etiquetas.js';
 import { EntidadDXF, generarDXF, rectangulo } from '../src/motores/dxf.js';
@@ -96,7 +97,7 @@ export function dxfDePlaca(proyecto: Proyecto): string {
 	}
 	for (const col of g.colocaciones) {
 		const d = proyecto.dispositivos.find((x) => x.id === col.dispositivoId);
-		if (!d || d.imagen) continue;
+		if (!d || esReferenciaVisualInerte(d)) continue;
 		e.push(...rectangulo('APARATOS', col.x, col.y, col.ancho, col.alto));
 		e.push({
 			capa: 'TEXTO',
