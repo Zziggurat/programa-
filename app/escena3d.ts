@@ -17,7 +17,7 @@ import {
 	Banda, carrilesDe, corredoresLibres, mejorCorredor, orthogonalize, Punto, Punto3, tenderCable,
 } from './geometria-cables.js';
 import {
-	Conflicto, conflictosDe, invasionesDe, RejillaCables, Solido, Trazo,
+	Conflicto, conflictosDe, invasionesDe, radioZonaSalidaBorne, RejillaCables, Solido, Trazo,
 } from './colisiones-cables.js';
 import {
 	canaletasQueContienen, cruzDe, DIENTE, dientesDe, ejeDe, ESPESOR, huellaCanaleta, puntoDe,
@@ -1303,7 +1303,13 @@ export function salidasDeCable(
 	proyecto: Proyecto,
 	conductor: Conductor,
 	abanico = abanicoDeSalida(proyecto),
-): { de: Anclaje; a: Anclaje; salidaA: Punto3; salidaB: Punto3 } | undefined {
+): {
+	de: Anclaje; a: Anclaje;
+	/** Fin de la zona perpendicular que usa la geometría final. */
+	salidaA: Punto3; salidaB: Punto3;
+	/** Punto de abanico sobre la cara, usado para elegir corredores sin desplazar la topología. */
+	accesoA: Punto3; accesoB: Punto3;
+} | undefined {
 	/*
 	 * UN PUENTE ENTRE DOS APARATOS DE LA PUERTA NO TIENE RECORRIDO POR EL ARMARIO.
 	 *
@@ -1317,19 +1323,52 @@ export function salidasDeCable(
 	const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
 	const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
 	if (!a || !b) return undefined; // solo si falta el aparato entero (se limpia al eliminarlo)
+	const radio = radioDeCable(conductor.seccion);
+	/**
+	 * Tramo recto perpendicular a la cara del aparato antes del primer codo.
+	 *
+	 * Solo hace falta cuando el tornillo lleva más de un conductor. Su largo no es un número de
+	 * adorno: es el radio mínimo de curvatura de ese cable, de modo que el abanico alcanza su
+	 * separación antes de que cada recorrido pueda volver a girar hacia la canaleta.
+	 */
+	const perpendicular = (dispositivoId: string, borneId: string, ancla: Anclaje): { dx: number; dy: number } => {
+		const compartido = proyecto.conductores.reduce((n, c) => n
+			+ Number((c.de.dispositivoId === dispositivoId && c.de.borneId === borneId)
+				|| (c.a.dispositivoId === dispositivoId && c.a.borneId === borneId)), 0);
+		if (compartido < 2) return { dx: 0, dy: 0 };
+		const largo = radioCodo(radio);
+		const col = proyecto.gabinete?.colocaciones.find((q) => q.dispositivoId === dispositivoId);
+		if (col) {
+			const lados = [
+				{ d: Math.abs(ancla.x - col.x), dx: -largo, dy: 0 },
+				{ d: Math.abs(ancla.x - (col.x + col.ancho)), dx: largo, dy: 0 },
+				{ d: Math.abs(ancla.y - col.y), dx: 0, dy: -largo },
+				{ d: Math.abs(ancla.y - (col.y + col.alto)), dx: 0, dy: largo },
+			].sort((p, q) => p.d - q.d || p.dx - q.dx || p.dy - q.dy);
+			return { dx: lados[0].dx, dy: lados[0].dy };
+		}
+		// Aparato de campo: se sale alejándose del centro del tablero.
+		const g = proyecto.gabinete;
+		if (!g) return { dx: 0, dy: 0 };
+		const dx = ancla.x - g.ancho / 2;
+		const dy = ancla.y - g.alto / 2;
+		return Math.abs(dx) > Math.abs(dy)
+			? { dx: Math.sign(dx || 1) * largo, dy: 0 }
+			: { dx: 0, dy: Math.sign(dy || 1) * largo };
+	};
+	const fanA = abanico(conductor.de.dispositivoId, conductor.de.borneId, conductor.id);
+	const fanB = abanico(conductor.a.dispositivoId, conductor.a.borneId, conductor.id);
+	const rectaA = perpendicular(conductor.de.dispositivoId, conductor.de.borneId, a);
+	const rectaB = perpendicular(conductor.a.dispositivoId, conductor.a.borneId, b);
+	const accesoA = { x: a.x + fanA.dx, y: a.y, z: a.z + fanA.dz };
+	const accesoB = { x: b.x + fanB.dx, y: b.y, z: b.z + fanB.dz };
 	return {
 		de: a,
 		a: b,
-		salidaA: {
-			x: a.x + abanico(conductor.de.dispositivoId, conductor.de.borneId, conductor.id).dx,
-			y: a.y,
-			z: a.z + abanico(conductor.de.dispositivoId, conductor.de.borneId, conductor.id).dz,
-		},
-		salidaB: {
-			x: b.x + abanico(conductor.a.dispositivoId, conductor.a.borneId, conductor.id).dx,
-			y: b.y,
-			z: b.z + abanico(conductor.a.dispositivoId, conductor.a.borneId, conductor.id).dz,
-		},
+		accesoA,
+		accesoB,
+		salidaA: { x: accesoA.x + rectaA.dx, y: accesoA.y + rectaA.dy, z: accesoA.z },
+		salidaB: { x: accesoB.x + rectaB.dx, y: accesoB.y + rectaB.dy, z: accesoB.z },
 	};
 }
 
@@ -1374,7 +1413,7 @@ export function radioDeCable(seccion?: number): number {
 
 /** Radio mínimo de curvatura del codo: cuanto más grueso el cable, más abierto dobla. */
 export function radioCodo(radio: number): number {
-	return 10 + radio * 4;
+	return radioZonaSalidaBorne(radio);
 }
 
 /**
@@ -1401,6 +1440,11 @@ const PASOS_LATERALES = [0, 1, -1];
  */
 let ultimoReparto: { firma: string; rutas: RutaCable[] } | undefined;
 
+/** Invalida únicamente la memoización del ruteo; útil al verificar dos modelos equivalentes. */
+export function invalidarCacheRuteo(): void {
+	ultimoReparto = undefined;
+}
+
 /**
  * CONTADORES PARA SABER QUÉ SE ESTÁ EJECUTANDO DE MÁS, sin adivinarlo.
  *
@@ -1416,11 +1460,13 @@ export function reiniciarContadores(): void {
 
 function firmaDelRuteo(proyecto: Proyecto): string {
 	const g = proyecto.gabinete;
+	const ordenar = <T>(lista: T[] | undefined, clave: (elemento: T) => string): T[] | undefined =>
+		lista?.slice().sort((a, b) => clave(a).localeCompare(clave(b)));
 	return JSON.stringify([
-		proyecto.conductores.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado]),
-		g?.colocaciones.map((c) => [c.dispositivoId, c.x, c.y, c.ancho, c.alto, c.z]),
-		g?.canaletas.map((c) => [c.id, c.x, c.y, c.largo, c.orientacion, c.ancho, c.alto]),
-		g?.rieles.map((r) => [r.x, r.y, r.largo, r.orientacion]),
+		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado]),
+		ordenar(g?.colocaciones, (c) => c.dispositivoId)?.map((c) => [c.dispositivoId, c.x, c.y, c.ancho, c.alto, c.z]),
+		ordenar(g?.canaletas, (c) => c.id)?.map((c) => [c.id, c.x, c.y, c.largo, c.orientacion, c.ancho, c.alto]),
+		ordenar(g?.rieles, (r) => r.id ?? `${r.x}|${r.y}|${r.orientacion}`)?.map((r) => [r.id, r.x, r.y, r.largo, r.orientacion]),
 		[g?.ancho, g?.alto],
 	]);
 }
@@ -1937,8 +1983,8 @@ function caminosPosibles(
  * a igualdad de holgura, ir lo menos expuesto posible: entre meterse en una canaleta y cruzar por
  * delante del tablero, gana la canaleta. Es lo que quita la cortina sin esconder nada.
  *
- * Es determinista: mismo proyecto, mismo reparto, porque se recorren los conductores en el orden
- * del proyecto y los candidatos en un orden fijo.
+ * Es determinista: mismo contenido, mismo reparto. El orden de las listas serializadas no es una
+ * propiedad física del tablero y, por tanto, no puede decidir quién ocupa primero un carril.
  */
 function repartirCables(proyecto: Proyecto): RutaCable[] {
 	const corredores = corredoresLibresDe(proyecto);
@@ -2015,11 +2061,14 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 	 * ya declaran la potencia antes que el mando. Se deja porque en un tablero dibujado en otro
 	 * orden sí importaría, y no cuesta nada.)
 	 *
-	 * El desempate es el índice del proyecto, así que el reparto sigue siendo determinista.
+	 * El desempate es el ID persistente. Usar el índice del array hacía que abrir el mismo contenido
+	 * con los conductores en otro orden cambiara 27 de 28 recorridos en el ejemplo más pequeño: la
+	 * ocupación incremental amplificaba ese primer desempate hasta mover todo el mazo.
 	 */
 	const orden = proyecto.conductores
-		.map((c, i) => ({ c, i }))
-		.sort((p, q) => radioDeCable(q.c.seccion) - radioDeCable(p.c.seccion) || p.i - q.i);
+		.map((c) => ({ c }))
+		.sort((p, q) => radioDeCable(q.c.seccion) - radioDeCable(p.c.seccion)
+			|| p.c.id.localeCompare(q.c.id));
 
 	for (const { c: conductor } of orden) {
 		const p = salidasDeCable(proyecto, conductor, abanico);
@@ -2087,12 +2136,10 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		 * el ruteo automático supiera hacer las dos cosas: el usuario tenía un editor 2D encima de
 		 * un motor 3D.
 		 *
-		 * Ahora cada punto puede traer su `z`. El que la trae se respeta tal cual —ahí es donde el
-		 * usuario dijo que va el cable, dentro del ducto o por delante— y el que no la trae sigue
-		 * dependiendo de la capa que proponga el repartidor, exactamente como antes. Por eso se
-		 * siguen generando las mismas `CAPAS_CABLE` alternativas: son las que se prueban para los
-		 * puntos libres, y si el usuario fijó todos los puntos, las alternativas salen iguales y la
-		 * primera vale.
+		 * Ahora cada punto puede traer su `z`. El que la trae es la preferencia física del usuario;
+		 * dentro de una canaleta se conserva si está libre y, si otro cable ya ocupa exactamente ese
+		 * eje, se prueba el sitio interior más cercano. El que no trae profundidad sigue dependiendo
+		 * de las capas expuestas, exactamente como antes.
 		 */
 		// Las canaletas en las que el usuario dejó puntos: para él no son obstáculo, son destino.
 		const ductosAMano = conductor.trazado?.length
@@ -2100,7 +2147,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 			: new Set<string>();
 
 		/*
-		 * PEINADO CON PROFUNDIDAD = LITERAL. El repartidor no vota.
+		 * PEINADO CON PROFUNDIDAD = LITERAL, salvo una colisión de eje dentro de una canaleta.
 		 *
 		 * Si todos los puntos del usuario traen su `z`, no hay nada que decidir: ese es el
 		 * recorrido, y punto. Sin capas alternativas que probar, sin buscar sitio en los ductos y
@@ -2108,31 +2155,70 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		 * ajenas. Medido antes de esto: un punto colocado a z=30 dentro de un ducto acababa
 		 * dibujado a z=59, y uno puesto sobre un aparato acababa a 155 mm de donde se dejó.
 		 *
-		 * Es la regla que pidió Diego y es la que hace predecible el editor: lo que colocas es lo
-		 * que se dibuja. Que ahí no quepa o que atraviese algo es cosa de la advertencia, no del
-		 * dibujo.
+		 * El punto pedido sigue siendo la primera alternativa. Las demás no son desplazamientos
+		 * inventados: son los sitios que salen de la sección útil real del ducto, ordenados por la
+		 * distancia al punto pedido. Solo gana uno de ellos cuando la geometría solicitada ya está
+		 * físicamente ocupada por otro conductor.
 		 */
 		const literal = !!conductor.trazado?.length && conductor.trazado.every((q) => q.z !== undefined);
 
-		const aMano = (): Candidato[] => (literal ? [{
+		const candidatoManual = (trazado: Punto3[]): Candidato => ({
 			nodos: [
 				{ x: p.de.x, y: p.de.y, z: p.de.z },
-				{ x: p.salidaA.x, y: p.salidaA.y, z: p.de.z },
-				...conductor.trazado!.map((q) => ({ x: q.x, y: q.y, z: q.z! })),
-				{ x: p.salidaB.x, y: p.salidaB.y, z: p.a.z },
+				{ x: p.salidaA.x, y: p.salidaA.y, z: p.salidaA.z },
+				...trazado,
+				{ x: p.salidaB.x, y: p.salidaB.y, z: p.salidaB.z },
 				{ x: p.a.x, y: p.a.y, z: p.a.z },
 			] as Punto3[],
 			expuesto: 0,
 			ductos: 0,
 			reserva: [],
-		}] : Array.from({ length: CAPAS_CABLE }, (_, capa) => {
+		});
+
+		const alternativasLiterales = (): Candidato[] => {
+			const pedido = conductor.trazado!.map((q) => ({ x: q.x, y: q.y, z: q.z! }));
+			const salida = [candidatoManual(pedido)];
+			/*
+			 * Cada rango toma, para cada punto interior, el sitio de la rejilla más cercano. En un
+			 * recorrido normal todos los puntos del tramo piden la misma coordenada transversal y z,
+			 * así que el rango conserva un carril continuo de entrada a salida. Se acota a doce: si ni
+			 * los doce sitios más cercanos caben, ese trazado necesita intervención del usuario.
+			 */
+			for (let rango = 0; rango < 12; rango++) {
+				let cambio = false;
+				const movido = pedido.map((q) => {
+					const tramo = red.tramos.find((t) => {
+						const eje = ejeDe(t, q.x, q.y);
+						const cruz = cruzDe(t, q.x, q.y);
+						return eje >= t.desde && eje <= t.hasta && Math.abs(cruz - t.centro) < t.semiancho
+							&& q.z >= t.zMin && q.z <= t.zMax;
+					});
+					if (!tramo) return q;
+					const cruzPedida = cruzDe(tramo, q.x, q.y);
+					const sitios = sitiosDe(tramo)
+						.filter((s) => Math.abs(s.cruz - tramo.centro) <= tramo.semiancho - radio - 0.5
+							&& s.z - radio >= tramo.zMin + 0.5 && s.z + radio <= tramo.zMax - 0.5)
+						.slice().sort((a, b) => Math.hypot(a.cruz - cruzPedida, a.z - q.z)
+							- Math.hypot(b.cruz - cruzPedida, b.z - q.z)
+							|| a.z - b.z || a.cruz - b.cruz);
+					const sitio = sitios[rango];
+					if (!sitio) return q;
+					cambio = true;
+					return { ...puntoDe(tramo, ejeDe(tramo, q.x, q.y), sitio.cruz), z: sitio.z };
+				});
+				if (cambio) salida.push(candidatoManual(movido));
+			}
+			return salida;
+		};
+
+		const aMano = (): Candidato[] => (literal ? alternativasLiterales() : Array.from({ length: CAPAS_CABLE }, (_, capa) => {
 			const zc = Z_EXPUESTO + capa * SEPARACION_CAPAS;
 			return {
 				nodos: [
 					{ x: p.de.x, y: p.de.y, z: p.de.z },
-					{ x: p.salidaA.x, y: p.salidaA.y, z: p.de.z },
+					{ x: p.salidaA.x, y: p.salidaA.y, z: p.salidaA.z },
 					...conductor.trazado!.map((q) => ({ x: q.x, y: q.y, z: q.z ?? zc })),
-					{ x: p.salidaB.x, y: p.salidaB.y, z: p.a.z },
+					{ x: p.salidaB.x, y: p.salidaB.y, z: p.salidaB.z },
 					{ x: p.a.x, y: p.a.y, z: p.a.z },
 				] as Punto3[],
 				expuesto: 0,
@@ -2150,9 +2236,21 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		 * aun así con tope. Es lo que hace que el coste dependa de la dificultad del cable y no del
 		 * tamaño del tablero.
 		 */
-		const generar = (amplitud: number): Candidato[] => (conductor.trazado?.length
-			? aMano()
-			: caminosPosibles(red, ocupacion, p.de, p.a, p.salidaA, p.salidaB, corredores, amplitud, radio, codo));
+		const generar = (amplitud: number): Candidato[] => {
+			if (conductor.trazado?.length) return aMano();
+			/*
+			 * Los accesos sobre la cara conservan la búsqueda topológica de canaletas y carriles. Solo
+			 * después de elegir cada candidato se sustituye su primer/último nodo por el final de la
+			 * zona perpendicular: una corrección local no debe cambiar qué corredor considera todo el
+			 * tablero, pero la geometría medida y dibujada sí debe contener la salida ordenada.
+			 */
+			return caminosPosibles(
+				red, ocupacion, p.de, p.a, p.accesoA, p.accesoB, corredores, amplitud, radio, codo,
+			).map((c) => ({
+				...c,
+				nodos: c.nodos.map((n, i) => i === 1 ? p.salidaA : i === c.nodos.length - 2 ? p.salidaB : n),
+			}));
+		};
 
 		let mejor: Puesto | undefined;
 		let mejorNota = -Infinity;
@@ -2228,6 +2326,13 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 	for (const c of conflictosDe(puestos.map((q) => q.trazo), HOLGURA_CABLE)) { malos.add(c.a); malos.add(c.b); }
 	for (const puesto of puestos) {
 		if (!malos.has(puesto.conductorId)) continue;
+		/*
+		 * El peinado literal ya eligió el sitio libre más cercano cuando se tendió. No se vuelve a
+		 * votar en la reparación global: hacerlo permitía que un cable automático colocado después
+		 * empujara nueve milímetros un trazado que el usuario había fijado expresamente. El automático
+		 * sí se puede recolocar alrededor del manual; la intención del usuario conserva prioridad.
+		 */
+		if (puesto.literal) continue;
 		rejilla.retirar(puesto.clave);
 		/*
 		 * Soltar su sitio antes de volver a elegir. Sin esto el cable se encontraba a SÍ MISMO
@@ -2271,8 +2376,9 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		puesto.clave = rejilla.anadir(puesto.trazo);
 	}
 
-	const sitioEnProyecto = new Map(proyecto.conductores.map((c, i) => [c.id, i]));
-	puestos.sort((p, q) => (sitioEnProyecto.get(p.conductorId) ?? 0) - (sitioEnProyecto.get(q.conductorId) ?? 0));
+	// La salida también es canónica: el orden de dibujo no debe reintroducir el orden del archivo
+	// como desempate de raycast cuando dos superficies quedan a la misma profundidad.
+	puestos.sort((p, q) => p.conductorId.localeCompare(q.conductorId));
 	return puestos.map((q) => ({
 		conductorId: q.conductorId, de: q.de, a: q.a,
 		nodos: q.nodos.map((n) => ({ x: n.x, y: n.y })), z: q.z,
@@ -2445,9 +2551,9 @@ export function rutaProvisional(proyecto: Proyecto, conductorId: string): RutaCa
 		: Z_EXPUESTO;
 	const nodos: Punto3[] = [
 		{ x: p.de.x, y: p.de.y, z: p.de.z },
-		{ x: p.salidaA.x, y: p.salidaA.y, z: p.de.z },
+		{ x: p.salidaA.x, y: p.salidaA.y, z: p.salidaA.z },
 		...(conductor.trazado ?? []).map((q) => ({ x: q.x, y: q.y, z: q.z ?? zSuelta })),
-		{ x: p.salidaB.x, y: p.salidaB.y, z: p.a.z },
+		{ x: p.salidaB.x, y: p.salidaB.y, z: p.salidaB.z },
 		{ x: p.a.x, y: p.a.y, z: p.a.z },
 	];
 	const puntos = tenderCable(nodos, codo);

@@ -67,6 +67,11 @@ export interface Conflicto {
  */
 const RADIO_BORNE = 14;
 
+/** Largo físico de la zona de salida: coincide con el radio mínimo del primer codo. */
+export function radioZonaSalidaBorne(radioCable: number): number {
+	return 10 + radioCable * 4;
+}
+
 const resta = (p: Punto3, q: Punto3): Punto3 => ({ x: p.x - q.x, y: p.y - q.y, z: p.z - q.z });
 const punto = (p: Punto3, q: Punto3): number => p.x * q.x + p.y * q.y + p.z * q.z;
 
@@ -114,6 +119,48 @@ export function distanciaSegmentos(
 	};
 }
 
+/**
+ * Longitud durante la que dos polilíneas ocupan prácticamente el mismo eje 3D.
+ *
+ * Un cruce perpendicular puede tener distancia cero en un punto y no por eso ser una fusión.
+ * Esta medida solo suma solape entre segmentos paralelos, a menos de `tolerancia` entre sus
+ * rectas. Tampoco suma un extremo común sin longitud, que es justamente el caso legítimo de dos
+ * conductores sujetos por el mismo tornillo.
+ */
+export function longitudCoincidente3D(
+	a: readonly Punto3[], b: readonly Punto3[], tolerancia = 0.5,
+): number {
+	let total = 0;
+	for (let i = 1; i < a.length; i++) {
+		const a0 = a[i - 1];
+		const a1 = a[i];
+		const ux = a1.x - a0.x, uy = a1.y - a0.y, uz = a1.z - a0.z;
+		const la = Math.hypot(ux, uy, uz);
+		if (la < 1e-9) continue;
+		const nx = ux / la, ny = uy / la, nz = uz / la;
+		for (let j = 1; j < b.length; j++) {
+			const b0 = b[j - 1];
+			const b1 = b[j];
+			const vx = b1.x - b0.x, vy = b1.y - b0.y, vz = b1.z - b0.z;
+			const lb = Math.hypot(vx, vy, vz);
+			if (lb < 1e-9) continue;
+			// Solo la misma dirección física; un cruce exacto se mide en otro diagnóstico.
+			if (Math.abs((ux * vx + uy * vy + uz * vz) / (la * lb)) < 0.9999) continue;
+			const wx = b0.x - a0.x, wy = b0.y - a0.y, wz = b0.z - a0.z;
+			const proyeccion = wx * nx + wy * ny + wz * nz;
+			const perpendicular = Math.hypot(
+				wx - proyeccion * nx, wy - proyeccion * ny, wz - proyeccion * nz,
+			);
+			if (perpendicular >= tolerancia) continue;
+			const t0 = proyeccion;
+			const t1 = (b1.x - a0.x) * nx + (b1.y - a0.y) * ny + (b1.z - a0.z) * nz;
+			const solape = Math.min(la, Math.max(t0, t1)) - Math.max(0, Math.min(t0, t1));
+			if (solape > 0) total += solape;
+		}
+	}
+	return total;
+}
+
 /** Un segmento del recorrido de un cable, con a quién pertenece y en qué tendido entró. */
 interface Barra { id: string; clave: string; radio: number; p0: Punto3; p1: Punto3; trazo: Trazo }
 
@@ -127,7 +174,8 @@ function esElPropioBorne(a: Trazo, b: Trazo, donde: Punto3): boolean {
 		for (let j = 0; j < 2; j++) {
 			if (a.bornes[i] !== b.bornes[j]) continue;
 			const p = a.extremos[i];
-			if (Math.hypot(donde.x - p.x, donde.y - p.y, donde.z - p.z) <= RADIO_BORNE) return true;
+			const zona = Math.max(RADIO_BORNE, radioZonaSalidaBorne(a.radio), radioZonaSalidaBorne(b.radio));
+			if (Math.hypot(donde.x - p.x, donde.y - p.y, donde.z - p.z) <= zona) return true;
 		}
 	}
 	return false;

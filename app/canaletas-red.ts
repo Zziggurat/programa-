@@ -164,7 +164,11 @@ export class RedCanaletas {
 	private readonly vecinos = new Map<string, string[]>();
 
 	constructor(canaletas: Canaleta[]) {
-		this.tramos = canaletas.map(tramoDe);
+		// El orden del array no es geometría. Canonizarlo evita que dos archivos equivalentes ofrezcan
+		// los mismos caminos en distinto orden y terminen asignando carriles diferentes.
+		this.tramos = canaletas.slice()
+			.sort((a, b) => a.id.localeCompare(b.id))
+			.map(tramoDe);
 		for (let i = 0; i < this.tramos.length; i++) {
 			for (let j = i + 1; j < this.tramos.length; j++) {
 				const a = this.tramos[i];

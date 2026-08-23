@@ -25,12 +25,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
-import { conflictosDe, distanciaSegmentos, invasionesDe } from '../app/colisiones-cables.js';
+import {
+	conflictosDe, distanciaSegmentos, invasionesDe, longitudCoincidente3D, radioZonaSalidaBorne,
+} from '../app/colisiones-cables.js';
 import { Punto3, tenderCable } from '../app/geometria-cables.js';
 import {
-	HOLGURA_CABLE, solidosDelTablero, trazosDeCables,
+	HOLGURA_CABLE, invalidarCacheRuteo, rutasDeCables, solidosDelTablero, trazosDeCables,
 } from '../app/escena3d.js';
 import { invasionesDeCanaletas, RedCanaletas } from '../app/canaletas-red.js';
+import { cargarProyecto } from '../src/modelo/cargar.js';
 
 /**
  * Cuánto se permite que se metan dos tubos, en mm. Cero sería lo ideal; esto es LO ALCANZADO, y el
@@ -44,6 +47,31 @@ import { invasionesDeCanaletas, RedCanaletas } from '../app/canaletas-red.js';
  * volumen, holgura −6,00 mm— que era lo que se veía antes.
  */
 const PENETRACION_TOLERADA = 3.5;
+
+/** Firma física por ID: el orden de las listas del modelo no forma parte del recorrido. */
+function firmasDeRutas(proyecto: ReturnType<typeof EJEMPLOS[number]['crear']>): Record<string, string> {
+	return Object.fromEntries(rutasDeCables(proyecto)
+		.map((r) => [r.conductorId, r.puntos
+			.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}`).join('|')])
+		.sort(([a], [b]) => a.localeCompare(b)));
+}
+
+/** Punto de una polilínea a una distancia física de uno de sus extremos. */
+function puntoA(puntos: Punto3[], distancia: number, desdeElFinal: boolean): Punto3 {
+	const lista = desdeElFinal ? puntos.slice().reverse() : puntos;
+	let restante = distancia;
+	for (let i = 1; i < lista.length; i++) {
+		const a = lista[i - 1];
+		const b = lista[i];
+		const largo = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+		if (largo >= restante && largo > 0) {
+			const t = restante / largo;
+			return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
+		}
+		restante -= largo;
+	}
+	return lista[lista.length - 1];
+}
 
 test('la distancia entre segmentos es la de verdad, no la de sus extremos', () => {
 	// Dos segmentos cruzados en aspa, separados 5 mm en z. Sus cuatro extremos están lejísimos
@@ -95,6 +123,102 @@ test('el cable trepa por encima de un obstáculo en vez de atravesarlo', () => {
 		const sube = Math.abs(puntos[i].z - puntos[i - 1].z);
 		assert.ok(sube <= avance * 0.8 + 0.6, `escalón de ${sube.toFixed(1)} mm en ${avance.toFixed(1)} mm de avance`);
 	}
+});
+
+test('la fusión 3D distingue una línea compartida de un cruce puntual', () => {
+	const recta = [{ x: 0, y: 0, z: 10 }, { x: 100, y: 0, z: 10 }];
+	const misma = [{ x: 20, y: 0, z: 10 }, { x: 80, y: 0, z: 10 }];
+	const cruzada = [{ x: 50, y: -30, z: 10 }, { x: 50, y: 30, z: 10 }];
+	const otraCapa = [{ x: 20, y: 0, z: 14 }, { x: 80, y: 0, z: 14 }];
+	assert.ok(Math.abs(longitudCoincidente3D(recta, misma) - 60) < 1e-6);
+	assert.equal(longitudCoincidente3D(recta, cruzada), 0);
+	assert.equal(longitudCoincidente3D(recta, otraCapa), 0);
+});
+
+test('los cables de un mismo borne comparten el tornillo y se separan después', () => {
+	const proyecto = EJEMPLOS[0].crear();
+	const rutas = new Map(rutasDeCables(proyecto).map((r) => [r.conductorId, r]));
+	const porBorne = new Map<string, { id: string; final: boolean }[]>();
+	for (const c of proyecto.conductores) {
+		for (const [ref, final] of [[c.de, false], [c.a, true]] as const) {
+			const clave = `${ref.dispositivoId}:${ref.borneId}`;
+			const lista = porBorne.get(clave) ?? [];
+			lista.push({ id: c.id, final });
+			porBorne.set(clave, lista);
+		}
+	}
+
+	let pares = 0;
+	for (const lista of porBorne.values()) {
+		for (let i = 0; i < lista.length; i++) {
+			for (let j = i + 1; j < lista.length; j++) {
+				const a = rutas.get(lista[i].id)!;
+				const b = rutas.get(lista[j].id)!;
+				const anclaA = lista[i].final ? a.puntos[a.puntos.length - 1] : a.puntos[0];
+				const anclaB = lista[j].final ? b.puntos[b.puntos.length - 1] : b.puntos[0];
+				assert.ok(Math.hypot(anclaA.x - anclaB.x, anclaA.y - anclaB.y, anclaA.z - anclaB.z) < 1e-6,
+					'el punto común del tornillo debe seguir siendo exacto');
+				const salidaA = puntoA(a.puntos, 18, lista[i].final);
+				const salidaB = puntoA(b.puntos, 18, lista[j].final);
+				const separacion = Math.hypot(salidaA.x - salidaB.x, salidaA.y - salidaB.y, salidaA.z - salidaB.z);
+				assert.ok(separacion >= 4,
+					`${lista[i].id}/${lista[j].id} siguen fusionados a 18 mm del borne (${separacion.toFixed(2)} mm)`);
+				const finZona = Math.max(radioZonaSalidaBorne(a.radio), radioZonaSalidaBorne(b.radio)) + 1;
+				const libreA = puntoA(a.puntos, finZona, lista[i].final);
+				const libreB = puntoA(b.puntos, finZona, lista[j].final);
+				const libre = Math.hypot(libreA.x - libreB.x, libreA.y - libreB.y, libreA.z - libreB.z);
+				assert.ok(libre >= a.radio + b.radio + HOLGURA_CABLE,
+					`${lista[i].id}/${lista[j].id}: tras la zona de salida quedan ${libre.toFixed(2)} mm entre ejes`);
+				pares++;
+			}
+		}
+	}
+	assert.ok(pares > 0, 'el fixture debe contener al menos un borne compartido');
+});
+
+test('varios cables comparten canaleta sin compartir línea central', () => {
+	const proyecto = EJEMPLOS[2].crear();
+	const trazos = trazosDeCables(proyecto);
+	const red = new RedCanaletas(proyecto.gabinete?.canaletas ?? []);
+	const dentro = (t: typeof red.tramos[number], p: Punto3): boolean => {
+		const eje = t.esH ? p.x : p.y;
+		const cruz = t.esH ? p.y : p.x;
+		return eje > t.desde && eje < t.hasta
+			&& Math.abs(cruz - t.centro) < t.semiancho && p.z > t.zMin && p.z < t.zMax;
+	};
+	const usuarios = new Map(red.tramos.map((t) => [t.id, trazos.filter((c) => c.puntos.some((p) => dentro(t, p))).length]));
+	assert.ok([...usuarios.values()].some((n) => n >= 2), 'el fixture debe tener varios cables dentro de una canaleta');
+	const fusionadosDentro: string[] = [];
+	for (let i = 0; i < trazos.length; i++) {
+		for (let j = i + 1; j < trazos.length; j++) {
+			const compartenCanaleta = red.tramos.some((t) => trazos[i].puntos.some((p) => dentro(t, p))
+				&& trazos[j].puntos.some((p) => dentro(t, p)));
+			if (compartenCanaleta && longitudCoincidente3D(trazos[i].puntos, trazos[j].puntos) > 4) {
+				fusionadosDentro.push(`${trazos[i].id}/${trazos[j].id}`);
+			}
+		}
+	}
+	assert.deepEqual(fusionadosDentro, [], 'compartir corredor no significa ocupar el mismo eje 3D');
+});
+
+test('el reparto no depende del orden de conductores ni canaletas', () => {
+	const proyecto = EJEMPLOS[0].crear();
+	invalidarCacheRuteo();
+	const original = firmasDeRutas(proyecto);
+	proyecto.conductores.reverse();
+	proyecto.gabinete?.canaletas.reverse();
+	invalidarCacheRuteo();
+	assert.deepEqual(firmasDeRutas(proyecto), original);
+});
+
+test('guardar y cargar conserva la asignación física de recorridos', () => {
+	const proyecto = EJEMPLOS[0].crear();
+	invalidarCacheRuteo();
+	const original = firmasDeRutas(proyecto);
+	const carga = cargarProyecto(JSON.stringify(proyecto));
+	assert.deepEqual(carga.arreglos, [], 'un proyecto actual no debe necesitar reparaciones al cargar');
+	invalidarCacheRuteo();
+	assert.deepEqual(firmasDeRutas(carga.proyecto), original);
 });
 
 for (const ej of EJEMPLOS) {
@@ -153,7 +277,9 @@ for (const ej of EJEMPLOS) {
 	test(`${ej.titulo}: el reparto es determinista`, () => {
 		// Mismo proyecto, mismo reparto. Sin esto, cada reconstrucción de la escena movería los
 		// cables de sitio y trabajar sería imposible.
+		invalidarCacheRuteo();
 		const unos = trazosDeCables(ej.crear()).map((t) => t.puntos.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}`).join('|'));
+		invalidarCacheRuteo();
 		const otros = trazosDeCables(ej.crear()).map((t) => t.puntos.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}`).join('|'));
 		assert.deepEqual(unos, otros);
 	});
