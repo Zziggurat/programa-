@@ -5,6 +5,8 @@
 import { chromium } from 'playwright-core';
 import { servir, abrirEjemplo, navegadorDelSistema } from './lib/mirar.mjs';
 
+const EN_GATE = process.argv.includes('--gate');
+
 const sv = await servir();
 const b = await chromium.launch({
 	...(navegadorDelSistema() ? { executablePath: navegadorDelSistema() } : {}),
@@ -238,7 +240,7 @@ const donde = () => p.evaluate((i) => {
 }
 
 /* ---- 7. Dos vueltas completas, arriba y abajo ---- */
-{
+if (!EN_GATE) {
 	await p.evaluate(() => document.getElementById('esp-conjunto')?.click());
 	await p.waitForTimeout(700);
 	await p.evaluate(() => window.qa.congelarCamara(true));
@@ -287,6 +289,8 @@ const donde = () => p.evaluate((i) => {
 	}
 	console.log(`   vertical ${gr(Math.min(...polares)).toFixed(0)}° .. ${gr(Math.max(...polares)).toFixed(0)}°`);
 	ok(gr(Math.min(...polares)) < 10 && gr(Math.max(...polares)) > 170, 'se llega al techo y al suelo');
+} else {
+	console.log('SKIP diagnóstico manual: dos vueltas completas y barrido polar extremo');
 }
 
 /* ---- 8. F y O ---- */

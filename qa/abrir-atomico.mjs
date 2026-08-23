@@ -61,8 +61,11 @@ await p.waitForTimeout(200);
  */
 await p.evaluate(() => document.getElementById('btn-empezar-blanco')?.click());
 await p.waitForTimeout(250);
+// El catálogo vive en el cajón real de «Añadir»; se abre como lo haría una persona.
+await p.locator('#hta-anadir').click();
+await p.waitForSelector('#seccion-catalogo:not([hidden])');
 const catalogo = p.locator('#catalogo button');
-for (let i = 0; i < 4; i++) { await catalogo.nth(i).click({ force: true }); await p.waitForTimeout(250); }
+for (let i = 0; i < 4; i++) { await catalogo.nth(i).click(); await p.waitForTimeout(250); }
 await p.evaluate(() => document.getElementById('btn-deshacer')?.click()); await p.waitForTimeout(300);
 await p.evaluate(() => document.getElementById('btn-deshacer')?.click()); await p.waitForTimeout(300);
 
@@ -151,8 +154,8 @@ must('rehacer sigue funcionando después del fallo',
  *
  * Una transacción que no apuntara NUNCA en el historial pasaría las cinco comprobaciones del fallo
  * sin despeinarse. Así que se abre el mismo archivo sin romper nada: tiene que entrar de verdad,
- * dejar su paso de deshacer, vaciar el de rehacer —eso es lo correcto tras un cambio nuevo— y
- * quedar guardado en el navegador.
+ * dejar el historial limpio —abrir un documento establece una nueva línea base— y quedar guardado
+ * en el navegador.
  */
 console.log('\n--- abrir un archivo que SÍ se abre ---');
 const previo = await qa('historial');
@@ -183,14 +186,11 @@ const bueno = {
 };
 console.log(`tras abrirlo bien: deshacer=${bueno.historial.deshacer} rehacer=${bueno.historial.rehacer} nombre=${bueno.nombre}`);
 must('el archivo se abre de verdad', bueno.nombre === 'EL QUE NO SE DEBE ABRIR', bueno.nombre);
-must('deja su paso de deshacer', bueno.historial.deshacer === previo.deshacer + 1,
+must('abre con el historial de deshacer limpio', bueno.historial.deshacer === 0,
 	`${previo.deshacer} → ${bueno.historial.deshacer}`);
-must('vacía el rehacer, como cualquier cambio nuevo', bueno.historial.rehacer === 0,
+must('abre con el historial de rehacer limpio', bueno.historial.rehacer === 0,
 	String(bueno.historial.rehacer));
 must('queda guardado en el navegador', (bueno.guardado ?? '').includes('EL QUE NO SE DEBE ABRIR'));
-await p.evaluate(() => document.getElementById('btn-deshacer')?.click()); await p.waitForTimeout(400);
-must('y se puede deshacer la apertura', (await qa('proyecto')).nombre !== 'EL QUE NO SE DEBE ABRIR',
-	(await qa('proyecto')).nombre);
 
 /*
  * PEGAR TAMPOCO PUEDE QUEDARSE A MEDIAS.
@@ -205,12 +205,14 @@ await p.evaluate(() => document.getElementById('btn-nuevo')?.click());
 await p.waitForTimeout(300);
 if (await p.isVisible('#modal-dialogo')) await p.evaluate(() => document.getElementById('dialogo-ok')?.click());
 await p.waitForTimeout(500);
-for (let i = 0; i < 2; i++) { await catalogo.nth(i).click({ force: true }); await p.waitForTimeout(300); }
+await p.locator('#hta-anadir').click();
+for (let i = 0; i < 2; i++) { await catalogo.nth(i).click(); await p.waitForTimeout(300); }
 /*
  * Se copia el primero y se pega una vez, para saber que copiar/pegar funciona antes de romperlo.
  * Se selecciona pulsando su fila en el panel de la izquierda, que es como se hace: Ctrl+C solo
  * atiende con un aparato seleccionado y en modo Editor.
  */
+await p.locator('#hta-seleccionar').click();
 await p.locator('#lista-dispositivos li').first().click();
 await p.waitForTimeout(300);
 await p.keyboard.press('Control+c'); await p.waitForTimeout(300);

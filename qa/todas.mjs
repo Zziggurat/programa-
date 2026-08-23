@@ -1,27 +1,31 @@
 /**
- * Corre TODAS las pruebas de navegador, buscándolas ella sola.
+ * Runner de las pruebas de navegador.
  *
  * Antes `npm run qa` llevaba la lista escrita a mano en `package.json`. El resultado previsible:
  * la lista se quedó atrás. Once suites —entre ellas las de la auditoría, que son justamente las
  * que vigilan que un fallo arreglado no vuelva— no las corría nadie salvo que uno se acordara de
  * escribir su nombre. Una prueba que no se ejecuta es una prueba que no existe.
  *
- * Así que la lista se saca del directorio: todo `qa/*.mjs` que no empiece por `_` (los `_` son
- * sondas de diagnóstico de usar y tirar, y están fuera del repositorio) es una suite y se corre.
- * Añadir una prueba nueva es dejar el archivo ahí; no hay ningún sitio más donde apuntarla.
+ * `--all` descubre todo `qa/*.mjs` que no empiece por `_`. El gate predeterminado es deliberado y
+ * vive en `qa/lib/gate.mjs`: una prueba nueva no puede convertirse accidentalmente en requisito de
+ * CI antes de demostrar que es determinista. Las sondas `_` están clasificadas en
+ * `qa/CLASIFICACION.md` y solo llegan al gate mediante un wrapper explícito.
  *
  * Cada suite se lanza en su PROPIO proceso y de una en una. Lo primero, porque cada una levanta su
  * servidor y su Chromium y así una que se cuelgue no se lleva a las demás por delante. Lo segundo,
  * porque en paralelo se quitan la CPU unas a otras: con dibujado por software `agarre` tarda media
  * hora ella sola, y acompañada no termina.
  *
- *   node qa/todas.mjs              todas
+ *   node qa/todas.mjs              gate estable
+ *   node qa/todas.mjs --gate       gate estable (también es el valor predeterminado)
+ *   node qa/todas.mjs --all        todas las suites oficiales, incluidas las largas
  *   node qa/todas.mjs cables riel  solo las que lleven eso en el nombre
  */
 import { spawn } from 'node:child_process';
 import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { GATE_OFICIAL } from './lib/gate.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const RAIZ = join(AQUI, '..');
@@ -51,12 +55,30 @@ if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) {
 	process.exit(2);
 }
 
-const filtros = process.argv.slice(2);
-const suites = readdirSync(AQUI)
+const argumentos = process.argv.slice(2);
+const opciones = argumentos.filter((a) => a.startsWith('--'));
+const desconocidas = opciones.filter((a) => !['--gate', '--all'].includes(a));
+if (desconocidas.length) {
+	console.error(`Opciones QA desconocidas: ${desconocidas.join(', ')}`);
+	process.exit(2);
+}
+if (opciones.includes('--gate') && opciones.includes('--all')) {
+	console.error('Elige --gate o --all, no ambos.');
+	process.exit(2);
+}
+const filtros = argumentos.filter((a) => !a.startsWith('--'));
+const todasLasSuites = readdirSync(AQUI)
 	.filter((f) => f.endsWith('.mjs') && !f.startsWith('_') && f !== 'todas.mjs')
 	.map((f) => f.replace(/\.mjs$/, ''))
-	.filter((n) => filtros.length === 0 || filtros.some((f) => n.includes(f)))
 	.sort();
+const faltantesDelGate = GATE_OFICIAL.filter((suite) => !todasLasSuites.includes(suite));
+if (faltantesDelGate.length) {
+	console.error(`El gate declara suites que no existen: ${faltantesDelGate.join(', ')}`);
+	process.exit(2);
+}
+const suites = filtros.length
+	? todasLasSuites.filter((n) => filtros.some((f) => n.includes(f)))
+	: opciones.includes('--all') ? todasLasSuites : [...GATE_OFICIAL].sort();
 
 if (suites.length === 0) {
 	console.error(`No hay ninguna prueba que encaje con «${filtros.join(' ')}».`);
@@ -97,6 +119,7 @@ console.log(`\n${suites.length} suites de navegador, de una en una.\n`);
 const fallaron = [];
 const agotaronTiempo = [];
 const saltadas = [];
+let comprobaciones = 0;
 const t0 = Date.now();
 let hijoActivo;
 
@@ -176,6 +199,8 @@ for (const [i, suite] of suites.entries()) {
 		});
 	});
 	hijoActivo = undefined;
+	comprobaciones += resultado.salida.split(/\r?\n/)
+		.filter((linea) => /^(?:OK|FAIL|MAL)\s/.test(linea.trimStart())).length;
 	if (resultado.timeout) agotaronTiempo.push(suite);
 	if (resultado.codigo !== 0) fallaron.push(suite);
 }
@@ -184,6 +209,7 @@ console.log(`\n${'─'.repeat(70)}`);
 console.log(`${suites.length - fallaron.length - saltadas.length} bien · ${fallaron.length} mal`
 	+ `${agotaronTiempo.length ? ` · ${agotaronTiempo.length} timeout` : ''}`
 	+ `${saltadas.length ? ` · ${saltadas.length} sin correr` : ''} · ${mmss(Date.now() - t0)}`);
+console.log(`${comprobaciones} comprobaciones reportadas por las suites`);
 if (saltadas.length) console.log(`sin correr: ${saltadas.join(', ')}`);
 if (agotaronTiempo.length) console.log(`TIMEOUT: ${agotaronTiempo.join(', ')}`);
 if (fallaron.length) console.log(`MAL: ${fallaron.join(', ')}`);

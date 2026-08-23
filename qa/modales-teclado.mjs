@@ -70,11 +70,11 @@ const VENTANAS = [
 	{ id: 'modal-ayuda', abre: 'btn-ayuda', menu: 'menu-aprender' },
 	{ id: 'modal-proyecto', abre: 'btn-datos-proyecto', menu: 'menu-archivo' },
 	{ id: 'modal-drc', abre: 'chip-drc' },
-	{ id: 'modal-controlador', abre: 'btn-controlador-medida' },
+	{ id: 'modal-controlador', abre: 'btn-controlador-medida', herramienta: 'hta-anadir' },
 	{ id: 'modal-ejemplos', abre: 'btn-empezar-ejemplo' },
 ];
 
-for (const { id, abre, menu } of VENTANAS) {
+for (const { id, abre, menu, herramienta } of VENTANAS) {
 	console.log(`\n--- #${id} (se abre con #${abre}) ---`);
 
 	/*
@@ -82,6 +82,7 @@ for (const { id, abre, menu } of VENTANAS) {
 	 * Se abre antes, porque un botón con `display: none` no se puede ni enfocar ni pulsar.
 	 */
 	if (menu) await p.evaluate((m) => document.getElementById(m)?.classList.add('abierto'), menu);
+	if (herramienta) await p.locator(`#${herramienta}`).click();
 	// El botón se enfoca ANTES de pulsarlo: así se sabe a dónde tiene que volver el foco al cerrar.
 	const hay = await p.evaluate((x) => {
 		const bt = document.getElementById(x);

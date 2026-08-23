@@ -13,6 +13,8 @@ import { chromium } from 'playwright-core';
 import { join } from 'node:path';
 import { servir, abrirEjemplo, SALIDA, puerta, navegadorDelSistema } from './lib/mirar.mjs';
 
+const EN_GATE = process.argv.includes('--gate');
+
 const sv = await servir();
 const b = await chromium.launch({
 	...(navegadorDelSistema() ? { executablePath: navegadorDelSistema() } : {}),
@@ -120,10 +122,12 @@ await abrirMontaje();
 	// La reserva es lo que hay CORTADO: no cambia al abrir. Si cambiara, el cable se estaría
 	// estirando, que es exactamente lo que un lazo de servicio existe para evitar.
 	ok(largos.every((l) => Math.abs(l - largos[0]) < 0.5), `la trenza no se estira al abrir (${largos.map((l) => l.toFixed(0)).join(' · ')})`);
-	await puerta(p, 1);
-	await p.screenshot({ path: join(SALIDA, 'v-trenza-abierta.png') });
-	await puerta(p, 0);
-	await p.screenshot({ path: join(SALIDA, 'v-trenza-cerrada.png') });
+	if (!EN_GATE) {
+		await puerta(p, 1);
+		await p.screenshot({ path: join(SALIDA, 'v-trenza-abierta.png') });
+		await puerta(p, 0);
+		await p.screenshot({ path: join(SALIDA, 'v-trenza-cerrada.png') });
+	}
 }
 
 /* ---- 6. Entradas de cable declaradas ---- */

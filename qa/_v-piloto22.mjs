@@ -8,6 +8,8 @@
 import { chromium } from 'playwright-core';
 import { servir, abrirEjemplo, lamina, puerta, navegadorDelSistema } from './lib/mirar.mjs';
 
+const EN_GATE = process.argv.includes('--gate');
+
 const sv = await servir();
 const b = await chromium.launch({
 	...(navegadorDelSistema() ? { executablePath: navegadorDelSistema() } : {}),
@@ -167,7 +169,7 @@ ok(encendidos.every((k) => k.encendido), `los ${encendidos.length} pilotos se en
 }
 
 /* ---------------- 5. Las láminas ---------------- */
-{
+if (!EN_GATE) {
 	const mira = { tx: x, ty: y, tz: z };
 	const alrededor = (r) => [
 		[`frente ${r}`, { x, y, z: z + r, ...mira }],
@@ -204,6 +206,8 @@ ok(encendidos.every((k) => k.encendido), `los ${encendidos.length} pilotos se en
 		['trasera de cerca', detras(72, 24)],
 	], { columnas: 3, celda: 460, archivo: 'v-p22-trasera.png' });
 	console.log('   v-p22-trasera.png');
+} else {
+	console.log('SKIP diagnóstico manual: láminas del piloto desde varios ángulos');
 }
 
 console.log(errores.length ? `ERRORES JS: ${errores.join(' | ')}` : 'sin errores de JavaScript');

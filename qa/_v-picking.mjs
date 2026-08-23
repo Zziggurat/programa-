@@ -8,6 +8,8 @@
 import { chromium } from 'playwright-core';
 import { servir, abrirEjemplo, lamina, navegadorDelSistema } from './lib/mirar.mjs';
 
+const EN_GATE = process.argv.includes('--gate');
+
 const sv = await servir();
 const b = await chromium.launch({
 	...(navegadorDelSistema() ? { executablePath: navegadorDelSistema() } : {}),
@@ -124,10 +126,12 @@ await p.waitForTimeout(300);
 	ok(s === undefined || s === null, `pinchar la chapa vacía deselecciona (quedó ${JSON.stringify(s)})`);
 }
 
-await lamina(p, [['puntería', await p.evaluate(() => {
-	const c = window.qa.camaraAhora();
-	return { x: c.pos.x, y: c.pos.y, z: c.pos.z, tx: c.mira.x, ty: c.mira.y, tz: c.mira.z };
-})]], { columnas: 1, celda: 900, archivo: 'v-picking.png' });
+if (!EN_GATE) {
+	await lamina(p, [['puntería', await p.evaluate(() => {
+		const c = window.qa.camaraAhora();
+		return { x: c.pos.x, y: c.pos.y, z: c.pos.z, tx: c.mira.x, ty: c.mira.y, tz: c.mira.z };
+	})]], { columnas: 1, celda: 900, archivo: 'v-picking.png' });
+}
 
 console.log(errores.length ? `ERRORES JS: ${errores.join(' | ')}` : 'sin errores de JavaScript');
 if (errores.length) fallos.push('errores de JavaScript');
