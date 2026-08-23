@@ -239,6 +239,10 @@ export interface Dispositivo {
 	 * de forma visual cualquier foto (un gabinete, un controlador, un motor…).
 	 */
 	imagen?: string;
+	/** Imagen persistida fuera del documento. Al abrir, la UI puede resolverla temporalmente a `imagen`. */
+	assetId?: string;
+	/** Revisión inmutable de la plantilla personal que se fotografió al colocar este aparato. */
+	componentePersonalizado?: { definicionId: string; revision: number };
 	/**
 	 * Colocación MANUAL en el esquema: la columna y la fila donde quien dibuja ha decidido que
 	 * va este aparato, arrastrándolo. Si falta, la decide el motor de esquema.

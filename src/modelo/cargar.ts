@@ -785,6 +785,19 @@ function leerImagen(bruto: unknown): string | undefined {
 	return s;
 }
 
+function leerAssetId(bruto: unknown): string | undefined {
+	const s = texto(bruto);
+	return s && /^sha256:[a-f\d]{64}$/i.test(s) ? s.toLowerCase() : undefined;
+}
+
+function leerProcedenciaPersonalizada(bruto: unknown): Dispositivo['componentePersonalizado'] | undefined {
+	if (!esObjeto(bruto)) return undefined;
+	const definicionId = texto(bruto.definicionId);
+	const revision = typeof bruto.revision === 'number' && Number.isInteger(bruto.revision)
+		&& bruto.revision >= 1 && bruto.revision <= 1_000_000 ? bruto.revision : undefined;
+	return definicionId && revision !== undefined ? { definicionId, revision } : undefined;
+}
+
 function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 	if (!esLista(bruto)) {
 		if (bruto !== undefined) arreglos.push('la lista de aparatos estaba corrupta');
@@ -904,6 +917,11 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			// Y la imagen APUNTA que la ha quitado. Ese olvido era el P0 de esta auditoría.
 			imagen: oQuitado(d.imagen, leerImagen(d.imagen), ruta('imagen'),
 				'la imagen no era un PNG, JPEG o WebP admisible, o pasaba del tamaño máximo'),
+			assetId: oQuitado(d.assetId, leerAssetId(d.assetId), ruta('assetId'),
+				'el asset no tenía un identificador SHA-256 válido'),
+			componentePersonalizado: oQuitado(d.componentePersonalizado,
+				leerProcedenciaPersonalizada(d.componentePersonalizado), ruta('componentePersonalizado'),
+				'la procedencia no tenía identidad y revisión válidas'),
 			curvaDisparo: oQuitado(d.curvaDisparo, unoDe(d.curvaDisparo, ['B', 'C', 'D', 'K', 'Z', 'gG', 'aM'] as const),
 				ruta('curvaDisparo'), 'la curva de disparo no era una de la norma'),
 			claseDiferencial: oQuitado(d.claseDiferencial, unoDe(d.claseDiferencial, ['AC', 'A', 'F', 'B'] as const),
