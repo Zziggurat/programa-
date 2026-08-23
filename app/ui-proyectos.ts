@@ -64,6 +64,17 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 			boton('Duplicar', 'Crear una copia independiente', async () => {
 				await ctx.gestor.duplicar(d.id); await pintar(); avisar('Copia independiente creada', 'ok');
 			});
+			if (d.estado === 'requiere-revision') {
+				boton('Aceptar reparación', 'Confirmar la revisión saneada; el original permanece en Recuperación', async () => {
+					if (!await confirmar(
+						`¿Aceptar la revisión reparada de «${d.nombre}»? El archivo original seguirá disponible en Recuperación.`,
+						{ ok: 'Aceptar reparación' },
+					)) return;
+					await ctx.gestor.aceptarReparacion(d.id);
+					await pintar();
+					avisar('Reparación aceptada. El original permanece en Recuperación.', 'ok');
+				});
+			}
 			const borrar = boton('Eliminar', 'Eliminar este tablero y sus snapshots', async () => {
 				if (!await confirmar(`¿Eliminar «${d.nombre}»? Esta acción no se puede deshacer.`, {
 					ok: 'Eliminar', peligro: true,

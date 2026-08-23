@@ -82,6 +82,8 @@ export interface OpcionesGestorDocumentos {
 	reloj?: () => Date;
 	/** Cinco minutos de forma predeterminada; nunca se crea un snapshot por cada edición. */
 	intervaloSnapshotMs?: number;
+	/** Un fallo de recuperación no convierte un guardado ya confirmado en fallido. */
+	alErrorRecuperacion?: (error: unknown) => void;
 }
 
 export interface ResultadoInicializacionDocumentos {
@@ -124,12 +126,15 @@ export class GestorDocumentos {
 	private readonly alCambiarEstado?: (estado: EstadoGuardadoDocumento) => void;
 	private readonly reloj: () => Date;
 	private readonly intervaloSnapshotMs: number;
+	private readonly alErrorRecuperacion?: (error: unknown) => void;
 
 	private actual?: DocumentoProyecto;
 	private ejemplo?: Proyecto;
 	private pendiente?: GuardadoPendiente;
 	private drenaje?: Promise<void>;
 	private ultimoFallo?: { trabajo: GuardadoPendiente; error: unknown };
+	/** Cabecera del último snapshot; evita recorrer el store completo después de cada edición. */
+	private readonly ultimoSnapshotPorProyecto = new Map<string, SnapshotProyecto | null>();
 	private generacion = 0;
 	private generacionGuardada = 0;
 	private cerrado = false;
@@ -142,6 +147,7 @@ export class GestorDocumentos {
 		this.alCambiarEstado = opciones.alCambiarEstado;
 		this.reloj = opciones.reloj ?? (() => new Date());
 		this.intervaloSnapshotMs = Math.max(0, opciones.intervaloSnapshotMs ?? 5 * 60_000);
+		this.alErrorRecuperacion = opciones.alErrorRecuperacion;
 	}
 
 	/** Copia del sobre activo; modificar lo devuelto no modifica la revisión de la sesión. */
@@ -156,9 +162,11 @@ export class GestorDocumentos {
 	}
 
 	/** Versiones de recuperación del documento real, aun cuando la UI esté mostrando un ejemplo. */
-	listarSnapshots(): Promise<SnapshotProyecto[]> {
+	async listarSnapshots(): Promise<SnapshotProyecto[]> {
 		this.comprobarInicializado();
-		return this.repositorio.listarSnapshots(this.actual!.id);
+		const snapshots = await this.repositorio.listarSnapshots(this.actual!.id);
+		this.ultimoSnapshotPorProyecto.set(this.actual!.id, snapshots[0] ?? null);
+		return snapshots;
 	}
 
 	estaMostrandoEjemplo(): boolean {
@@ -272,6 +280,7 @@ export class GestorDocumentos {
 		this.actual = documento;
 		this.inicializado = true;
 		this.emitirGuardado(documento);
+		await this.intentarSnapshot(() => this.crearSnapshotModeradoDe(documento, false, 'apertura'));
 		return { documento: clonar(documento), migracion };
 	}
 
@@ -323,6 +332,7 @@ export class GestorDocumentos {
 				this.actual = guardado;
 				this.generacionGuardada = trabajo.generacion;
 				if (!this.pendiente) this.emitirGuardado(guardado);
+				await this.intentarSnapshot(() => this.crearSnapshotPeriodicoDe(guardado));
 			} catch (error) {
 				// Si mientras fallaba llegó una generación más nueva, ésa es la que interesa reintentar.
 				// El cast hace explícita la posible mutación desde `programarGuardado` durante el `await`:
@@ -370,13 +380,53 @@ export class GestorDocumentos {
 	private async crearSnapshotModeradoDe(
 		documento: DocumentoProyecto,
 		forzar = false,
+		motivo: 'manual' | 'apertura' = 'manual',
 	): Promise<SnapshotProyecto | undefined> {
-		const snapshots = await this.repositorio.listarSnapshots(documento.id);
-		const ultimo = snapshots[0];
+		const ultimo = await this.ultimoSnapshotDe(documento.id);
 		const edad = ultimo ? this.reloj().getTime() - Date.parse(ultimo.creadoEn) : Infinity;
 		if (!forzar && ultimo && ultimo.revisionOrigen === documento.revision
 			&& edad >= 0 && edad < this.intervaloSnapshotMs) return undefined;
-		return this.repositorio.crearSnapshot(documento.id, 'manual');
+		const creado = await this.repositorio.crearSnapshot(documento.id, motivo);
+		this.ultimoSnapshotPorProyecto.set(documento.id, creado);
+		return creado;
+	}
+
+	private async ultimoSnapshotDe(projectId: string): Promise<SnapshotProyecto | undefined> {
+		if (this.ultimoSnapshotPorProyecto.has(projectId)) {
+			return this.ultimoSnapshotPorProyecto.get(projectId) ?? undefined;
+		}
+		const ultimo = (await this.repositorio.listarSnapshots(projectId))[0];
+		this.ultimoSnapshotPorProyecto.set(projectId, ultimo ?? null);
+		return ultimo;
+	}
+
+	/**
+	 * Se evalúa después de un guardado real. No usa un `setInterval`: sin cambios no hay una
+	 * versión distinta que proteger; con cambios, el primer guardado posterior al intervalo crea
+	 * una recuperación. La edad manda aunque haya cien revisiones intermedias.
+	 */
+	private async crearSnapshotPeriodicoDe(
+		documento: DocumentoProyecto,
+	): Promise<SnapshotProyecto | undefined> {
+		const ultimo = await this.ultimoSnapshotDe(documento.id);
+		const edad = ultimo ? this.reloj().getTime() - Date.parse(ultimo.creadoEn) : Infinity;
+		if (ultimo && edad >= 0 && edad < this.intervaloSnapshotMs) return undefined;
+		const creado = await this.repositorio.crearSnapshot(documento.id, 'periodico');
+		this.ultimoSnapshotPorProyecto.set(documento.id, creado);
+		return creado;
+	}
+
+	private async intentarSnapshot(
+		trabajo: () => Promise<SnapshotProyecto | undefined>,
+	): Promise<SnapshotProyecto | undefined> {
+		try {
+			return await trabajo();
+		} catch (error) {
+			// El documento ya se guardó o abrió correctamente. La recuperación es una segunda línea de
+			// defensa y su fallo se informa, pero jamás se reintenta con una revisión obsoleta.
+			try { this.alErrorRecuperacion?.(error); } catch { /* informar tampoco puede romper la sesión */ }
+			return undefined;
+		}
 	}
 
 	/** Punto explícito para eventos importantes; programar una edición nunca llama a este método. */
@@ -391,7 +441,7 @@ export class GestorDocumentos {
 		await this.flush();
 		// Una versión al abandonar el documento permite volver tras una edición grande, pero la
 		// ventana temporal y la revisión impiden convertir cada navegación en un Git interno.
-		await this.crearSnapshotModeradoDe(this.actual!);
+		await this.intentarSnapshot(() => this.crearSnapshotModeradoDe(this.actual!));
 	}
 
 	private async publicarDocumento(
@@ -420,6 +470,7 @@ export class GestorDocumentos {
 		this.pendiente = undefined;
 		this.ultimoFallo = undefined;
 		this.emitirGuardado(documento);
+		await this.intentarSnapshot(() => this.crearSnapshotModeradoDe(documento, false, 'apertura'));
 		return clonar(documento);
 	}
 
@@ -472,6 +523,33 @@ export class GestorDocumentos {
 	}
 
 	/**
+	 * Confirma de forma explícita un documento legacy reparado. El raw original permanece en
+	 * `recovery`; esta operación solo normaliza la revisión saneada que la persona ya inspeccionó.
+	 */
+	async aceptarReparacion(id: string): Promise<DocumentoProyecto> {
+		this.comprobarInicializado();
+		let base: DocumentoProyecto;
+		if (id === this.actual!.id) {
+			if (this.ejemplo) throw new Error('Vuelve a tu tablero antes de aceptar una reparación.');
+			await this.flush();
+			base = this.actual!;
+		} else {
+			base = await this.repositorio.abrir(id);
+		}
+		if (base.estado !== 'requiere-revision') return clonar(base);
+		const aceptado = await this.repositorio.guardar(id, {
+			revisionEsperada: base.revision,
+			proyecto: clonar(base.proyecto),
+			aceptarReparacion: true,
+		});
+		if (id === this.actual!.id) {
+			this.actual = aceptado;
+			this.emitirGuardado(aceptado);
+		}
+		return clonar(aceptado);
+	}
+
+	/**
 	 * Restaura una versión del documento activo. El repositorio crea atómicamente el snapshot
 	 * `antes-de-restaurar`; el gestor no añade otro ni permite que una edición pendiente quede por
 	 * detrás de él en la historia.
@@ -508,6 +586,9 @@ export class GestorDocumentos {
 			throw error;
 		}
 		this.actual = documento;
+		// `restaurarSnapshot` crea atómicamente otra versión (`antes-de-restaurar`). Se relee solo
+		// cuando vuelva a hacer falta; no se adivina cuál ganó si el reloj tiene la misma marca.
+		this.ultimoSnapshotPorProyecto.delete(documento.id);
 		this.emitirGuardado(documento);
 		return clonar(documento);
 	}
@@ -522,6 +603,7 @@ export class GestorDocumentos {
 		if (id !== this.actual!.id) {
 			const documento = await this.repositorio.abrir(id);
 			await this.repositorio.eliminar(id, documento.revision);
+			this.ultimoSnapshotPorProyecto.delete(id);
 			return;
 		}
 
@@ -560,6 +642,7 @@ export class GestorDocumentos {
 			throw error;
 		}
 		this.actual = reemplazo;
+		this.ultimoSnapshotPorProyecto.delete(id);
 		this.ejemplo = undefined;
 		this.emitirGuardado(reemplazo);
 	}

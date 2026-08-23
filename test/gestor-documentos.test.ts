@@ -348,11 +348,13 @@ test('un ejemplo es efímero: no guarda ni pisa el activo, permite volver o copi
 test('los snapshots se crean en eventos moderados, no en cada cambio, y restaurar conserva recuperación', async () => {
 	const { gestor, repositorio, pantalla } = entorno({ intervaloSnapshotMs: 60_000 });
 	const a = (await gestor.inicializar()).documento;
+	assert.equal((await repositorio.listarSnapshots(a.id)).length, 1, 'falta la versión al abrir');
 	const editado = a.proyecto;
 	editado.datos = { revision: 'B' };
 	gestor.programarGuardado(editado);
 	await gestor.flush();
-	assert.equal((await repositorio.listarSnapshots(a.id)).length, 0);
+	assert.equal((await repositorio.listarSnapshots(a.id)).length, 1,
+		'un guardado inmediato creó otra versión de recuperación');
 
 	const versionB = await gestor.crearSnapshotModerado();
 	assert.ok(versionB);
@@ -371,6 +373,45 @@ test('los snapshots se crean en eventos moderados, no en cada cambio, y restaura
 	assert.ok(snapshots.some((s) => s.motivo === 'antes-de-restaurar'
 		&& s.proyecto.datos?.revision === 'C'));
 	assert.equal((await gestor.listar()).find((x) => x.id === a.id)?.revision, restaurado.revision);
+});
+
+test('el primer guardado posterior al intervalo crea snapshot periódico, no uno por edición', async () => {
+	let ahora = Date.parse('2026-01-01T12:00:00.000Z');
+	const { gestor, repositorio } = entorno({
+		reloj: () => new Date(ahora), intervaloSnapshotMs: 60_000,
+	});
+	const a = (await gestor.inicializar()).documento;
+	for (const nombre of ['B', 'C']) {
+		const p = gestor.documentoActivo()!.proyecto; p.nombre = nombre;
+		gestor.programarGuardado(p); await gestor.flush();
+	}
+	assert.equal((await repositorio.listarSnapshots(a.id)).length, 1);
+
+	ahora += 61_000;
+	const p = gestor.documentoActivo()!.proyecto; p.nombre = 'D';
+	gestor.programarGuardado(p); await gestor.flush();
+	const snapshots = await repositorio.listarSnapshots(a.id);
+	assert.equal(snapshots.length, 2);
+	assert.equal(snapshots[0].motivo, 'periodico');
+	assert.equal(snapshots[0].proyecto.nombre, 'D');
+});
+
+test('una reparación legacy se acepta explícitamente y el raw original permanece recuperable', async () => {
+	const { gestor, repositorio } = entorno();
+	const legacy = proyectoValido('Legacy reparable');
+	legacy.conductores.push({
+		id: 'roto', de: { dispositivoId: 'q1', borneId: '1' },
+		a: { dispositivoId: 'inexistente', borneId: 'X' }, seccion: 1,
+	});
+	const inicial = await gestor.inicializar(JSON.stringify(legacy));
+	assert.equal(inicial.documento.estado, 'requiere-revision');
+	const rawAntes = await repositorio.listarRecuperaciones();
+	assert.equal(rawAntes.length, 1);
+
+	const aceptado = await gestor.aceptarReparacion(inicial.documento.id);
+	assert.equal(aceptado.estado, 'normal');
+	assert.equal(gestor.documentoActivo()?.estado, 'normal');
+	assert.equal((await repositorio.listarRecuperaciones())[0].raw, rawAntes[0].raw);
 });
 
 test('una versión que no se puede montar no altera contenido, revisión ni identidad activa', async () => {

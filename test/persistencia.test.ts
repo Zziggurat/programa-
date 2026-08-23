@@ -165,6 +165,16 @@ const ARRASTRE = ['pointermove', 'mousemove', 'touchmove'];
 
 const MODULOS = ['app/main.ts', 'app/ui-inicio.ts', 'app/ui-dossier.ts'];
 
+test('el editor permanece inerte hasta que termina el bootstrap del repositorio', () => {
+	const fuente = readFileSync(join(RAIZ, 'app/main.ts'), 'utf8');
+	assert.match(fuente, /persistenciaDocumentalPendiente\s*=\s*true;[\s\S]{0,500}document\.body\.inert\s*=\s*true/,
+		'el editor queda interactivo antes de tener identidad documental');
+	assert.match(fuente, /function\s+terminarBloqueoDePersistencia[\s\S]{0,350}document\.body\.inert\s*=\s*false/,
+		'el bootstrap no libera explícitamente la interacción');
+	const llamadas = fuente.match(/terminarBloqueoDePersistencia\(\)/g)?.length ?? 0;
+	assert.ok(llamadas >= 3, 'la ruta correcta o el fallback podrían dejar el editor bloqueado');
+});
+
 for (const archivo of MODULOS) {
 	test(`${archivo}: todo lo que cambia el tablero acaba guardándolo`, () => {
 		const bs = bloques(readFileSync(join(RAIZ, archivo), 'utf8'));

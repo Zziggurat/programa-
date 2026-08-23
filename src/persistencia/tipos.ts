@@ -47,7 +47,13 @@ export interface DocumentoProyecto {
 
 export type ResumenProyecto = Omit<DocumentoProyecto, 'proyecto'>;
 
-export type MotivoSnapshot = 'manual' | 'antes-de-restaurar' | 'migracion-legacy' | 'importacion-paquete';
+export type MotivoSnapshot =
+	| 'manual'
+	| 'apertura'
+	| 'periodico'
+	| 'antes-de-restaurar'
+	| 'migracion-legacy'
+	| 'importacion-paquete';
 
 export interface SnapshotProyecto {
 	id: string;
