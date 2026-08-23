@@ -11,11 +11,13 @@
  */
 import * as THREE from 'three';
 
+import { resolverComportamiento } from '../src/modelo/comportamiento.js';
 import { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { MemoriaLogica, memoriaLogicaVacia } from '../src/motores/logica.js';
 import {
-	EstadoAparato, EstadoTablero, MemoriaTiempos, ResultadoSimulacion, formatearA, memoriaVacia, simular,
+	EstadoAparato, EstadoTablero, EstadoVariador, MemoriaTiempos, ResultadoSimulacion,
+	formatearA, memoriaVacia, simular,
 } from '../src/motores/simulacion.js';
 import { emisionDeCable } from './animacion-sim.js';
 import { Escenario } from './escena3d.js';
@@ -43,6 +45,10 @@ export interface PanelSimulacion {
 	 * para que el clic no siga su camino normal (seleccionar para editar).
 	 */
 	accionar: (dispositivoId: string) => boolean;
+	/** Mantiene apretado un mando momentáneo hasta la llamada correspondiente a `soltar`. */
+	presionar: (dispositivoId: string) => boolean;
+	/** Suelta un mando momentáneo; no cambia selectores ni aparatos de corte. */
+	soltar: (dispositivoId: string) => boolean;
 	/**
 	 * ¿Este aparato se accionaría si se pinchara en él?
 	 *
@@ -67,11 +73,113 @@ export interface PanelSimulacion {
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
-/** Las protecciones que se abren y se cierran a mano. */
-const PROTECCIONES = new Set(['disyuntor', 'diferencial', 'guardamotor', 'seccionador', 'fusible']);
+export type ControlSimulacion =
+	| {
+		clase: 'mando';
+		modo: 'momentaneo' | 'mantenido';
+		posiciones: 2 | 3;
+		reposo: number;
+	}
+	| { clase: 'sensor'; analogico: boolean }
+	| { clase: 'proteccion'; rearmable: boolean; termico: boolean }
+	| { clase: 'seccionador' };
 
-/** Un térmico se reconoce por su contacto 95-96: es lo que se dispara a mano para probar. */
-const esTermico = (d: Dispositivo): boolean => d.tipo === 'rele' && d.bornes.some((b) => b.id === '95');
+/**
+ * Traduce el contrato eléctrico al control que puede operar una persona.
+ *
+ * El perfil manda incluso si la carcasa es `otro` o viene de una imagen. `tipo` solo conserva una
+ * excepción honesta del adaptador legacy: hoy `proteccion` es también el contrato de continuidad
+ * de un seccionador, aunque éste no dispara. Hasta que el perfil tenga una clase `corte`, se lo
+ * separa aquí para no presentarlo como protección ni inventarle un rearme.
+ */
+export function controlDeSimulacion(d: Dispositivo): ControlSimulacion | undefined {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase === 'mando' && d.rol?.tipo !== 'esclavo') {
+		return {
+			clase: 'mando', modo: perfil.modo, posiciones: perfil.posiciones, reposo: perfil.reposo,
+		};
+	}
+	if (perfil?.clase === 'sensor') return { clase: 'sensor', analogico: !!d.rangoSonda };
+	if (perfil?.clase !== 'proteccion') return undefined;
+	if (d.tipo === 'seccionador') return { clase: 'seccionador' };
+	const ids = new Set(d.bornes.map((b) => b.id));
+	return {
+		clase: 'proteccion',
+		rearmable: perfil.rearmable,
+		termico: ids.has('95') && !ids.has('A1'),
+	};
+}
+
+export type OperacionControl = 'accionar' | 'presionar' | 'soltar';
+
+export interface ResultadoOperacionControl {
+	atendido: boolean;
+	cambio: boolean;
+	estado: EstadoAparato;
+}
+
+/** Texto compacto y estable para el estado contractual de un variador. */
+export function textoEstadoVariador(v: EstadoVariador): string {
+	const estado = v.estado === 'sin-alimentacion' ? 'SIN ALIMENTACIÓN'
+		: v.estado === 'listo' ? 'READY' : v.estado === 'marcha' ? 'RUN' : 'FAULT';
+	return `${estado} · ${v.frecuenciaHz.toFixed(1)} Hz · ref. ${v.referenciaPorcentaje.toFixed(0)} %`;
+}
+
+/** Transición pura del estado runtime; la UI y los tests usan exactamente las mismas reglas. */
+export function operarControl(
+	d: Dispositivo,
+	estado: EstadoAparato,
+	operacion: OperacionControl,
+): ResultadoOperacionControl {
+	const control = controlDeSimulacion(d);
+	const siguiente = { ...estado };
+	if (!control) return { atendido: false, cambio: false, estado: siguiente };
+
+	if (control.clase === 'mando') {
+		if (control.modo === 'momentaneo') {
+			const activo = operacion === 'presionar' ? true
+				: operacion === 'soltar' ? false : !siguiente.activo;
+			const cambio = siguiente.activo !== activo;
+			siguiente.activo = activo;
+			delete siguiente.posicion;
+			return { atendido: true, cambio, estado: siguiente };
+		}
+		if (operacion !== 'accionar') return { atendido: false, cambio: false, estado: siguiente };
+		const actual = Number.isInteger(siguiente.posicion) && siguiente.posicion! >= 0
+			&& siguiente.posicion! < control.posiciones ? siguiente.posicion! : control.reposo;
+		siguiente.posicion = (actual + 1) % control.posiciones;
+		delete siguiente.activo;
+		return { atendido: true, cambio: true, estado: siguiente };
+	}
+
+	if (control.clase === 'sensor') {
+		if (operacion !== 'accionar') return { atendido: false, cambio: false, estado: siguiente };
+		if (control.analogico) return { atendido: true, cambio: false, estado: siguiente };
+		siguiente.activo = !siguiente.activo;
+		return { atendido: true, cambio: true, estado: siguiente };
+	}
+
+	if (operacion !== 'accionar') return { atendido: false, cambio: false, estado: siguiente };
+	if (control.clase === 'seccionador') {
+		siguiente.cerrado = siguiente.cerrado === false;
+		// Un seccionador no tiene mecanismo de disparo. Se elimina cualquier residuo heredado en vez
+		// de convertir el siguiente clic en un supuesto rearme.
+		delete siguiente.disparado;
+		return { atendido: true, cambio: true, estado: siguiente };
+	}
+	if (siguiente.disparado) {
+		if (!control.rearmable) return { atendido: true, cambio: false, estado: siguiente };
+		siguiente.disparado = false;
+		siguiente.cerrado = true;
+		return { atendido: true, cambio: true, estado: siguiente };
+	}
+	if (control.termico) {
+		siguiente.disparado = true;
+		return { atendido: true, cambio: true, estado: siguiente };
+	}
+	siguiente.cerrado = siguiente.cerrado === false;
+	return { atendido: true, cambio: true, estado: siguiente };
+}
 
 /**
  * ¿ESTE APARATO SE PUEDE ACCIONAR?
@@ -79,30 +187,48 @@ const esTermico = (d: Dispositivo): boolean => d.tipo === 'rele' && d.bornes.som
  * Tiene que decir exactamente lo mismo que `accionarEnSimulacion`, porque de aquí sale la lista de
  * mandos que se le enseña al usuario: si dijera de más, saldría un botón que no hace nada; si
  * dijera de menos, faltaría el botón que hace falta para arrancar el tablero. Las dos leen la
- * misma tabla `PROTECCIONES` y el mismo `esTermico` para no poder separarse.
+ * misma clasificación por perfil y las mismas transiciones puras para no poder separarse.
  *
  * Una sonda CON RANGO no entra: su mando no es un botón sino el deslizador de «Sondas».
  */
 function esMando(d: Dispositivo): boolean {
-	if (d.tipo === 'pulsador' || d.tipo === 'selector') return true;
-	if (d.tipo === 'sensor') return !d.rangoSonda;
-	if (PROTECCIONES.has(d.tipo)) return true;
-	return esTermico(d);
+	const control = controlDeSimulacion(d);
+	return !!control && !(control.clase === 'sensor' && control.analogico);
 }
 
 /** Cómo se lee y cómo se rotula el botón de un mando, según cómo esté ahora. */
-function estadoDelMando(d: Dispositivo, st: EstadoAparato): { texto: string; boton: string; encendido: boolean } {
-	if (esTermico(d)) {
-		const disparado = !!st.disparado;
-		return { texto: disparado ? 'DISPARADO' : 'rearmado', boton: disparado ? 'Rearmar' : 'Disparar', encendido: disparado };
+export function estadoDelMando(
+	d: Dispositivo,
+	st: EstadoAparato,
+): { texto: string; boton: string; encendido: boolean; deshabilitado?: boolean } {
+	const control = controlDeSimulacion(d);
+	if (!control) return { texto: 'sin control', boton: 'No disponible', encendido: false, deshabilitado: true };
+	if (control.clase === 'mando' && control.modo === 'mantenido') {
+		const posicion = Number.isInteger(st.posicion) && st.posicion! >= 0
+			&& st.posicion! < control.posiciones ? st.posicion! : control.reposo;
+		return {
+			texto: `posición ${posicion + 1}/${control.posiciones}`,
+			boton: 'Cambiar',
+			encendido: posicion !== control.reposo,
+		};
 	}
-	if (PROTECCIONES.has(d.tipo)) {
-		if (st.disparado) return { texto: 'DISPARADO', boton: 'Rearmar', encendido: true };
+	if (control.clase === 'mando' || control.clase === 'sensor') {
+		const activo = !!st.activo;
+		return { texto: activo ? 'accionado' : 'en reposo', boton: activo ? 'Soltar' : 'Accionar', encendido: activo };
+	}
+	if (control.clase === 'seccionador') {
 		const abierto = st.cerrado === false;
 		return { texto: abierto ? 'abierto' : 'cerrado', boton: abierto ? 'Cerrar' : 'Abrir', encendido: abierto };
 	}
-	const activo = !!st.activo;
-	return { texto: activo ? 'accionado' : 'en reposo', boton: activo ? 'Soltar' : 'Accionar', encendido: activo };
+	if (st.disparado && !control.rearmable) {
+		return { texto: 'FUNDIDO · requiere sustitución', boton: 'No rearmable', encendido: true, deshabilitado: true };
+	}
+	if (st.disparado) return { texto: 'DISPARADO', boton: 'Rearmar', encendido: true };
+	if (control.termico) {
+		return { texto: 'rearmado', boton: 'Disparar', encendido: false };
+	}
+	const abierto = st.cerrado === false;
+	return { texto: abierto ? 'abierto' : 'cerrado', boton: abierto ? 'Cerrar' : 'Abrir', encendido: abierto };
 }
 
 export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
@@ -139,6 +265,42 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	let velocidadSim = 1;
 	/** Instantes en que cada protección empezó a ver corriente de más, para cronometrar su disparo. */
 	let sobrecargaDesde: Record<string, number> = {};
+	/**
+	 * El panel se repinta al presionar y reemplaza el propio botón que recibió `pointerdown`.
+	 * Por eso el final del gesto vive temporalmente en `window`, no en el nodo efímero. Cada gesto
+	 * retira sus dos listeners al terminar; reinstalar el panel no acumula observadores globales.
+	 */
+	const gestosPorPuntero = new Map<number, { id: string; limpiar: () => void }>();
+	const clickConsumido = new Set<string>();
+	const finalizarPuntero = (ev: PointerEvent) => {
+		const gesto = gestosPorPuntero.get(ev.pointerId);
+		if (!gesto) return;
+		gesto.limpiar();
+		const id = gesto.id;
+		clickConsumido.add(id);
+		soltarEnSimulacion(id);
+		// El `click` se despacha después de `pointerup`; una microtarea puede ejecutarse antes. El
+		// siguiente macrotask es el primer punto seguro para volver a admitir clicks sintéticos.
+		window.setTimeout(() => clickConsumido.delete(id), 0);
+	};
+	const iniciarPuntero = (pointerId: number, id: string) => {
+		gestosPorPuntero.get(pointerId)?.limpiar();
+		const alFinalizar = (ev: PointerEvent) => {
+			if (ev.pointerId === pointerId) finalizarPuntero(ev);
+		};
+		const limpiar = () => {
+			window.removeEventListener('pointerup', alFinalizar, true);
+			window.removeEventListener('pointercancel', alFinalizar, true);
+			gestosPorPuntero.delete(pointerId);
+		};
+		gestosPorPuntero.set(pointerId, { id, limpiar });
+		window.addEventListener('pointerup', alFinalizar, true);
+		window.addEventListener('pointercancel', alFinalizar, true);
+	};
+	const limpiarGestos = () => {
+		for (const gesto of [...gestosPorPuntero.values()]) gesto.limpiar();
+		clickConsumido.clear();
+	};
 
 	function recalcularSimulacion(): void {
 		if (!energizado) return;
@@ -298,17 +460,33 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		if (mandos.length) {
 			$('sim-mandos').innerHTML = '<h3 class="titulo-sim">Mandos</h3>' + mandos.map((d) => {
 				const st = estadoSim[d.id] ?? {};
-				const { texto, boton, encendido } = estadoDelMando(d, st);
+				const { texto, boton, encendido, deshabilitado } = estadoDelMando(d, st);
 				const fuera = dentroDelArmario.has(d.id) ? ''
 					: '<span class="fuera" title="No está montado en el armario: va en la puerta o en '
 						+ 'campo, así que solo se acciona desde aquí">· en la puerta</span>';
 				return `<div class="fila-mando ${encendido ? 'activo' : ''}">`
 					+ `<span class="des-sim">${escaparHtml(d.designacion ?? d.id)}</span>`
 					+ `<span class="estado-mando">${escaparHtml(texto)}</span>${fuera}`
-					+ `<button data-mando="${escaparHtml(d.id)}">${escaparHtml(boton)}</button></div>`;
+					+ `<button data-mando="${escaparHtml(d.id)}"${deshabilitado ? ' disabled' : ''}>`
+					+ `${escaparHtml(boton)}</button></div>`;
 			}).join('');
 			for (const el of $('sim-mandos').querySelectorAll<HTMLElement>('[data-mando]')) {
-				el.onclick = () => { accionarEnSimulacion(el.dataset.mando!); };
+				const id = el.dataset.mando!;
+				const dispositivo = proyecto().dispositivos.find((d) => d.id === id);
+				const control = dispositivo ? controlDeSimulacion(dispositivo) : undefined;
+				if (control?.clase === 'mando' && control.modo === 'momentaneo') {
+					el.onpointerdown = (ev) => {
+						if (ev.button !== 0) return;
+						iniciarPuntero(ev.pointerId, id);
+						presionarEnSimulacion(id);
+					};
+					el.onclick = (ev) => {
+						if (clickConsumido.has(id)) ev.preventDefault();
+						else accionarEnSimulacion(id); // teclado y `.click()` de compatibilidad
+					};
+				} else {
+					el.onclick = () => { accionarEnSimulacion(id); };
+				}
 			}
 		}
 
@@ -320,7 +498,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		const cableado = (d: Dispositivo) =>
 			proyecto().conductores.some((c) => c.de.dispositivoId === d.id || c.a.dispositivoId === d.id);
 		const posiblesSondas = proyecto().dispositivos.filter((d) =>
-			d.tipo === 'sensor' && !esReferenciaVisualInerte(d) && cableado(d));
+			resolverComportamiento(d)?.clase === 'sensor' && !esReferenciaVisualInerte(d) && cableado(d));
 		/*
 		 * Una SONDA es la que declara su rango de medida; lo demás son contactos de campo —un
 		 * presostato, una boya, un final de carrera— que se accionan con su interruptor, no con un
@@ -404,7 +582,11 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 				+ (r.consumos.length > 1 ? ` en ${r.consumos.length} cargas` : '') + '</div>';
 		}
 		const cargas = [...r.cargaPorAparato.values()]
-			.filter((c) => c.corriente > 0 && c.nominal)
+			.filter((c) => {
+				if (!(c.corriente > 0 && c.nominal)) return false;
+				const d = proyecto().dispositivos.find((x) => x.id === c.dispositivoId);
+				return d ? controlDeSimulacion(d)?.clase === 'proteccion' : false;
+			})
 			.sort((a, b) => (b.porcentaje ?? 0) - (a.porcentaje ?? 0));
 		if (cargas.length) {
 			$('sim-carga').innerHTML = '<h3 class="titulo-sim">Carga de las protecciones</h3>'
@@ -464,19 +646,55 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		 * «apagada» son lo mismo, pero en una válvula un 0 % es un dato —está cerrada porque la
 		 * sonda lo pide— y no verlo dejaría a quien programa sin saber si su rampa funciona.
 		 */
-		for (const [clave, valor] of r.analogicas) {
+		for (const [clave, salida] of r.salidasAnalogicas) {
 			const [id, borne] = clave.split('::');
 			const d = proyecto().dispositivos.find((x) => x.id === id);
+			const recorrido = salida.rango[1] - salida.rango[0];
+			const porcentaje = recorrido > 0
+				? Math.round((salida.voltios - salida.rango[0]) / recorrido * 100) : 0;
 			const fila = document.createElement('div');
 			fila.className = 'fila-sim analogica';
 			fila.innerHTML = `<span class="punto-sim"></span>`
 				+ `<span class="des-sim">${escaparHtml(`${d?.designacion ?? id}:${borne}`)}</span>`
-				+ `<span class="que-sim">${valor.toFixed(1)} V · ${Math.round((valor / 10) * 100)} %</span>`;
+				+ `<span class="que-sim">${salida.voltios.toFixed(1)} V · ${porcentaje} %`
+				+ `${salida.supuesto ? ' · rango supuesto' : ''}</span>`;
+			fila.onclick = () => seleccionar(id);
+			cont.appendChild(fila);
+		}
+
+		// Estado completo del variador, incluso cuando no está en RUN. `funcionando` solo contiene
+		// aparatos activos y por eso no podía distinguir READY de “no existe” o “sin alimentación”.
+		const estadosVariador = new Set(r.variadores.map((v) => v.dispositivoId));
+		for (const v of r.variadores) {
+			const fila = document.createElement('div');
+			fila.className = `fila-sim variador ${v.estado}`;
+			fila.innerHTML = '<span class="punto-sim"></span>'
+				+ `<span class="des-sim">${escaparHtml(v.designacion)}</span>`
+				+ `<span class="que-sim">${textoEstadoVariador(v)}</span>`;
+			fila.onclick = () => seleccionar(v.dispositivoId);
+			cont.appendChild(fila);
+		}
+
+		// La posición viene del resultado eléctrico, no de “está activo”. Una válvula alimentada con
+		// referencia 0 V está cerrada al 0 %, aunque como carga tenga tensión en sus bornes.
+		const cargasConPosicion = new Set<string>();
+		for (const [id, posicion] of r.posicionesCargas) {
+			const d = proyecto().dispositivos.find((x) => x.id === id);
+			const perfil = d ? resolverComportamiento(d) : undefined;
+			if (perfil?.clase !== 'carga') continue;
+			cargasConPosicion.add(id);
+			const fila = document.createElement('div');
+			fila.className = 'fila-sim posicion-carga';
+			fila.innerHTML = '<span class="punto-sim"></span>'
+				+ `<span class="des-sim">${escaparHtml(d?.designacion ?? id)}</span>`
+				+ `<span class="que-sim">${perfil.efecto === 'movimiento' ? 'válvula/actuador' : 'carga modulante'}`
+				+ ` · posición ${posicion.toFixed(0)} %</span>`;
 			fila.onclick = () => seleccionar(id);
 			cont.appendChild(fila);
 		}
 		if (r.funcionando.length === 0 && cont.children.length === 0) cont.innerHTML = '<div class="nada-sim">Nada está funcionando todavía.</div>';
 		for (const f of r.funcionando) {
+			if (estadosVariador.has(f.dispositivoId) || cargasConPosicion.has(f.dispositivoId)) continue;
 			const fila = document.createElement('div');
 			fila.className = 'fila-sim';
 			fila.innerHTML = `<span class="punto-sim"></span><span class="des-sim">${escaparHtml(f.designacion)}</span>`
@@ -504,57 +722,54 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	function accionarEnSimulacion(dispositivoId: string): boolean {
 		const d = proyecto().dispositivos.find((x) => x.id === dispositivoId);
 		if (!d) return false;
-		const st = { ...(estadoSim[d.id] ?? {}) };
-		switch (d.tipo) {
-			case 'sensor':
-				// Una SONDA no se acciona: se mueve. Cambiarle un `activo` que nadie mira daría la
-				// impresión de que el clic no hace nada; el mando de verdad está en el panel.
-				if (d.rangoSonda) {
-					const mando = document.querySelector<HTMLInputElement>(`#sim-sondas [data-sonda="${d.id}"]`);
-					mando?.focus();
-					const u = d.unidadSonda ? ` ${d.unidadSonda}` : '';
-					avisar(`${d.designacion ?? d.id} es una sonda: muévela con su mando del panel `
-						+ `(ahora marca ${estadoSim[d.id]?.valor ?? '—'}${u}).`, 'info');
-					return true;
-				}
-				st.activo = !st.activo;
-				avisar(`${d.designacion ?? d.id}: ${st.activo ? 'accionado' : 'en reposo'}`, 'info');
-				break;
-			case 'pulsador':
-			case 'selector':
-				st.activo = !st.activo;
-				avisar(`${d.designacion ?? d.id}: ${st.activo ? 'accionado' : 'en reposo'}`, 'info');
-				break;
-			default:
-				/*
-				 * Protecciones y térmicos, leyendo LAS MISMAS tablas que `esMando`. Antes esto era
-				 * una lista de `case` escrita aparte, y de ahí sale el fallo clásico: se añade un
-				 * tipo de aparato en un sitio y no en el otro, y queda un botón que no hace nada (o
-				 * un aparato que no se puede accionar y nadie sabe por qué).
-				 */
-				if (PROTECCIONES.has(d.tipo)) {
-					// Si había disparado, el clic lo rearma; si estaba cerrado, lo abre.
-					if (st.disparado) { st.disparado = false; st.cerrado = true; }
-					else st.cerrado = st.cerrado === false;
-					avisar(`${d.designacion ?? d.id}: ${st.cerrado === false ? 'abierto' : 'cerrado'}`, 'info');
-					break;
-				}
-				// Un térmico se dispara a mano para comprobar que el mando cae como debe.
-				if (esTermico(d)) {
-					st.disparado = !st.disparado;
-					avisar(`${d.designacion ?? d.id}: ${st.disparado ? 'DISPARADO' : 'rearmado'}`,
-						st.disparado ? 'error' : 'ok');
-					break;
-				}
-				return false;
+		const control = controlDeSimulacion(d);
+		if (control?.clase === 'sensor' && control.analogico) {
+			const mando = document.querySelector<HTMLInputElement>(`#sim-sondas [data-sonda="${d.id}"]`);
+			mando?.focus();
+			const u = d.unidadSonda ? ` ${d.unidadSonda}` : '';
+			avisar(`${d.designacion ?? d.id} es una sonda: muévela con su mando del panel `
+				+ `(ahora marca ${estadoSim[d.id]?.valor ?? '—'}${u}).`, 'info');
+			return true;
 		}
-		estadoSim[d.id] = st;
-		recalcularSimulacion();
+		const operado = operarControl(d, estadoSim[d.id] ?? {}, 'accionar');
+		if (!operado.atendido) return false;
+		if (operado.cambio) {
+			estadoSim[d.id] = operado.estado;
+			recalcularSimulacion();
+		}
+		const visible = estadoDelMando(d, operado.estado);
+		if (control?.clase === 'proteccion' && operado.estado.disparado && !control.rearmable) {
+			avisar(`${d.designacion ?? d.id}: fusible FUNDIDO; requiere sustitución.`, 'error');
+		} else {
+			avisar(`${d.designacion ?? d.id}: ${visible.texto}`,
+				operado.estado.disparado ? 'error' : 'info');
+		}
 		return true;
+	}
+
+	function operarMomento(dispositivoId: string, operacion: 'presionar' | 'soltar'): boolean {
+		const d = proyecto().dispositivos.find((x) => x.id === dispositivoId);
+		if (!d) return false;
+		const operado = operarControl(d, estadoSim[d.id] ?? {}, operacion);
+		if (!operado.atendido) return false;
+		if (operado.cambio) {
+			estadoSim[d.id] = operado.estado;
+			recalcularSimulacion();
+		}
+		return true;
+	}
+
+	function presionarEnSimulacion(dispositivoId: string): boolean {
+		return operarMomento(dispositivoId, 'presionar');
+	}
+
+	function soltarEnSimulacion(dispositivoId: string): boolean {
+		return operarMomento(dispositivoId, 'soltar');
 	}
 
 	function aplicarEnergizado(activo: boolean): void {
 		energizado = activo;
+		if (!activo) limpiarGestos();
 		document.body.classList.toggle('modo-simulacion', activo);
 		$('btn-energizar').classList.toggle('activo', activo);
 		($('seccion-simulacion') as HTMLElement).hidden = !activo;
@@ -583,6 +798,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	 * hacer cuando el tablero se cambia entero.
 	 */
 	function volverAReposo(): void {
+		limpiarGestos();
 		estadoSim = {};
 		activosPrevios = new Set();
 		ultimaSim = undefined;
@@ -607,9 +823,11 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		alternar: () => aplicarEnergizado(!energizado),
 		recalcular: recalcularSimulacion,
 		accionar: accionarEnSimulacion,
+		presionar: presionarEnSimulacion,
+		soltar: soltarEnSimulacion,
 		puedeAccionar: (id: string) => {
 			const d = proyecto().dispositivos.find((x) => x.id === id);
-			return !!d && esMando(d);
+			return !!d && controlDeSimulacion(d) !== undefined;
 		},
 		resultado: () => ultimaSim,
 		estadoDeLosMandos: () => estadoSim,

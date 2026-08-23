@@ -20,14 +20,15 @@
  *   sonda o boya        su testigo se enciende al accionarla
  *
  * Las piezas vienen marcadas desde donde se construye el aparato (`userData.pieza`), así que este
- * módulo no sabe de geometría: busca piezas por nombre y las mueve. Un aparato al que nadie le
- * marcó piezas simplemente no se anima, sin romperse.
+ * módulo no sabe de geometría: busca piezas por nombre y las mueve. Si una imagen personalizada
+ * no declara piezas, su material recibe únicamente un realce reversible derivado del resultado.
  *
  * EL ÍNDICE SE CALCULA UNA VEZ POR APARATO, no en cada fotograma: recorrer el árbol entero de la
  * escena sesenta veces por segundo era lo que había que evitar, y con treinta aparatos se nota.
  */
 import * as THREE from 'three';
 
+import { resolverComportamiento } from '../src/modelo/comportamiento.js';
 import { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { EstadoTablero, ResultadoSimulacion } from '../src/motores/simulacion.js';
 
@@ -42,6 +43,8 @@ interface Piezas {
 	vastago: THREE.Mesh[];
 	pantalla: THREE.Mesh[];
 	led: THREE.Mesh[];
+	/** Materiales del marco/cuerpo disponibles para un estado genérico de una imagen importada. */
+	generico: THREE.Mesh[];
 	/** El resplandor de un piloto encendido: un disco aditivo, no una luz. */
 	halo: THREE.Mesh[];
 	/** Posición de reposo de cada pieza, para poder devolverla al desenergizar. */
@@ -50,7 +53,7 @@ interface Piezas {
 
 const VACIO = (): Piezas => ({
 	armadura: [], palanca: [], mirilla: [], lente: [], boton: [], eje: [], vastago: [],
-	pantalla: [], led: [], halo: [],
+	pantalla: [], led: [], generico: [], halo: [],
 	reposo: new Map(),
 });
 
@@ -112,7 +115,12 @@ function piezasDe(grupo: THREE.Object3D): Piezas {
 	const p = VACIO();
 	grupo.traverse((o) => {
 		const nombre = o.userData.pieza as keyof Piezas | undefined;
-		if (!nombre || !(o instanceof THREE.Mesh)) return;
+		if (!(o instanceof THREE.Mesh)) return;
+		if (!nombre) {
+			const materiales = Array.isArray(o.material) ? o.material : [o.material];
+			if (materiales.some((m) => m instanceof THREE.MeshStandardMaterial)) p.generico.push(o);
+			return;
+		}
 		const lista = p[nombre];
 		if (!Array.isArray(lista)) return;
 		lista.push(o);
@@ -120,6 +128,43 @@ function piezasDe(grupo: THREE.Object3D): Piezas {
 	});
 	grupo.userData.piezasSim = p;
 	return p;
+}
+
+interface ReposoMaterialSim {
+	emissive: number;
+	emissiveIntensity: number;
+}
+
+/**
+ * Realce sobrio para una imagen personalizada sin piezas móviles. No crea geometría, no clona
+ * materiales y no guarda un segundo estado: cada fotograma recibe el estado derivado del motor.
+ */
+function realzarGenerico(
+	piezas: Piezas,
+	estado: { activo: boolean; color: number; intensidad: number },
+): void {
+	for (const malla of piezas.generico) {
+		const materiales = Array.isArray(malla.material) ? malla.material : [malla.material];
+		for (const material of materiales) {
+			if (!(material instanceof THREE.MeshStandardMaterial)) continue;
+			let reposo = material.userData.reposoSim as ReposoMaterialSim | undefined;
+			if (!reposo) {
+				reposo = {
+					emissive: material.emissive.getHex(),
+					emissiveIntensity: material.emissiveIntensity,
+				};
+				material.userData.reposoSim = reposo;
+			}
+			material.emissive.setHex(estado.activo ? estado.color : reposo.emissive);
+			material.emissiveIntensity = estado.activo ? estado.intensidad : reposo.emissiveIntensity;
+		}
+	}
+}
+
+function tienePiezaFuncional(p: Piezas): boolean {
+	return p.armadura.length + p.palanca.length + p.mirilla.length + p.lente.length
+		+ p.boton.length + p.eje.length + p.vastago.length + p.pantalla.length
+		+ p.led.length + p.halo.length > 0;
 }
 
 export interface EntradaAnimacion {
@@ -156,6 +201,12 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 	const porId = new Map<string, Dispositivo>();
 	for (const d of e.proyecto.dispositivos) porId.set(d.id, d);
 	const activos = e.energizado ? e.resultado?.activos : undefined;
+	const controladoresPorId = new Map(
+		(e.energizado ? e.resultado?.controladores ?? [] : []).map((c) => [c.dispositivoId, c]),
+	);
+	const variadoresPorId = new Map(
+		(e.energizado ? e.resultado?.variadores ?? [] : []).map((v) => [v.dispositivoId, v]),
+	);
 
 	/*
 	 * --- LOS CABLES RESPIRAN, Y BRILLAN SEGÚN LO QUE LLEVAN ---
@@ -206,17 +257,22 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		if (!d) continue;
 		const p = piezasDe(grupo);
 		const st = e.estado[id] ?? {};
+		const perfil = resolverComportamiento(d);
 		const enMarcha = !!activos?.has(id);
+		const posicionCarga = e.energizado ? e.resultado?.posicionesCargas.get(id) : undefined;
+		const variador = variadoresPorId.get(id);
 
 		/* --- Contactor y relé: la armadura entra cuando la bobina tira --- */
 		for (const m of p.armadura) {
 			const base = p.reposo.get(m);
-			if (base) m.position.z = base.z - (enMarcha ? 2.2 : 0);
+			if (base) m.position.z = base.z
+				- (perfil?.clase === 'contactos-electromagneticos' && enMarcha ? 2.2 : 0);
 		}
 
 		/* --- Protecciones: palanca y mirilla --- */
-		const abierto = st.cerrado === false;
-		const disparado = !!st.disparado;
+		const esCorte = perfil?.clase === 'proteccion';
+		const abierto = esCorte && st.cerrado === false;
+		const disparado = esCorte && !!st.disparado;
 		for (const m of p.palanca) {
 			const base = p.reposo.get(m);
 			// Abierta baja del todo; disparada se queda a medias, que es como avisa de que ha saltado.
@@ -231,7 +287,9 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 
 		/* --- Pilotos, lámparas y testigos: se encienden con su propio color --- */
 		// Una sonda o boya se enciende cuando está ACCIONADA, aunque no consuma nada.
-		const encendida = enMarcha || (d.tipo === 'sensor' && !!st.activo);
+		const sensorActivo = e.energizado && perfil?.clase === 'sensor' && !!st.activo;
+		const encendida = (perfil?.clase === 'carga' && perfil.efecto === 'luz' && enMarcha)
+			|| sensorActivo;
 		for (const m of p.lente) {
 			const propio = (m.userData.colorPropio as number | undefined) ?? 0xffd54f;
 			const mat = m.material as THREE.MeshStandardMaterial;
@@ -273,31 +331,33 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		}
 
 		/* --- Pulsadores: la cabeza se hunde mientras está apretada --- */
+		const pulsado = e.energizado && perfil?.clase === 'mando'
+			&& perfil.modo === 'momentaneo' && !!st.activo;
 		for (const m of p.boton) {
 			const base = p.reposo.get(m);
-			if (base) m.position.z = base.z - (st.activo ? 3.2 : 0);
+			if (base) m.position.z = base.z - (pulsado ? 3.2 : 0);
 		}
 
 		/*
 		 * --- MOTORES: el eje gira, y a la velocidad que le toca ---
 		 *
-		 * Antes giraba siempre a la misma velocidad aunque el comentario prometiera «más deprisa
-		 * cuanta más tensión»: el comentario decía una cosa y el código hacía otra. Ahora sale de
-		 * la simulación de verdad —de la tensión a la que está trabajando— así que un motor a 380 V
-		 * se ve girar más vivo que uno a 220, y uno de 24 V apenas. No es un dato de catálogo: es
-		 * lo que el propio circuito le está dando.
+		 * El RESULTADO decide si gira; la tensión nominal solo da una escala visual moderada a la
+		 * velocidad porque el motor todavía no calcula RPM ni deslizamiento. No se conserva un estado
+		 * de animación alternativo que pueda seguir girando después de que el circuito se detenga.
 		 */
-		if (p.eje.length && enMarcha) {
+		if (p.eje.length && perfil?.clase === 'carga' && perfil.efecto === 'giro' && enMarcha) {
 			const tension = d.tensionNominal ?? 220;
 			// 220 V como referencia: ~9 rad/s. Se acota para que ni se pare ni maree.
 			const vueltas = Math.min(16, Math.max(4, 9 * Math.sqrt(tension / 220)));
 			for (const m of p.eje) m.rotation.x += vueltas * e.dt;
 		}
 
-		/* --- Válvulas: el vástago sale al abrir --- */
+		/* --- Válvulas: el vástago sigue la posición 0..100 que calculó el motor --- */
+		const apertura = perfil?.clase === 'carga' && perfil.efecto === 'movimiento'
+			? (posicionCarga ?? (enMarcha ? 100 : 0)) : 0;
 		for (const m of p.vastago) {
 			const base = p.reposo.get(m);
-			if (base) m.position.y = base.y + (enMarcha ? 6 : 0);
+			if (base) m.position.y = base.y + 6 * Math.max(0, Math.min(100, apertura)) / 100;
 		}
 
 		/*
@@ -310,16 +370,17 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		 * «Tener tensión» se toma de la simulación: o está haciendo algo, o el motor de lógica lo
 		 * reconoce como controlador en marcha. Con el tablero sin energizar, todo apagado.
 		 */
-		const ctrl = e.energizado
-			? e.resultado?.controladores.find((c) => c.dispositivoId === id)
-			: undefined;
-		const conTension = enMarcha || !!ctrl;
+		const ctrl = controladoresPorId.get(id);
+		const fuenteConSalida = e.energizado && perfil?.clase === 'fuente'
+			&& perfil.salidas.some((s) => e.resultado?.vivos.has(`${id}::${s.borne}`));
+		const conTension = enMarcha || !!ctrl || !!variador?.alimentado || !!fuenteConSalida;
 		for (const m of p.pantalla) {
 			const propio = (m.userData.colorPropio as number | undefined) ?? 0x39e08a;
 			const mat = m.material as THREE.MeshStandardMaterial;
-			mat.emissive.setHex(propio);
+			mat.emissive.setHex(variador?.estado === 'falla' ? 0xd32f2f : propio);
 			// Un parpadeo lentísimo, como el refresco de un display: vivo sin llamar la atención.
-			mat.emissiveIntensity = conTension ? 0.75 + 0.06 * Math.sin(reloj * 2.2) : 0;
+			mat.emissiveIntensity = conTension
+				? (variador?.estado === 'marcha' ? 1 : 0.75) + 0.06 * Math.sin(reloj * 2.2) : 0;
 		}
 		/*
 		 * Los LEDs del autómata dicen lo que dice el programa: el primero es el de tensión y los
@@ -330,9 +391,38 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 			const propio = (m.userData.colorPropio as number | undefined) ?? 0x21d07a;
 			const i = (m.userData.indiceLed as number | undefined) ?? 0;
 			const mat = m.material as THREE.MeshStandardMaterial;
-			const encendido = i === 0 ? conTension : conTension && (ctrl?.salidas.length ?? 0) >= i;
+			const encendido = variador
+				? i === 0 ? variador.alimentado : i === 1 ? variador.estado === 'marcha'
+					: i === 2 ? variador.estado === 'falla' : false
+				: i === 0 ? conTension : conTension && (ctrl?.salidas.length ?? 0) >= i;
 			mat.emissive.setHex(propio);
 			mat.emissiveIntensity = encendido ? 1 : 0;
+		}
+
+		/*
+		 * Una imagen personalizada es plana y no declara `pieza`. Se realza su marco sin teñir la
+		 * fotografía: verde/azul cuando su resultado está activo, rojo ante fallo, ámbar al accionar
+		 * un sensor o mando. El dato sale del perfil + ResultadoSimulacion/EstadoTablero canónico;
+		 * nunca se conserva un booleano visual paralelo.
+		 */
+		if (d.imagen && !tienePiezaFuncional(p)) {
+			const perfilEjecutable = perfil?.clase === 'sin-comportamiento' ? undefined : perfil;
+			const posicionActiva = (posicionCarga ?? 0) > 0;
+			const entradaActiva = e.energizado && (perfilEjecutable?.clase === 'sensor'
+				|| perfilEjecutable?.clase === 'mando') && (!!st.activo
+					|| (perfilEjecutable.clase === 'mando' && st.posicion !== undefined
+						&& st.posicion !== perfilEjecutable.reposo));
+			const fallo = variador?.estado === 'falla'
+				|| (perfilEjecutable?.clase === 'proteccion' && !!st.disparado);
+			const activoGenerico = !!perfilEjecutable && e.energizado
+				&& (enMarcha || posicionActiva || entradaActiva
+				|| variador?.estado === 'listo' || variador?.estado === 'marcha' || fallo);
+			realzarGenerico(p, {
+				activo: activoGenerico,
+				color: fallo ? 0xd32f2f : entradaActiva ? 0xf59e0b
+					: variador?.estado === 'listo' ? 0x38bdf8 : 0x22c55e,
+				intensidad: fallo ? 0.75 : enMarcha || posicionActiva || variador?.estado === 'marcha' ? 0.42 : 0.25,
+			});
 		}
 	}
 }
