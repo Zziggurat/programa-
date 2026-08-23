@@ -143,18 +143,35 @@ await abrirEjemplo(2);
  * se siguen comprobando TODOS los puntos de TODOS los cables, solo se evita pagar 170 veces el
  * protocolo remoto entre ambos procesos.
  */
-const muestras = await page.evaluate((zona) => {
+const cobertura = await page.evaluate((zona) => {
 	const dentro = (p) => p && p.x > zona.x0 && p.x < zona.x1 && p.y > zona.y0 && p.y < zona.y1;
-	return window.qa.rutas().flatMap((ruta) => window.qa.puntosVisiblesDeCable(ruta.id, 7)
-		.filter(dentro)
-		.map((punto) => ({ id: ruta.id, elegido: window.qa.cableEnPixel(punto.x, punto.y) })));
+	return window.qa.rutas().map((ruta) => {
+		let puntos = window.qa.puntosVisiblesDeCable(ruta.id, 7).filter(dentro);
+		/*
+		 * Siete muestras mantienen barata la pasada normal. Si no encuentran ninguna, se agota el
+		 * recorrido con 21 antes de declarar el cable inaccesible. La condición es general: `w18`
+		 * fue quien reveló el hueco, pero cualquier conductor completamente oculto debe poner rojo.
+		 */
+		if (puntos.length === 0) puntos = window.qa.puntosVisiblesDeCable(ruta.id, 21).filter(dentro);
+		return {
+			id: ruta.id,
+			muestras: puntos.map((punto) => ({
+				id: ruta.id, elegido: window.qa.cableEnPixel(punto.x, punto.y),
+			})),
+		};
+	});
 }, LIBRE);
+const sinMuestra = cobertura.filter((c) => c.muestras.length === 0).map((c) => c.id);
+const muestras = cobertura.flatMap((c) => c.muestras);
 const probados = muestras.length;
 const aciertos = muestras.filter((m) => m.elegido === m.id).length;
 const errados = muestras.filter((m) => m.elegido !== m.id)
 	.map((m) => `${m.id} → ${m.elegido ?? 'nada'}`);
 info(`${aciertos}/${probados} clics cayeron en el cable señalado`);
 if (errados.length) info('errados: ' + errados.slice(0, 6).join(', '));
+if (sinMuestra.length) info('sin punto frontal propio: ' + sinMuestra.slice(0, 10).join(', '));
+must('cada cable tiene al menos un punto frontal comprobable', sinMuestra.length === 0,
+	`${cobertura.length - sinMuestra.length}/${cobertura.length}`);
 must('apuntar a un cable selecciona ESE cable', aciertos === probados, `${aciertos}/${probados}`);
 
 /* ---- Y el clic de verdad (ratón real) también, incluso con la cámara girada ---- */
