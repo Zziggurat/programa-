@@ -216,5 +216,7 @@ const porMillon = Math.round((diferencia.distintos / diferencia.total) * 1e6);
 ok(porMillon < 400, `la imagen es la misma tras recargar (${porMillon} píxeles distintos por millón, peor salto ${diferencia.peor})`);
 
 console.log(errores.length ? `ERRORES JS: ${errores.join(' | ')}` : 'sin errores de JavaScript');
+if (errores.length) fallos.push('errores de JavaScript');
 console.log(fallos.length ? `\n${fallos.length} FALLOS` : '\nTODO PASA');
 await b.close(); sv.close();
+process.exit(fallos.length ? 1 : 0);

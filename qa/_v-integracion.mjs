@@ -299,4 +299,4 @@ if (errores.length) fallos.push('errores de JavaScript');
 console.log(fallos.length ? `\n${fallos.length} FALLOS` : '\nTODO PASA');
 await b.close();
 sv.close();
-process.exit(0);
+process.exit(fallos.length ? 1 : 0);

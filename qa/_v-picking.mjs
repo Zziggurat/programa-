@@ -130,5 +130,7 @@ await lamina(p, [['puntería', await p.evaluate(() => {
 })]], { columnas: 1, celda: 900, archivo: 'v-picking.png' });
 
 console.log(errores.length ? `ERRORES JS: ${errores.join(' | ')}` : 'sin errores de JavaScript');
+if (errores.length) fallos.push('errores de JavaScript');
 console.log(fallos.length ? `\n${fallos.length} FALLOS` : '\nTODO PASA');
 await b.close(); sv.close();
+process.exit(fallos.length ? 1 : 0);

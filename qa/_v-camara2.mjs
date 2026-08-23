@@ -322,4 +322,4 @@ const donde = () => p.evaluate((i) => {
 console.log(errores.length ? `ERRORES JS: ${errores.join(' | ')}` : 'sin errores de JavaScript');
 if (errores.length) fallos.push('errores de JavaScript');
 console.log(fallos.length ? `\n${fallos.length} FALLOS` : '\nTODO PASA');
-await b.close(); sv.close(); process.exit(0);
+await b.close(); sv.close(); process.exit(fallos.length ? 1 : 0);
