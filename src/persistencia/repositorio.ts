@@ -3,9 +3,15 @@ import type { Proyecto } from '../modelo/tipos.js';
 import {
 	FORMATO_COMPONENTE_PERSONALIZADO,
 	VERSION_COMPONENTE_PERSONALIZADO,
+	crearPaqueteProyecto,
+	leerPaqueteProyecto,
 	validarDefinicionComponente,
 } from '../componentes/personalizados.js';
-import type { DefinicionComponentePersonalizado } from '../componentes/personalizados.js';
+import type {
+	AssetPortatil,
+	DefinicionComponentePersonalizado,
+	PaqueteProyectoPortatil,
+} from '../componentes/personalizados.js';
 import type {
 	AssetPersistido,
 	BackendPersistencia,
@@ -111,6 +117,48 @@ function construirComponente(
 		creadoEn,
 		modificadoEn,
 	});
+}
+
+/** Base64 portable: funciona igual en navegador y Node moderno, sin acoplar el núcleo a Buffer. */
+function bytesABase64(bytes: Uint8Array): string {
+	let binario = '';
+	const BLOQUE = 0x8000;
+	for (let i = 0; i < bytes.length; i += BLOQUE) {
+		binario += String.fromCharCode(...bytes.subarray(i, i + BLOQUE));
+	}
+	return globalThis.btoa(binario);
+}
+
+function base64ABytes(base64: string): Uint8Array {
+	let binario: string;
+	try {
+		binario = globalThis.atob(base64);
+	} catch (error) {
+		throw new ProyectoPersistenciaInvalido('El paquete contiene un asset base64 corrupto.', error);
+	}
+	const bytes = new Uint8Array(binario.length);
+	for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+	return bytes;
+}
+
+function bytesIguales(a: Uint8Array, b: Uint8Array): boolean {
+	return a.byteLength === b.byteLength && a.every((byte, i) => byte === b[i]);
+}
+
+/** Igualdad de contenido independiente del orden de claves JSON; las listas sí conservan orden. */
+function contenidoIgual(a: unknown, b: unknown): boolean {
+	if (Object.is(a, b)) return true;
+	if (Array.isArray(a) || Array.isArray(b)) {
+		return Array.isArray(a) && Array.isArray(b) && a.length === b.length
+			&& a.every((valor, i) => contenidoIgual(valor, b[i]));
+	}
+	if (typeof a !== 'object' || a === null || typeof b !== 'object' || b === null) return false;
+	// JSON no distingue una propiedad ausente de otra con `undefined`; el paquete tampoco debe.
+	const clavesA = Object.keys(a).filter((clave) => (a as Record<string, unknown>)[clave] !== undefined).sort();
+	const clavesB = Object.keys(b).filter((clave) => (b as Record<string, unknown>)[clave] !== undefined).sort();
+	return clavesA.length === clavesB.length && clavesA.every((clave, i) =>
+		clave === clavesB[i]
+		&& contenidoIgual((a as Record<string, unknown>)[clave], (b as Record<string, unknown>)[clave]));
 }
 
 function resumen(documento: DocumentoProyecto): ResumenProyecto {
@@ -507,6 +555,149 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 			this.comprobarRevisionComponente(definicion, revisionEsperada);
 			await tx.eliminar('customComponents', id);
 		});
+	}
+
+	async exportarPaquete(projectId: string): Promise<PaqueteProyectoPortatil> {
+		const recogido = await this.backend.transaccion(
+			['projects', 'assets', 'customComponents'],
+			'readonly',
+			async (tx) => {
+				const documento = await this.documento(tx, projectId);
+				const idsDefiniciones = new Set(
+					documento.proyecto.dispositivos
+						.map((d) => d.componentePersonalizado?.definicionId)
+						.filter((id): id is string => typeof id === 'string' && id.length > 0),
+				);
+				const componentes: DefinicionComponentePersonalizado[] = [];
+				for (const id of [...idsDefiniciones].sort()) {
+					const disponible = await tx.obtener<DefinicionComponentePersonalizado>('customComponents', id);
+					if (disponible) componentes.push(validarComponente(disponible));
+				}
+				const idsAssets = new Set<string>();
+				for (const dispositivo of documento.proyecto.dispositivos) {
+					if (dispositivo.assetId) idsAssets.add(dispositivo.assetId);
+				}
+				for (const componente of componentes) idsAssets.add(componente.assetId);
+				const assets: AssetPersistido[] = [];
+				for (const id of [...idsAssets].sort()) {
+					const asset = await tx.obtener<AssetPersistido>('assets', id);
+					if (!asset) throw new ProyectoPersistenciaInvalido(`Falta el asset ${id} requerido por el paquete.`);
+					assets.push(asset);
+				}
+				return { proyecto: documento.proyecto, componentes, assets };
+			},
+		);
+
+		const assets: AssetPortatil[] = [];
+		for (const asset of recogido.assets) {
+			if (!MIME_ASSET.has(asset.mime)) {
+				throw new ProyectoPersistenciaInvalido(`El asset ${asset.id} tiene un MIME no admitido.`);
+			}
+			const digest = (await this.sha256(asset.bytes)).toLowerCase();
+			if (asset.id !== `sha256:${digest}`) {
+				throw new ProyectoPersistenciaInvalido(`El contenido del asset ${asset.id} no coincide con su SHA-256.`);
+			}
+			assets.push({
+				id: asset.id,
+				mime: asset.mime as AssetPortatil['mime'],
+				base64: bytesABase64(asset.bytes),
+			});
+		}
+		return crearPaqueteProyecto(recogido.proyecto, assets, recogido.componentes);
+	}
+
+	async importarPaquete(
+		paquete: PaqueteProyectoPortatil,
+		nuevoNombre?: string,
+	): Promise<DocumentoProyecto> {
+		let validado: PaqueteProyectoPortatil;
+		try {
+			// El mismo codec gobierna archivos leídos y objetos entregados por otras capas.
+			validado = leerPaqueteProyecto(JSON.stringify(paquete));
+		} catch (error) {
+			throw new ProyectoPersistenciaInvalido('El paquete portable no es válido.', error);
+		}
+
+		// Decodificar y verificar hashes ANTES de abrir la transacción IndexedDB.
+		const assets: AssetPersistido[] = [];
+		for (const asset of validado.assets) {
+			const bytes = base64ABytes(asset.base64);
+			const digest = (await this.sha256(bytes)).toLowerCase();
+			if (asset.id !== `sha256:${digest}`) {
+				throw new ProyectoPersistenciaInvalido(
+					`El asset ${asset.id} no coincide con su contenido SHA-256.`,
+				);
+			}
+			assets.push({
+				id: asset.id,
+				mime: asset.mime,
+				tamano: bytes.byteLength,
+				creadoEn: this.ahora(),
+				bytes,
+			});
+		}
+		const componentes = validado.componentes.map(validarComponente);
+		const nombre = nombreValido(nuevoNombre ?? validado.proyecto.nombre);
+		const proyecto = validarProyecto({ ...validado.proyecto, nombre }).proyecto;
+		const id = this.crearId();
+		const snapshotId = this.crearId();
+		const ahora = this.ahora();
+		const documento: DocumentoProyecto = {
+			id,
+			nombre,
+			creadoEn: ahora,
+			modificadoEn: ahora,
+			ultimoAcceso: ahora,
+			revision: 1,
+			estado: 'normal',
+			proyecto,
+		};
+		const snapshot: SnapshotProyecto = {
+			id: snapshotId,
+			projectId: id,
+			creadoEn: ahora,
+			motivo: 'importacion-paquete',
+			revisionOrigen: 1,
+			proyecto: clonar(proyecto),
+		};
+
+		return this.backend.transaccion(
+			['projects', 'assets', 'customComponents', 'snapshots'],
+			'readwrite',
+			async (tx) => {
+				if (await tx.obtener('projects', id)) {
+					throw new ProyectoPersistenciaInvalido(`Ya existe un proyecto con la identidad ${id}.`);
+				}
+				if (await tx.obtener('snapshots', snapshotId)) {
+					throw new ProyectoPersistenciaInvalido(`Ya existe un snapshot con la identidad ${snapshotId}.`);
+				}
+				for (const asset of assets) {
+					const existente = await tx.obtener<AssetPersistido>('assets', asset.id);
+					if (existente) {
+						if (existente.mime !== asset.mime || !bytesIguales(existente.bytes, asset.bytes)) {
+							throw new ProyectoPersistenciaInvalido(
+								`Colisión del asset ${asset.id}: la identidad existe con otro contenido.`,
+							);
+						}
+					} else await tx.guardar('assets', asset.id, asset);
+				}
+				for (const componente of componentes) {
+					const existente = await tx.obtener<DefinicionComponentePersonalizado>(
+						'customComponents', componente.id,
+					);
+					if (existente) {
+						if (!contenidoIgual(existente, componente)) {
+							throw new ProyectoPersistenciaInvalido(
+								`Colisión del componente ${componente.id}: la identidad existe con otra definición.`,
+							);
+						}
+					} else await tx.guardar('customComponents', componente.id, componente);
+				}
+				await tx.guardar('projects', id, documento);
+				await tx.guardar('snapshots', snapshotId, snapshot);
+				return clonar(documento);
+			},
+		);
 	}
 
 	async listarRecuperaciones(): Promise<RecuperacionLegacy[]> {

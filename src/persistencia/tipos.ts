@@ -1,5 +1,8 @@
 import type { Proyecto } from '../modelo/tipos.js';
-import type { DefinicionComponentePersonalizado } from '../componentes/personalizados.js';
+import type {
+	DefinicionComponentePersonalizado,
+	PaqueteProyectoPortatil,
+} from '../componentes/personalizados.js';
 
 export const ALMACENES_PERSISTENCIA = [
 	'projects',
@@ -44,7 +47,7 @@ export interface DocumentoProyecto {
 
 export type ResumenProyecto = Omit<DocumentoProyecto, 'proyecto'>;
 
-export type MotivoSnapshot = 'manual' | 'antes-de-restaurar' | 'migracion-legacy';
+export type MotivoSnapshot = 'manual' | 'antes-de-restaurar' | 'migracion-legacy' | 'importacion-paquete';
 
 export interface SnapshotProyecto {
 	id: string;
@@ -157,6 +160,8 @@ export interface RepositorioProyectos {
 	): Promise<DefinicionComponentePersonalizado>;
 	duplicarComponente(id: string, nombre?: string): Promise<DefinicionComponentePersonalizado>;
 	eliminarComponente(id: string, revisionEsperada: number): Promise<void>;
+	exportarPaquete(projectId: string): Promise<PaqueteProyectoPortatil>;
+	importarPaquete(paquete: PaqueteProyectoPortatil, nombre?: string): Promise<DocumentoProyecto>;
 	listarRecuperaciones(): Promise<RecuperacionLegacy[]>;
 	migrarAutosaveLegacy(raw: string | null | undefined): Promise<ResultadoMigracionLegacy>;
 }

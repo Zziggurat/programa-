@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
+import {
+	crearPaqueteProyecto,
+} from '../src/componentes/personalizados.js';
+import type { PaqueteProyectoPortatil } from '../src/componentes/personalizados.js';
 import type { ContenidoComponentePersonalizado } from '../src/persistencia/index.js';
 import {
 	ALMACENES_PERSISTENCIA,
@@ -52,6 +56,23 @@ function entorno(maxSnapshotsPorProyecto = 20) {
 		reloj: () => new Date(`2026-01-01T00:00:${String(secuencia).padStart(2, '0')}.000Z`),
 	});
 	return { backend, repositorio };
+}
+
+async function paquetePortable(): Promise<PaqueteProyectoPortatil> {
+	const { repositorio } = entorno();
+	const asset = await repositorio.guardarAsset('image/png', new Uint8Array([21, 22, 23, 24, 25]));
+	const definicion = await repositorio.crearComponente({
+		id: 'cmp-portable',
+		definicion: contenidoComponente(asset.id, 'Componente portable'),
+	});
+	const proyecto = proyectoValido('Proyecto portable');
+	proyecto.dispositivos[0].assetId = asset.id;
+	proyecto.dispositivos[0].componentePersonalizado = {
+		definicionId: definicion.id,
+		revision: definicion.revision,
+	};
+	const documento = await repositorio.crear({ proyecto });
+	return repositorio.exportarPaquete(documento.id);
 }
 
 test('el esquema lógico contiene los seis almacenes permanentes', () => {
@@ -337,4 +358,99 @@ test('una definición custom inválida o sin asset nunca entra a la biblioteca',
 		ComponentePersonalizadoInvalido,
 	);
 	assert.equal(await backend.contar('customComponents'), 0);
+});
+
+test('export/import portable hace roundtrip autosuficiente y acepta contenido idéntico existente', async () => {
+	const paquete = await paquetePortable();
+	assert.equal(paquete.assets.length, 1);
+	assert.equal(paquete.componentes.length, 1);
+	assert.equal(paquete.proyecto.dispositivos[0].assetId, paquete.assets[0].id);
+	assert.ok(!JSON.stringify(paquete).includes('Buffer'));
+
+	const { backend, repositorio } = entorno();
+	const primero = await repositorio.importarPaquete(paquete, 'Copia recibida');
+	assert.equal(primero.nombre, 'Copia recibida');
+	assert.equal((await repositorio.abrirAsset(paquete.assets[0].id))!.tamano, 5);
+	assert.deepEqual(await repositorio.abrirComponente('cmp-portable'), paquete.componentes[0]);
+	assert.equal((await repositorio.listarSnapshots(primero.id))[0].motivo, 'importacion-paquete');
+	assert.equal(await repositorio.obtenerProyectoActivo(), undefined, 'importar no activa antes de renderizar');
+
+	const segundo = await repositorio.importarPaquete(paquete);
+	assert.notEqual(segundo.id, primero.id);
+	assert.equal(await backend.contar('projects'), 2);
+	assert.equal(await backend.contar('assets'), 1);
+	assert.equal(await backend.contar('customComponents'), 1);
+	assert.equal(await backend.contar('snapshots'), 2);
+});
+
+test('import rechaza paquete incompleto y hash falso antes de abrir una transacción', async () => {
+	const paquete = await paquetePortable();
+	const { backend, repositorio } = entorno();
+	const incompleto = structuredClone(paquete);
+	incompleto.assets = [];
+	await assert.rejects(repositorio.importarPaquete(incompleto), /paquete portable no es válido/i);
+
+	const hashFalso = structuredClone(paquete);
+	hashFalso.assets[0].base64 = 'AQID';
+	await assert.rejects(repositorio.importarPaquete(hashFalso), /SHA-256/i);
+	assert.equal(await backend.contar('projects'), 0);
+	assert.equal(await backend.contar('assets'), 0);
+	assert.equal(await backend.contar('customComponents'), 0);
+	assert.equal(await backend.contar('snapshots'), 0);
+});
+
+test('el codec exige también los assets usados directamente por instancias del proyecto', () => {
+	const proyecto = proyectoValido('Asset de instancia');
+	proyecto.dispositivos[0].assetId = `sha256:${'a'.repeat(64)}`;
+	assert.throws(
+		() => crearPaqueteProyecto(proyecto, [], []),
+		/falta el asset.*usado por el aparato/i,
+	);
+});
+
+test('fallo físico al importar revierte proyecto, asset, componente y snapshot juntos', async () => {
+	const paquete = await paquetePortable();
+	const { backend, repositorio } = entorno();
+	backend.fallarProximaTransaccion(new Error('fallo import simulado'));
+	await assert.rejects(repositorio.importarPaquete(paquete), /fallo import simulado/);
+	for (const almacen of ['projects', 'assets', 'customComponents', 'snapshots'] as const) {
+		assert.equal(await backend.contar(almacen), 0, `${almacen} quedó publicado a medias`);
+	}
+});
+
+test('import rechaza una definición con el mismo ID y distinto contenido sin pisarla', async () => {
+	const paquete = await paquetePortable();
+	const { backend, repositorio } = entorno();
+	const asset = paquete.assets[0];
+	const bytes = Uint8Array.from(globalThis.atob(asset.base64), (caracter) => caracter.charCodeAt(0));
+	await repositorio.guardarAsset(asset.mime, bytes);
+	const conflictivo = await repositorio.crearComponente({
+		id: paquete.componentes[0].id,
+		definicion: contenidoComponente(asset.id, 'Definición local distinta'),
+	});
+
+	await assert.rejects(repositorio.importarPaquete(paquete), /Colisión del componente/);
+	assert.equal((await repositorio.abrirComponente(conflictivo.id)).nombre, 'Definición local distinta');
+	assert.equal(await backend.contar('projects'), 0);
+	assert.equal(await backend.contar('snapshots'), 0);
+});
+
+test('import rechaza un asset con el mismo hash nominal pero bytes almacenados distintos', async () => {
+	const paquete = await paquetePortable();
+	const { backend, repositorio } = entorno();
+	const asset = paquete.assets[0];
+	await backend.transaccion(['assets'], 'readwrite', async (tx) => {
+		await tx.guardar('assets', asset.id, {
+			id: asset.id,
+			mime: asset.mime,
+			tamano: 1,
+			creadoEn: '2026-01-01T00:00:00.000Z',
+			bytes: new Uint8Array([255]),
+		});
+	});
+
+	await assert.rejects(repositorio.importarPaquete(paquete), /Colisión del asset/);
+	assert.equal(await backend.contar('projects'), 0);
+	assert.equal(await backend.contar('customComponents'), 0);
+	assert.equal(await backend.contar('snapshots'), 0);
 });

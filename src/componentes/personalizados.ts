@@ -249,14 +249,22 @@ export function crearPaqueteProyecto(
 	componentes: readonly DefinicionComponentePersonalizado[],
 ): PaqueteProyectoPortatil {
 	// Usa el mismo codec que cualquier archivo entrante; IndexedDB no convierte el proyecto en fiable.
-	const validado = cargarProyecto(JSON.stringify(proyecto)).proyecto;
+	const carga = cargarProyecto(JSON.stringify(proyecto));
+	if (carga.arreglos.length > 0) {
+		throw new Error(`El proyecto del paquete requeriría reparaciones: ${carga.arreglos.join('; ')}`);
+	}
+	const validado = carga.proyecto;
+	const idsComponentes = new Set<string>();
 	for (const componente of componentes) {
 		const errores = validarDefinicionComponente(componente);
 		if (errores.length) throw new Error(`«${componente.nombre}»: ${errores.join('; ')}`);
+		if (idsComponentes.has(componente.id)) throw new Error(`Componente repetido en el paquete: ${componente.id}`);
+		idsComponentes.add(componente.id);
 	}
 	const idsAssets = new Set<string>();
 	for (const asset of assets) {
-		if (!asset.id || !MIME_PORTATIL.has(asset.mime) || !/^[A-Za-z0-9+/]*={0,2}$/.test(asset.base64)) {
+		if (!/^sha256:[a-f\d]{64}$/i.test(asset.id) || !MIME_PORTATIL.has(asset.mime)
+			|| !asset.base64 || !/^[A-Za-z0-9+/]*={0,2}$/.test(asset.base64)) {
 			throw new Error(`Asset portátil inválido: ${asset.id || '(sin id)'}`);
 		}
 		if (idsAssets.has(asset.id)) throw new Error(`Asset repetido en el paquete: ${asset.id}`);
@@ -264,6 +272,11 @@ export function crearPaqueteProyecto(
 	}
 	for (const componente of componentes) {
 		if (!idsAssets.has(componente.assetId)) throw new Error(`Falta el asset ${componente.assetId} de «${componente.nombre}»`);
+	}
+	for (const dispositivo of validado.dispositivos) {
+		if (dispositivo.assetId && !idsAssets.has(dispositivo.assetId)) {
+			throw new Error(`Falta el asset ${dispositivo.assetId} usado por el aparato ${dispositivo.id}`);
+		}
 	}
 	return { formato: 'tablero-studio-paquete', version: 1, proyecto: validado, assets: clonar([...assets]), componentes: clonar([...componentes]) };
 }
