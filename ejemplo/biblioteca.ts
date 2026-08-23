@@ -493,10 +493,13 @@ function estrellaTriangulo(): Proyecto {
 		cable(['q3', '4'], ['hs', 'X1'], 1, 'negro'),
 		cable(['q3', '6'], ['ht', 'X1'], 1, 'gris'),
 		// Los tres X2 van ENCADENADOS hasta el neutro, no los tres a la misma borna: en una borna
-		// caben dos hilos, y encadenar es lo que se hace en el tablero.
+		// caben dos hilos, y encadenar es lo que se hace en el tablero. `red::N` representa aquí el
+		// punto de entrada del neutro en la envolvente; este tramo concreto lo instala el montador y
+		// cruza la bisagra, por eso su alcance físico se declara `puerta` en vez de deducirlo del
+		// aparato eléctrico que hay al otro extremo.
 		cable(['hr', 'X2'], ['hs', 'X2'], 1, 'azul'),
 		cable(['hs', 'X2'], ['ht', 'X2'], 1, 'azul'),
-		cable(['ht', 'X2'], ['red', 'N'], 1, 'azul'),
+		{ ...cable(['ht', 'X2'], ['red', 'N'], 1, 'azul'), clase: 'puerta' },
 		// Los cuatro retornos de bobina se encadenan y vuelven por el contacto del térmico.
 		cable(['km2', 'A2'], ['km3', 'A2'], 1, 'azul'),
 		cable(['km3', 'A2'], ['kt', 'A2'], 1, 'azul'),

@@ -107,6 +107,8 @@ await abrirMontaje();
 		// No se cuenta con los conductores: el mazo de mando sigue teniendo los suyos.
 		const m = await p.evaluate(() => window.qa.mazoPuerta());
 		ok(m.conductores.length === 4, `y no se cuela en el mazo de mando (${m.conductores.length} lazos)`);
+		ok(m.conductores.includes('w56'), 'w56 llega desde el neutro interno como cable de puerta');
+		ok(m.protecciones.length === 0, 'el ejemplo no inventa ningún PE de puerta');
 	}
 }
 

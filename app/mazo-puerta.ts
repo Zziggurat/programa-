@@ -29,7 +29,8 @@
  */
 import * as THREE from 'three';
 
-import { Colocacion, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
+import { Colocacion, Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
+import { claseDeConductor } from '../src/motores/clases-cable.js';
 import { Puerta } from './gabinete3d.js';
 
 /** Separación entre conductores dentro del mazo, en mm. */
@@ -110,6 +111,11 @@ export interface Mazo {
 	flexibles: THREE.Group;
 	cables: CablePuerta[];
 	/**
+	 * Conductores PE que cruzan la bisagra por un recorrido propio. No pertenecen al mazo de
+	 * mando y tampoco son la trenza de bonding de la chapa, que sigue siendo independiente.
+	 */
+	protecciones: CablePuerta[];
+	/**
 	 * LA TRENZA DE MASA DE LA HOJA, si el proyecto la pide. Va aparte de `cables` a propósito: no
 	 * es un conductor del esquema, no se numera, no se energiza y —sobre todo— NO viaja dentro
 	 * del mazo de mando. En un tablero es la única cosa verde-amarilla que cruza la bisagra, y se
@@ -125,6 +131,37 @@ export interface Mazo {
 export function enLaPuerta(proyecto: Proyecto, dispositivoId: string): boolean {
 	return proyecto.gabinete?.colocaciones
 		.some((c) => c.dispositivoId === dispositivoId && c.montaje === 'puerta') ?? false;
+}
+
+/** Clave física estable: no depende del orden del array ni de qué extremo se llamó `de` o `a`. */
+function claveConductor(c: Conductor): string {
+	const extremos = [
+		`${c.de.dispositivoId}::${c.de.borneId}`,
+		`${c.a.dispositivoId}::${c.a.borneId}`,
+	].sort();
+	return `${extremos[0]}|${extremos[1]}|${c.id}`;
+}
+
+/**
+ * Conductores que necesitan geometría sobre la hoja.
+ *
+ * `puerta` viaja en el mazo de mando; `proteccion` cruza por un recorrido PE separado. Campo e
+ * interno quedan fuera aunque tengan un extremo geométricamente en la puerta: la ubicación por
+ * sí sola no puede cambiar quién instala el conductor ni su función eléctrica.
+ */
+export function conductoresFisicosDePuerta(proyecto: Proyecto): {
+	mando: Conductor[]; proteccion: Conductor[];
+} {
+	const enHoja = proyecto.conductores.filter(
+		(c) => enLaPuerta(proyecto, c.de.dispositivoId) || enLaPuerta(proyecto, c.a.dispositivoId),
+	).slice().sort((a, b) => {
+		const ka = claveConductor(a), kb = claveConductor(b);
+		return ka < kb ? -1 : ka > kb ? 1 : 0;
+	});
+	return {
+		mando: enHoja.filter((c) => claseDeConductor(proyecto, c) === 'puerta'),
+		proteccion: enHoja.filter((c) => claseDeConductor(proyecto, c) === 'proteccion'),
+	};
 }
 
 /**
@@ -446,6 +483,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 	const enPuerta = new THREE.Group();
 	const flexibles = new THREE.Group();
 	const cables: CablePuerta[] = [];
+	const protecciones: CablePuerta[] = [];
 	puerta.frente.add(enPuerta);
 
 	const g = proyecto.gabinete;
@@ -453,17 +491,16 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 	// también en los caminos cortos, que es donde se quedaba sin dibujar.
 	const conTrenza = () => {
 		const b = tenderTrenza(o, enPuerta, flexibles);
-		return { enLaPuerta: enPuerta, flexibles, cables, ...(b ? { bonding: b } : {}) };
+		return { enLaPuerta: enPuerta, flexibles, cables, protecciones, ...(b ? { bonding: b } : {}) };
 	};
-	if (!g) return { enLaPuerta: enPuerta, flexibles, cables };
+	if (!g) return { enLaPuerta: enPuerta, flexibles, cables, protecciones };
 
 	// Las matrices tienen que estar al día ANTES de preguntar dónde cae un terminal: si no,
 	// `worldToLocal` trabaja con la posición de la hoja de hace un fotograma.
 	puerta.pivote.updateMatrixWorld(true);
 
-	const conductores = proyecto.conductores.filter(
-		(c) => enLaPuerta(proyecto, c.de.dispositivoId) || enLaPuerta(proyecto, c.a.dispositivoId),
-	);
+	const fisicos = conductoresFisicosDePuerta(proyecto);
+	const conductores = [...fisicos.mando, ...fisicos.proteccion];
 	if (!conductores.length) return conTrenza();
 
 	/*
@@ -507,10 +544,12 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 	 * lo acompaña con su carril —unos milímetros de separación para que se distingan los seis— y
 	 * se separa en horizontal cuando llega a su altura.
 	 */
-	const alturasHoja = destinos.map((d) => o.caja.alto / 2 - d.col.y);
+	const idsMando = new Set(fisicos.mando.map((c) => c.id));
+	const destinosMando = destinos.filter((d) => idsMando.has(d.conductorId));
+	const alturasHoja = destinosMando.map((d) => o.caja.alto / 2 - d.col.y);
 	const yTronco = alturasHoja.length ? Math.max(...alturasHoja) : 0;
 	const yTroncoBajo = alturasHoja.length ? Math.min(...alturasHoja) : 0;
-	const grosorMazo = Math.max(6, destinos.length * 2.6);
+	const grosorMazo = Math.max(6, destinosMando.length * 2.6);
 
 	/*
 	 * LAS SUJECIONES DEL TRONCO. Una en el punto de transferencia —junto a las bisagras, que es
@@ -528,7 +567,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		sj.rotation.y = Math.PI;
 		enPuerta.add(sj);
 	};
-	{
+	if (destinosMando.length) {
 		const alto = Math.max(0, yTronco - yTroncoBajo);
 		const cuantas = Math.max(1, Math.round(alto / pasoSujecion));
 		for (let i = 0; i <= cuantas; i++) amarrar(xEntrada, yTronco - (alto * i) / cuantas, grosorMazo);
@@ -540,7 +579,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		 * haz que va a ese aparato, no cada hilo por separado.
 		 */
 		const porAparato = new Map<string, { y: number; x: number; n: number }>();
-		for (const d of destinos) {
+		for (const d of destinosMando) {
 			const t = terminales.get(`${d.conductorId}|${d.dispositivoId}|${d.borneId}`);
 			if (!t) continue;
 			const antes = porAparato.get(d.dispositivoId);
@@ -557,7 +596,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 	const salida = new THREE.Vector3(0, 0, -1)
 		.applyQuaternion(puerta.frente.getWorldQuaternion(new THREE.Quaternion())).normalize();
 
-	for (const c of conductores) {
+	for (const c of fisicos.mando) {
 		const propio = destinos.filter((d) => d.conductorId === c.id);
 		if (!propio.length) continue;
 		const radio = o.radio(c.seccion);
@@ -586,6 +625,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 			];
 			const curva = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
 			const malla = tubo(curva, 40, radio, 10, material, c.id);
+			malla.userData.claseConductor = 'puerta';
 			malla.userData.guia = puntos.map((q) => ({ x: q.x, y: q.y, z: q.z }));
 			apuntarTraza(malla, curva, 26);
 			enPuerta.add(malla);
@@ -649,6 +689,7 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		];
 		const curvaPuerta = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
 		const mallaPuerta = tubo(curvaPuerta, 48, radio, 10, material, c.id);
+		mallaPuerta.userData.claseConductor = 'puerta';
 		mallaPuerta.userData.guia = puntos.map((q) => ({ x: q.x, y: q.y, z: q.z }));
 		apuntarTraza(mallaPuerta, curvaPuerta, 30);
 		enPuerta.add(mallaPuerta);
@@ -706,13 +747,117 @@ export function construirMazoPuerta(o: OpcionesMazo): Mazo {
 		};
 		const curvaLazo = curvaFlexible(cable, destinoMundo);
 		cable.flexible = tubo(curvaLazo, cable.segmentos, radio, cable.radiales, material, c.id);
+		cable.flexible.userData.claseConductor = 'puerta';
 		cable.trazaLazo = curvaLazo.getPoints(20);
 		flexibles.add(cable.flexible);
 		cables.push(cable);
 	}
 
+	/*
+	 * PROTECCIÓN EN LA PUERTA.
+	 *
+	 * Un PE puede necesitar cruzar la bisagra para llegar a la carcasa de un aparato, pero no por
+	 * eso se convierte en un hilo del tronco de mando. Usa un corredor propio, más cerca del canto
+	 * de bisagras, y un lazo cuya reserva sale del radio mínimo del conductor. La separación del
+	 * tronco es la del mazo o la que exige el diámetro, la mayor: no depende de un índice ni del
+	 * orden de creación.
+	 */
+	for (const c of fisicos.proteccion) {
+		const propio = destinos.filter((d) => d.conductorId === c.id);
+		if (!propio.length) continue;
+		const puntoDe = (d: typeof propio[number]) => terminales.get(`${c.id}|${d.dispositivoId}|${d.borneId}`);
+		const radio = o.radio(c.seccion);
+		const material = materialDeCable(o.color(c), c.id);
+		const separacion = Math.max(SEP_MAZO, radio * 2 + 4);
+		const xProteccion = xEntrada + signo * separacion;
+		const zProteccion = Z_CARA_INTERIOR - Math.max(6, radio * 2 + 2);
+
+		// Un puente PE entre dos piezas de la hoja queda enteramente en la hoja y tampoco usa lazo.
+		if (propio.length >= 2) {
+			const a = puntoDe(propio[0]);
+			const b = puntoDe(propio[1]);
+			if (!a || !b) continue;
+			const puntos = [
+				a.clone(), new THREE.Vector3(a.x, a.y, zProteccion),
+				new THREE.Vector3(xProteccion, a.y, zProteccion),
+				new THREE.Vector3(xProteccion, b.y, zProteccion),
+				new THREE.Vector3(b.x, b.y, zProteccion), b.clone(),
+			];
+			const curva = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
+			const malla = tubo(curva, 44, radio, 10, material, c.id);
+			malla.userData.claseConductor = 'proteccion';
+			malla.userData.guia = puntos.map((q) => ({ x: q.x, y: q.y, z: q.z }));
+			apuntarTraza(malla, curva, 28);
+			enPuerta.add(malla);
+			continue;
+		}
+
+		const d = propio[0];
+		const t = puntoDe(d);
+		if (!t) continue;
+		const carril = carrilDeMazo(g.colocaciones, d.dispositivoId);
+		const desvio = desvioDeCarril(carril.indice, carril.total);
+		const yEntrada = o.caja.alto / 2 - d.col.y + desvio;
+		const entradaLocal = new THREE.Vector3(xProteccion, yEntrada, zProteccion);
+		const haciaAparato = Math.sign(t.x - xProteccion) || -signo;
+		const puntos = [
+			entradaLocal,
+			...(Math.abs(yEntrada - t.y) > 20
+				? [new THREE.Vector3(xProteccion, t.y + Math.sign(yEntrada - t.y) * 14, zProteccion)]
+				: []),
+			new THREE.Vector3(xProteccion - signo * separacion * 0.5, t.y, zProteccion),
+			new THREE.Vector3(t.x - haciaAparato * Math.max(16, radioMinimo(radio)), t.y, zProteccion),
+			new THREE.Vector3(t.x, t.y, zProteccion),
+			t.clone(),
+		];
+		const curvaPuerta = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
+		const mallaPuerta = tubo(curvaPuerta, 48, radio, 10, material, c.id);
+		mallaPuerta.userData.claseConductor = 'proteccion';
+		mallaPuerta.userData.guia = puntos.map((q) => ({ x: q.x, y: q.y, z: q.z }));
+		apuntarTraza(mallaPuerta, curvaPuerta, 30);
+		enPuerta.add(mallaPuerta);
+		amarrar(xProteccion, yEntrada, Math.max(6, radio * 2 + 4));
+
+		const marcador = new THREE.Object3D();
+		marcador.position.copy(entradaLocal);
+		puerta.frente.add(marcador);
+		marcador.updateMatrixWorld(true);
+		const destinoMundo = marcador.getWorldPosition(new THREE.Vector3());
+		const alturaModelo = alturaDeMazo(o.placa, o.caja, d.col.y);
+		const anclaModelo = anclajeFijoDeMazo(
+			o.placa, o.caja, o.izquierda, alturaModelo, desvio, ajustes.desdeBisagra,
+		);
+		const fijo = o.aEscena(anclaModelo.x, anclaModelo.y, anclaModelo.z);
+		const soporte = sujecion(Math.max(6, radio * 2 + 4));
+		soporte.position.copy(fijo);
+		soporte.rotation.y = signo * Math.PI / 2;
+		flexibles.add(soporte);
+
+		const dentro = new THREE.Vector3(-signo, 0, 0);
+		const cable: CablePuerta = {
+			conductorId: c.id,
+			enLaPuerta: mallaPuerta,
+			flexible: undefined as unknown as THREE.Mesh,
+			entrada: marcador,
+			fijo,
+			reserva: Math.max(20, fijo.distanceTo(destinoMundo) + 2 * radioMinimo(radio) + Math.max(0, ajustes.holgura)),
+			radio,
+			caida: new THREE.Vector3(0, -1, 0).addScaledVector(dentro, 0.25).normalize(),
+			salida,
+			segmentos: 24,
+			radiales: 10,
+			trazaLazo: [],
+		};
+		const curvaLazo = curvaFlexible(cable, destinoMundo);
+		cable.flexible = tubo(curvaLazo, cable.segmentos, radio, cable.radiales, material, c.id);
+		cable.flexible.userData.claseConductor = 'proteccion';
+		cable.trazaLazo = curvaLazo.getPoints(20);
+		flexibles.add(cable.flexible);
+		protecciones.push(cable);
+	}
+
 	const bonding = tenderTrenza(o, enPuerta, flexibles);
-	return { enLaPuerta: enPuerta, flexibles, cables, ...(bonding ? { bonding } : {}) };
+	return { enLaPuerta: enPuerta, flexibles, cables, protecciones, ...(bonding ? { bonding } : {}) };
 }
 
 /**
@@ -795,7 +940,8 @@ function tenderTrenza(
  */
 export function actualizarMazoPuerta(mazo: Mazo): void {
 	const destino = new THREE.Vector3();
-	for (const c of mazo.bonding ? [...mazo.cables, mazo.bonding] : mazo.cables) {
+	const moviles = [...mazo.cables, ...mazo.protecciones, ...(mazo.bonding ? [mazo.bonding] : [])];
+	for (const c of moviles) {
 		c.entrada.getWorldPosition(destino);
 		const curva = curvaFlexible(c, destino);
 		reescribirTubo(c.flexible, curva, c.radio, c.segmentos, c.radiales);
@@ -826,7 +972,7 @@ export function trazasDeMazo(mazo: Mazo): TrazaMazo[] {
 			puntos: mundo,
 		});
 	}
-	for (const c of mazo.cables) {
+	for (const c of [...mazo.cables, ...mazo.protecciones]) {
 		if (c.trazaLazo.length > 1) salida.push({ conductorId: c.conductorId, radio: c.radio, puntos: c.trazaLazo });
 	}
 	return salida;

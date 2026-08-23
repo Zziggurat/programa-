@@ -13,18 +13,148 @@
  */
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
+import * as THREE from 'three';
 
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
+import { crearProyecto } from '../src/modelo/proyecto.js';
 import {
 	claseDeConductor, fueraDelGabinete, montadoEnPuerta, recuentoPorClase,
 } from '../src/motores/clases-cable.js';
-import { ajustesDeMazo } from '../app/mazo-puerta.js';
-import { Proyecto } from '../src/modelo/tipos.js';
+import { ajustesDeMazo, conductoresFisicosDePuerta, construirMazoPuerta } from '../app/mazo-puerta.js';
+import { construirComponentePuerta } from '../app/componentes-puerta.js';
+import { construirEnvolvente } from '../app/gabinete3d.js';
+import { ClaseConductor, Proyecto } from '../src/modelo/tipos.js';
 
 function tablero(): Proyecto {
 	return EJEMPLOS.find((e) => /estrella/i.test(e.titulo))!.crear();
 }
+
+/** Un tablero mínimo que contiene deliberadamente las cuatro fronteras físicas. */
+function tableroSemantico(): Proyecto {
+	const p = crearProyecto('clases semánticas');
+	p.dispositivos = [
+		{
+			id: 'placa-a', tipo: 'otro', bornes: [
+				{ id: 'PE', tipo: 'PE' }, { id: '0V', tipo: 'control' },
+				{ id: 'C1', tipo: 'control' }, { id: 'C2', tipo: 'control' },
+			],
+		},
+		{ id: 'placa-b', tipo: 'otro', bornes: [{ id: 'C', tipo: 'control' }] },
+		{
+			id: 'puerta', tipo: 'piloto', bornes: [
+				{ id: 'PE', tipo: 'PE' }, { id: 'GND', tipo: 'control' }, { id: 'X1', tipo: 'control' },
+			],
+		},
+		{ id: 'campo', tipo: 'sensor', campo: true, bornes: [{ id: 'S', tipo: 'senal' }] },
+	];
+	p.gabinete = {
+		ancho: 500, alto: 600, rieles: [], canaletas: [],
+		caja: { ancho: 560, alto: 660, profundidad: 180 },
+		colocaciones: [
+			{ dispositivoId: 'placa-a', x: 40, y: 80, ancho: 100, alto: 80 },
+			{ dispositivoId: 'placa-b', x: 200, y: 80, ancho: 80, alto: 80 },
+			{ dispositivoId: 'puerta', x: 260, y: 90, ancho: 30, alto: 30, montaje: 'puerta' },
+		],
+	};
+	p.conductores = [
+		{ id: 'pe-puerta', de: { dispositivoId: 'placa-a', borneId: 'PE' }, a: { dispositivoId: 'puerta', borneId: 'PE' } },
+		{ id: 'gnd-control', de: { dispositivoId: 'placa-a', borneId: '0V' }, a: { dispositivoId: 'puerta', borneId: 'GND' } },
+		{ id: 'campo-bornera', de: { dispositivoId: 'campo', borneId: 'S' }, a: { dispositivoId: 'placa-a', borneId: 'C1' } },
+		{ id: 'interno', de: { dispositivoId: 'placa-a', borneId: 'C2' }, a: { dispositivoId: 'placa-b', borneId: 'C' } },
+		{ id: 'puerta-mando', de: { dispositivoId: 'placa-b', borneId: 'C' }, a: { dispositivoId: 'puerta', borneId: 'X1' } },
+	];
+	return p;
+}
+
+function clasesPorId(p: Proyecto): Record<string, ClaseConductor> {
+	return Object.fromEntries(p.conductores.map((c) => [c.id, claseDeConductor(p, c)]));
+}
+
+test('PE explícito, GND funcional, campo, interno y puerta no se confunden', () => {
+	const p = tableroSemantico();
+	assert.deepEqual(clasesPorId(p), {
+		'pe-puerta': 'proteccion',
+		'gnd-control': 'puerta',
+		'campo-bornera': 'campo',
+		interno: 'interno',
+		'puerta-mando': 'puerta',
+	});
+});
+
+test('el texto y el color no convierten por sí solos un GND de control en PE', () => {
+	const p = tableroSemantico();
+	const gnd = p.conductores.find((c) => c.id === 'gnd-control')!;
+	gnd.color = 'verde/amarillo';
+	assert.equal(claseDeConductor(p, gnd), 'puerta');
+
+	const interno = p.conductores.find((c) => c.id === 'interno')!;
+	interno.de.borneId = 'C2';
+	p.dispositivos.find((d) => d.id === 'placa-a')!.bornes.find((b) => b.id === 'C2')!.id = 'GND';
+	interno.de.borneId = 'GND';
+	assert.equal(claseDeConductor(p, interno), 'interno');
+});
+
+test('la semántica PE del borne tiene prioridad sobre una clase física incompatible', () => {
+	const p = tableroSemantico();
+	const pe = p.conductores.find((c) => c.id === 'pe-puerta')!;
+	pe.clase = 'interno';
+	assert.equal(claseDeConductor(p, pe), 'proteccion');
+});
+
+test('solo mando de puerta y protección llegan al sistema físico de la hoja', () => {
+	const p = tableroSemantico();
+	const fisicos = conductoresFisicosDePuerta(p);
+	assert.deepEqual(fisicos.mando.map((c) => c.id), ['gnd-control', 'puerta-mando']);
+	assert.deepEqual(fisicos.proteccion.map((c) => c.id), ['pe-puerta']);
+	assert.ok(![...fisicos.mando, ...fisicos.proteccion].some((c) => c.id === 'campo-bornera'));
+});
+
+test('la escena separa el PE del mazo de mando y deja fuera el cable de campo', () => {
+	const p = tableroSemantico();
+	const g = p.gabinete!;
+	const caja = g.caja!;
+	const envolvente = construirEnvolvente(caja.ancho, caja.alto, caja.profundidad);
+	const aparatos = g.colocaciones.filter((c) => c.montaje === 'puerta').map((col) => {
+		const dispositivo = p.dispositivos.find((d) => d.id === col.dispositivoId)!;
+		const grupo = construirComponentePuerta(dispositivo, col);
+		envolvente.puerta.colocar(grupo, 'frente', col.x, col.y, 0);
+		return grupo;
+	});
+	envolvente.grupo.updateMatrixWorld(true);
+	const mazo = construirMazoPuerta({
+		proyecto: p, puerta: envolvente.puerta, aparatos,
+		aEscena: (x, y, z) => new THREE.Vector3(x - g.ancho / 2, g.alto / 2 - y, z),
+		placa: { ancho: g.ancho, alto: g.alto }, caja, izquierda: true,
+		color: () => 0x546e7a, radio: () => 1.2,
+	});
+	assert.deepEqual(mazo.cables.map((c) => c.conductorId), ['gnd-control', 'puerta-mando']);
+	assert.deepEqual(mazo.protecciones.map((c) => c.conductorId), ['pe-puerta']);
+	const tubos = mazo.enLaPuerta.children.filter((o) => o.userData.conductorId);
+	assert.ok(tubos.some((o) => o.userData.conductorId === 'pe-puerta'
+		&& o.userData.claseConductor === 'proteccion'));
+	assert.ok(!tubos.some((o) => o.userData.conductorId === 'campo-bornera'));
+});
+
+test('guardar, cargar y recomputar conserva todas las clases deducidas', () => {
+	const p = tableroSemantico();
+	const antes = clasesPorId(p);
+	const despues = cargarProyecto(JSON.stringify(p)).proyecto;
+	assert.deepEqual(clasesPorId(despues), antes);
+});
+
+test('invertir dispositivos, colocaciones y conductores no cambia ninguna clase ni el mazo', () => {
+	const p = tableroSemantico();
+	const clases = clasesPorId(p);
+	const fisicos = conductoresFisicosDePuerta(p);
+	p.dispositivos.reverse();
+	p.gabinete!.colocaciones.reverse();
+	p.conductores.reverse();
+	assert.deepEqual(clasesPorId(p), clases);
+	const invertidos = conductoresFisicosDePuerta(p);
+	assert.deepEqual(invertidos.mando.map((c) => c.id), fisicos.mando.map((c) => c.id));
+	assert.deepEqual(invertidos.proteccion.map((c) => c.id), fisicos.proteccion.map((c) => c.id));
+});
 
 test('un cable a un piloto de puerta es de clase puerta', () => {
 	const p = tablero();
@@ -33,6 +163,17 @@ test('un cable a un piloto de puerta es de clase puerta', () => {
 	);
 	assert.ok(aPuerta, 'el ejemplo tiene que traer pilotos de puerta cableados');
 	assert.equal(claseDeConductor(p, aPuerta), 'puerta');
+});
+
+test('el retorno directo desde la entrada declara de forma persistente su alcance de puerta', () => {
+	const p = tablero();
+	const campoEnPuerta = p.conductores.filter((c) =>
+		(montadoEnPuerta(p, c.de.dispositivoId) || montadoEnPuerta(p, c.a.dispositivoId))
+		&& claseDeConductor(p, c) === 'campo');
+	assert.deepEqual(campoEnPuerta.map((c) => c.id), []);
+	const retorno = p.conductores.find((c) => c.id === 'w56')!;
+	assert.equal(retorno.clase, 'puerta');
+	assert.equal(claseDeConductor(p, retorno), 'puerta');
 });
 
 test('un cable a un aparato que no está en el armario es de campo', () => {

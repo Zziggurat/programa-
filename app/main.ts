@@ -9328,7 +9328,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				tramosHoja: escenario.mazo.enLaPuerta.children
 					.filter((m) => m.userData.conductorId)
 					.map((m) => ({ id: m.userData.conductorId as string, hoja: caja(m) })),
-				porCable: escenario.mazo.cables.map((c) => ({
+				porCable: [...escenario.mazo.cables, ...escenario.mazo.protecciones].map((c) => ({
 					id: c.conductorId, hoja: caja(c.enLaPuerta), lazo: caja(c.flexible),
 					// Y los puntos con los que se tendió, en coordenadas de la hoja: es lo único
 					// que dice si el problema es dónde se pidió la curva o cómo se dibujó.
@@ -9381,7 +9381,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			const m = escenario.mazo;
 			const largos: Record<string, number> = {};
 			const destino = new THREE.Vector3();
-			for (const c of m.cables) {
+			for (const c of [...m.cables, ...m.protecciones]) {
 				c.entrada.getWorldPosition(destino);
 				const g = c.flexible.geometry as THREE.BufferGeometry;
 				const pos = g.getAttribute('position');
@@ -9404,6 +9404,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				sujeciones: m.enLaPuerta.children.filter((k) => !k.userData.conductorId).length
 					+ m.flexibles.children.filter((k) => !k.userData.conductorId).length,
 				conductores: m.cables.map((c) => c.conductorId),
+				protecciones: m.protecciones.map((c) => c.conductorId),
 				largos,
 				enLaHojaMundo: m.cables.map((c) => {
 					const w = c.enLaPuerta.getWorldPosition(new THREE.Vector3());
