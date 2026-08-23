@@ -1623,9 +1623,11 @@ const COLOR_TIPO: Record<string, number> = {
  * pin (borne con u,v). Sirve para cablear cualquier imagen de forma visual (estilo EduVolt).
  */
 function imagenReferencia(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
-	const prof = 6;
+	const personalizado = !!d.componentePersonalizado;
+	const prof = personalizado ? Math.max(6, d.profundidad ?? 6) : 6;
 	// Marco/plano trasero.
-	g.add(caja(w + 4, h + 4, 2, M.plastico(0x2a2f34, 0.8), 0, 0, 1));
+	g.add(caja(w + 4, h + 4, personalizado ? prof : 2, M.plastico(0x2a2f34, 0.8),
+		0, 0, personalizado ? prof / 2 : 1));
 
 	// La textura llega asíncrona; se refresca sola en el bucle de render.
 	const tex = new THREE.Texture();
@@ -1636,7 +1638,7 @@ function imagenReferencia(g: THREE.Group, d: Dispositivo, w: number, h: number):
 		new THREE.PlaneGeometry(w, h),
 		new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }),
 	);
-	plano.position.z = prof - 1;
+	plano.position.z = personalizado ? prof + 0.2 : prof - 1;
 	plano.userData.esPlanoImagen = true; // para calcular u,v al añadir pines
 	g.add(plano);
 

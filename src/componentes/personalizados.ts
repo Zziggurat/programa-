@@ -230,6 +230,7 @@ export function instanciarComponentePersonalizado(
 		tensionNominal: p?.tensionV,
 		corrienteNominal: p?.corrienteA,
 		disipacionW: p?.potenciaW,
+		profundidad: definicion.dimensiones.fondoMm,
 		temporizacion: p?.temporizacion ? clonar(p.temporizacion) : undefined,
 		programa: texto(p?.programa),
 		rangoSonda: p?.rangoSonda ? clonar(p.rangoSonda) : undefined,

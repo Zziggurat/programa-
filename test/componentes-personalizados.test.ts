@@ -105,6 +105,7 @@ test('colocar una definición toma un snapshot estable del perfil y los terminal
 		? colocado.comportamiento.bobina.entrada : '', 'A1');
 	assert.deepEqual(colocado.componentePersonalizado, { definicionId: 'cmp-k1', revision: 1 });
 	assert.match(colocado.assetId, /^sha256:/);
+	assert.equal(colocado.profundidad, 75, 'la envolvente física conserva el fondo declarado');
 });
 
 test('una imagen con perfil es aparato; una imagen legacy sin perfil sigue siendo referencia inerte', () => {

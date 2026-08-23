@@ -2933,7 +2933,7 @@ export function anclajeBorne(
 		// La profundidad de la imagen CUENTA: sus pines se dibujan sobre el panel, así que si la
 		// imagen está adelantada, el punto de enganche del cable tiene que adelantarse con ella.
 		// Sin esto el cable salía por detrás del pin y el pin dejaba de poder pincharse.
-		const z = (col.z ?? 0) + 10;
+		const z = (col.z ?? 0) + (d.componentePersonalizado ? Math.max(6, d.profundidad ?? 6) + 0.5 : 10);
 		const b = d.bornes.find((x) => x.id === borneId);
 		if (b?.u !== undefined && b?.v !== undefined) {
 			return { x: col.x + b.u * col.ancho, y: col.y + b.v * col.alto, z };
