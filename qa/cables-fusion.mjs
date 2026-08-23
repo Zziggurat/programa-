@@ -60,17 +60,28 @@ async function lienzoLibre() {
 
 const SEPARACION_MIN = 4; // mm: por debajo de esto dos cables se ven como uno solo
 
-/** Puntos del recorrido de un cable a `dist` mm de su primer/último nodo (la salida del borne). */
-function puntaDe(nodos, desdeElFinal) {
-	return desdeElFinal ? nodos[nodos.length - 1] : nodos[0];
+/** Punto 3D a `dist` mm de un extremo del recorrido final. */
+function puntaDe(puntos, dist, desdeElFinal) {
+	const lista = desdeElFinal ? puntos.slice().reverse() : puntos;
+	let restante = dist;
+	for (let i = 1; i < lista.length; i++) {
+		const a = lista[i - 1]; const b = lista[i];
+		const largo = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+		if (largo >= restante && largo > 0) {
+			const t = restante / largo;
+			return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
+		}
+		restante -= largo;
+	}
+	return lista[lista.length - 1];
 }
 
-for (const [indice, nombre] of [[0, 'Arranque directo'], [1, 'Bomba con boya'], [2, 'Tablero de control']]) {
+for (const [indice, nombre] of [[0, 'Arranque directo'], [1, 'Bomba con boya'], [2, 'Arranque estrella-triángulo']]) {
 	console.log(`\n--- 1. ${nombre}: cables que comparten borne ---`);
 	await abrirEjemplo(indice);
 	const proyecto = await qa('proyecto');
 	const rutas = await qa('rutas');
-	const porId = new Map(rutas.map((r) => [r.id, r.nodos]));
+	const porId = new Map(rutas.map((r) => [r.id, r]));
 
 	// Agrupa los conductores por borne y comprueba que las puntas de los que comparten uno
 	// están separadas: si coincidieran, se verían fundidas en una sola conexión.
@@ -92,9 +103,12 @@ for (const [indice, nombre] of [[0, 'Arranque directo'], [1, 'Bomba con boya'], 
 			for (let j = i + 1; j < lista.length; j++) {
 				const a = porId.get(lista[i].id); const b = porId.get(lista[j].id);
 				if (!a || !b) continue;
-				const pa = puntaDe(a, lista[i].alFinal);
-				const pb = puntaDe(b, lista[j].alFinal);
-				const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
+				// Fin de la zona física: radio mínimo del codo (10 + 4r) más la separación
+				// visual exigida. En un cable de 6 mm² son 26 mm; antes de eso aún está abriendo.
+				const finZona = 10 + 4 * Math.max(a.radio, b.radio) + SEPARACION_MIN;
+				const pa = puntaDe(a.puntos, finZona, lista[i].alFinal);
+				const pb = puntaDe(b.puntos, finZona, lista[j].alFinal);
+				const d = Math.hypot(pa.x - pb.x, pa.y - pb.y, pa.z - pb.z);
 				peor = Math.min(peor, d);
 				if (d < SEPARACION_MIN) { fundidos++; info(`fundidos en ${clave}: ${lista[i].id} y ${lista[j].id} (${d.toFixed(1)} mm)`); }
 			}
@@ -114,9 +128,9 @@ for (const [indice, nombre] of [[0, 'Arranque directo'], [1, 'Bomba con boya'], 
 	const am = await qa('amontonamiento');
 	const porCable = am.cables ? Math.round(am.totalMm / am.cables) : 0;
 	info(`en paralelo: ${am.totalMm} mm en ${am.pares} pares de ${am.cables} cables (${porCable} mm/cable)`);
-	info(`a la misma profundidad: ${am.mismaCapaMm} mm en ${am.paresMismaCapa} pares`);
-	must('ningún cable va metido DENTRO de otro', am.mismaCapaMm === 0,
-		`${am.mismaCapaMm} mm en ${am.paresMismaCapa} pares`);
+	info(`eje 3D coincidente: ${am.fusionMm} mm en ${am.paresFusionados} pares`);
+	must('ningún cable va metido DENTRO de otro', am.fusionMm === 0,
+		`${am.fusionMm} mm en ${am.paresFusionados} pares`);
 }
 
 /* ============ 2. La selección tiene que caer en el cable que se está señalando ============ */

@@ -42,6 +42,7 @@ import {
 	Bloqueo, distanciaASegmento, Eje, indiceDeInsercion, normalDeArrastre, P3,
 	proyectarEnPolilinea, respetarBloqueo,
 } from './edicion-cables.js';
+import { compararPrioridadCable } from './picking-cables.js';
 import { colorDeTipo } from './dispositivos3d.js';
 import {
 	colorDePiloto, construirComponentePuerta, fichaFrontal, huellaFrontal, RADIO_PILOTO,
@@ -72,6 +73,7 @@ import {
 	dentroDelArea, fueraDeLaHuella, Huella, longitudSolapada, orthogonalize,
 	redondearEsquinas,
 } from './geometria-cables.js';
+import { longitudCoincidente3D } from './colisiones-cables.js';
 
 /** Bandera que inyecta el empaquetador: true solo en el build para las pruebas (QA=1). */
 declare const __QA__: boolean;
@@ -4535,13 +4537,8 @@ function cablesSenalados(ev: MouseEvent, tolerancia = TOLERANCIA_PX): CableSenal
 	 * tiene delante de los ojos. Solo cuando ninguno está encima se ordena por cercanía, que es el
 	 * caso de «apunté cerca» y ahí lo razonable es el más próximo al cursor.
 	 */
-	salida.sort((a, b) => {
-		const ea = a.pixeles <= a.radio ? 0 : 1;
-		const eb = b.pixeles <= b.radio ? 0 : 1;
-		if (ea !== eb) return ea - eb;
-		if (ea === 0) return a.profundidad - b.profundidad;
-		return a.pixeles - b.pixeles;
-	});
+	const seleccionado = sel?.tipo === 'cable' ? sel.id : undefined;
+	salida.sort((a, b) => compararPrioridadCable(a, b, seleccionado));
 	return salida;
 }
 
@@ -8172,6 +8169,22 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		const p = v.clone().project(camaraViva());
 		return { x: r.left + (p.x * 0.5 + 0.5) * r.width, y: r.top + (-p.y * 0.5 + 0.5) * r.height };
 	};
+	/**
+	 * Muestras uniformes sobre la curva visible, no sobre el buffer triangular del tubo.
+	 *
+	 * Un TubeGeometry guarda anillos de vértices, y tomar índices uniformes del buffer no reparte
+	 * puntos uniformes a lo largo del cable: con nueve muestras `w18` quedaba sin visitar aunque
+	 * tenía 41 píxeles frontales propios. Esta curva es la misma que usa `construirCables` y
+	 * `getPointAt` distribuye por longitud, de borne a borne.
+	 */
+	const muestrasUniformesDeCable = (id: string, muestras: number): THREE.Vector3[] => {
+		const ruta = rutaVigente(id);
+		if (!ruta || ruta.puntos.length < 2) return [];
+		const curva = new THREE.CatmullRomCurve3(
+			ruta.puntos.map((q) => escenario.aEscena(q.x, q.y, q.z)), false, 'centripetal', 0.5,
+		);
+		return Array.from({ length: Math.max(0, muestras - 1) }, (_, i) => curva.getPointAt((i + 1) / muestras));
+	};
 	/*
 	 * EL REGISTRO DE TAREAS LARGAS, para poder ATRIBUIR un tirón en vez de inventarle una causa.
 	 *
@@ -8270,11 +8283,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				.find((m) => m.userData.conductorId === id) as THREE.Mesh | undefined;
 			if (!malla) return [];
 			const r = renderer.domElement.getBoundingClientRect();
-			const pos = malla.geometry.getAttribute('position');
 			const out: { x: number; y: number }[] = [];
-			for (let k = 1; k < muestras; k++) {
-				const i = Math.round((k * (pos.count - 1)) / muestras);
-				const mundo = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(malla.matrixWorld);
+			for (const mundo of muestrasUniformesDeCable(id, muestras)) {
 				const p = aPantalla(mundo);
 				puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
 				raycaster.setFromCamera(puntero, camaraViva());
@@ -8303,18 +8313,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Puntos en pantalla repartidos A LO LARGO del tubo de un cable, para poder pincharlo. */
 		puntosDeCable: (id: string, muestras = 9) => {
-			const malla = mallasDeCable()
-				.flatMap((g) => g.children)
-				.find((m) => m.userData.conductorId === id) as THREE.Mesh | undefined;
-			if (!malla) return [];
-			const pos = malla.geometry.getAttribute('position');
-			const out: { x: number; y: number }[] = [];
-			for (let k = 1; k < muestras; k++) {
-				const i = Math.round((k * (pos.count - 1)) / muestras);
-				const v = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(malla.matrixWorld);
-				out.push(aPantalla(v));
-			}
-			return out;
+			return muestrasUniformesDeCable(id, muestras).map(aPantalla);
 		},
 		/** Qué hay seleccionado ahora mismo (para distinguir a quién agarró un clic). */
 		seleccion: () => (sel ? { tipo: sel.tipo, id: sel.id } : undefined),
@@ -8484,27 +8483,29 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 *
 		 * Se dan DOS cifras, y la que importa es la segunda. `totalMm` mira el tablero de frente,
 		 * en plano: ahí cuenta como montado cualquier cable que corra paralelo a otro, y en un
-		 * mazo de verdad eso pasa continuamente sin que sea un defecto. `mismaCapaMm` cuenta solo
-		 * los que además van a la MISMA PROFUNDIDAD, o sea uno dentro del otro: esos no se
-		 * distinguen ni girando la vista, y son los que hay que dejar en cero.
+		 * mazo de verdad eso pasa continuamente sin que sea un defecto. `fusionMm` mide la longitud
+		 * realmente coincidente en los recorridos 3D finales; un cruce puntual y un borne común no
+		 * suman longitud.
 		 */
 		amontonamiento: () => {
 			const rutas = rutasDeCables(proyecto);
 			let total = 0;
 			let pares = 0;
-			let mismaCapa = 0;
-			let paresMismaCapa = 0;
+			let fusion = 0;
+			let paresFusionados = 0;
 			for (let i = 0; i < rutas.length; i++) {
 				for (let j = i + 1; j < rutas.length; j++) {
 					const mm = longitudSolapada(rutas[i].nodos, rutas[j].nodos);
-					if (mm <= 0) continue;
-					total += mm; pares++;
-					if (Math.abs(rutas[i].z - rutas[j].z) < 0.5) { mismaCapa += mm; paresMismaCapa++; }
+					if (mm > 0) { total += mm; pares++; }
+					const mm3d = longitudCoincidente3D(rutas[i].puntos, rutas[j].puntos);
+					if (mm3d > 0.5) { fusion += mm3d; paresFusionados++; }
 				}
 			}
 			return {
 				totalMm: Math.round(total), pares, cables: rutas.length,
-				mismaCapaMm: Math.round(mismaCapa), paresMismaCapa,
+				fusionMm: Math.round(fusion), paresFusionados,
+				// Compatibilidad con sondas antiguas; ahora representan geometría 3D real.
+				mismaCapaMm: Math.round(fusion), paresMismaCapa: paresFusionados,
 			};
 		},
 		/**
@@ -8551,10 +8552,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				.find((m) => m.userData.tuboVisible && m.userData.conductorId === id) as THREE.Mesh | undefined;
 			if (!malla) return undefined;
 			const r = renderer.domElement.getBoundingClientRect();
-			const pos = malla.geometry.getAttribute('position');
-			for (let k = 1; k < muestras; k++) {
-				const i = Math.round((k * (pos.count - 1)) / muestras);
-				const mundo = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(malla.matrixWorld);
+			for (const mundo of muestrasUniformesDeCable(id, muestras)) {
 				// El navegador entrega los clics en píxeles ENTEROS: se comprueba el punto ya
 				// redondeado, para no dar por bueno un píxel que en realidad cae en el borde del tubo.
 				const v = aPantalla(mundo);
@@ -8578,12 +8576,11 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				if (aparato && aparato.distance < cable.distance) continue; // tapado por un aparato
 				// Tampoco vale si encima hay un tirador de otra unión: ahí lo que se ve es el tirador.
 				if (raycaster.intersectObjects(escenario.handles.children, true).some((h) => h.distance < cable.distance)) continue;
-				// Ni si delante hay un BORNE: ahí el programa entiende —bien— que quieres conectar,
-				// no agarrar el cable, y así lo dice `cableTapaAlBorne`. Es la comprobación simétrica
-				// de la que hace `puntoParaBorne` con los cables; faltaba aquí, y por eso la prueba
-				// pinchaba en un terminal creyendo que pinchaba en un cable.
+				// Ni si hay un BORNE bajo el mismo píxel. La política real da ese clic al terminal salvo
+				// que caiga justo sobre una unión del cable; esta sonda busca un punto ordinario del tubo,
+				// no una unión, así que aceptarlo aquí haría que la prueba pidiera otra prioridad.
 				if (raycaster.intersectObjects(escenario.bornes.children, true)
-					.some((h) => h.object.userData.borneId && h.distance < cable.distance)) continue;
+					.some((h) => h.object.userData.borneId)) continue;
 				return p;
 			}
 			return undefined;
