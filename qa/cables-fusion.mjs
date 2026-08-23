@@ -168,14 +168,24 @@ must('apuntar a un cable selecciona ESE cable', aciertos === probados, `${aciert
  * tanto, apunta a una escena y pincha en otra, y un tubo fino se le escapa por un píxel.
  */
 async function esperarCamaraQuieta(maximoMs = 6000) {
-	let antes = await qa('camara');
-	const hasta = Date.now() + maximoMs;
-	while (Date.now() < hasta) {
-		await page.waitForTimeout(120);
-		const ahora = await qa('camara');
-		if (Object.keys(ahora).every((k) => Math.abs(ahora[k] - antes[k]) < 0.02)) return;
-		antes = ahora;
-	}
+	/*
+	 * Un solo viaje al navegador. Hacer el mismo sondeo con un `page.evaluate` por muestra
+	 * convertía seis segundos de espera máxima en decenas de segundos bajo SwiftShader: cada
+	 * consulta tenía que esperar su turno detrás del render. La condición y la cadencia de 120 ms
+	 * son las mismas; solo el polling vive ahora donde está la cámara.
+	 */
+	await page.evaluate((limite) => new Promise((resolver) => {
+		let antes = window.qa.camara();
+		const hasta = performance.now() + limite;
+		const mirar = () => {
+			const ahora = window.qa.camara();
+			if (Object.keys(ahora).every((k) => Math.abs(ahora[k] - antes[k]) < 0.02)
+				|| performance.now() >= hasta) { resolver(undefined); return; }
+			antes = ahora;
+			setTimeout(mirar, 120);
+		};
+		setTimeout(mirar, 120);
+	}), maximoMs);
 }
 
 async function girarCamara(dx, dy) {
@@ -205,11 +215,29 @@ for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la der
 	let ok = 0; let total = 0;
 	const mal = [];
 	const sinPunto = [];
-	for (const r of reales) {
+	/*
+	 * La lectura de la selección anterior y la búsqueda del punto siguiente comparten visita al
+	 * navegador. El orden sigue siendo el correcto: clic trusted → leer a quién eligió → Esc para
+	 * limpiar → buscar el próximo punto ya en estado limpio. No se precalculan puntos sobre una
+	 * escena distinta; solo se evita pagar dos turnos de protocolo para dos operaciones contiguas.
+	 */
+	const preparar = (id, conSeleccion, limpiar = false) => page.evaluate(([cable, zona, leerSeleccion, cancelar]) => {
+		const seleccion = leerSeleccion ? window.qa.seleccion() : undefined;
+		/*
+		 * Escape solo prepara el caso siguiente; no es la entrada bajo prueba. La aplicación no
+		 * distingue eventos trusted aquí (ni debería: cancelar no concede ninguna capacidad), y el
+		 * clic que se valida sigue entrando por CDP como evento real del navegador.
+		 */
+		if (cancelar) window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+		return { seleccion, candidato: window.qa.puntoParaAgarrar(cable, 9, zona) };
+	}, [id, LIBRE, conSeleccion, limpiar]);
+	await page.keyboard.press('Escape');
+	let preparado = await preparar(reales[0].id, false);
+	for (let indice = 0; indice < reales.length; indice++) {
+		const r = reales[indice];
 		// Esc antes de cada intento: si un clic anterior arrancó un cableado sin querer, TODOS los
 		// clics siguientes se los come el tendido y saldrían como fallo en cascada, tapando cuál
-		// fue el que falló de verdad. Cada cable se prueba desde un estado limpio.
-		await page.keyboard.press('Escape');
+		// fue el que falló de verdad. Desde el segundo cable, el Esc ocurre al preparar esta entrada.
 		/*
 		 * Apuntar, COMPROBAR que el píxel sigue siendo suyo y pinchar sin soltar el aliento.
 		 *
@@ -222,19 +250,29 @@ for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la der
 		 * la ventana en la que la cámara puede moverse queda cerrada.
 		 */
 		/*
-		 * La cámara está congelada: repetir cuatro veces la misma búsqueda determinista no puede dar
-		 * otro resultado. Once muestras cubren el recorrido sin los 30 raycasts por cable del valor
+		 * La cámara está congelada: repetir la misma búsqueda determinista no puede dar otro resultado.
+		 * Nueve muestras cubren el recorrido sin los 30 raycasts por cable del valor
 		 * predeterminado, y la zona se filtra DENTRO de la sonda para no elegir primero un punto que
 		 * luego se descarte aquí.
 		 */
-		const candidato = await qa('puntoParaAgarrar', r.id, 9, LIBRE);
-		const p = enZona(candidato) && (await qa('cableEnPixel', candidato.x, candidato.y)) === r.id
-			? candidato : undefined;
-		if (!p) { sinPunto.push(r.id); continue; }
+		const candidato = preparado.candidato;
+		/*
+		 * `puntoParaAgarrar` ya exige, con el mismo raycaster de `cableEnPixel`, que el primer tubo
+		 * visible sea éste. Repetir la consulta desde Playwright no añadía una condición: añadía un
+		 * segundo viaje. La equivalencia semántica se comprueba exhaustivamente justo arriba; aquí
+		 * corresponde comprobar la otra capa, el evento trusted y su selección final.
+		 */
+		const p = enZona(candidato) ? candidato : undefined;
+		if (!p) {
+			sinPunto.push(r.id);
+			if (indice + 1 < reales.length) {
+				preparado = await preparar(reales[indice + 1].id, false, true);
+			}
+			continue;
+		}
 		// El clic se completa antes de leer la selección. Leerla entre pointerdown y pointerup —como
 		// hacía la prueba anterior— observaba el estado anterior porque un clic corto se confirma al
 		// SOLTAR, justo después de comprobar el umbral de arrastre.
-		const antesDeApretar = await qa('cableEnPixel', p.x, p.y);
 		/*
 		 * Entrada REAL del navegador, pero sin un `mouseMoved` previo. El hover del producto proyecta
 		 * todas las rutas y ya se prueba por separado; repetirlo para los 59 cables y tres cámaras
@@ -244,19 +282,30 @@ for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la der
 		await cdp.send('Input.dispatchMouseEvent', {
 			type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1,
 		});
-		const trasApretar = await qa('cableEnPixel', p.x, p.y);
 		await cdp.send('Input.dispatchMouseEvent', {
 			type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1,
 		});
-		const sel = await qa('seleccion');
+		let sel;
+		if (indice + 1 < reales.length) {
+			preparado = await preparar(reales[indice + 1].id, true, true);
+			sel = preparado.seleccion;
+		} else {
+			sel = await qa('seleccion');
+		}
 		total++;
 		if (sel?.tipo === 'cable' && sel.id === r.id) ok++;
 		else {
-			const hits = await qa('diagnosticoPixel', p.x, p.y);
-			const est = await qa('estadoInteraccion');
-			const encima = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.id || document.elementFromPoint(x, y)?.tagName, [p.x, p.y]);
+			// En el camino verde no se pagan lecturas de diagnóstico. Si falla, se recogen TODAS en
+			// una sola visita, para que el mensaje siga siendo igual de accionable.
+			const diagnostico = await page.evaluate(([x, y]) => ({
+				pixel: window.qa.cableEnPixel(x, y),
+				hits: window.qa.diagnosticoPixel(x, y),
+				estado: window.qa.estadoInteraccion(),
+				encima: document.elementFromPoint(x, y)?.id || document.elementFromPoint(x, y)?.tagName,
+			}), [p.x, p.y]);
 			mal.push(`${r.id}@(${Math.round(p.x)},${Math.round(p.y)}) → ${sel ? sel.tipo + ':' + sel.id : 'nada'} `
-				+ `(pixel antes=${antesDeApretar} despues=${trasApretar}) [${hits.join(' ')}] ${JSON.stringify(est)} encima=${encima}`);
+				+ `(pixel=${diagnostico.pixel}) [${diagnostico.hits.join(' ')}] `
+				+ `${JSON.stringify(diagnostico.estado)} encima=${diagnostico.encima}`);
 		}
 	}
 	must(`nada tapa el lienzo (${comoSeVe})`, await lienzoLibre());
