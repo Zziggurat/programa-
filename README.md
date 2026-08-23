@@ -69,23 +69,20 @@ npm run ejemplo # genera la documentación de un tablero real en ejemplo/salida/
 Además de los tests del núcleo, hay varias suites que manejan el editor 3D de verdad
 (con un navegador) y comprueban lo que ve el usuario.
 
-`npm run qa` las corre **todas**, y no lleva ninguna lista: `qa/todas.mjs` busca en el
-directorio y ejecuta todo `qa/*.mjs` que no empiece por `_` (los `_` son sondas de
-diagnóstico de usar y tirar, y están fuera del repositorio). Antes la lista iba escrita a mano
-en `package.json` y pasó lo previsible: se quedó atrás, y once suites —entre ellas las que
-vigilan que un fallo ya arreglado no vuelva— no las corría nadie. Una prueba que no se ejecuta
-es una prueba que no existe. **Añadir una suite es dejar el archivo en `qa/`; no hay ningún
-otro sitio donde apuntarla.**
+`npm run qa` ejecuta el gate estable declarado en `qa/lib/gate.mjs`. Una suite nueva no entra en
+CI por el mero hecho de existir: primero debe demostrar que es determinista, tener exit code real
+y no depender de inspección humana. `npm run qa:all` descubre todas las suites oficiales para una
+campaña extensa. Las 70 sondas `_*.mjs` están clasificadas en `qa/CLASIFICACION.md`.
 
-Cada una va en su propio proceso y de una en una: levantan su servidor y su Chromium, así que
-una que se cuelgue no se lleva a las demás, y en paralelo se quitarían la CPU unas a otras
-(con dibujado por software `agarre` tarda media hora ella sola, y acompañada no termina).
-Se puede filtrar por nombre: `node qa/todas.mjs cables riel`.
+Cada suite va en su propio proceso y de una en una. El runner impone 12 minutos por suite, mata su
+árbol de procesos al agotar el tiempo y continúa para entregar un resumen completo. El límite se
+puede ajustar expresamente con `QA_SUITE_TIMEOUT_MS`. Se puede filtrar por nombre con
+`node qa/todas.mjs cables riel`.
 
 | Suite | Qué verifica |
 |---|---|
-| `npm run qa:auditoria` | Las ocho de la **auditoría externa**, juntas: que un autoguardado ilegible no se pise, que un campo en blanco no se declare como 0 °C, que nada tape a un diálogo o a un aviso, que el texto del usuario no se convierta en HTML, que duplicar y pegar no dejen aparatos que nadie monta, que la rueda de la Planta tenga tope, que los atajos no editen el tablero cuando el tablero no se ve, y que **nada de lo que haces se pierda al recargar** |
-| `node qa/se-guarda-solo.mjs` | La pregunta del usuario, no la del programador: **«si se me cierra el navegador, ¿pierdo esto?»**. Hace un rato de trabajo corriente —sacar aparatos, ponerle nombre y cliente al tablero, agrandar la placa, añadir un riel, corregir la ficha de un aparato, tender un cable a clics, poner la empresa que firma el dossier— y luego recarga la página y comprueba **dato a dato** qué sobrevivió. Así se encontró que los ajustes del dossier no se guardaban nunca |
+| `npm run qa` | Gate estable de cámara, cables, puerta, piloto, picking, persistencia, capas, modales y entradas hostiles |
+| `node qa/se-guarda-solo.mjs` | Abre un ejemplo desde la UI, crea una copia, cambia nombre y estructura por el rail Montaje, recarga y verifica el mismo estado en Interior y Frontal |
 | `npm run qa:cables` | Cero cables fantasma, cablear por clic, codos, uniones, arrastre, Supr y deshacer |
 | `node qa/controladores.mjs` | Los doce controladores reales del catálogo y el diálogo «a medida»: huella, borneras en su sitio y cableado por terminal |
 | `node qa/dossier.mjs` | Que el PDF describa el tablero que hay en pantalla, y que cambie cuando el tablero cambia |

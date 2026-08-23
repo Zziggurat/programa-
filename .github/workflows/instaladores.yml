@@ -35,12 +35,12 @@ jobs:
       # resolvía el paquete `playwright` —que no está en el lock, donde solo hay `playwright-core`—
       # así que cada ejecución podía bajarse una versión distinta. Una batería que no corre dos
       # veces sobre lo mismo no sirve para comparar.
-      - run: npx --yes playwright@1.56.1 install --with-deps chromium
+      - run: npx playwright-core install --with-deps chromium
 
       # Y la REGRESIÓN CRÍTICA, no solo el empaquetado. Antes la puerta corría dos suites; las que
       # cubren lo que de verdad no puede salir roto —recuperación del guardado, datos del proyecto,
       # texto hostil, entradas hostiles, el puente eléctrico— no entraban.
-      - run: npm run qa:auditoria
+      - run: npm run qa
       - run: npm run empaquetar
       - run: node qa/entrega.mjs
       - run: node qa/empaquetado.mjs

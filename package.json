@@ -11,7 +11,9 @@
     "editor": "vite app",
     "editor:build": "vite build app",
     "empaquetar": "vite build app && node app/empaquetar.mjs",
-    "qa": "vite build app --mode qa && node qa/todas.mjs",
+    "qa": "vite build app --mode qa && node qa/todas.mjs --gate",
+    "qa:run": "node qa/todas.mjs --gate",
+    "qa:all": "vite build app --mode qa && node qa/todas.mjs --all",
     "qa:cables": "node qa/cables.mjs",
     "qa:fusion": "node qa/cables-fusion.mjs",
     "qa:agarre": "node qa/agarre.mjs",
@@ -35,13 +37,13 @@
     "qa:cubierta": "node qa/cubierta-obra.mjs",
     "extraer-planta": "python3 herramientas/extraer-planta.py",
     "qa:empaquetado": "npm run empaquetar && node qa/empaquetado.mjs",
-    "qa:auditoria": "vite build app --mode qa && node qa/todas.mjs recuperacion datos-proyecto capas texto-hostil sin-fantasmas planta-zoom atajos-a-ciegas se-guarda-solo planta-estrecha entradas-hostiles modales-teclado abrir-atomico ejemplos-energizados ejemplos-solo-lectura",
+    "qa:auditoria": "vite build app --mode qa && node qa/todas.mjs --gate",
     "check": "tsc --noEmit -p tsconfig.app.json"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
     "@types/three": "^0.170.0",
-    "playwright-core": "^1.61.1",
+    "playwright-core": "1.61.1",
     "three": "^0.170.0",
     "typescript": "^5.6.3",
     "vite": "^7.3.6"
