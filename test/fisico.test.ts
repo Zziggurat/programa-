@@ -87,6 +87,36 @@ test('sincronización: un gabinete completo queda sincronizado', () => {
 	assert.equal(sincronizarEsquemaGabinete(p).sincronizado, true);
 });
 
+test('sincronización: una imagen con perfil es aparato y una imagen legacy sigue siendo referencia', () => {
+	const p = proyectoFisico();
+	p.dispositivos.push({
+		id: 'custom', tipo: 'contactor', imagen: 'data:image/png;base64,AA==',
+		bornes: [{ id: 'A1' }, { id: 'A2' }, { id: 'L1' }, { id: 'T1' }],
+		comportamiento: {
+			version: 1, clase: 'contactos-electromagneticos',
+			bobina: { entrada: 'A1', retorno: 'A2' },
+			polos: [{ entrada: 'L1', salida: 'T1' }], contactos: [],
+		},
+	});
+	p.dispositivos.push({
+		id: 'referencia', tipo: 'otro', imagen: 'data:image/png;base64,AA==', bornes: [],
+	});
+	p.gabinete!.colocaciones.push({
+		dispositivoId: 'referencia', x: 100, y: 100, ancho: 50, alto: 50,
+	});
+
+	const sinCustom = sincronizarEsquemaGabinete(p);
+	assert.ok(sinCustom.faltanEnGabinete.includes('custom'),
+		'el aparato perfilado desapareció de la sincronización por tener imagen');
+	assert.ok(!sinCustom.faltanEnGabinete.includes('referencia'),
+		'la referencia visual legacy se convirtió en aparato físico');
+
+	p.gabinete!.colocaciones.push({
+		dispositivoId: 'custom', x: 200, y: 200, ancho: 45, alto: 80,
+	});
+	assert.equal(sincronizarEsquemaGabinete(p).sincronizado, true);
+});
+
 test('plan de bornero: lados interno/externo, puentes y número de conductor', () => {
 	const p = crearProyecto('t');
 	p.dispositivos = [

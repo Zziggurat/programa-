@@ -15,6 +15,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 import { Proyecto } from '../src/modelo/tipos.js';
+import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { revisarTablero } from '../src/motores/revision.js';
 import { fondoDe } from '../src/motores/ficha-tablero.js';
 import { factorTemperatura, TEMPERATURA_TABLA_C } from '../src/motores/electrico.js';
@@ -812,7 +813,8 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	// para saber si el tablero está coordinado, y la que hay que poder contrastar con las hojas
 	// de datos. El «~» marca lo que todavía es una estimación y no un dato firmado.
 	const ES_PROT = new Set(['disyuntor', 'diferencial', 'guardamotor', 'fusible', 'seccionador']);
-	const protecciones = proyecto.dispositivos.filter((d) => ES_PROT.has(d.tipo) && !d.imagen);
+	const protecciones = proyecto.dispositivos.filter((d) =>
+		ES_PROT.has(d.tipo) && !esReferenciaVisualInerte(d));
 	if (protecciones.length > 0) {
 		doc.setFont('helvetica', 'bold');
 		doc.setFontSize(11);

@@ -6,6 +6,7 @@
  * montaje es un dibujo aparte sin ningún vínculo; aquí es el mismo modelo.
  */
 import { Colocacion, Proyecto } from '../modelo/tipos.js';
+import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { cajaDeGabinete } from '../modelo/proyecto.js';
 
 export interface ResultadoSincronizacion {
@@ -24,14 +25,17 @@ export interface ResultadoSincronizacion {
 
 export function sincronizarEsquemaGabinete(proyecto: Proyecto): ResultadoSincronizacion {
 	const gabinete = proyecto.gabinete;
-	// Las imágenes de referencia son visuales: no cuentan como aparatos del montaje físico.
-	const idsImagen = new Set(proyecto.dispositivos.filter((d) => d.imagen).map((d) => d.id));
-	const colocaciones = (gabinete?.colocaciones ?? []).filter((c) => !idsImagen.has(c.dispositivoId));
+	// Solo las referencias visuales inertes quedan fuera. Una imagen con perfil eléctrico confirmado
+	// es un aparato físico y debe sincronizarse igual que su equivalente nativo.
+	const idsReferencia = new Set(proyecto.dispositivos
+		.filter(esReferenciaVisualInerte).map((d) => d.id));
+	const colocaciones = (gabinete?.colocaciones ?? []).filter((c) => !idsReferencia.has(c.dispositivoId));
 	const idsEsquema = new Set(proyecto.dispositivos.map((d) => d.id));
 	const idsColocados = new Set(colocaciones.map((c) => c.dispositivoId));
 
 	const faltanEnGabinete = proyecto.dispositivos
-		.filter((d) => !d.campo && !d.imagen && d.tipo !== 'cable' && !idsColocados.has(d.id))
+		.filter((d) => !d.campo && !esReferenciaVisualInerte(d)
+			&& d.tipo !== 'cable' && !idsColocados.has(d.id))
 		.map((d) => d.designacion ?? d.id);
 
 	const sobranEnGabinete = colocaciones
