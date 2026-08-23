@@ -36,6 +36,21 @@ const RAIZ = join(AQUI, '..');
 const NECESITAN_EMPAQUETADO = new Set(['empaquetado', 'entrega']);
 const ARCHIVO_ENTREGA = join(RAIZ, 'dist-final', 'TableroStudio.html');
 
+/*
+ * Las suites pequeñas medidas en una máquina Windows con SwiftShader tardan 18–35 s; la suite
+ * normal más lenta observada (`correcciones`) tarda 6:41. Doce minutos deja casi el doble de
+ * margen para una máquina CI lenta sin permitir que una espera infinita bloquee toda la campaña.
+ * Se puede subir de forma explícita para diagnósticos pesados, nunca silenciosamente:
+ *
+ *   QA_SUITE_TIMEOUT_MS=900000 node qa/todas.mjs correcciones
+ */
+const TIMEOUT_PREDETERMINADO_MS = 12 * 60_000;
+const timeoutMs = Number(process.env.QA_SUITE_TIMEOUT_MS ?? TIMEOUT_PREDETERMINADO_MS);
+if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) {
+	console.error('QA_SUITE_TIMEOUT_MS debe ser un número de milisegundos mayor o igual a 1000.');
+	process.exit(2);
+}
+
 const filtros = process.argv.slice(2);
 const suites = readdirSync(AQUI)
 	.filter((f) => f.endsWith('.mjs') && !f.startsWith('_') && f !== 'todas.mjs')
@@ -80,8 +95,39 @@ const mmss = (ms) => `${Math.floor(ms / 60000)}:${String(Math.round((ms % 60000)
 console.log(`\n${suites.length} suites de navegador, de una en una.\n`);
 
 const fallaron = [];
+const agotaronTiempo = [];
 const saltadas = [];
 const t0 = Date.now();
+let hijoActivo;
+
+/** Mata la suite Y sus descendientes: Chromium y el servidor deben morir con ella. */
+async function matarArbol(hijo) {
+	if (!hijo?.pid) return;
+	if (process.platform === 'win32') {
+		await new Promise((resolve) => {
+			const taskkill = spawn('taskkill', ['/pid', String(hijo.pid), '/t', '/f'], {
+				stdio: 'ignore', windowsHide: true,
+			});
+			taskkill.once('error', resolve);
+			taskkill.once('close', resolve);
+		});
+		return;
+	}
+	try { process.kill(-hijo.pid, 'SIGTERM'); } catch { return; }
+	await new Promise((resolve) => setTimeout(resolve, 1_500));
+	try { process.kill(-hijo.pid, 'SIGKILL'); } catch { /* ya terminó */ }
+}
+
+let interrumpiendo = false;
+async function interrumpir(signal) {
+	if (interrumpiendo) return;
+	interrumpiendo = true;
+	console.error(`\nQA interrumpido (${signal}); limpiando la suite activa…`);
+	await matarArbol(hijoActivo);
+	process.exit(signal === 'SIGINT' ? 130 : 143);
+}
+process.once('SIGINT', () => { void interrumpir('SIGINT'); });
+process.once('SIGTERM', () => { void interrumpir('SIGTERM'); });
 
 for (const [i, suite] of suites.entries()) {
 	if (NECESITAN_EMPAQUETADO.has(suite) && !hayEntrega) {
@@ -92,25 +138,54 @@ for (const [i, suite] of suites.entries()) {
 	}
 	const marca = Date.now();
 	process.stdout.write(`[${i + 1}/${suites.length}] ▶  ${suite}… `);
-	const codigo = await new Promise((resolve) => {
-		const hijo = spawn(process.execPath, [join(AQUI, `${suite}.mjs`)], { cwd: RAIZ, stdio: ['ignore', 'pipe', 'pipe'] });
+	const resultado = await new Promise((resolve) => {
+		const hijo = spawn(process.execPath, [join(AQUI, `${suite}.mjs`)], {
+			cwd: RAIZ,
+			stdio: ['ignore', 'pipe', 'pipe'],
+			// En POSIX crea un grupo que incluye Chromium; Windows usa taskkill /t.
+			detached: process.platform !== 'win32',
+		});
+		hijoActivo = hijo;
 		let salida = '';
 		hijo.stdout.on('data', (d) => { salida += d; });
 		hijo.stderr.on('data', (d) => { salida += d; });
+		let resuelto = false;
+		const limite = setTimeout(() => {
+			if (resuelto) return;
+			resuelto = true;
+			const duracion = mmss(Date.now() - marca);
+			console.log(`⏱️  TIMEOUT ${duracion} (límite ${mmss(timeoutMs)})`);
+			console.log(`        La suite «${suite}» agotó su tiempo; se termina su proceso, navegador y servidor.`);
+			void matarArbol(hijo).then(() => resolve({ codigo: null, timeout: true, salida }));
+		}, timeoutMs);
+		hijo.on('error', (error) => {
+			if (resuelto) return;
+			resuelto = true;
+			clearTimeout(limite);
+			console.log(`❌ no se pudo iniciar: ${error.message}`);
+			resolve({ codigo: 1, timeout: false, salida: `${salida}\n${error.stack ?? error.message}` });
+		});
 		hijo.on('close', (c) => {
+			if (resuelto) return;
+			resuelto = true;
+			clearTimeout(limite);
 			console.log(`${c === 0 ? '✅' : '❌'} ${mmss(Date.now() - marca)}`);
 			// De las que pasan basta con saber que pasan; de las que fallan se enseña todo.
 			if (c !== 0) console.log(salida.split('\n').map((l) => `        ${l}`).join('\n'));
-			resolve(c);
+			resolve({ codigo: c, timeout: false, salida });
 		});
 	});
-	if (codigo !== 0) fallaron.push(suite);
+	hijoActivo = undefined;
+	if (resultado.timeout) agotaronTiempo.push(suite);
+	if (resultado.codigo !== 0) fallaron.push(suite);
 }
 
 console.log(`\n${'─'.repeat(70)}`);
 console.log(`${suites.length - fallaron.length - saltadas.length} bien · ${fallaron.length} mal`
+	+ `${agotaronTiempo.length ? ` · ${agotaronTiempo.length} timeout` : ''}`
 	+ `${saltadas.length ? ` · ${saltadas.length} sin correr` : ''} · ${mmss(Date.now() - t0)}`);
 if (saltadas.length) console.log(`sin correr: ${saltadas.join(', ')}`);
+if (agotaronTiempo.length) console.log(`TIMEOUT: ${agotaronTiempo.join(', ')}`);
 if (fallaron.length) console.log(`MAL: ${fallaron.join(', ')}`);
 else console.log('✅ TODAS BIEN');
 process.exit(fallaron.length ? 1 : 0);
