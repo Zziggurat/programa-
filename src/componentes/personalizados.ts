@@ -24,6 +24,12 @@ export interface ParametrosNominalesComponente {
 	corrienteA?: number;
 	potenciaW?: number;
 	frecuenciaHz?: number;
+	/** Propiedades runtime que no pertenecen al grafo de bornes del perfil. */
+	temporizacion?: { tipo: 'trabajo' | 'reposo'; segundos: number };
+	programa?: string;
+	rangoSonda?: [number, number];
+	unidadSonda?: string;
+	rangoSalidaAnalogica?: [number, number];
 }
 
 export interface DefinicionComponentePersonalizado {
@@ -102,6 +108,17 @@ export function validarDefinicionComponente(d: DefinicionComponentePersonalizado
 	if (!numeroPositivo(d.dimensiones.anchoMm) || !numeroPositivo(d.dimensiones.altoMm)
 		|| !numeroPositivo(d.dimensiones.fondoMm)) {
 		errores.push('ancho, alto y fondo deben ser mayores que cero');
+	}
+	const p = d.parametros;
+	if (p?.temporizacion && (!Number.isFinite(p.temporizacion.segundos) || p.temporizacion.segundos < 0)) {
+		errores.push('la temporización debe expresarse en segundos positivos o cero');
+	}
+	for (const [nombre, rango] of [
+		['rango de sonda', p?.rangoSonda], ['rango de salida analógica', p?.rangoSalidaAnalogica],
+	] as const) {
+		if (rango && (!Number.isFinite(rango[0]) || !Number.isFinite(rango[1]) || rango[1] <= rango[0])) {
+			errores.push(`el ${nombre} debe crecer de mínimo a máximo`);
+		}
 	}
 	if (d.terminales.length === 0 && d.comportamiento.clase !== 'sin-comportamiento') {
 		errores.push('marca al menos un terminal');
@@ -213,6 +230,11 @@ export function instanciarComponentePersonalizado(
 		tensionNominal: p?.tensionV,
 		corrienteNominal: p?.corrienteA,
 		disipacionW: p?.potenciaW,
+		temporizacion: p?.temporizacion ? clonar(p.temporizacion) : undefined,
+		programa: texto(p?.programa),
+		rangoSonda: p?.rangoSonda ? clonar(p.rangoSonda) : undefined,
+		unidadSonda: texto(p?.unidadSonda),
+		rangoSalidaAnalogica: p?.rangoSalidaAnalogica ? clonar(p.rangoSalidaAnalogica) : undefined,
 		campo: opciones.campo ?? false,
 		bornes: clonar(definicion.terminales),
 		comportamiento: clonar(definicion.comportamiento),
