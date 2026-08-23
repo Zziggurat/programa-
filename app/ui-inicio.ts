@@ -37,7 +37,7 @@ export interface ContextoInicio {
 	 * `ajustes` es lo que haya que dejar puesto ANTES de pintar —el modo Trabajo de los ejemplos—,
 	 * para que la primera pintada ya salga bien y quede dentro de la transacción.
 	 */
-	reemplazarProyecto: (p: Proyecto, ajustes?: () => void) => void;
+	reemplazarProyecto: (p: Proyecto, ajustes?: () => void) => void | Promise<void>;
 	/** Da por vista la tarjeta de bienvenida del lienzo vacío. */
 	descartarBienvenida: () => void;
 	aplicarModo: (nuevo: 'editor' | 'trabajo') => void;
@@ -150,7 +150,7 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 		nuevo.esEjemplo = true;
 		try {
 			// El modo Trabajo entra dentro: el ejemplo se abre listo para recorrer el cableado.
-			ctx.reemplazarProyecto(nuevo, () => ctx.aplicarModo('trabajo'));
+			await ctx.reemplazarProyecto(nuevo, () => ctx.aplicarModo('trabajo'));
 		} catch {
 			avisar(`No se pudo abrir el ejemplo «${ej.titulo}». El tablero que tenías sigue como estaba.`, 'error');
 			return;
@@ -198,7 +198,7 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 		cont.insertAdjacentHTML('beforeend', pintarPlantillasPropias());
 		for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-plantilla]')) {
 			b.onclick = () => { void (async () => {
-				if (await puedoReemplazarElTablero('esta plantilla')) abrirPlantilla(Number(b.dataset.plantilla));
+				if (await puedoReemplazarElTablero('esta plantilla')) await abrirPlantilla(Number(b.dataset.plantilla));
 			})(); };
 		}
 		for (const b of cont.querySelectorAll<HTMLButtonElement>('[data-bajar-plantilla]')) {
@@ -331,7 +331,7 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 	 * Y si no se puede leer, se dice y NO SE TOCA el tablero que hay en pantalla. Reemplazarlo
 	 * por algo que no se ha podido validar es la forma más rápida de perder una tarde de trabajo.
 	 */
-	function abrirPlantilla(indice: number): void {
+	async function abrirPlantilla(indice: number): Promise<void> {
 		const p = plantillasGuardadas()[indice];
 		if (!p) return;
 		let nuevo: Proyecto;
@@ -346,7 +346,7 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 			// Reencuadra por dentro. Segunda auditoría, TS2-P2-13: sin eso, una plantilla de una
 			// placa muy distinta a la que había en pantalla se abría fuera de escala y parecía
 			// vacía, con el tablero fuera del cuadro.
-			ctx.reemplazarProyecto(nuevo);
+			await ctx.reemplazarProyecto(nuevo);
 		} catch {
 			avisar(`No se pudo abrir la plantilla «${p.nombre}». El tablero que tenías sigue como estaba.`, 'error');
 			return;

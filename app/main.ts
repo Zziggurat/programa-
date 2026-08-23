@@ -74,6 +74,12 @@ import {
 	redondearEsquinas,
 } from './geometria-cables.js';
 import { longitudCoincidente3D } from './colisiones-cables.js';
+import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
+import { GestorDocumentos, EstadoGuardadoDocumento } from './gestor-documentos.js';
+import { instalarUIProyectos } from './ui-proyectos.js';
+import { base64ABytes, hidratarImagenesDeProyecto, proyectoParaPersistir } from '../src/componentes/assets.js';
+import { leerPaqueteProyecto } from '../src/componentes/personalizados.js';
+import type { RepositorioProyectos } from '../src/persistencia/tipos.js';
 
 /** Bandera que inyecta el empaquetador: true solo en el build para las pruebas (QA=1). */
 declare const __QA__: boolean;
@@ -210,6 +216,14 @@ function nombreDeError(e: unknown): string {
 
 const cargaInicial = cargarInicial();
 let proyecto: Proyecto = cargaInicial.proyecto;
+let gestorDocumentos: GestorDocumentos | undefined;
+let repositorioDocumentos: RepositorioProyectos | undefined;
+let cerrarRepositorioDocumentos: (() => void) | undefined;
+let recursosImagenActivos: { liberar(): void } | undefined;
+/** Hasta que la migración termine no se toca la clave legacy que constituye su fuente segura. */
+let persistenciaDocumentalPendiente = true;
+/** Salvaguarda explícita si IndexedDB no está disponible; nunca se activa en silencio. */
+let usarFallbackLegacy = false;
 /** Congelado = hay algo guardado que no se ha podido leer y que NO se puede pisar todavía. */
 let guardadoCongelado = !!cargaInicial.problema?.crudo;
 
@@ -237,7 +251,7 @@ function recalcular(): void {
  * usuario seguía trabajando convencido de que estaba a salvo, y al cerrar lo perdía todo.
  * Ahora se dice, y además queda constancia de si hay cambios sin volcar a un archivo.
  */
-type EstadoGuardado = 'guardado' | 'sucio' | 'fallo';
+type EstadoGuardado = 'guardando' | 'guardado' | 'sucio' | 'fallo';
 let estadoGuardado: EstadoGuardado = 'guardado';
 /** True desde el primer cambio hasta que se descarga el proyecto como archivo. */
 let hayCambiosSinExportar = false;
@@ -263,8 +277,13 @@ function pintarChipEjemplo(): void {
  * Es la salida para quien quiera trastear —los propios ejemplos lo piden: «cámbiale el retardo o
  * los 21 °C y vuelve a simular»—, sin que el ejemplo original se pueda estropear.
  */
-function copiarEjemploParaTrabajar(): void {
+async function copiarEjemploParaTrabajar(): Promise<void> {
 	if (!proyecto.esEjemplo) return;
+	if (gestorDocumentos) {
+		await gestorDocumentos.copiarEjemplo();
+		avisar('La copia es un tablero nuevo, independiente y guardado localmente.', 'ok');
+		return;
+	}
 	delete proyecto.esEjemplo;
 	proyecto.nombre = `Copia de ${proyecto.nombre}`;
 	($('nombre-proyecto') as HTMLInputElement).value = proyecto.nombre;
@@ -282,23 +301,43 @@ function pintarEstadoGuardado(motivo?: string): void {
 	e.classList.toggle('fallo', estadoGuardado === 'fallo');
 	// Textos cortos y de largo parecido: este chip vive en la barra de herramientas y si crece
 	// al cambiar de estado empuja a los botones fuera de la pantalla. El detalle va en el tooltip.
-	e.textContent = estadoGuardado === 'fallo' ? 'Sin guardar'
-		: estadoGuardado === 'sucio' ? 'Sin descargar' : 'Guardado';
+	e.textContent = estadoGuardado === 'fallo' ? 'Error al guardar'
+		: estadoGuardado === 'guardando' || estadoGuardado === 'sucio' ? 'Guardando…'
+			: 'Guardado localmente';
 	// El texto del chip cambia de ancho, así que puede ser justo lo que haga que los rótulos de
 	// los botones dejen de caber.
 	ajustarRotulosBarra();
 	e.title = estadoGuardado === 'fallo'
 		? `No se pudo guardar en el navegador${motivo ? ` (${motivo})` : ''}. `
 			+ 'Descarga el proyecto con Archivo → Guardar para no perderlo.'
-		: estadoGuardado === 'sucio'
-			? 'Guardado en este navegador. Descárgalo con Archivo → Guardar para tener copia.'
-			: 'El trabajo está guardado en este navegador.';
+		: estadoGuardado === 'guardando' || estadoGuardado === 'sucio'
+			? 'Se está escribiendo una revisión local del tablero.'
+			: 'El trabajo está guardado localmente. Exportar crea una copia portátil aparte.';
+}
+
+function reflejarEstadoDocumental(estado: EstadoGuardadoDocumento): void {
+	estadoGuardado = estado.estado === 'guardando' ? 'guardando'
+		: estado.estado === 'guardado' ? 'guardado' : 'fallo';
+	pintarEstadoGuardado(estado.estado === 'error' ? nombreDeError(estado.error) : undefined);
 }
 
 function autoguardar(): void {
 	// Hay un proyecto guardado que no se ha podido leer. Hasta que el usuario diga qué hacer con
 	// él, no se escribe: sobrescribirlo sería destruir justo lo que está intentando recuperar.
 	if (guardadoCongelado) return;
+	if (gestorDocumentos) {
+		if (proyecto.esEjemplo) return;
+		try {
+			gestorDocumentos.programarGuardado(proyectoParaPersistir(proyecto));
+		} catch (e) {
+			estadoGuardado = 'fallo';
+			pintarEstadoGuardado(nombreDeError(e));
+		}
+		return;
+	}
+	// No se modifica la fuente legacy hasta que su migración transaccional haya terminado.
+	if (persistenciaDocumentalPendiente) return;
+	if (!usarFallbackLegacy) return;
 	/*
 	 * UN EJEMPLO NO ES TRABAJO TUYO Y NO SE GUARDA ENCIMA DEL TUYO.
 	 *
@@ -356,7 +395,6 @@ function cerrarVentanasDeArriba(): boolean {
 /** Solo la señal: hay trabajo que todavía no se ha descargado como archivo. */
 function senalarTrabajoSinExportar(): void {
 	hayCambiosSinExportar = true;
-	if (estadoGuardado !== 'fallo') { estadoGuardado = 'sucio'; pintarEstadoGuardado(); }
 }
 
 /**
@@ -382,7 +420,7 @@ function marcarSucio(): void {
 
 // Cerrar la pestaña con trabajo sin descargar pide confirmación al navegador.
 window.addEventListener('beforeunload', (ev) => {
-	if (!hayCambiosSinExportar && estadoGuardado !== 'fallo') return;
+	if (estadoGuardado !== 'guardando' && estadoGuardado !== 'fallo') return;
 	ev.preventDefault();
 	ev.returnValue = '';
 });
@@ -473,7 +511,8 @@ async function resolverAutoguardadoReparado(motivo: string, crudo: string): Prom
 	}
 }
 
-void resolverAutoguardadoIlegible();
+// La decisión sobre el autosave antiguo se toma después de copiarlo atómicamente a `recovery`.
+// Si IndexedDB no abre, el bootstrap activa el flujo legacy de estas funciones como salvaguarda.
 
 /* ------------------------- Historial (deshacer/rehacer) ------------------------- */
 
@@ -554,7 +593,7 @@ function avisarQueEsEjemplo(): void {
  * está montado y pintado, y mientras se prueba el guardado está congelado. Si algo revienta, las
  * tres cosas se quedan exactamente como estaban.
  */
-function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void): void {
+function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void, guardarAlFinal = true): void {
 	const anterior = proyecto;
 	const pilaAntes = [...pila];
 	const rehacerAntes = [...rehacerPila];
@@ -622,7 +661,7 @@ function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void): void {
 	pila.length = 0;
 	rehacerPila.length = 0;
 	actualizarBotonesHistorial();
-	autoguardar();
+	if (guardarAlFinal) autoguardar();
 }
 
 /**
@@ -6680,20 +6719,32 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 	 * puertas que cambian el tablero entero pasan ya por el mismo sitio.
 	 */
 	// El catálogo se ve desde el primer momento, para poder empezar a añadir aparatos.
-	reemplazarProyecto(proyectoNuevo(), () => aplicarModo('editor'));
+	if (gestorDocumentos) await gestorDocumentos.crear(proyectoNuevo());
+	else reemplazarProyecto(proyectoNuevo(), () => aplicarModo('editor'));
 };
 
-($('btn-guardar') as HTMLButtonElement).onclick = () => {
-	descargar(
-		`${nombreArchivo()}.tablero.json`,
-		JSON.stringify(proyecto, null, '\t'),
-		'application/json',
-	);
+async function exportarProyectoActual(): Promise<void> {
+	let contenido: unknown = proyectoParaPersistir(proyecto);
+	let sufijo = '.tablero.json';
+	try {
+		if (gestorDocumentos && repositorioDocumentos && !proyecto.esEjemplo) {
+			await gestorDocumentos.flush();
+			if (proyecto.dispositivos.some((d) => d.assetId)) {
+				contenido = await repositorioDocumentos.exportarPaquete(gestorDocumentos.documentoActivo()!.id);
+				sufijo = '.tablero.paquete.json';
+			}
+		}
+	} catch (e) {
+		avisar(`No se pudo preparar la copia portátil: ${nombreDeError(e)}`, 'error');
+		return;
+	}
+	descargar(`${nombreArchivo()}${sufijo}`, JSON.stringify(contenido, null, '\t'), 'application/json');
 	// Ya hay copia en un archivo del usuario: se puede cerrar la pestaña sin miedo.
 	hayCambiosSinExportar = false;
 	if (estadoGuardado !== 'fallo') { estadoGuardado = 'guardado'; pintarEstadoGuardado(); }
-	avisar('Proyecto descargado', 'ok');
-};
+	avisar(sufijo.includes('paquete') ? 'Proyecto y sus imágenes descargados en un paquete portátil' : 'Proyecto descargado', 'ok');
+}
+($('btn-guardar') as HTMLButtonElement).onclick = () => { void exportarProyectoActual(); };
 
 /**
  * Dónde cae una imagen de referencia recién subida.
@@ -6775,15 +6826,24 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 };
 
 ($('btn-abrir') as HTMLButtonElement).onclick = () => ($('archivo-abrir') as HTMLInputElement).click();
-($('archivo-abrir') as HTMLInputElement).onchange = async (e) => {
-	const archivo = (e.target as HTMLInputElement).files?.[0];
-	if (!archivo) return;
-	if (!(await panelInicio.puedoReemplazarElTablero('otro proyecto'))) {
-		(e.target as HTMLInputElement).value = '';
-		return;
-	}
+async function importarArchivoProyecto(archivo: File): Promise<void> {
+	const textoArchivo = await archivo.text();
+	let abierto: Proyecto;
+	let arreglos: string[] = [];
+	let documentoImportado: Awaited<ReturnType<RepositorioProyectos['importarPaquete']>> | undefined;
 	try {
-		const { proyecto: abierto, arreglos } = cargarProyecto(await archivo.text());
+		const cabecera = JSON.parse(textoArchivo) as { formato?: unknown };
+		if (cabecera?.formato === 'tablero-studio-paquete') {
+			if (!repositorioDocumentos || !gestorDocumentos) throw new Error('La biblioteca local todavía no está disponible.');
+			documentoImportado = await repositorioDocumentos.importarPaquete(leerPaqueteProyecto(textoArchivo));
+			abierto = documentoImportado.proyecto;
+		} else {
+			const cargado = cargarProyecto(textoArchivo); abierto = cargado.proyecto; arreglos = cargado.arreglos;
+		}
+	} catch (e) {
+		if (e instanceof SyntaxError) throw new ArchivoInvalido('El archivo no contiene JSON válido.');
+		throw e;
+	}
 		/*
 		 * ABRIR ES TODO O NADA.
 		 *
@@ -6796,17 +6856,32 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 		 * quedaba con un paso de deshacer inútil y sin nada que rehacer. `reemplazarProyecto()`
 		 * mueve las tres cosas —proyecto, historial y guardado— o ninguna.
 		 */
-		reemplazarProyecto(abierto);
+	if (gestorDocumentos) {
+		if (documentoImportado) await gestorDocumentos.abrir(documentoImportado.id);
+		else await gestorDocumentos.crear(abierto, abierto.nombre);
+	} else reemplazarProyecto(abierto);
 		// Si hubo que sanear algo, se dice: callarlo es dejar que el usuario descubra
 		// más tarde que le faltan cables sin saber por qué.
-		avisar(arreglos.length
-			? `Proyecto abierto. Se corrigió: ${arreglos.join(', ')}.`
-			: 'Proyecto abierto correctamente', arreglos.length ? 'info' : 'ok');
+	avisar(arreglos.length
+		? `Proyecto abierto. Se corrigió: ${arreglos.join(', ')}.`
+		: 'Proyecto abierto correctamente', arreglos.length ? 'info' : 'ok');
+}
+
+($('archivo-abrir') as HTMLInputElement).onchange = async (e) => {
+	const entrada = e.target as HTMLInputElement;
+	const archivo = entrada.files?.[0];
+	if (!archivo) return;
+	if (!gestorDocumentos && !(await panelInicio.puedoReemplazarElTablero('otro proyecto'))) {
+		entrada.value = '';
+		return;
+	}
+	try {
+		await importarArchivoProyecto(archivo);
 	} catch (e) {
 		avisar(e instanceof ArchivoInvalido ? e.message
-			: 'No se pudo leer el archivo de proyecto.', 'error');
+			: `No se pudo leer el archivo de proyecto: ${nombreDeError(e)}`, 'error');
 	}
-	(e.target as HTMLInputElement).value = '';
+	entrada.value = '';
 };
 
 ($('btn-dossier') as HTMLButtonElement).onclick = () => {
@@ -7217,7 +7292,7 @@ function aplicarModo(nuevo: Modo): void {
 $('modo-editor').onclick = () => { if (!visualizacion) aplicarModo('editor'); };
 $('modo-trabajo').onclick = () => { if (!visualizacion) aplicarModo('trabajo'); };
 ($('btn-ver') as HTMLButtonElement).onclick = () => aplicarVisualizacion(!visualizacion);
-($('btn-copiar-ejemplo') as HTMLButtonElement).onclick = () => copiarEjemploParaTrabajar();
+($('btn-copiar-ejemplo') as HTMLButtonElement).onclick = () => { void copiarEjemploParaTrabajar(); };
 
 ($('btn-deshacer') as HTMLButtonElement).onclick = deshacer;
 ($('btn-rehacer') as HTMLButtonElement).onclick = rehacer;
@@ -7890,7 +7965,11 @@ $('modal-controlador').addEventListener('click', (e) => {
 
 const panelInicio = instalarInicio({
 	proyecto: () => proyecto,
-	reemplazarProyecto,
+	reemplazarProyecto: async (nuevo, ajustes) => {
+		if (!gestorDocumentos) { reemplazarProyecto(nuevo, ajustes); return; }
+		if (nuevo.esEjemplo) await gestorDocumentos.mostrarEjemplo(nuevo);
+		else await gestorDocumentos.crear(nuevo, nuevo.nombre);
+	},
 	descartarBienvenida: () => { bienvenidaDescartada = true; },
 	aplicarModo,
 	encuadrar,
@@ -7899,6 +7978,89 @@ const panelInicio = instalarInicio({
 	encuadrePendiente: () => encuadrePendiente,
 	irAPlanta,
 });
+
+/** Convierte imágenes inline antiguas en assets una sola vez; la escena conserva su URL runtime. */
+async function extraerAssetsInline(): Promise<void> {
+	if (!repositorioDocumentos || !gestorDocumentos || proyecto.esEjemplo) return;
+	let cambio = false;
+	for (const d of proyecto.dispositivos) {
+		if (d.assetId || !d.imagen) continue;
+		const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]*={0,2})$/i.exec(d.imagen);
+		if (!m) continue;
+		const asset = await repositorioDocumentos.guardarAsset(m[1].toLowerCase(), base64ABytes(m[2]));
+		d.assetId = asset.id;
+		cambio = true;
+	}
+	if (cambio) {
+		gestorDocumentos.programarGuardado(proyectoParaPersistir(proyecto));
+		await gestorDocumentos.flush();
+	}
+}
+
+/**
+ * Arranque asíncrono de la biblioteca. Hasta que termina, `autoguardar()` no toca localStorage:
+ * esa cadena es precisamente la entrada que la migración debe copiar byte por byte a recovery.
+ */
+async function iniciarPersistenciaDocumental(): Promise<void> {
+	let rawLegacy: string | null = null;
+	try { rawLegacy = localStorage.getItem(CLAVE_AUTOSAVE); } catch { /* el repositorio puede funcionar igual */ }
+	try {
+		const abierto = await abrirRepositorioProyectosIndexedDB();
+		const gestor = new GestorDocumentos({
+			repositorio: abierto.repositorio,
+			crearProyectoInicial: proyectoNuevo,
+			alCambiarEstado: reflejarEstadoDocumental,
+			aplicarProyecto: async (nuevo, contexto) => {
+				const recursos = await hidratarImagenesDeProyecto(nuevo,
+					(id) => abierto.repositorio.abrirAsset(id));
+				try {
+					reemplazarProyecto(recursos.proyecto, () => {
+						if (contexto.ejemplo) aplicarModo('trabajo');
+						else if (contexto.origen === 'crear' || contexto.origen === 'copiar-ejemplo') aplicarModo('editor');
+					}, false);
+				} catch (e) {
+					 recursos.liberar();
+					 throw e;
+				}
+				const anteriores = recursosImagenActivos;
+				recursosImagenActivos = recursos;
+				anteriores?.liberar();
+				if (recursos.faltantes.length) {
+					avisar(`Faltan ${recursos.faltantes.length} imagen(es) del proyecto; su perfil eléctrico se conserva.`, 'error');
+				}
+			},
+		});
+		const resultado = await gestor.inicializar(rawLegacy);
+		repositorioDocumentos = abierto.repositorio;
+		cerrarRepositorioDocumentos = abierto.cerrar;
+		gestorDocumentos = gestor;
+		guardadoCongelado = false;
+		persistenciaDocumentalPendiente = false;
+		usarFallbackLegacy = false;
+		await extraerAssetsInline();
+		instalarUIProyectos({
+			gestor,
+			crearProyecto: proyectoNuevo,
+			abrirEjemplos: panelInicio.abrirBiblioteca,
+			importarArchivo: importarArchivoProyecto,
+			exportarActivo: exportarProyectoActual,
+			listarRecuperaciones: () => abierto.repositorio.listarRecuperaciones(),
+		});
+		if (resultado.migracion.estado === 'cuarentena') {
+			avisar('El autoguardado antiguo no era legible: quedó intacto en Recuperación.', 'error');
+		} else if (resultado.migracion.estado === 'reparable') {
+			avisar('El autoguardado antiguo se migró, pero requiere revisar las reparaciones indicadas.', 'info');
+		}
+	} catch (e) {
+		persistenciaDocumentalPendiente = false;
+		usarFallbackLegacy = true;
+		estadoGuardado = 'fallo';
+		pintarEstadoGuardado(nombreDeError(e));
+		avisar(`No se pudo abrir la biblioteca de proyectos. Se conserva el autoguardado antiguo: ${nombreDeError(e)}`, 'error');
+		// Solo aquí, después de comprobar que no hay repositorio nuevo, se recupera el flujo anterior.
+		void resolverAutoguardadoIlegible();
+	}
+}
 
 function ajustarTamano(): void {
 	const r = contenedor.getBoundingClientRect();
@@ -8022,6 +8184,7 @@ aplicarModo('editor');
 aplicarHerramienta('seleccionar', true);
 actualizarBotonesHistorial();
 addEventListener('resize', () => encajarPaneles());
+const persistenciaLista = iniciarPersistenciaDocumental();
 
 /**
  * Fotogramas dibujados por el editor. Lo lee la sonda de QA para comprobar que, con la Planta

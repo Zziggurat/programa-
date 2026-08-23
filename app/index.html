@@ -1059,15 +1059,30 @@
 	body.vista-2d #escena canvas { cursor: crosshair; }
 
 	/* Biblioteca de ejemplos y su explicación (reutilizan el aspecto del modal de ayuda) */
-	#modal-ejemplos, #modal-explicacion { position: fixed; inset: 0; z-index: var(--capa-modal); background: #0009;
+	#modal-ejemplos, #modal-explicacion, #modal-tableros { position: fixed; inset: 0; z-index: var(--capa-modal); background: #0009;
 		display: flex; align-items: center; justify-content: center; padding: 20px; }
-	#modal-ejemplos .caja-modal, #modal-explicacion .caja-modal { position: relative; background: var(--panel);
+	#modal-ejemplos .caja-modal, #modal-explicacion .caja-modal, #modal-tableros .caja-modal { position: relative; background: var(--panel);
 		border: 1px solid var(--borde); border-radius: 16px; padding: 26px 30px; max-width: 660px;
 		max-height: 88vh; overflow-y: auto; box-shadow: 0 18px 60px #000a; }
-	#modal-ejemplos h2, #modal-explicacion h2 { margin: 0 0 14px; font-size: 20px; }
-	#modal-ejemplos .cerrar, #modal-explicacion .cerrar { position: absolute; top: 14px; right: 14px;
+	#modal-tableros .caja-biblioteca { width:min(940px,94vw); max-width:940px; }
+	#modal-ejemplos h2, #modal-explicacion h2, #modal-tableros h2 { margin: 0 0 14px; font-size: 20px; }
+	#modal-ejemplos .cerrar, #modal-explicacion .cerrar, #modal-tableros .cerrar { position: absolute; top: 14px; right: 14px;
 		background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px;
 		height: 30px; border-radius: 8px; cursor: pointer; }
+	.acciones-biblioteca { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 20px; }
+	.rejilla-documentos { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
+	.tarjeta-documento { border:1px solid var(--borde); background:var(--panel-2); border-radius:10px; padding:12px; }
+	.tarjeta-documento.activo { border-color:#4b9bd8; box-shadow:inset 0 0 0 1px #4b9bd866; }
+	.tarjeta-documento h3 { margin:0 0 4px; font-size:15px; }
+	.tarjeta-documento p { margin:0; color:var(--texto-suave); font-size:12px; }
+	.tarjeta-documento strong { display:block; color:#f0bd65; font-size:12px; margin-top:6px; }
+	.acciones-documento { display:flex; gap:6px; flex-wrap:wrap; margin-top:12px; }
+	.acciones-documento .boton { padding:6px 8px; font-size:12px; }
+	.acciones-documento .peligro { color:#ffb1aa; }
+	.recuperacion-biblioteca { margin-top:18px; border-top:1px solid var(--borde); padding-top:12px; }
+	.fila-snapshot { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:7px 0; border-bottom:1px solid var(--borde); }
+	.vacio-biblioteca, .error-biblioteca { color:var(--texto-suave); }
+	.error-biblioteca { color:#ff9b94; }
 	.tarjeta-ejemplo { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 12px;
 		padding: 14px 16px; margin-bottom: 10px; }
 	.tarjeta-ejemplo h3 { margin: 0 0 4px; font-size: 15px; }
@@ -1184,6 +1199,7 @@
 		</button>
 	</div>
 	<div id="inicio-secundario">
+		<button id="inicio-mis-tableros">🗂️ Mis tableros</button>
 		<button id="inicio-abrir">📂 Abrir un proyecto guardado…</button>
 		<button id="inicio-ejemplos">📚 Tableros de ejemplo</button>
 		<button id="inicio-guia">❓ Guía rápida</button>
@@ -1212,6 +1228,7 @@
 	<input id="nombre-proyecto" title="Nombre del proyecto">
 	<span id="estado-guardado" title="Estado del guardado automático">Guardado</span>
 	<span id="chip-ejemplo" hidden>📚 Ejemplo — solo lectura
+		<button id="btn-volver-tablero" title="Cerrar el ejemplo y volver al último tablero guardado">Volver a mi tablero</button>
 		<button id="btn-copiar-ejemplo" title="Crea un tablero tuyo, igual a este, que sí puedes modificar y se guarda con tu trabajo">Hacer una copia para trabajar</button>
 	</span>
 	<button class="boton icono" id="btn-deshacer" aria-label="Deshacer" title="Deshacer (Ctrl+Z)">↶</button>
@@ -1241,6 +1258,7 @@
 	<div class="menu" id="menu-archivo">
 		<button class="boton" id="btn-archivo" aria-label="Archivo" title="Nuevo, abrir, guardar y plantillas">📁<span class="rotulo-boton">Archivo</span> ▾</button>
 		<div class="lista">
+			<button id="btn-mis-tableros">🗂️ Mis tableros<small>Abrir, duplicar, recuperar e importar proyectos</small></button>
 			<button id="btn-nuevo">🆕 Nuevo tablero<small>Vaciar la placa y empezar de cero</small></button>
 			<button id="btn-abrir">📂 Abrir proyecto…<small>Un archivo .tablero.json guardado antes</small></button>
 			<button id="btn-guardar">💾 Guardar proyecto<small>Descarga el archivo a tu equipo</small></button>
@@ -1608,6 +1626,34 @@
 		<p class="sub" style="margin-top:-6px">Tableros reales ya armados y cableados. Ábrelos para
 		estudiar cómo funcionan: puedes girarlos, seguir cada cable y ver la verificación eléctrica.</p>
 		<div id="lista-ejemplos"></div>
+	</div>
+</div>
+
+<!-- Biblioteca persistente: documentos del usuario, separada de ejemplos y plantillas. -->
+<div id="modal-tableros" hidden>
+	<div class="caja-modal caja-biblioteca">
+		<button class="cerrar" id="btn-cerrar-tableros" title="Cerrar">✕</button>
+		<h2>Mis tableros</h2>
+		<p class="sub">Cada tablero tiene identidad, historial de recuperación y autoguardado local independientes.</p>
+		<div class="acciones-biblioteca">
+			<button class="boton primario" id="btn-nuevo-biblioteca">＋ Nuevo tablero</button>
+			<button class="boton" id="btn-importar-biblioteca">📥 Importar</button>
+			<button class="boton" id="btn-exportar-biblioteca">📤 Exportar abierto</button>
+			<button class="boton" id="btn-ejemplos-biblioteca">📚 Abrir ejemplos</button>
+			<input id="archivo-importar-biblioteca" type="file" accept=".json,.tablero" hidden>
+		</div>
+		<section aria-labelledby="titulo-mis-tableros">
+			<h3 id="titulo-mis-tableros">Mis tableros</h3>
+			<div id="lista-mis-tableros" class="rejilla-documentos"></div>
+		</section>
+		<details class="recuperacion-biblioteca">
+			<summary>Versiones recuperables del tablero abierto</summary>
+			<div id="lista-recuperacion"></div>
+		</details>
+		<details class="recuperacion-biblioteca">
+			<summary>Copias antiguas o archivos en cuarentena</summary>
+			<div id="lista-recuperacion-legacy"></div>
+		</details>
 	</div>
 </div>
 
