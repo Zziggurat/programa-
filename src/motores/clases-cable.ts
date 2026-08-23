@@ -7,9 +7,10 @@
  * una acometida que trae el instalador desde fuera o el conductor de protección, que no comparte
  * mazo con nadie. Son cuatro maneras distintas de tender el mismo trazo.
  *
- * Aquí se deduce esa clase de dónde están los extremos, que es información que el proyecto ya
- * tiene, y solo se deduce cuando el conductor no la lleva escrita: si el usuario la fijó a mano,
- * manda la suya.
+ * Aquí se deduce esa clase de la semántica eléctrica y de dónde están los extremos, que son datos
+ * persistentes del proyecto. Una clase escrita por la persona manda sobre la deducción física,
+ * salvo que alguno de los bornes sea PE: la función de protección es una propiedad eléctrica más
+ * fuerte que una preferencia de tendido.
  */
 import { ClaseConductor, Conductor, Proyecto } from '../modelo/tipos.js';
 
@@ -31,13 +32,22 @@ export function fueraDelGabinete(proyecto: Proyecto, dispositivoId: string): boo
 	return !g.colocaciones.some((c) => c.dispositivoId === dispositivoId);
 }
 
-/** Si el conductor es de protección: por su color normalizado o por su marca de potencial. */
+/** El borne al que apunta un extremo. El id es un rótulo; `tipo` es la declaración eléctrica. */
+function borneDe(proyecto: Proyecto, extremo: Conductor['de']) {
+	return proyecto.dispositivos.find((d) => d.id === extremo.dispositivoId)
+		?.bornes.find((b) => b.id === extremo.borneId);
+}
+
+/**
+ * Si el conductor es de protección por SEMÁNTICA persistente.
+ *
+ * No se mira el nombre ni el color. `GND` puede ser el común funcional de 0 V de un control y un
+ * hilo verde-amarillo mal declarado sigue siendo un dato incoherente, no una orden para cambiar
+ * en silencio su función eléctrica. Los proyectos antiguos sin `Borne.tipo` deben declarar la
+ * clase del conductor si quieren apartarse de la deducción física.
+ */
 function esProteccion(proyecto: Proyecto, c: Conductor): boolean {
-	const color = (c.color ?? '').toLowerCase();
-	if (color.includes('verde') && color.includes('amarillo')) return true;
-	if (color === '#00a651' || color === 'pe') return true;
-	const bornes = [c.de.borneId, c.a.borneId].map((b) => b.toUpperCase());
-	return bornes.includes('PE') || bornes.includes('GND');
+	return borneDe(proyecto, c.de)?.tipo === 'PE' || borneDe(proyecto, c.a)?.tipo === 'PE';
 }
 
 /**
@@ -47,8 +57,9 @@ function esProteccion(proyecto: Proyecto, c: Conductor): boolean {
  * extremo; y solo entonces la puerta.
  */
 export function claseDeConductor(proyecto: Proyecto, c: Conductor): ClaseConductor {
-	if (c.clase) return c.clase;
+	if (c.clase === 'proteccion') return 'proteccion';
 	if (esProteccion(proyecto, c)) return 'proteccion';
+	if (c.clase) return c.clase;
 	if (fueraDelGabinete(proyecto, c.de.dispositivoId) || fueraDelGabinete(proyecto, c.a.dispositivoId)) {
 		return 'campo';
 	}

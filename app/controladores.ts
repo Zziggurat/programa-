@@ -78,13 +78,18 @@ const CONECTOR = {
 };
 
 /**
- * Naturaleza eléctrica de un terminal deducida de su rótulo. La usa el DRC y la
+ * Naturaleza eléctrica propuesta al crear un terminal desde un rótulo libre. La usa el DRC y la
  * numeración de potenciales: una entrada universal no es lo mismo que una fase.
+ *
+ * Solo las designaciones inequívocas de protección se convierten en PE. `GND` queda como control:
+ * según el fabricante puede ser 0 V, referencia funcional o chasis, y el texto solo no permite
+ * elegir entre ellos. Si una ficha conoce que ese borne es protección debe declararlo de forma
+ * explícita en el modelo, no confiar en esta heurística de importación.
  */
 export function naturalezaTerminal(rotulo: string): TipoBorne {
 	const t = rotulo.toUpperCase().trim();
-	if (/^(PE|GND|EARTH|TIERRA|⏚)/.test(t)) return 'PE';
-	if (/^(24V|~|G0|G$|HOT|COM|0V|\+24|R$|C$|24 ?VAC|24 ?VDC)/.test(t)) return 'control';
+	if (/^(PE|EARTH|TIERRA|⏚)(?:\b|$)/.test(t)) return 'PE';
+	if (/^(GND|24V|~|G0|G$|HOT|COM|0V|\+24|R$|C$|24 ?VAC|24 ?VDC)/.test(t)) return 'control';
 	if (/^(MS\/TP|RS485|FC|SA|SYLK|CE|A1|B1|SHLD|SHIELD|PL-LINK)/.test(t)) return 'senal';
 	return 'senal';
 }

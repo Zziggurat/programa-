@@ -328,10 +328,11 @@ export interface Conductor {
 	 * y muere en una bornera, y el de protección tiene su propia identidad —verde-amarillo,
 	 * continuidad propia— y no viaja dentro del mazo de mando.
 	 *
-	 * Es OPCIONAL a propósito. Si falta, `claseDeConductor` la deduce de dónde están sus dos
-	 * extremos, que es información que el proyecto ya tiene; guardarla sirve para el caso en que
-	 * el usuario quiera decir otra cosa. Un proyecto viejo se abre sin este campo y se comporta
-	 * exactamente igual que antes.
+	 * Es OPCIONAL a propósito. Si falta, `claseDeConductor` la deduce de la naturaleza eléctrica
+	 * de los bornes y de dónde están sus dos extremos, que es información que el proyecto ya
+	 * tiene; guardarla sirve para el caso en que el usuario quiera decidir el tendido físico. Un
+	 * borne declarado PE siempre conserva prioridad: no se puede convertir protección en mando o
+	 * campo mediante una preferencia geométrica.
 	 */
 	clase?: ClaseConductor;
 }

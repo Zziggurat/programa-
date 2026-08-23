@@ -120,10 +120,13 @@ test('no repite rótulos ni se dispara con un rango disparatado', () => {
 /* ------------------------- Fichas de controladores reales ------------------------- */
 
 test('naturaleza de los terminales por su rótulo', () => {
-	assert.equal(naturalezaTerminal('GND'), 'PE');
+	assert.equal(naturalezaTerminal('GND'), 'control');
 	assert.equal(naturalezaTerminal('PE'), 'PE');
+	assert.equal(naturalezaTerminal('EARTH'), 'PE');
 	assert.equal(naturalezaTerminal('24V~'), 'control');
 	assert.equal(naturalezaTerminal('24V COM'), 'control');
+	assert.equal(naturalezaTerminal('0V'), 'control');
+	assert.equal(naturalezaTerminal('COM'), 'control');
 	assert.equal(naturalezaTerminal('G0'), 'control');
 	assert.equal(naturalezaTerminal('G'), 'control');
 	assert.equal(naturalezaTerminal('HOT'), 'control');

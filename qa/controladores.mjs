@@ -158,7 +158,8 @@ must('«24V COM» quedó como UN terminal, no dos',
 	(medida?.bornes ?? []).some((b) => b.id === '24V COM'));
 must('«MS/TP-» no se confundió con un rango',
 	(medida?.bornes ?? []).some((b) => b.id === 'MS/TP-'));
-must('GND se reconoce como tierra', (medida?.bornes ?? []).find((b) => b.id === 'GND')?.tipo === 'PE');
+must('GND queda como referencia funcional y no se inventa un PE',
+	(medida?.bornes ?? []).find((b) => b.id === 'GND')?.tipo === 'control');
 must('lleva el fondo indicado', medida?.profundidad === 62, String(medida?.profundidad));
 const colM = pm.gabinete.colocaciones.find((c) => c.dispositivoId === medida.id);
 must('lleva la huella indicada', colM?.ancho === 160 && colM?.alto === 120, `${colM?.ancho}×${colM?.alto}`);
