@@ -16,6 +16,7 @@
     "qa:all": "vite build app --mode qa && node qa/todas.mjs --all",
     "qa:cables": "node qa/cables.mjs",
     "qa:fusion": "node qa/cables-fusion.mjs",
+    "qa:fixture-puerta": "node qa/fixture-puerta.mjs",
     "qa:agarre": "node qa/agarre.mjs",
     "qa:general": "node qa/general.mjs",
     "qa:tablero": "node qa/tablero-desde-cero.mjs",
