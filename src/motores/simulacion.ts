@@ -56,7 +56,9 @@
  * empleo declaradas, no el resultado de un cálculo de cortocircuito.
  */
 import { Conductor, Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tipos.js';
-import { resolverComportamiento } from '../modelo/comportamiento.js';
+import {
+	ComportamientoSimulacion, ReferenciaAnalogicaSimulacion, resolverComportamiento,
+} from '../modelo/comportamiento.js';
 import { claveBorne } from '../modelo/proyecto.js';
 import { tensionSecundariaDe } from './tensiones.js';
 import {
@@ -72,6 +74,10 @@ export interface EstadoAparato {
 	disparado?: boolean;
 	/** Pulsadores y sensores: activado ahora mismo (pulsado, detectando). */
 	activo?: boolean;
+	/** Selectores mantenidos: posición estable, numerada desde 0. */
+	posicion?: number;
+	/** Variadores y electrónica: fallo activo que inhibe la salida. */
+	fallo?: boolean;
 	/** Salidas DIGITALES de un controlador que el usuario fuerza a ON, por su id de borne. */
 	salidas?: string[];
 	/**
@@ -109,10 +115,24 @@ export interface MemoriaTiempos {
 	desdeSoltado: Record<string, number>;
 	/** Relés cuya temporización ya se cumplió: sus contactos están conmutados. */
 	cumplidos: string[];
+	/** Frecuencia efectiva y último instante confirmado de cada variador. */
+	variadores?: Record<string, { frecuenciaHz: number; actualizadoEn: number }>;
 }
 
 export function memoriaVacia(): MemoriaTiempos {
-	return { desdeConectado: {}, desdeSoltado: {}, cumplidos: [] };
+	return { desdeConectado: {}, desdeSoltado: {}, cumplidos: [], variadores: {} };
+}
+
+export interface EstadoVariador {
+	dispositivoId: string;
+	designacion: string;
+	estado: 'sin-alimentacion' | 'listo' | 'marcha' | 'falla';
+	alimentado: boolean;
+	run: boolean;
+	habilitado: boolean;
+	referenciaPorcentaje: number;
+	frecuenciaObjetivoHz: number;
+	frecuenciaHz: number;
 }
 
 /** Lo que hay que saber de un temporizador para enseñarlo: cuánto lleva y cuánto le falta. */
@@ -176,6 +196,8 @@ export interface Disparo {
 	nominal: number;
 	/** Tiempo estimado de disparo según su curva, en segundos. */
 	segundos: number;
+	/** False en un fusible: hace falta sustituirlo, no pulsar rearme. */
+	rearmable: boolean;
 	explicacion: string;
 }
 
@@ -252,6 +274,10 @@ export interface ResultadoSimulacion {
 	arranques: Arranque[];
 	/** Lo que están haciendo los controladores programados del tablero. */
 	controladores: EstadoControlador[];
+	/** Estado funcional de cada variador con perfil ejecutable. */
+	variadores: EstadoVariador[];
+	/** Posición 0..100 de cargas modulantes, por id de aparato. */
+	posicionesCargas: Map<string, number>;
 }
 
 /** Lo que hace un controlador con su programa: qué lee, qué enciende y qué está esperando. */
@@ -402,6 +428,18 @@ export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaM
 	if (comportamiento?.clase === 'mando' && d.rol?.tipo === 'esclavo') {
 		for (const c of comportamiento.contactos) {
 			const cerrado = c.reposo === 'cerrado' ? !bobinaMetida : bobinaMetida;
+			if (cerrado) pares.push([c.entrada, c.salida]);
+		}
+		return pares;
+	}
+	if (comportamiento?.clase === 'mando') {
+		const posicionPedida = estado.posicion ?? (estado.activo === true ? 1 : comportamiento.reposo);
+		const posicion = Math.max(0, Math.min(comportamiento.posiciones - 1, Math.trunc(posicionPedida)));
+		const accionado = posicion !== comportamiento.reposo;
+		for (const c of comportamiento.contactos) {
+			const cerrado = c.cerradoEn
+				? c.cerradoEn.includes(posicion)
+				: (c.reposo === 'cerrado' ? !accionado : accionado);
 			if (cerrado) pares.push([c.entrada, c.salida]);
 		}
 		return pares;
@@ -752,6 +790,151 @@ function controladorAlimentado(d: Dispositivo, vivos: Map<string, BorneVivo>): b
 	return entradas.some((a) => retornos.some((b) => a.papel !== b.papel));
 }
 
+type PerfilVariador = Extract<ComportamientoSimulacion, { clase: 'variador' }>;
+
+function alimentacionCompleta(
+	d: Dispositivo,
+	alimentacion: { fases: string[]; retornos: string[]; fasesMinimas: 1 | 3 },
+	vivos: Map<string, BorneVivo>,
+): boolean {
+	const fases = alimentacion.fases.map((id) => vivos.get(`${d.id}::${id}`))
+		.filter((v): v is BorneVivo => v?.papel === 'fase');
+	const fuentes = new Set(fases.map((v) => v.fuente));
+	if (alimentacion.fasesMinimas === 3) return fuentes.size >= 3;
+	const retornos = alimentacion.retornos.map((id) => vivos.get(`${d.id}::${id}`))
+		.filter((v): v is BorneVivo => !!v);
+	return fases.length > 0 && retornos.some((r) => fases.some((f) => r.papel !== f.papel));
+}
+
+/** Busca una AO por el cable de señal, atravesando únicamente borneros y sus puentes. */
+function valorAnalogicoCableadoA(
+	dispositivoId: string,
+	borneId: string,
+	proyecto: Proyecto,
+	vivos: Map<string, BorneVivo>,
+	analogicas: ReadonlyMap<string, number>,
+	unidades: 'V' | 'porcentaje',
+): number | undefined {
+	const inicio = `${dispositivoId}::${borneId}`;
+	const vistos = new Set<string>([inicio]);
+	const cola = [inicio];
+	const porId = new Map(proyecto.dispositivos.map((x) => [x.id, x]));
+	while (cola.length && vistos.size < 400) {
+		const aqui = cola.shift()!;
+		const [dueño, borne] = aqui.split('::');
+		if (dueño !== dispositivoId) {
+			const pct = analogicas.get(aqui);
+			const origen = porId.get(dueño);
+			if (pct !== undefined && origen && controladorAlimentado(origen, vivos)) {
+				return unidades === 'porcentaje' ? pct : salidaAnalogicaEn(origen, borne, pct).voltios;
+			}
+			if (origen?.tipo !== 'bornero') continue;
+			for (const [a, b] of origen.puentesInternos ?? []) {
+				const otro = a === borne ? b : b === borne ? a : undefined;
+				if (otro) {
+					const clave = `${dueño}::${otro}`;
+					if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
+				}
+			}
+			for (const grupo of origen.puentes ?? []) {
+				if (!grupo.includes(borne)) continue;
+				for (const otro of grupo) {
+					const clave = `${dueño}::${otro}`;
+					if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
+				}
+			}
+		}
+		for (const c of proyecto.conductores) {
+			const mio = c.de.dispositivoId === dueño && c.de.borneId === borne;
+			const suyo = c.a.dispositivoId === dueño && c.a.borneId === borne;
+			if (!mio && !suyo) continue;
+			const otro = mio ? c.a : c.de;
+			const clave = `${otro.dispositivoId}::${otro.borneId}`;
+			if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
+		}
+	}
+	return undefined;
+}
+
+function porcentajeReferencia(
+	d: Dispositivo,
+	referencia: ReferenciaAnalogicaSimulacion,
+	proyecto: Proyecto,
+	estado: EstadoTablero,
+	vivos: Map<string, BorneVivo>,
+	analogicas: ReadonlyMap<string, number>,
+): number {
+	const directo = estado[d.id]?.valor;
+	const valor = Number.isFinite(directo)
+		? directo!
+		: valorAnalogicoCableadoA(d.id, referencia.borne, proyecto, vivos, analogicas, referencia.unidad);
+	if (valor === undefined) return 0;
+	const [min, max] = referencia.rango;
+	if (max <= min) return 0;
+	return Math.max(0, Math.min(100, ((valor - min) / (max - min)) * 100));
+}
+
+function estadoVariador(
+	d: Dispositivo,
+	perfil: PerfilVariador,
+	proyecto: Proyecto,
+	estado: EstadoTablero,
+	vivos: Map<string, BorneVivo>,
+	analogicas: ReadonlyMap<string, number>,
+	reloj?: { ahora: number; memoria: MemoriaTiempos },
+): EstadoVariador {
+	const alimentado = alimentacionCompleta(d, perfil.alimentacion, vivos);
+	const run = vivos.get(`${d.id}::${perfil.mando.run}`)?.papel === 'fase';
+	const habilitado = !perfil.mando.habilitacion
+		|| vivos.get(`${d.id}::${perfil.mando.habilitacion}`)?.papel === 'fase';
+	const falla = estado[d.id]?.fallo === true || estado[d.id]?.disparado === true;
+	const referenciaPorcentaje = porcentajeReferencia(d, perfil.referencia, proyecto, estado, vivos, analogicas);
+	const pedido = perfil.frecuencia.minimaHz
+		+ (perfil.frecuencia.maximaHz - perfil.frecuencia.minimaHz) * referenciaPorcentaje / 100;
+	const frecuenciaObjetivoHz = alimentado && habilitado && run && !falla ? pedido : 0;
+	let frecuenciaHz = frecuenciaObjetivoHz;
+	if (reloj) {
+		const anterior = reloj.memoria.variadores?.[d.id];
+		if (!anterior) frecuenciaHz = 0;
+		else {
+			const dt = Math.max(0, reloj.ahora - anterior.actualizadoEn) / 1000;
+			const maxCambio = perfil.frecuencia.rampaHzS * dt;
+			const diferencia = frecuenciaObjetivoHz - anterior.frecuenciaHz;
+			frecuenciaHz = anterior.frecuenciaHz + Math.sign(diferencia) * Math.min(Math.abs(diferencia), maxCambio);
+		}
+	}
+	if (!alimentado || falla) frecuenciaHz = 0;
+	return {
+		dispositivoId: d.id, designacion: d.designacion ?? d.id,
+		estado: !alimentado ? 'sin-alimentacion' : falla ? 'falla' : run && habilitado ? 'marcha' : 'listo',
+		alimentado, run, habilitado, referenciaPorcentaje: Math.round(referenciaPorcentaje * 100) / 100,
+		frecuenciaObjetivoHz: Math.round(frecuenciaObjetivoHz * 100) / 100,
+		frecuenciaHz: Math.round(frecuenciaHz * 100) / 100,
+	};
+}
+
+function fuentesDeVariadores(
+	aparatos: Dispositivo[], estados: EstadoVariador[],
+): Fuente[] {
+	const porId = new Map(estados.map((e) => [e.dispositivoId, e]));
+	const salida: Fuente[] = [];
+	for (const d of aparatos) {
+		const perfil = resolverComportamiento(d);
+		if (perfil?.clase !== 'variador') continue;
+		const e = porId.get(d.id);
+		if (!e || e.estado !== 'marcha' || e.frecuenciaHz <= 0) continue;
+		for (const borne of [perfil.salida.u, perfil.salida.v, perfil.salida.w]) {
+			salida.push({ clave: `${d.id}::${borne}`, tension: perfil.salida.tensionV, papel: 'fase', trifasica: true });
+		}
+	}
+	return salida;
+}
+
+function proteccionRearmable(d: Dispositivo): boolean {
+	const perfil = resolverComportamiento(d);
+	return perfil?.clase === 'proteccion' ? perfil.rearmable : d.tipo !== 'fusible';
+}
+
 /**
  * Lo que un controlador VE de su tablero: qué entradas tienen tensión y qué marcan sus sondas.
  *
@@ -924,6 +1107,7 @@ export function simular(
 		}
 	}
 	let prop: Propagacion = { vivos, alcances: [], conductorEntre: new Map() };
+	let fuentesVariadores: Fuente[] = [];
 
 	/*
 	 * LOS RETARDOS DEL PROGRAMA SE CUENTAN CON EL CIRCUITO YA RESUELTO, NO A MEDIO RESOLVER.
@@ -952,7 +1136,7 @@ export function simular(
 	 */
 	while (pasadas < MAX_PASADAS && !estable) {
 		pasadas++;
-		prop = propagar(proyecto, aparatos, fuentes, estado, activos, vivos, conmutados, salidasDePrograma);
+		prop = propagar(proyecto, aparatos, [...fuentes, ...fuentesVariadores], estado, activos, vivos, conmutados, salidasDePrograma);
 		const nuevosVivos = prop.vivos;
 		// Copia limpia por pasada: parte de la historia REAL y se descarta al terminar la pasada.
 		const memoriaTanteo = reloj ? clonarMemoriaLogica(memoriaLogica) : undefined;
@@ -977,6 +1161,16 @@ export function simular(
 				}
 			}
 		}
+		const estadosVariadores = aparatos.flatMap((d) => {
+			const perfil = resolverComportamiento(d);
+			return perfil?.clase === 'variador'
+				? [estadoVariador(d, perfil, proyecto, estado, nuevosVivos, analogicas, reloj)] : [];
+		});
+		const nuevasFuentesVariadores = fuentesDeVariadores(aparatos, estadosVariadores);
+		const cambiaronFuentesVariadores = !igualesConjuntos(
+			new Set(fuentesVariadores.map((f) => f.clave)), new Set(nuevasFuentesVariadores.map((f) => f.clave)),
+		);
+		fuentesVariadores = nuevasFuentesVariadores;
 		const nuevosActivos = new Set<string>();
 		for (const d of aparatos) {
 			if (bobinaAlimentada(d, nuevosVivos)) nuevosActivos.add(d.id);
@@ -987,7 +1181,8 @@ export function simular(
 			for (const s2 of salidas) nuevosActivos.add(`${id}::${s2}`);
 		}
 		conmutados = aplicarTemporizadores(aparatos, nuevosActivos, reloj);
-		estable = igualesClaves(vivos, nuevosVivos) && igualesConjuntos(activos, nuevosActivos);
+		estable = igualesClaves(vivos, nuevosVivos) && igualesConjuntos(activos, nuevosActivos)
+			&& !cambiaronFuentesVariadores;
 		vivos = nuevosVivos;
 		activos = nuevosActivos;
 
@@ -1022,7 +1217,27 @@ export function simular(
 	const funcionando: ResultadoSimulacion['funcionando'] = [];
 	const avisos: string[] = [];
 	const consumos: Consumo[] = [];
+	const variadores = aparatos.flatMap((d) => {
+		const perfil = resolverComportamiento(d);
+		return perfil?.clase === 'variador'
+			? [estadoVariador(d, perfil, proyecto, estado, vivos, analogicas, reloj)] : [];
+	});
+	if (reloj) {
+		reloj.memoria.variadores ??= {};
+		for (const v of variadores) {
+			reloj.memoria.variadores[v.dispositivoId] = { frecuenciaHz: v.frecuenciaHz, actualizadoEn: reloj.ahora };
+		}
+	}
+	for (const v of variadores) {
+		if (v.estado !== 'marcha') continue;
+		activos.add(v.dispositivoId);
+		funcionando.push({
+			dispositivoId: v.dispositivoId, designacion: v.designacion,
+			que: `variador en marcha · ${v.frecuenciaHz.toFixed(1)} Hz`,
+		});
+	}
 	for (const d of aparatos) {
+		if (resolverComportamiento(d)?.clase === 'variador') continue;
 		const etiqueta = d.designacion ?? d.id;
 		if (CONSUME.has(d.tipo)) {
 			if (tieneCircuitoCompleto(d, vivos)) {
@@ -1059,6 +1274,14 @@ export function simular(
 			});
 		}
 	}
+	const posicionesCargas = new Map<string, number>();
+	for (const d of aparatos) {
+		const perfil = resolverComportamiento(d);
+		if (perfil?.clase !== 'carga' || !perfil.mandoAnalogico) continue;
+		const pct = tieneCircuitoCompleto(d, vivos)
+			? porcentajeReferencia(d, perfil.mandoAnalogico, proyecto, estado, vivos, analogicas) : 0;
+		posicionesCargas.set(d.id, perfil.mandoAnalogico.invertido ? 100 - pct : pct);
+	}
 
 	/* ---- Lo que consume el tablero: intensidades por rama, faltas y disparos ---- */
 	const { porConductor, porAparato } = repartirCorrientes(consumos, prop);
@@ -1089,6 +1312,7 @@ export function simular(
 					corriente: Math.round(corriente * 100) / 100,
 					nominal,
 					segundos,
+					rearmable: proteccionRearmable(d),
 					explicacion: `${formatearA(corriente)} por un aparato de ${nominal} A `
 						+ `(${Math.round((corriente / nominal) * 100)} % del calibre): dispara en `
 						+ `${segundos < 1 ? 'menos de un segundo' : `${Math.round(segundos)} s`}.`,
@@ -1109,6 +1333,7 @@ export function simular(
 				corriente: Number.POSITIVE_INFINITY,
 				nominal: calibreDe(d) ?? 0,
 				segundos: 0.01,
+				rearmable: proteccionRearmable(d),
 				explicacion: `Cortocircuito: ${falta.que}. Corta al instante por el magnético.`,
 			});
 		}
@@ -1278,7 +1503,7 @@ export function simular(
 		disparos,
 		tensionesEquivocadas,
 		arranques,
-		controladores,
+		controladores, variadores, posicionesCargas,
 		temporizadores: cuentasAtras(aparatos, activos, reloj),
 	};
 }
@@ -1442,6 +1667,10 @@ function bobinaAlimentada(d: Dispositivo, vivos: Map<string, BorneVivo>): boolea
  * ellos no hay diferencia de potencial y el motor no gira. Por eso se comparan las fuentes.
  */
 function tieneCircuitoCompleto(d: Dispositivo, vivos: Map<string, BorneVivo>): boolean {
+	const perfil = resolverComportamiento(d);
+	if (d.comportamiento && perfil?.clase === 'carga') {
+		return alimentacionCompleta(d, perfil.alimentacion, vivos);
+	}
 	const conTension = d.bornes
 		.filter((b) => b.tipo !== 'PE')
 		.map((b) => vivos.get(`${d.id}::${b.id}`))

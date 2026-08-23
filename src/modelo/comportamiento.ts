@@ -5,8 +5,9 @@
  * describe qué hace eléctricamente. Separarlos permite que un componente genérico o importado se
  * comporte igual que uno nativo sin deducir su función de la imagen, la marca o el texto visible.
  *
- * La versión 1 es deliberadamente pequeña: formaliza los roles que el motor ya sabe ejecutar. No
- * promete todavía un variador, un diferencial residual ni una red analógica completa.
+ * La versión 1 es deliberadamente pequeña: formaliza los roles que el motor ya sabe ejecutar,
+ * incluido un variador funcional conceptual. No promete PWM, diferencial residual ni una red
+ * analógica de proceso completa.
  */
 import type { Borne, Dispositivo, TipoDispositivo } from './tipos.js';
 
@@ -18,6 +19,15 @@ export interface ParBornesSimulacion {
 export interface ContactoSimulacion extends ParBornesSimulacion {
 	reposo: 'abierto' | 'cerrado';
 	funcion: 'potencia' | 'auxiliar';
+	/** Posiciones en las que conduce un selector; si falta se usa NA/NC respecto de `reposo`. */
+	cerradoEn?: number[];
+}
+
+export interface ReferenciaAnalogicaSimulacion {
+	borne: string;
+	comun: string;
+	unidad: 'V' | 'porcentaje';
+	rango: [number, number];
 }
 
 export type ComportamientoSimulacion =
@@ -56,6 +66,9 @@ export type ComportamientoSimulacion =
 	| {
 		version: 1;
 		clase: 'mando';
+		modo: 'momentaneo' | 'mantenido';
+		posiciones: 2 | 3;
+		reposo: number;
 		contactos: ContactoSimulacion[];
 	}
 	| {
@@ -67,9 +80,19 @@ export type ComportamientoSimulacion =
 	}
 	| {
 		version: 1;
+		clase: 'variador';
+		alimentacion: { fases: string[]; retornos: string[]; fasesMinimas: 1 | 3 };
+		mando: { run: string; habilitacion?: string };
+		referencia: ReferenciaAnalogicaSimulacion;
+		salida: { u: string; v: string; w: string; tensionV: number };
+		frecuencia: { minimaHz: number; maximaHz: number; rampaHzS: number };
+	}
+	| {
+		version: 1;
 		clase: 'carga';
 		alimentacion: { fases: string[]; retornos: string[]; fasesMinimas: 1 | 3 };
 		efecto: 'giro' | 'luz' | 'movimiento' | 'calor' | 'reactivo' | 'generico';
+		mandoAnalogico?: ReferenciaAnalogicaSimulacion & { invertido?: boolean };
 	}
 	| {
 		version: 1;
@@ -95,7 +118,7 @@ export interface FilaFidelidadSimulacion {
  * añadir una familia al modelo obliga a declarar qué sabe hacer el motor con ella.
  */
 export const MATRIZ_FIDELIDAD_SIMULACION = {
-	version: 1,
+	version: 2,
 	tipos: {
 		plc: { nivel: 'parcial', participacion: 'Programa, entradas y salidas digitales/0-10 V.', limitacion: 'DSL limitada; no IEC 61131-3.' },
 		fuente: { nivel: 'parcial', participacion: 'Crea un secundario si el primario está alimentado.', limitacion: 'Sin límite de potencia, eficiencia ni fallo.' },
@@ -107,20 +130,20 @@ export const MATRIZ_FIDELIDAD_SIMULACION = {
 		diferencial: { nivel: 'parcial', participacion: 'Corte manual y polos.', limitacion: 'No calcula corriente residual ni sensibilidad.' },
 		fusible: { nivel: 'parcial', participacion: 'Corte por sobrecorriente estimada.', limitacion: 'El estado de sustitución no está modelado.' },
 		seccionador: { nivel: 'parcial', participacion: 'Apertura y cierre de polos.', limitacion: 'Sin enclavamientos ni poder de corte.' },
-		variador: { nivel: 'sin-comportamiento', participacion: 'No ejecuta potencia ni control.', limitacion: 'Faltan RUN, referencia, frecuencia, rampa y fallos.' },
+		variador: { nivel: 'parcial', participacion: 'Potencia, RUN/ENABLE, referencia, U/V/W y rampa de frecuencia.', limitacion: 'Salida trifásica conceptual; sin PWM, par, frenado ni modelo de fallo interno.' },
 		motor: { nivel: 'parcial', participacion: 'Carga y giro binario.', limitacion: 'Sin par, velocidad, transición de arranque ni fallo.' },
-		pulsador: { nivel: 'parcial', participacion: 'Conmuta contactos NA/NC.', limitacion: 'El estado momentáneo/mantenido no es explícito.' },
-		selector: { nivel: 'parcial', participacion: 'Conmuta contactos NA/NC.', limitacion: 'Solo dos estados; sin posiciones múltiples.' },
+		pulsador: { nivel: 'parcial', participacion: 'Conmuta contactos NA/NC con modo momentáneo explícito.', limitacion: 'La duración física depende del cliente que entrega el estado.' },
+		selector: { nivel: 'parcial', participacion: 'Selector mantenido de dos o tres posiciones y contactos por posición.', limitacion: 'Sin llave, retorno por resorte ni secuencias de leva.' },
 		piloto: { nivel: 'simulado', participacion: 'Carga binaria e indicación luminosa.', limitacion: 'No modela vida útil o destrucción por sobretensión.' },
 		sensor: { nivel: 'parcial', participacion: 'Contacto seco, PNP simple o valor funcional.', limitacion: 'Sin modelo eléctrico 0-10 V/4-20 mA completo.' },
-		valvula: { nivel: 'parcial', participacion: 'Carga y movimiento binario.', limitacion: 'Sin posición, presión o caudal.' },
+		valvula: { nivel: 'parcial', participacion: 'Carga binaria o posición modulante 0-100 % por perfil.', limitacion: 'Sin presión, caudal ni tiempo mecánico de carrera.' },
 		resistencia: { nivel: 'parcial', participacion: 'Carga de corriente declarada.', limitacion: 'Sin cálculo R/P ni temperatura.' },
 		condensador: { nivel: 'parcial', participacion: 'Carga genérica.', limitacion: 'Sin carga, descarga, reactancia ni transitorio.' },
 		bornero: { nivel: 'parcial', participacion: 'Conectividad pasiva y puentes.', limitacion: 'La señal analógica no atraviesa todos los puentes internos.' },
 		cable: { nivel: 'sin-comportamiento', participacion: 'El tipo de dispositivo no participa.', limitacion: 'Los conductores del proyecto son otra entidad y sí participan.' },
 		otro: { nivel: 'parcial', participacion: 'Una acometida legacy puede actuar como fuente.', limitacion: 'El resto carece de contrato común.' },
 	},
-} as const satisfies { version: 1; tipos: Record<TipoDispositivo, FilaFidelidadSimulacion> };
+} as const satisfies { version: 2; tipos: Record<TipoDispositivo, FilaFidelidadSimulacion> };
 
 const esObjeto = (v: unknown): v is Record<string, unknown> =>
 	typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -147,7 +170,11 @@ const contacto = (v: unknown): ContactoSimulacion | undefined => {
 	if (!p || !esObjeto(v)) return undefined;
 	const reposo = v.reposo === 'abierto' || v.reposo === 'cerrado' ? v.reposo : undefined;
 	const funcion = v.funcion === 'potencia' || v.funcion === 'auxiliar' ? v.funcion : undefined;
-	return reposo && funcion ? { ...p, reposo, funcion } : undefined;
+	const cerradoEn = v.cerradoEn === undefined ? undefined
+		: Array.isArray(v.cerradoEn) && v.cerradoEn.every((x) => Number.isInteger(x) && (x as number) >= 0)
+			? [...new Set(v.cerradoEn as number[])] : null;
+	return reposo && funcion && cerradoEn !== null
+		? { ...p, reposo, funcion, ...(cerradoEn === undefined ? {} : { cerradoEn }) } : undefined;
 };
 const contactos = (v: unknown): ContactoSimulacion[] | undefined => {
 	if (!Array.isArray(v)) return undefined;
@@ -164,6 +191,13 @@ const rango = (v: unknown): [number, number] | undefined =>
 	Array.isArray(v) && v.length === 2 && typeof v[0] === 'number' && Number.isFinite(v[0])
 		&& typeof v[1] === 'number' && Number.isFinite(v[1]) && v[0] <= v[1]
 		? [v[0], v[1]] : undefined;
+
+const referenciaAnalogica = (v: unknown): ReferenciaAnalogicaSimulacion | undefined => {
+	if (!esObjeto(v)) return undefined;
+	const borne = texto(v.borne); const comun = texto(v.comun); const r = rango(v.rango);
+	const unidad = v.unidad === 'V' || v.unidad === 'porcentaje' ? v.unidad : undefined;
+	return borne && comun && r && unidad ? { borne, comun, rango: r, unidad } : undefined;
+};
 
 /** Reconstruye un perfil externo desde una lista blanca. Nunca devuelve referencias al JSON bruto. */
 export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimulacion | undefined {
@@ -216,7 +250,11 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 		}
 		case 'mando': {
 			const cs = contactos(bruto.contactos);
-			return cs ? { version: 1, clase: bruto.clase, contactos: cs } : undefined;
+			const modo = bruto.modo === 'momentaneo' || bruto.modo === 'mantenido' ? bruto.modo : 'momentaneo';
+			const posiciones = bruto.posiciones === 3 ? 3 : 2;
+			const reposo = typeof bruto.reposo === 'number' && Number.isInteger(bruto.reposo) ? bruto.reposo : 0;
+			return cs && reposo >= 0 && reposo < posiciones
+				? { version: 1, clase: bruto.clase, modo, posiciones, reposo, contactos: cs } : undefined;
 		}
 		case 'sensor': {
 			const cs = contactos(bruto.contactos);
@@ -237,6 +275,33 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 			}
 			return { version: 1, clase: bruto.clase, contactos: cs, alimentacion: alim, salidaDigital };
 		}
+		case 'variador': {
+			if (!esObjeto(bruto.alimentacion) || !esObjeto(bruto.mando) || !esObjeto(bruto.salida)
+				|| !esObjeto(bruto.frecuencia)) return undefined;
+			const fases = listaTextos(bruto.alimentacion.fases);
+			const retornos = listaTextos(bruto.alimentacion.retornos);
+			const fasesMinimas = bruto.alimentacion.fasesMinimas === 1 || bruto.alimentacion.fasesMinimas === 3
+				? bruto.alimentacion.fasesMinimas : undefined;
+			const run = texto(bruto.mando.run);
+			const habilitacion = bruto.mando.habilitacion === undefined ? undefined : texto(bruto.mando.habilitacion);
+			if (bruto.mando.habilitacion !== undefined && !habilitacion) return undefined;
+			const referencia = referenciaAnalogica(bruto.referencia);
+			const u = texto(bruto.salida.u); const v = texto(bruto.salida.v); const w = texto(bruto.salida.w);
+			const tensionV = typeof bruto.salida.tensionV === 'number' && Number.isFinite(bruto.salida.tensionV)
+				&& bruto.salida.tensionV > 0 ? bruto.salida.tensionV : undefined;
+			const minimaHz = typeof bruto.frecuencia.minimaHz === 'number' && Number.isFinite(bruto.frecuencia.minimaHz)
+				&& bruto.frecuencia.minimaHz >= 0 ? bruto.frecuencia.minimaHz : undefined;
+			const maximaHz = typeof bruto.frecuencia.maximaHz === 'number' && Number.isFinite(bruto.frecuencia.maximaHz)
+				&& bruto.frecuencia.maximaHz > 0 ? bruto.frecuencia.maximaHz : undefined;
+			const rampaHzS = typeof bruto.frecuencia.rampaHzS === 'number' && Number.isFinite(bruto.frecuencia.rampaHzS)
+				&& bruto.frecuencia.rampaHzS > 0 ? bruto.frecuencia.rampaHzS : undefined;
+			return fases && retornos && fasesMinimas && run && referencia && u && v && w && tensionV
+				&& minimaHz !== undefined && maximaHz !== undefined && maximaHz >= minimaHz && rampaHzS
+				? { version: 1, clase: bruto.clase, alimentacion: { fases, retornos, fasesMinimas },
+					mando: { run, habilitacion }, referencia, salida: { u, v, w, tensionV },
+					frecuencia: { minimaHz, maximaHz, rampaHzS } }
+				: undefined;
+		}
 		case 'carga': {
 			if (!esObjeto(bruto.alimentacion)) return undefined;
 			const fases = listaTextos(bruto.alimentacion.fases);
@@ -244,8 +309,15 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 			const fasesMinimas = bruto.alimentacion.fasesMinimas === 1 || bruto.alimentacion.fasesMinimas === 3
 				? bruto.alimentacion.fasesMinimas : undefined;
 			const efectos = ['giro', 'luz', 'movimiento', 'calor', 'reactivo', 'generico'];
+			const mando = bruto.mandoAnalogico === undefined ? undefined : referenciaAnalogica(bruto.mandoAnalogico);
+			if (bruto.mandoAnalogico !== undefined && !mando) return undefined;
+			const invertidoBruto = esObjeto(bruto.mandoAnalogico) ? bruto.mandoAnalogico.invertido : undefined;
+			if (invertidoBruto !== undefined && typeof invertidoBruto !== 'boolean') return undefined;
+			const invertido = typeof invertidoBruto === 'boolean' ? invertidoBruto : undefined;
 			return fases && retornos && fasesMinimas && typeof bruto.efecto === 'string' && efectos.includes(bruto.efecto)
-				? { version: 1, clase: bruto.clase, alimentacion: { fases, retornos, fasesMinimas }, efecto: bruto.efecto as Extract<ComportamientoSimulacion, { clase: 'carga' }>['efecto'] }
+				? { version: 1, clase: bruto.clase, alimentacion: { fases, retornos, fasesMinimas },
+					efecto: bruto.efecto as Extract<ComportamientoSimulacion, { clase: 'carga' }>['efecto'],
+					mandoAnalogico: mando ? { ...mando, invertido } : undefined }
 				: undefined;
 		}
 		case 'pasivo': {
@@ -317,6 +389,13 @@ export function validarComportamiento(
 		borne(p.entrada, `${ruta}.entrada`); borne(p.salida, `${ruta}.salida`);
 		if (p.entrada === p.salida) errores.push(`${ruta} une un borne consigo mismo`);
 	};
+	const revisarReferencia = (r: ReferenciaAnalogicaSimulacion, ruta: string) => {
+		borne(r.borne, `${ruta}.borne`); borne(r.comun, `${ruta}.comun`);
+		if (r.borne === r.comun) errores.push(`${ruta} usa el mismo borne como señal y común`);
+		if (!Number.isFinite(r.rango[0]) || !Number.isFinite(r.rango[1]) || r.rango[1] <= r.rango[0]) {
+			errores.push(`${ruta}.rango debe crecer de mínimo a máximo`);
+		}
+	};
 	if (c.version !== 1) errores.push(`versión de comportamiento no soportada: ${String((c as { version: unknown }).version)}`);
 	switch (c.clase) {
 		case 'contactos-electromagneticos':
@@ -341,15 +420,36 @@ export function validarComportamiento(
 			c.polos.forEach((p, i) => revisarPar(p, `polos[${i}]`));
 			c.contactos.forEach((p, i) => revisarPar(p, `contactos[${i}]`));
 			break;
-		case 'mando': c.contactos.forEach((p, i) => revisarPar(p, `contactos[${i}]`)); break;
+		case 'mando':
+			if (c.reposo < 0 || c.reposo >= c.posiciones) errores.push('la posición de reposo está fuera del mando');
+			c.contactos.forEach((p, i) => {
+				revisarPar(p, `contactos[${i}]`);
+				for (const posicion of p.cerradoEn ?? []) {
+					if (posicion < 0 || posicion >= c.posiciones) errores.push(`contactos[${i}].cerradoEn contiene la posición inexistente ${posicion}`);
+				}
+			});
+			break;
 		case 'sensor':
 			c.contactos.forEach((p, i) => revisarPar(p, `contactos[${i}]`));
 			if (c.alimentacion) { borne(c.alimentacion.entrada, 'alimentacion.entrada'); borne(c.alimentacion.retorno, 'alimentacion.retorno'); }
 			if (c.salidaDigital) { borne(c.salidaDigital.borne, 'salidaDigital.borne'); borne(c.salidaDigital.tomaDe, 'salidaDigital.tomaDe'); }
 			break;
+		case 'variador':
+			c.alimentacion.fases.forEach((x, i) => borne(x, `alimentacion.fases[${i}]`));
+			c.alimentacion.retornos.forEach((x, i) => borne(x, `alimentacion.retornos[${i}]`));
+			if (c.alimentacion.fases.length < c.alimentacion.fasesMinimas) errores.push('faltan entradas de fase para alimentar el variador');
+			if (c.alimentacion.fasesMinimas === 1 && !c.alimentacion.retornos.length) errores.push('la alimentación monofásica no declara retorno');
+			borne(c.mando.run, 'mando.run');
+			if (c.mando.habilitacion) borne(c.mando.habilitacion, 'mando.habilitacion');
+			revisarReferencia(c.referencia, 'referencia');
+			borne(c.salida.u, 'salida.u'); borne(c.salida.v, 'salida.v'); borne(c.salida.w, 'salida.w');
+			if (new Set([c.salida.u, c.salida.v, c.salida.w]).size !== 3) errores.push('U, V y W deben ser tres bornes distintos');
+			if (c.frecuencia.maximaHz < c.frecuencia.minimaHz || c.frecuencia.rampaHzS <= 0) errores.push('la frecuencia o su rampa no son válidas');
+			break;
 		case 'carga':
 			c.alimentacion.fases.forEach((x, i) => borne(x, `alimentacion.fases[${i}]`));
 			c.alimentacion.retornos.forEach((x, i) => borne(x, `alimentacion.retornos[${i}]`));
+			if (c.mandoAnalogico) revisarReferencia(c.mandoAnalogico, 'mandoAnalogico');
 			break;
 		case 'pasivo': c.conexiones.forEach((p, i) => revisarPar(p, `conexiones[${i}]`)); break;
 		case 'sin-comportamiento': break;
@@ -373,7 +473,7 @@ export function resolverComportamiento(d: Dispositivo): ComportamientoSimulacion
 		};
 	}
 	if ((d.tipo === 'contactor' || d.tipo === 'rele') && d.rol?.tipo === 'esclavo') {
-		return { version: 1, clase: 'mando', contactos: contactosIEC(d) };
+		return { version: 1, clase: 'mando', modo: 'mantenido', posiciones: 2, reposo: 0, contactos: contactosIEC(d) };
 	}
 	if (['disyuntor', 'guardamotor', 'diferencial', 'fusible', 'seccionador'].includes(d.tipo)
 		|| d.tipo === 'rele' && ids.has('95')) {
@@ -383,7 +483,10 @@ export function resolverComportamiento(d: Dispositivo): ComportamientoSimulacion
 		};
 	}
 	if (d.tipo === 'pulsador' || d.tipo === 'selector') {
-		return { version: 1, clase: 'mando', contactos: contactosIEC(d) };
+		return {
+			version: 1, clase: 'mando', modo: d.tipo === 'pulsador' ? 'momentaneo' : 'mantenido',
+			posiciones: 2, reposo: 0, contactos: contactosIEC(d),
+		};
 	}
 	if (d.tipo === 'sensor') {
 		const entrada = primerBorne(bornes, ['+24', '+']);
@@ -413,6 +516,27 @@ export function resolverComportamiento(d: Dispositivo): ComportamientoSimulacion
 		const entradas = bornes.filter((b) => b.tipo === 'L' || b.id === 'P1' || b.id === 'L').map((b) => b.id);
 		const retornos = bornes.filter((b) => b.tipo === 'N' || b.id === 'P2').map((b) => b.id);
 		return { version: 1, clase: 'fuente', primario: { entradas, retornos }, salidas };
+	}
+	if (d.tipo === 'variador') {
+		// Adaptador legacy por designaciones eléctricas habituales; un perfil explícito puede usar
+		// cualquier rótulo y siempre tiene prioridad sobre estas convenciones.
+		const salidaU = primerBorne(bornes, ['U']); const salidaV = primerBorne(bornes, ['V']);
+		const salidaW = primerBorne(bornes, ['W']);
+		const run = primerBorne(bornes, ['RUN', 'DI1']);
+		const habilitacion = primerBorne(bornes, ['ENABLE', 'ENA', 'EN']);
+		const referencia = primerBorne(bornes, ['AI1', 'REF']);
+		const comun = primerBorne(bornes, ['0V', 'COM', 'GND']);
+		const fases = bornes.filter((b) => b.tipo === 'L' && !['U', 'V', 'W'].includes(b.id)).map((b) => b.id);
+		const retornos = bornes.filter((b) => b.tipo === 'N').map((b) => b.id);
+		if (salidaU && salidaV && salidaW && run && referencia && comun && fases.length) {
+			return {
+				version: 1, clase: 'variador', alimentacion: { fases, retornos, fasesMinimas: fases.length >= 3 ? 3 : 1 },
+				mando: { run, habilitacion }, referencia: { borne: referencia, comun, unidad: 'V', rango: [0, 10] },
+				salida: { u: salidaU, v: salidaV, w: salidaW, tensionV: d.tensionNominal ?? 220 },
+				frecuencia: { minimaHz: 0, maximaHz: 50, rampaHzS: 10 },
+			};
+		}
+		return { version: 1, clase: 'sin-comportamiento', motivo: 'variador legacy sin terminales funcionales suficientes' };
 	}
 	if (['motor', 'valvula', 'resistencia', 'piloto', 'condensador'].includes(d.tipo)) {
 		const fases = bornes.filter((b) => b.tipo !== 'PE' && b.tipo !== 'N').map((b) => b.id);
