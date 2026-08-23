@@ -1,11 +1,21 @@
 import { cargarProyecto } from '../modelo/cargar.js';
 import type { Proyecto } from '../modelo/tipos.js';
+import {
+	FORMATO_COMPONENTE_PERSONALIZADO,
+	VERSION_COMPONENTE_PERSONALIZADO,
+	validarDefinicionComponente,
+} from '../componentes/personalizados.js';
+import type { DefinicionComponentePersonalizado } from '../componentes/personalizados.js';
 import type {
 	AssetPersistido,
 	BackendPersistencia,
+	ContenidoComponentePersonalizado,
 	DocumentoProyecto,
 	MarcadorMigracionLegacy,
+	MetadataProyectoActivo,
 	MotivoSnapshot,
+	OpcionesActualizarComponentePersonalizado,
+	OpcionesCrearComponentePersonalizado,
 	OpcionesCrearProyecto,
 	OpcionesGuardarProyecto,
 	OpcionesRepositorio,
@@ -17,12 +27,16 @@ import type {
 	TransaccionPersistencia,
 } from './tipos.js';
 import {
+	ComponentePersonalizadoInvalido,
+	ComponentePersonalizadoNoEncontrado,
 	ConflictoRevision,
+	ConflictoRevisionComponente,
 	ProyectoNoEncontrado,
 	ProyectoPersistenciaInvalido,
 } from './tipos.js';
 
 const MIME_ASSET = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const CLAVE_PROYECTO_ACTIVO = 'active-project';
 
 function clonar<T>(valor: T): T {
 	return structuredClone(valor);
@@ -50,6 +64,53 @@ function nombreValido(nombre: string): string {
 	const limpio = nombre.trim();
 	if (!limpio) throw new ProyectoPersistenciaInvalido('El nombre del proyecto no puede estar vacío.');
 	return limpio.slice(0, 160);
+}
+
+function nombreComponenteValido(nombre: string): string {
+	const limpio = nombre.trim();
+	if (!limpio) throw new ComponentePersonalizadoInvalido('El nombre del componente no puede estar vacío.');
+	return limpio.slice(0, 160);
+}
+
+function validarComponente(
+	definicion: DefinicionComponentePersonalizado,
+): DefinicionComponentePersonalizado {
+	try {
+		const copia = clonar(definicion);
+		const errores = validarDefinicionComponente(copia);
+		if (errores.length > 0) {
+			throw new ComponentePersonalizadoInvalido(
+				`El componente personalizado no es válido: ${errores.join('; ')}`,
+				errores,
+			);
+		}
+		return copia;
+	} catch (error) {
+		if (error instanceof ComponentePersonalizadoInvalido) throw error;
+		throw new ComponentePersonalizadoInvalido(
+			'El componente personalizado no cumple el contrato persistente.',
+			[error instanceof Error ? error.message : String(error)],
+		);
+	}
+}
+
+function construirComponente(
+	contenido: ContenidoComponentePersonalizado,
+	id: string,
+	revision: number,
+	creadoEn: string,
+	modificadoEn: string,
+): DefinicionComponentePersonalizado {
+	return validarComponente({
+		...clonar(contenido),
+		formato: FORMATO_COMPONENTE_PERSONALIZADO,
+		version: VERSION_COMPONENTE_PERSONALIZADO,
+		id,
+		revision,
+		nombre: nombreComponenteValido(contenido.nombre),
+		creadoEn,
+		modificadoEn,
+	});
 }
 
 function resumen(documento: DocumentoProyecto): ResumenProyecto {
@@ -99,6 +160,36 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 	private comprobarRevision(documento: DocumentoProyecto, esperada: number): void {
 		if (documento.revision !== esperada) {
 			throw new ConflictoRevision(documento.id, esperada, documento.revision);
+		}
+	}
+
+	private async componente(
+		tx: TransaccionPersistencia,
+		id: string,
+	): Promise<DefinicionComponentePersonalizado> {
+		const definicion = await tx.obtener<DefinicionComponentePersonalizado>('customComponents', id);
+		if (!definicion) throw new ComponentePersonalizadoNoEncontrado(id);
+		return validarComponente(definicion);
+	}
+
+	private comprobarRevisionComponente(
+		definicion: DefinicionComponentePersonalizado,
+		esperada: number,
+	): void {
+		if (definicion.revision !== esperada) {
+			throw new ConflictoRevisionComponente(definicion.id, esperada, definicion.revision);
+		}
+	}
+
+	private async comprobarAssetComponente(
+		tx: TransaccionPersistencia,
+		assetId: string,
+	): Promise<void> {
+		if (!await tx.obtener<AssetPersistido>('assets', assetId)) {
+			throw new ComponentePersonalizadoInvalido(
+				`El componente referencia un asset inexistente: ${assetId}.`,
+				[`falta el asset ${assetId}`],
+			);
 		}
 	}
 
@@ -211,12 +302,16 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 	}
 
 	async eliminar(id: string, revisionEsperada: number): Promise<void> {
-		await this.backend.transaccion(['projects', 'snapshots'], 'readwrite', async (tx) => {
+		await this.backend.transaccion(['projects', 'snapshots', 'metadata'], 'readwrite', async (tx) => {
 			const documento = await this.registro(tx, id);
 			this.comprobarRevision(documento, revisionEsperada);
 			await tx.eliminar('projects', id);
 			const snapshots = await tx.listar<SnapshotProyecto>('snapshots');
 			for (const snapshot of snapshots) if (snapshot.projectId === id) await tx.eliminar('snapshots', snapshot.id);
+			const activo = await tx.obtener<MetadataProyectoActivo>('metadata', CLAVE_PROYECTO_ACTIVO);
+			if (activo?.projectId === id) {
+				await tx.eliminar('metadata', CLAVE_PROYECTO_ACTIVO);
+			}
 		});
 	}
 
@@ -315,6 +410,102 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 		return this.backend.transaccion(['assets'], 'readonly', async (tx) => {
 			const asset = await tx.obtener<AssetPersistido>('assets', id);
 			return asset ? clonar(asset) : undefined;
+		});
+	}
+
+	async obtenerProyectoActivo(): Promise<string | undefined> {
+		return this.backend.transaccion(['metadata'], 'readonly', async (tx) => {
+			const metadata = await tx.obtener<MetadataProyectoActivo>('metadata', CLAVE_PROYECTO_ACTIVO);
+			return metadata?.id === CLAVE_PROYECTO_ACTIVO && typeof metadata.projectId === 'string'
+				? metadata.projectId : undefined;
+		});
+	}
+
+	async marcarProyectoActivo(projectId: string | undefined): Promise<void> {
+		return this.backend.transaccion(['projects', 'metadata'], 'readwrite', async (tx) => {
+			if (projectId === undefined) {
+				await tx.eliminar('metadata', CLAVE_PROYECTO_ACTIVO);
+				return;
+			}
+			await this.documento(tx, projectId);
+			const metadata: MetadataProyectoActivo = {
+				id: CLAVE_PROYECTO_ACTIVO,
+				projectId,
+				actualizadoEn: this.ahora(),
+			};
+			await tx.guardar('metadata', CLAVE_PROYECTO_ACTIVO, metadata);
+		});
+	}
+
+	async crearComponente(
+		opciones: OpcionesCrearComponentePersonalizado,
+	): Promise<DefinicionComponentePersonalizado> {
+		const id = opciones.id ?? this.crearId();
+		const ahora = this.ahora();
+		const definicion = construirComponente(opciones.definicion, id, 1, ahora, ahora);
+		return this.backend.transaccion(['customComponents', 'assets'], 'readwrite', async (tx) => {
+			if (await tx.obtener('customComponents', id)) {
+				throw new ComponentePersonalizadoInvalido(`Ya existe un componente con la identidad ${id}.`);
+			}
+			await this.comprobarAssetComponente(tx, definicion.assetId);
+			await tx.guardar('customComponents', id, definicion);
+			return clonar(definicion);
+		});
+	}
+
+	async abrirComponente(id: string): Promise<DefinicionComponentePersonalizado> {
+		return this.backend.transaccion(['customComponents'], 'readonly', async (tx) =>
+			clonar(await this.componente(tx, id)));
+	}
+
+	async listarComponentes(): Promise<DefinicionComponentePersonalizado[]> {
+		return this.backend.transaccion(['customComponents'], 'readonly', async (tx) => {
+			const definiciones = (await tx.listar<DefinicionComponentePersonalizado>('customComponents'))
+				.map(validarComponente)
+				.sort((a, b) => b.modificadoEn.localeCompare(a.modificadoEn) || a.id.localeCompare(b.id));
+			return clonar(definiciones);
+		});
+	}
+
+	async actualizarComponente(
+		id: string,
+		opciones: OpcionesActualizarComponentePersonalizado,
+	): Promise<DefinicionComponentePersonalizado> {
+		return this.backend.transaccion(['customComponents', 'assets'], 'readwrite', async (tx) => {
+			const anterior = await this.componente(tx, id);
+			this.comprobarRevisionComponente(anterior, opciones.revisionEsperada);
+			const actualizado = construirComponente(
+				opciones.definicion, id, anterior.revision + 1, anterior.creadoEn, this.ahora(),
+			);
+			await this.comprobarAssetComponente(tx, actualizado.assetId);
+			await tx.guardar('customComponents', id, actualizado);
+			return clonar(actualizado);
+		});
+	}
+
+	async duplicarComponente(id: string, nuevoNombre?: string): Promise<DefinicionComponentePersonalizado> {
+		const nuevoId = this.crearId();
+		return this.backend.transaccion(['customComponents', 'assets'], 'readwrite', async (tx) => {
+			const original = await this.componente(tx, id);
+			if (await tx.obtener('customComponents', nuevoId)) {
+				throw new ComponentePersonalizadoInvalido(`Ya existe un componente con la identidad ${nuevoId}.`);
+			}
+			const { id: _id, revision: _revision, creadoEn: _creadoEn, modificadoEn: _modificadoEn,
+				formato: _formato, version: _version, ...contenido } = original;
+			const nombre = nombreComponenteValido(nuevoNombre ?? `${original.nombre} (copia)`);
+			const ahora = this.ahora();
+			const copia = construirComponente({ ...contenido, nombre }, nuevoId, 1, ahora, ahora);
+			await this.comprobarAssetComponente(tx, copia.assetId);
+			await tx.guardar('customComponents', nuevoId, copia);
+			return clonar(copia);
+		});
+	}
+
+	async eliminarComponente(id: string, revisionEsperada: number): Promise<void> {
+		await this.backend.transaccion(['customComponents'], 'readwrite', async (tx) => {
+			const definicion = await this.componente(tx, id);
+			this.comprobarRevisionComponente(definicion, revisionEsperada);
+			await tx.eliminar('customComponents', id);
 		});
 	}
 

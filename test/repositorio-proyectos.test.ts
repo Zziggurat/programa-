@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
+import type { ContenidoComponentePersonalizado } from '../src/persistencia/index.js';
 import {
 	ALMACENES_PERSISTENCIA,
 	BackendPersistenciaMemoria,
+	ComponentePersonalizadoInvalido,
 	ConflictoRevision,
+	ConflictoRevisionComponente,
 	ProyectoNoEncontrado,
 	ProyectoPersistenciaInvalido,
 	RepositorioProyectosCore,
@@ -23,6 +26,21 @@ function proyectoValido(nombre = 'Tablero A'): Proyecto {
 		{ dispositivoId: 'q1', x: 20, y: 20, ancho: 18, alto: 85 },
 	];
 	return proyecto;
+}
+
+function contenidoComponente(
+	assetId: string,
+	nombre = 'Sensor propio',
+): ContenidoComponentePersonalizado {
+	return {
+		nombre,
+		descripcion: 'Componente de prueba del repositorio',
+		tipoDispositivo: 'otro',
+		dimensiones: { anchoMm: 30, altoMm: 45, fondoMm: 20 },
+		assetId,
+		terminales: [{ id: 'S', tipo: 'senal', u: 0.5, v: 0.8 }],
+		comportamiento: { version: 1, clase: 'sin-comportamiento', motivo: 'Prueba de persistencia' },
+	};
 }
 
 function entorno(maxSnapshotsPorProyecto = 20) {
@@ -225,4 +243,98 @@ test('un registro actual corrupto no bloquea la biblioteca ni restaurar un snaps
 	const restaurado = await repositorio.restaurarSnapshot(creado.id, snapshot.id, creado.revision);
 	assert.equal(restaurado.proyecto.nombre, 'Recuperable');
 	assert.equal((await repositorio.abrir(creado.id)).proyecto.nombre, 'Recuperable');
+});
+
+test('metadata activa usa una frontera tipada y se limpia al eliminar el proyecto', async () => {
+	const { repositorio } = entorno();
+	assert.equal(await repositorio.obtenerProyectoActivo(), undefined);
+	await assert.rejects(repositorio.marcarProyectoActivo('no-existe'), ProyectoNoEncontrado);
+	const proyecto = await repositorio.crear({ proyecto: proyectoValido('Activo') });
+	await repositorio.marcarProyectoActivo(proyecto.id);
+	assert.equal(await repositorio.obtenerProyectoActivo(), proyecto.id);
+
+	await repositorio.eliminar(proyecto.id, proyecto.revision);
+	assert.equal(await repositorio.obtenerProyectoActivo(), undefined);
+	await repositorio.marcarProyectoActivo(undefined);
+	assert.equal(await repositorio.obtenerProyectoActivo(), undefined);
+});
+
+test('biblioteca custom crea, abre y lista definiciones con clonación defensiva', async () => {
+	const { backend, repositorio } = entorno();
+	const asset = await repositorio.guardarAsset('image/png', new Uint8Array([1, 2, 3, 4]));
+	const contenido = contenidoComponente(asset.id);
+	const creado = await repositorio.crearComponente({ definicion: contenido });
+	contenido.nombre = 'Mutación exterior';
+	contenido.terminales[0].id = 'MUTADO';
+	creado.nombre = 'Mutación de la respuesta';
+	creado.terminales[0].id = 'MUTADO-2';
+
+	const abierto = await repositorio.abrirComponente(creado.id);
+	assert.equal(abierto.nombre, 'Sensor propio');
+	assert.equal(abierto.terminales[0].id, 'S');
+	assert.equal(abierto.revision, 1);
+	const lista = await repositorio.listarComponentes();
+	assert.equal(lista.length, 1);
+	lista[0].nombre = 'Tampoco debe entrar';
+	assert.equal((await repositorio.abrirComponente(creado.id)).nombre, 'Sensor propio');
+	assert.equal(await backend.contar('customComponents'), 1);
+});
+
+test('actualizar custom exige revisión y un fallo no pisa la versión vigente', async () => {
+	const { repositorio } = entorno();
+	const asset = await repositorio.guardarAsset('image/png', new Uint8Array([5, 6, 7]));
+	const creado = await repositorio.crearComponente({ definicion: contenidoComponente(asset.id) });
+	const actualizado = await repositorio.actualizarComponente(creado.id, {
+		revisionEsperada: 1,
+		definicion: contenidoComponente(asset.id, 'Sensor revisado'),
+	});
+	assert.equal(actualizado.id, creado.id);
+	assert.equal(actualizado.revision, 2);
+	assert.equal(actualizado.creadoEn, creado.creadoEn);
+
+	await assert.rejects(
+		repositorio.actualizarComponente(creado.id, {
+			revisionEsperada: 1,
+			definicion: contenidoComponente(asset.id, 'Edición obsoleta'),
+		}),
+		(error) => error instanceof ConflictoRevisionComponente && error.revisionActual === 2,
+	);
+	assert.equal((await repositorio.abrirComponente(creado.id)).nombre, 'Sensor revisado');
+
+	const assetFantasma = contenidoComponente('sha256:no-existe', 'Asset ausente');
+	await assert.rejects(
+		repositorio.actualizarComponente(creado.id, { revisionEsperada: 2, definicion: assetFantasma }),
+		ComponentePersonalizadoInvalido,
+	);
+	assert.equal((await repositorio.abrirComponente(creado.id)).revision, 2);
+});
+
+test('duplicar custom crea identidad/revisión nuevas y eliminar también detecta conflictos', async () => {
+	const { repositorio } = entorno();
+	const asset = await repositorio.guardarAsset('image/webp', new Uint8Array([8, 9, 10]));
+	const original = await repositorio.crearComponente({ definicion: contenidoComponente(asset.id, 'Original') });
+	const copia = await repositorio.duplicarComponente(original.id, 'Copia');
+	assert.notEqual(copia.id, original.id);
+	assert.equal(copia.revision, 1);
+	assert.equal(copia.nombre, 'Copia');
+	assert.equal(copia.assetId, original.assetId);
+
+	await assert.rejects(repositorio.eliminarComponente(original.id, 99), ConflictoRevisionComponente);
+	await repositorio.eliminarComponente(original.id, original.revision);
+	assert.equal((await repositorio.listarComponentes()).length, 1);
+	assert.equal((await repositorio.abrirComponente(copia.id)).nombre, 'Copia');
+});
+
+test('una definición custom inválida o sin asset nunca entra a la biblioteca', async () => {
+	const { backend, repositorio } = entorno();
+	const sinAsset = contenidoComponente('sha256:ausente');
+	await assert.rejects(repositorio.crearComponente({ definicion: sinAsset }), ComponentePersonalizadoInvalido);
+	const asset = await repositorio.guardarAsset('image/jpeg', new Uint8Array([11, 12, 13]));
+	const dimensionesInvalidas = contenidoComponente(asset.id);
+	dimensionesInvalidas.dimensiones.anchoMm = 0;
+	await assert.rejects(
+		repositorio.crearComponente({ definicion: dimensionesInvalidas }),
+		ComponentePersonalizadoInvalido,
+	);
+	assert.equal(await backend.contar('customComponents'), 0);
 });

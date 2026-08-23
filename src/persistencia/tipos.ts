@@ -1,4 +1,5 @@
 import type { Proyecto } from '../modelo/tipos.js';
+import type { DefinicionComponentePersonalizado } from '../componentes/personalizados.js';
 
 export const ALMACENES_PERSISTENCIA = [
 	'projects',
@@ -62,6 +63,28 @@ export interface AssetPersistido {
 	bytes: Uint8Array;
 }
 
+export interface MetadataProyectoActivo {
+	id: 'active-project';
+	projectId: string;
+	actualizadoEn: string;
+}
+
+/** Contenido editable; identidad, revisión y fechas pertenecen al repositorio. */
+export type ContenidoComponentePersonalizado = Omit<
+	DefinicionComponentePersonalizado,
+	'id' | 'revision' | 'creadoEn' | 'modificadoEn' | 'formato' | 'version'
+>;
+
+export interface OpcionesCrearComponentePersonalizado {
+	id?: string;
+	definicion: ContenidoComponentePersonalizado;
+}
+
+export interface OpcionesActualizarComponentePersonalizado {
+	revisionEsperada: number;
+	definicion: ContenidoComponentePersonalizado;
+}
+
 export interface RecuperacionLegacy {
 	id: string;
 	fuente: 'legacy-autosave';
@@ -121,6 +144,19 @@ export interface RepositorioProyectos {
 	restaurarSnapshot(id: string, snapshotId: string, revisionEsperada: number): Promise<DocumentoProyecto>;
 	guardarAsset(mime: string, bytes: Uint8Array): Promise<AssetPersistido>;
 	abrirAsset(id: string): Promise<AssetPersistido | undefined>;
+	obtenerProyectoActivo(): Promise<string | undefined>;
+	marcarProyectoActivo(projectId: string | undefined): Promise<void>;
+	crearComponente(
+		opciones: OpcionesCrearComponentePersonalizado,
+	): Promise<DefinicionComponentePersonalizado>;
+	abrirComponente(id: string): Promise<DefinicionComponentePersonalizado>;
+	listarComponentes(): Promise<DefinicionComponentePersonalizado[]>;
+	actualizarComponente(
+		id: string,
+		opciones: OpcionesActualizarComponentePersonalizado,
+	): Promise<DefinicionComponentePersonalizado>;
+	duplicarComponente(id: string, nombre?: string): Promise<DefinicionComponentePersonalizado>;
+	eliminarComponente(id: string, revisionEsperada: number): Promise<void>;
 	listarRecuperaciones(): Promise<RecuperacionLegacy[]>;
 	migrarAutosaveLegacy(raw: string | null | undefined): Promise<ResultadoMigracionLegacy>;
 }
@@ -147,5 +183,33 @@ export class ProyectoNoEncontrado extends Error {
 	constructor(readonly projectId: string) {
 		super(`No existe el proyecto ${projectId}.`);
 		this.name = 'ProyectoNoEncontrado';
+	}
+}
+
+export class ComponentePersonalizadoInvalido extends Error {
+	constructor(mensaje: string, readonly errores: string[] = []) {
+		super(mensaje);
+		this.name = 'ComponentePersonalizadoInvalido';
+	}
+}
+
+export class ComponentePersonalizadoNoEncontrado extends Error {
+	constructor(readonly componenteId: string) {
+		super(`No existe el componente personalizado ${componenteId}.`);
+		this.name = 'ComponentePersonalizadoNoEncontrado';
+	}
+}
+
+export class ConflictoRevisionComponente extends Error {
+	constructor(
+		readonly componenteId: string,
+		readonly revisionEsperada: number,
+		readonly revisionActual: number,
+	) {
+		super(
+			`Conflicto al guardar el componente ${componenteId}: se esperaba la revisión `
+			+ `${revisionEsperada} y existe la ${revisionActual}.`,
+		);
+		this.name = 'ConflictoRevisionComponente';
 	}
 }
