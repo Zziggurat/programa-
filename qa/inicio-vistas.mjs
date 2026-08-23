@@ -120,6 +120,9 @@ must('en el alzado los bornes siguen localizables en pantalla', bornes2D.length 
 must('y caen dentro del lienzo', bornes2D.filter((b) => b.x > 0 && b.x < 1440 && b.y > 0 && b.y < 900).length > 5);
 await click('btn-2d'); await page.waitForTimeout(500);
 await click('modo-editor'); await page.waitForTimeout(300);
+await click('hta-estructura');
+await page.click('#seccion-estructura > summary');
+await page.locator('#aplicar-dim').waitFor({ state: 'visible' });
 
 /* ---------- 3. El suelo ---------- */
 console.log('\n--- 3. Al agrandar la caja no se atraviesa el suelo ---');

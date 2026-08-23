@@ -60,8 +60,11 @@ const escribir = (id, valor) => p.evaluate(({ id, valor }) => {
 	e.dispatchEvent(new Event('change', { bubbles: true }));
 }, { id, valor });
 
-await p.evaluate(() => { document.getElementById('seccion-estructura').open = true; });
-await p.waitForTimeout(300);
+// La estructura vive en el cajón Montaje desde la reorganización de herramientas. Abrir solo el
+// `<details>` deja el formulario oculto y no representa una acción posible del usuario.
+await p.click('#hta-estructura');
+await p.click('#seccion-estructura > summary');
+await p.locator('#aplicar-dim').waitFor({ state: 'visible' });
 
 // Primera pasada: encoger la placa. «Aplicar» estira/encoge los rieles con la placa, así que el
 // largo del riel hay que ponerlo DESPUÉS, en una segunda pasada donde el ancho ya no cambia.
