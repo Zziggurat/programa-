@@ -5,6 +5,7 @@
  */
 import { Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { crearProyecto } from '../src/modelo/proyecto.js';
+import { fixturePuertaSemantica } from './fixture-puerta.js';
 import { tableroEjemplo } from './tablero-ejemplo.js';
 
 export interface EjemploTablero {
@@ -1077,5 +1078,24 @@ export const EJEMPLOS: EjemploTablero[] = [
 			q2: '-Q2', g1: '-G1', f1: '-F1', k1: '-K1', k1na: '-K1.1', a1: '-A1', x2: '-X2',
 			s0: '-S0', s1: '-S1', b1: '-B1', y1: '-Y1', y2: '-Y2',
 		}),
+	},
+	{
+		id: 'fixture-puerta',
+		titulo: 'Fixture de puerta: mando, 0 V, PE y campo',
+		resumen: 'Escena pequeña de regresión para distinguir mando, 0 V funcional, PE y bonding.',
+		queHace: 'No representa una máquina completa: reúne en una sola puerta las fronteras físicas '
+			+ 'que deben permanecer separadas al clasificar y tender conductores.',
+		comoFunciona: [
+			'La fuente G1 entrega +24 V y 0 V funcional a la bornera X1.',
+			'El piloto H1 recibe ambos conductores mediante el mazo flexible de mando.',
+			'La borna XPE lleva un PE aislado a un punto propio de la hoja, fuera del mazo de mando.',
+			'La trenza de bonding une las chapas por separado y el sensor B1 queda del lado de campo.',
+		],
+		aprender: [
+			'Abre la puerta y compara el lazo rojo/azul de mando con el PE verde-amarillo independiente.',
+			'Mira abajo, junto a la bisagra: la trenza de bonding es otra entidad, no el conductor PE.',
+			'El cable violeta del sensor termina en la bornera y no aparece en el mazo de puerta.',
+		],
+		crear: fixturePuertaSemantica,
 	},
 ];

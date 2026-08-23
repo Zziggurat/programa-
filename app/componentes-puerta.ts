@@ -679,6 +679,72 @@ export const OPCIONES_COLOR: { valor: string; texto: string }[] = [
 
 const FICHAS = new Map<string, FichaFrontal>();
 
+/**
+ * Un punto PE soldado a la hoja vive solo por su cara interior. No es un piloto sin lente: es el
+ * perno, la arandela dentada y la borna anular sobre la que termina el conductor de protección.
+ * Se reconoce por semántica explícita (`bornero` con bornes exclusivamente PE), nunca por texto.
+ */
+function construirPuntoPePuerta(d: Dispositivo): THREE.Group {
+	const g = new THREE.Group();
+	g.userData.dispositivoId = d.id;
+	g.userData.montaje = 'puerta';
+
+	const zBase = -CHAPA_PUERTA - 2.4;
+	const apoyo = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 2.8, 24), M.metal(0xaeb5ba));
+	apoyo.rotation.x = Math.PI / 2;
+	apoyo.position.z = zBase;
+	apoyo.userData.pieza = 'punto-pe';
+	g.add(apoyo);
+
+	// La arandela verde/amarilla hace identificable la función sin convertir el color en semántica.
+	const identificador = new THREE.Mesh(
+		new THREE.TorusGeometry(9.2, 2.2, 8, 24),
+		new THREE.MeshStandardMaterial({ color: 0x59a832, roughness: 0.62, metalness: 0.05 }),
+	);
+	identificador.position.z = zBase - 2;
+	identificador.userData.pieza = 'identificador-pe';
+	g.add(identificador);
+	const marcaAmarilla = new THREE.Mesh(new THREE.BoxGeometry(16, 3.2, 1.2), M.tecnico(0xe0c52e));
+	marcaAmarilla.position.z = zBase - 3.1;
+	marcaAmarilla.rotation.z = Math.PI / 4;
+	marcaAmarilla.raycast = () => undefined;
+	g.add(marcaAmarilla);
+
+	const perno = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 15, 12), M.metal(0xc7cdd1));
+	perno.rotation.x = Math.PI / 2;
+	perno.position.z = zBase - 8;
+	perno.castShadow = true;
+	g.add(perno);
+	const tuerca = new THREE.Mesh(new THREE.CylinderGeometry(5.4, 5.4, 3.5, 6), M.metal(0xb8bec2));
+	tuerca.rotation.x = Math.PI / 2;
+	tuerca.position.z = zBase - 13.5;
+	g.add(tuerca);
+
+	// Éste es el punto geométrico al que llega el mazo. Lleva el id persistente del borne real.
+	const terminal = new THREE.Mesh(new THREE.BoxGeometry(11, 8, 3), M.metal(0xc5a45d));
+	terminal.position.set(0, 0, zBase - 17);
+	terminal.userData.borneId = d.bornes[0]?.id ?? 'PE';
+	terminal.userData.pieza = 'terminal-pe';
+	g.add(terminal);
+	const rotulo = marca(d.bornes[0]?.id ?? 'PE', 2.8);
+	if (rotulo) {
+		rotulo.position.set(0, -9, zBase - 18.6);
+		rotulo.rotation.y = Math.PI;
+		g.add(rotulo);
+	}
+	return g;
+}
+
+const FICHA_PUNTO_PE: FichaFrontal = {
+	familia: 'Punto PE de hoja',
+	huella: () => ({ forma: 'redonda', ancho: 28 }),
+	construir: construirPuntoPePuerta,
+	propiedades: [
+		{ clave: 'designacion', etiqueta: 'Marca', tipo: 'texto' },
+		{ clave: 'descripcion', etiqueta: 'Para qué es', tipo: 'texto' },
+	],
+};
+
 /** Da de alta una familia de componentes de frontal. */
 export function registrarFrontal(tipo: string, ficha: FichaFrontal): void {
 	FICHAS.set(tipo, ficha);
@@ -690,6 +756,9 @@ export function registrarFrontal(tipo: string, ficha: FichaFrontal): void {
  * ha perdido.
  */
 export function fichaFrontal(d: Dispositivo): FichaFrontal {
+	if (d.tipo === 'bornero' && d.bornes.length > 0 && d.bornes.every((b) => b.tipo === 'PE')) {
+		return FICHA_PUNTO_PE;
+	}
 	return FICHAS.get(d.tipo) ?? FICHAS.get('piloto')!;
 }
 
