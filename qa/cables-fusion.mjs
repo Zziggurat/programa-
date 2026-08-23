@@ -18,6 +18,7 @@ const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
 const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+const cdp = await page.context().newCDPSession(page);
 const errs = [];
 page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404|Not Found/i.test(m.text())) errs.push(m.text()); });
 page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
@@ -122,20 +123,22 @@ for (const [indice, nombre] of [[0, 'Arranque directo'], [1, 'Bomba con boya'], 
 
 console.log('\n--- 2. Apuntar y seleccionar: el clic cae en el cable señalado ---');
 await abrirEjemplo(2);
-const rutas = await qa('rutas');
-let probados = 0;
-let aciertos = 0;
-const errados = [];
-for (const r of rutas) {
-	const puntos = (await qa('puntosVisiblesDeCable', r.id, 7)).filter(enZona);
-	for (const p of puntos) {
-		// A quién elegiría un clic exactamente en ese píxel, donde SE VE este cable.
-		const elegido = await qa('cableEnPixel', p.x, p.y);
-		probados++;
-		if (elegido === r.id) aciertos++;
-		else errados.push(`${r.id} → ${elegido ?? 'nada'}`);
-	}
-}
+/*
+ * Todas las muestras se calculan dentro de la página. Antes se hacían 170 viajes secuenciales
+ * Playwright ↔ navegador y cada uno volvía a proyectar todas las rutas. La afirmación no cambia:
+ * se siguen comprobando TODOS los puntos de TODOS los cables, solo se evita pagar 170 veces el
+ * protocolo remoto entre ambos procesos.
+ */
+const muestras = await page.evaluate((zona) => {
+	const dentro = (p) => p && p.x > zona.x0 && p.x < zona.x1 && p.y > zona.y0 && p.y < zona.y1;
+	return window.qa.rutas().flatMap((ruta) => window.qa.puntosVisiblesDeCable(ruta.id, 7)
+		.filter(dentro)
+		.map((punto) => ({ id: ruta.id, elegido: window.qa.cableEnPixel(punto.x, punto.y) })));
+}, LIBRE);
+const probados = muestras.length;
+const aciertos = muestras.filter((m) => m.elegido === m.id).length;
+const errados = muestras.filter((m) => m.elegido !== m.id)
+	.map((m) => `${m.id} → ${m.elegido ?? 'nada'}`);
 info(`${aciertos}/${probados} clics cayeron en el cable señalado`);
 if (errados.length) info('errados: ' + errados.slice(0, 6).join(', '));
 must('apuntar a un cable selecciona ESE cable', aciertos === probados, `${aciertos}/${probados}`);
@@ -177,13 +180,22 @@ for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la der
 	await qa('congelarCamara', true);
 	await page.waitForTimeout(120);
 	const lista = await qa('rutas');
+	/*
+	 * La decisión geométrica ya se comprobó exhaustivamente arriba (170 puntos de todos los
+	 * cables). Aquí se verifica otra capa: que eventos trusted de botón atraviesen el manejador y
+	 * produzcan la selección. Ocho cables repartidos de extremo a extremo de la lista cubren ese
+	 * camino sin repetir 177 veces el raycast volumétrico más caro de la sonda.
+	 */
+	const reales = [...new Set(Array.from({ length: Math.min(8, lista.length) }, (_, i) =>
+		lista[Math.round((i * (lista.length - 1)) / Math.max(1, Math.min(8, lista.length) - 1))]))];
 	let ok = 0; let total = 0;
 	const mal = [];
-	for (const r of lista) {
+	const sinPunto = [];
+	for (const r of reales) {
 		// Esc antes de cada intento: si un clic anterior arrancó un cableado sin querer, TODOS los
 		// clics siguientes se los come el tendido y saldrían como fallo en cascada, tapando cuál
 		// fue el que falló de verdad. Cada cable se prueba desde un estado limpio.
-		await page.keyboard.press('Escape'); await page.waitForTimeout(60);
+		await page.keyboard.press('Escape');
 		/*
 		 * Apuntar, COMPROBAR que el píxel sigue siendo suyo y pinchar sin soltar el aliento.
 		 *
@@ -195,23 +207,34 @@ for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la der
 		 * Ahora se reintenta hasta cuatro veces y entre la comprobación y el clic NO hay espera:
 		 * la ventana en la que la cámara puede moverse queda cerrada.
 		 */
-		let p;
-		for (let intento = 0; intento < 4; intento++) {
-			const candidato = await qa('puntoParaAgarrar', r.id);
-			if (!enZona(candidato)) { p = undefined; break; }
-			await page.mouse.move(candidato.x, candidato.y); await page.waitForTimeout(50);
-			if ((await qa('cableEnPixel', candidato.x, candidato.y)) === r.id) { p = candidato; break; }
-			p = undefined;
-			await page.waitForTimeout(80);
-		}
-		if (!p) continue;
-		// Lo que el programa dice del píxel JUSTO ANTES y JUSTO DESPUÉS de apretar. Si no coinciden,
-		// lo que ha cambiado es la escena entre una cosa y la otra, no la puntería.
+		/*
+		 * La cámara está congelada: repetir cuatro veces la misma búsqueda determinista no puede dar
+		 * otro resultado. Once muestras cubren el recorrido sin los 30 raycasts por cable del valor
+		 * predeterminado, y la zona se filtra DENTRO de la sonda para no elegir primero un punto que
+		 * luego se descarte aquí.
+		 */
+		const candidato = await qa('puntoParaAgarrar', r.id, 9, LIBRE);
+		const p = enZona(candidato) && (await qa('cableEnPixel', candidato.x, candidato.y)) === r.id
+			? candidato : undefined;
+		if (!p) { sinPunto.push(r.id); continue; }
+		// El clic se completa antes de leer la selección. Leerla entre pointerdown y pointerup —como
+		// hacía la prueba anterior— observaba el estado anterior porque un clic corto se confirma al
+		// SOLTAR, justo después de comprobar el umbral de arrastre.
 		const antesDeApretar = await qa('cableEnPixel', p.x, p.y);
-		await page.mouse.down(); await page.waitForTimeout(40);
+		/*
+		 * Entrada REAL del navegador, pero sin un `mouseMoved` previo. El hover del producto proyecta
+		 * todas las rutas y ya se prueba por separado; repetirlo para los 59 cables y tres cámaras
+		 * convertía esta regresión en 6–10 minutos. CDP entrega eventos trusted de botón con las mismas
+		 * coordenadas, sin añadir un segundo benchmark de pointermove a cada aserción de selección.
+		 */
+		await cdp.send('Input.dispatchMouseEvent', {
+			type: 'mousePressed', x: p.x, y: p.y, button: 'left', clickCount: 1,
+		});
 		const trasApretar = await qa('cableEnPixel', p.x, p.y);
+		await cdp.send('Input.dispatchMouseEvent', {
+			type: 'mouseReleased', x: p.x, y: p.y, button: 'left', clickCount: 1,
+		});
 		const sel = await qa('seleccion');
-		await page.mouse.up(); await page.waitForTimeout(60);
 		total++;
 		if (sel?.tipo === 'cable' && sel.id === r.id) ok++;
 		else {
@@ -223,6 +246,8 @@ for (const [dx, dy, comoSeVe] of [[0, 0, 'de frente'], [110, 0, 'girado a la der
 		}
 	}
 	must(`nada tapa el lienzo (${comoSeVe})`, await lienzoLibre());
+	must(`toda la muestra tiene un punto comprobable (${comoSeVe})`, total === reales.length,
+		`${total}/${reales.length}${sinPunto.length ? `; sin punto: ${sinPunto.slice(0, 6).join(', ')}` : ''}`);
 	if (mal.length) info('fallaron: ' + mal.join(' | '));
 	must(`el clic real agarra el cable señalado (${comoSeVe})`, ok === total && total > 0, `${ok}/${total}`);
 }
