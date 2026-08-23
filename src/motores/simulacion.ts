@@ -56,6 +56,7 @@
  * empleo declaradas, no el resultado de un cálculo de cortocircuito.
  */
 import { Conductor, Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tipos.js';
+import { resolverComportamiento } from '../modelo/comportamiento.js';
 import { claveBorne } from '../modelo/proyecto.js';
 import { tensionSecundariaDe } from './tensiones.js';
 import {
@@ -384,6 +385,27 @@ function tensionDeEmpleo(d: Dispositivo, vivos: Map<string, BorneVivo>): number 
 export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaMetida: boolean): [string, string][] {
 	const pares: [string, string][] = [];
 	const idsBornes = new Set(d.bornes.map((b) => b.id));
+	const comportamiento = resolverComportamiento(d);
+
+	// Un perfil explícito no depende ni de la carcasa 3D ni de la serigrafía. Este camino también
+	// recibe a los contactores legacy a través del adaptador IEC de `resolverComportamiento`.
+	if (comportamiento?.clase === 'contactos-electromagneticos') {
+		if (bobinaMetida) {
+			for (const p of comportamiento.polos) pares.push([p.entrada, p.salida]);
+		}
+		for (const c of comportamiento.contactos) {
+			const cerrado = c.reposo === 'cerrado' ? !bobinaMetida : bobinaMetida;
+			if (cerrado) pares.push([c.entrada, c.salida]);
+		}
+		return pares;
+	}
+	if (comportamiento?.clase === 'mando' && d.rol?.tipo === 'esclavo') {
+		for (const c of comportamiento.contactos) {
+			const cerrado = c.reposo === 'cerrado' ? !bobinaMetida : bobinaMetida;
+			if (cerrado) pares.push([c.entrada, c.salida]);
+		}
+		return pares;
+	}
 
 	if (CONMUTA.has(d.tipo)) {
 		// Un relé TÉRMICO se declara como «rele» pero no se parece en nada a un relé auxiliar: no
@@ -441,7 +463,7 @@ export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaM
 	for (const [a, b] of d.puentesInternos ?? []) pares.push([a, b]);
 	// Un controlador cierra las salidas que pide su PROGRAMA, más las que el usuario fuerce a
 	// mano. `salidas` llega ya resuelta: la calcula el motor en cada pasada de la simulación.
-	if (d.tipo === 'plc' && estado.salidas?.length) {
+	if (comportamiento?.clase === 'controlador' && estado.salidas?.length) {
 		for (const s of estado.salidas) {
 			if (!idsBornes.has(s)) continue;
 			/*
@@ -454,7 +476,7 @@ export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaM
 			 * Las analógicas van por `estado.analogicas`, en % de su rango, y salen del motor como
 			 * voltios contra su común — no como tensión de red propagada por el circuito.
 			 */
-			if (esSalidaAnalogica(s)) continue;
+			if (esSalidaAnalogicaDe(d, s)) continue;
 			const comun = comunDeSalida(d, s, idsBornes);
 			if (comun) pares.push([comun, s]);
 		}
@@ -492,6 +514,13 @@ export function esSalidaAnalogica(borne: string): boolean {
 	return /^(AO|Y)\d+$/.test(borne);
 }
 
+/** El perfil explícito manda; la regex queda únicamente como compatibilidad de proyectos legacy. */
+function esSalidaAnalogicaDe(d: Dispositivo, borne: string): boolean {
+	const c = resolverComportamiento(d);
+	if (c?.clase === 'controlador') return c.salidasAnalogicas.some((s) => s.borne === borne);
+	return esSalidaAnalogica(borne);
+}
+
 /** Rango de una salida analógica, en voltios, si el aparato no declara otro. */
 export const RANGO_AO_POR_DEFECTO: [number, number] = [0, 10];
 
@@ -507,18 +536,26 @@ export function salidaAnalogicaEn(
 	d: Dispositivo, borne: string, porcentaje: number,
 ): { voltios: number; referencia: string | undefined; rango: [number, number]; supuesto: boolean } {
 	const declarado = d.rangoSalidaAnalogica;
-	const rango = declarado ?? RANGO_AO_POR_DEFECTO;
+	const perfil = resolverComportamiento(d);
+	const salida = perfil?.clase === 'controlador'
+		? perfil.salidasAnalogicas.find((s) => s.borne === borne) : undefined;
+	const rango = salida?.rango ?? declarado ?? RANGO_AO_POR_DEFECTO;
 	const pct = Math.max(0, Math.min(100, porcentaje));
 	const idsBornes = new Set(d.bornes.map((b) => b.id));
 	return {
 		voltios: Math.round((rango[0] + (rango[1] - rango[0]) * (pct / 100)) * 100) / 100,
-		referencia: comunDeSalida(d, borne, idsBornes),
+		referencia: salida?.referencia ?? comunDeSalida(d, borne, idsBornes),
 		rango,
-		supuesto: !declarado,
+		supuesto: !salida && !declarado,
 	};
 }
 
 function comunDeSalida(d: Dispositivo, salida: string, idsBornes: Set<string>): string | undefined {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase === 'controlador') {
+		return perfil.salidasDigitales.find((s) => s.borne === salida)?.comun
+			?? perfil.salidasAnalogicas.find((s) => s.borne === salida)?.referencia;
+	}
 	const familia = `${salida.replace(/\d+$/, '')}C`;
 	if (familia !== salida && idsBornes.has(familia)) return familia;
 	return d.bornes.find((b) => b.id === '+24' || b.id === '+V')?.id;
@@ -541,6 +578,13 @@ interface ContactoIEC { comun: string; salida: string; tipo: 'NA' | 'NC' }
  * contacto; si no está y hay un 14, ese 14 comparte común con el 11 y es un conmutado.
  */
 export function contactosAuxiliaresIEC(d: Dispositivo): ContactoIEC[] {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase === 'contactos-electromagneticos' || perfil?.clase === 'proteccion'
+		|| perfil?.clase === 'mando' || perfil?.clase === 'sensor') {
+		return perfil.contactos.map((c) => ({
+			comun: c.entrada, salida: c.salida, tipo: c.reposo === 'abierto' ? 'NA' : 'NC',
+		}));
+	}
 	const salida: ContactoIEC[] = [];
 	const ids = new Set(d.bornes.map((b) => b.id));
 	for (let g = 1; g <= 9; g++) {
@@ -573,6 +617,10 @@ export function contactosAuxiliaresIEC(d: Dispositivo): ContactoIEC[] {
  * al revés de como funciona. Por eso se descarta todo borne que ya sea un contacto IEC.
  */
 export function polosDe(d: Dispositivo): [string, string][] {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase === 'contactos-electromagneticos' || perfil?.clase === 'proteccion') {
+		return perfil.polos.map((p) => [p.entrada, p.salida]);
+	}
 	if (d.puentesInternos?.length) return d.puentesInternos.map(([a, b]) => [a, b] as [string, string]);
 	const ids = new Set(d.bornes.map((b) => b.id));
 	const auxiliares = new Set<string>();
@@ -614,7 +662,15 @@ interface Fuente {
 function fuentesDe(proyecto: Proyecto): Fuente[] {
 	const fuentes: Fuente[] = [];
 	for (const d of proyecto.dispositivos) {
-		if (d.imagen) continue;
+		const comportamiento = resolverComportamiento(d);
+		if (!comportamiento || comportamiento.clase === 'sin-comportamiento') continue;
+		if (d.comportamiento && comportamiento.clase === 'fuente') {
+			const trifasica = comportamiento.salidas.filter((s) => s.papel === 'fase').length >= 3;
+			for (const s of comportamiento.salidas) {
+				fuentes.push({ clave: `${d.id}::${s.borne}`, tension: s.tensionV, papel: s.papel, trifasica });
+			}
+			continue;
+		}
 		// Acometida: un aparato de campo sin nada aguas arriba que tiene fases y neutro.
 		const esAcometida = d.campo && d.bornes.some((b) => b.tipo === 'L')
 			&& (d.clase === 'W' || /acometida|red|alimentaci/i.test(d.descripcion ?? ''));
@@ -660,11 +716,40 @@ export { tensionSecundariaDe } from './tensiones.js';
 
 /** ¿Está alimentado el primario de esta fuente/transformador? */
 function primarioAlimentado(d: Dispositivo, vivos: Map<string, BorneVivo>): boolean {
-	const entradas = d.bornes.filter((b) => b.tipo === 'L' || b.id === 'P1' || b.id === 'L');
-	const retornos = d.bornes.filter((b) => b.tipo === 'N' || b.id === 'P2');
+	const perfil = resolverComportamiento(d);
+	const declarada = perfil?.clase === 'fuente' ? perfil.primario : undefined;
+	const entradas = declarada
+		? d.bornes.filter((b) => declarada.entradas.includes(b.id))
+		: d.bornes.filter((b) => b.tipo === 'L' || b.id === 'P1' || b.id === 'L');
+	const retornos = declarada
+		? d.bornes.filter((b) => declarada.retornos.includes(b.id))
+		: d.bornes.filter((b) => b.tipo === 'N' || b.id === 'P2');
 	const hayFase = entradas.some((b) => vivos.get(claveBorne({ dispositivoId: d.id, borneId: b.id }))?.papel === 'fase');
 	const hayRetorno = retornos.some((b) => vivos.has(claveBorne({ dispositivoId: d.id, borneId: b.id })));
 	return hayFase && hayRetorno;
+}
+
+/**
+ * La DSL expresa una rampa en la unidad física de la salida (V en el perfil v1), mientras que el
+ * estado forzado y `ResultadoSimulacion.analogicas` usan siempre 0..100 %. Esta frontera explícita
+ * evita que una consigna de 5 V se vuelva a convertir como si fuera 5 % (= 0,5 V).
+ */
+function porcentajeDeSalidaFisica(d: Dispositivo, borne: string, valor: number): number {
+	const perfil = resolverComportamiento(d);
+	const declarada = perfil?.clase === 'controlador'
+		? perfil.salidasAnalogicas.find((s) => s.borne === borne)?.rango : undefined;
+	const [min, max] = declarada ?? d.rangoSalidaAnalogica ?? RANGO_AO_POR_DEFECTO;
+	if (max === min) return 0;
+	return Math.max(0, Math.min(100, ((valor - min) / (max - min)) * 100));
+}
+
+/** Un controlador solo ejecuta/entrega salidas si recibe una diferencia de potencial. */
+function controladorAlimentado(d: Dispositivo, vivos: Map<string, BorneVivo>): boolean {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase !== 'controlador') return false;
+	const entradas = perfil.alimentacion.entradas.map((id) => vivos.get(`${d.id}::${id}`)).filter((v): v is BorneVivo => !!v);
+	const retornos = perfil.alimentacion.retornos.map((id) => vivos.get(`${d.id}::${id}`)).filter((v): v is BorneVivo => !!v);
+	return entradas.some((a) => retornos.some((b) => a.papel !== b.papel));
 }
 
 /**
@@ -776,7 +861,10 @@ export function simular(
 	activosPrevios?: ReadonlySet<string>,
 	reloj?: { ahora: number; memoria: MemoriaTiempos; logica?: MemoriaLogica },
 ): ResultadoSimulacion {
-	const aparatos = proyecto.dispositivos.filter((d) => !d.imagen);
+	const aparatos = proyecto.dispositivos.filter((d) => {
+		const perfil = resolverComportamiento(d);
+		return !!perfil && perfil.clase !== 'sin-comportamiento';
+	});
 	const fuentes = fuentesDe(proyecto);
 
 	/*
@@ -790,7 +878,7 @@ export function simular(
 	const programas = new Map<string, ReglaLogica[]>();
 	const erroresPrograma: string[] = [];
 	for (const d of aparatos) {
-		if (d.tipo !== 'plc' || !d.programa?.trim()) continue;
+		if (resolverComportamiento(d)?.clase !== 'controlador' || !d.programa?.trim()) continue;
 		const leido = leerPrograma(d.programa);
 		programas.set(d.id, leido.reglas);
 		for (const e of leido.errores) {
@@ -871,6 +959,10 @@ export function simular(
 		// Los controladores leen su tablero y deciden sus salidas ANTES de la siguiente pasada.
 		for (const [id, reglas] of programas) {
 			const d = aparatos.find((x) => x.id === id)!;
+			if (!controladorAlimentado(d, nuevosVivos)) {
+				salidasDePrograma.set(id, new Set());
+				continue;
+			}
 			const lectura = leerControlador(d, proyecto, nuevosVivos, estado,
 				salidasDePrograma.get(id) ?? new Set());
 			salidasDePrograma.set(id, salidasActivas(reglas, lectura,
@@ -880,7 +972,9 @@ export function simular(
 			for (const [borne, v] of Object.entries(valoresAnalogicos(reglas, lectura))) {
 				// Lo forzado a mano manda sobre lo que calcula el programa: quien fuerza está
 				// probando, y el programa volvería a poner su valor en cada pasada.
-				if (estado[id]?.analogicas?.[borne] === undefined) analogicas.set(`${id}::${borne}`, v);
+				if (estado[id]?.analogicas?.[borne] === undefined) {
+					analogicas.set(`${id}::${borne}`, porcentajeDeSalidaFisica(d, borne, v));
+				}
 			}
 		}
 		const nuevosActivos = new Set<string>();
@@ -905,6 +999,10 @@ export function simular(
 		if (estable && reloj) {
 			for (const [id, reglas] of programas) {
 				const d = aparatos.find((x) => x.id === id)!;
+				if (!controladorAlimentado(d, vivos)) {
+					salidasDePrograma.set(id, new Set());
+					continue;
+				}
 				const lectura = leerControlador(d, proyecto, vivos, estado,
 					salidasDePrograma.get(id) ?? new Set());
 				const firmes = salidasActivas(reglas, lectura, { ahora: reloj.ahora, memoria: memoriaLogica });
@@ -1122,6 +1220,7 @@ export function simular(
 	const controladores: EstadoControlador[] = [];
 	for (const [id, reglas] of programas) {
 		const d = aparatos.find((x) => x.id === id)!;
+		if (!controladorAlimentado(d, vivos)) continue;
 		const lectura = leerControlador(d, proyecto, vivos, estado, salidasDePrograma.get(id) ?? new Set());
 		const mios = erroresPrograma.filter((e) => e.startsWith(`${d.designacion ?? d.id},`));
 		controladores.push({
@@ -1163,7 +1262,7 @@ export function simular(
 	for (const [clave, pct] of analogicas) {
 		const [id, borne] = clave.split('::');
 		const d = aparatos.find((x) => x.id === id);
-		if (!d || !esSalidaAnalogica(borne)) continue;
+		if (!d || !controladorAlimentado(d, vivos) || !esSalidaAnalogicaDe(d, borne)) continue;
 		salidasAnalogicas.set(clave, salidaAnalogicaEn(d, borne, pct));
 	}
 
@@ -1261,9 +1360,14 @@ function propagar(
 		const delMaestro = d.rol?.tipo === 'esclavo' ? estado[d.rol.maestroId] ?? {} : {};
 		const suyo = { ...delMaestro, ...(estado[d.id] ?? {}) };
 		const delPrograma = salidasDePrograma.get(d.id);
-		const conSalidas = delPrograma?.size
+		let conSalidas = delPrograma?.size
 			? { ...suyo, salidas: [...new Set([...(suyo.salidas ?? []), ...delPrograma])] }
 			: suyo;
+		// Forzar o recordar una salida no crea energía dentro de un controlador desconectado. Se usa
+		// la pasada anterior porque este grafo es precisamente el que calculará la alimentación nueva.
+		if (resolverComportamiento(d)?.clase === 'controlador' && !controladorAlimentado(d, vivosPrevios)) {
+			conSalidas = { ...conSalidas, salidas: [] };
+		}
 		/*
 		 * QUÉ BOBINA MANDA EN ESTE APARATO.
 		 *
@@ -1286,7 +1390,8 @@ function propagar(
 	const activas = fuentes.filter((f) => {
 		const dueño = f.clave.split('::')[0];
 		const d = aparatos.find((x) => x.id === dueño);
-		return !(d && (d.tipo === 'fuente' || d.tipo === 'transformador') && !primarioAlimentado(d, vivosPrevios));
+		const perfil = d ? resolverComportamiento(d) : undefined;
+		return !(d && perfil?.clase === 'fuente' && perfil.primario && !primarioAlimentado(d, vivosPrevios));
 	});
 
 	const alcances: Alcance[] = [];
@@ -1316,9 +1421,10 @@ function propagar(
 
 /** ¿Tiene la bobina de este aparato tensión en A1 y retorno en A2? */
 function bobinaAlimentada(d: Dispositivo, vivos: Map<string, BorneVivo>): boolean {
-	if (d.tipo !== 'contactor' && d.tipo !== 'rele') return false;
-	const a1 = vivos.get(`${d.id}::A1`);
-	const a2 = vivos.get(`${d.id}::A2`);
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase !== 'contactos-electromagneticos') return false;
+	const a1 = vivos.get(`${d.id}::${perfil.bobina.entrada}`);
+	const a2 = vivos.get(`${d.id}::${perfil.bobina.retorno}`);
 	if (!a1 || !a2) return false;
 	// Hace falta diferencia de potencial: fase en un extremo y retorno en el otro.
 	return a1.papel !== a2.papel;

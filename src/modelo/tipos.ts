@@ -15,6 +15,7 @@ export type LetraClase =
 
 /** Tipos de aparato conocidos, con su letra IEC por defecto (se puede forzar con `clase`). */
 import { AjustesDossier } from './dossier.js';
+import type { ComportamientoSimulacion } from './comportamiento.js';
 
 export type TipoDispositivo =
 	| 'plc' | 'fuente' | 'transformador' | 'contactor' | 'rele'
@@ -129,6 +130,8 @@ export interface Posicion { x: number; y: number }
 export interface Dispositivo {
 	id: string;
 	tipo: TipoDispositivo;
+	/** Contrato eléctrico ejecutable. Si existe, manda sobre las heurísticas legacy por tipo/IEC. */
+	comportamiento?: ComportamientoSimulacion;
 	/** Fuerza la letra IEC (si no, se usa CLASE_POR_TIPO[tipo]). */
 	clase?: LetraClase;
 	/** Número de secuencia asignado por el motor de numeración (K"1"). */

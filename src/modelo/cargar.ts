@@ -14,6 +14,7 @@ import {
 	Gabinete, Hoja, LadoAparato, OpcionesProyecto, RotuloFrontal, Posicion, Proyecto, Riel, Rol,
 } from './tipos.js';
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
+import { leerComportamientoSimulacion, validarComportamiento } from './comportamiento.js';
 
 /** Versión de formato que escribe este programa. */
 export const VERSION_FORMATO = 1;
@@ -806,6 +807,11 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			return v as Dispositivo[K] | undefined;
 		};
 		const ruta = (campo: string) => `dispositivos[${d.id}].${campo}`;
+		const bornes = leerBornes(d.bornes);
+		const comportamientoLeido = leerComportamientoSimulacion(d.comportamiento);
+		const erroresComportamiento = comportamientoLeido
+			? validarComportamiento({ bornes, comportamiento: comportamientoLeido }) : [];
+		const comportamiento = erroresComportamiento.length ? undefined : comportamientoLeido;
 		/** Texto que TIENE que ser texto. Un objeto aquí revienta la BOM al ordenar. */
 		const cadena = (campo: string): string | undefined => {
 			const v = (d as Record<string, unknown>)[campo];
@@ -832,7 +838,9 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 		 */
 		salida.push({
 			id: d.id as string,
-			bornes: leerBornes(d.bornes),
+			bornes: bornes,
+			comportamiento: oQuitado(d.comportamiento, comportamiento, ruta('comportamiento'),
+				erroresComportamiento[0] ?? 'el perfil de simulación no tenía una forma o versión válida'),
 			designacion: cadena('designacion'),
 			descripcion: cadena('descripcion'),
 			fabricante: cadena('fabricante'),
