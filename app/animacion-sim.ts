@@ -207,6 +207,9 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 	const variadoresPorId = new Map(
 		(e.energizado ? e.resultado?.variadores ?? [] : []).map((v) => [v.dispositivoId, v]),
 	);
+	const motoresPorId = new Map(
+		(e.energizado ? e.resultado?.motores ?? [] : []).map((m) => [m.dispositivoId, m]),
+	);
 
 	/*
 	 * --- LOS CABLES RESPIRAN, Y BRILLAN SEGÚN LO QUE LLEVAN ---
@@ -261,6 +264,7 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		const enMarcha = !!activos?.has(id);
 		const posicionCarga = e.energizado ? e.resultado?.posicionesCargas.get(id) : undefined;
 		const variador = variadoresPorId.get(id);
+		const motor = motoresPorId.get(id);
 
 		/* --- Contactor y relé: la armadura entra cuando la bobina tira --- */
 		for (const m of p.armadura) {
@@ -341,14 +345,19 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		/*
 		 * --- MOTORES: el eje gira, y a la velocidad que le toca ---
 		 *
-		 * El RESULTADO decide si gira; la tensión nominal solo da una escala visual moderada a la
-		 * velocidad porque el motor todavía no calcula RPM ni deslizamiento. No se conserva un estado
-		 * de animación alternativo que pueda seguir girando después de que el circuito se detenga.
+		 * El RESULTADO decide si gira. Durante el estado estimado de arranque la velocidad sube de
+		 * forma progresiva; detenido o en falla no gira. La tensión nominal solo da una escala visual
+		 * moderada porque el motor no calcula RPM, par ni deslizamiento. No se conserva un estado de
+		 * animación alternativo que pueda seguir girando después de que el circuito se detenga.
 		 */
-		if (p.eje.length && perfil?.clase === 'carga' && perfil.efecto === 'giro' && enMarcha) {
+		const factorGiro = motor
+			? motor.estado === 'marcha' ? 1
+				: motor.estado === 'arrancando' ? 0.2 + 0.8 * motor.progresoArranque : 0
+			: enMarcha ? 1 : 0;
+		if (p.eje.length && perfil?.clase === 'carga' && perfil.efecto === 'giro' && factorGiro > 0) {
 			const tension = d.tensionNominal ?? 220;
 			// 220 V como referencia: ~9 rad/s. Se acota para que ni se pare ni maree.
-			const vueltas = Math.min(16, Math.max(4, 9 * Math.sqrt(tension / 220)));
+			const vueltas = Math.min(16, Math.max(4, 9 * Math.sqrt(tension / 220))) * factorGiro;
 			for (const m of p.eje) m.rotation.x += vueltas * e.dt;
 		}
 

@@ -84,6 +84,7 @@
 		max-width: 640px; }
 
 	body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; background: var(--fondo); color: var(--texto); font-size: 13px; }
+	body.persistencia-pendiente::after { content:"Abriendo biblioteca local…"; position:fixed; inset:0; z-index:30000; display:grid; place-items:center; background:#07111ed9; color:#e8f2fb; font:600 15px/1.4 system-ui,sans-serif; letter-spacing:.01em; }
 	#escena { position: fixed; inset: 46px 0 0 0; }
 
 	/* ==========================================================================
@@ -1049,6 +1050,7 @@
 	body.modo-visualizacion #bienvenida,
 	body.modo-visualizacion #tip-borne,
 	body.modo-visualizacion #btn-imagen,
+	body.modo-visualizacion #btn-componentes-personalizados,
 	body.modo-visualizacion #btn-nuevo,
 	body.modo-visualizacion #btn-abrir,
 	body.modo-visualizacion #btn-deshacer,
@@ -1308,6 +1310,8 @@
 	<button class="hta" id="hta-proyecto" data-hta="proyecto" title="Lo que hay en el tablero: aparatos, cables y verificación (P)">
 		<span class="ico">☰</span><span class="txt">Tablero</span></button>
 	<div class="empuje"></div>
+	<button class="hta" id="btn-componentes-personalizados" disabled aria-label="Abrir Mis Componentes"
+		title="Crear, importar y reutilizar componentes con imagen, terminales y comportamiento eléctrico"><span class="ico">🧩</span><span class="txt">Componentes</span></button>
 	<button class="hta" id="btn-imagen" aria-label="Añadir imagen de referencia" title="Añadir una imagen (foto de gabinete, controlador, motor…) como referencia visual para cablear sobre ella"><span class="ico">🖼</span><span class="txt">Imagen</span></button>
 	<input type="file" id="archivo-imagen" accept="image/*" hidden>
 </nav>

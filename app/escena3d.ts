@@ -278,7 +278,16 @@ export function construirEscenario(proyecto: Proyecto, realista = false): Escena
 	 * orden: ahí es donde miran el ratón —para poder pinchar un pulsador de la puerta— y la
 	 * animación de la simulación —para hacer girar el motor—. Fuera de ese grupo serían adorno.
 	 */
-	raiz.add(construirEntradasCampo(proyecto, aEscena, dispositivos));
+	const entradasCampo = construirEntradasCampo(proyecto, aEscena, dispositivos);
+	raiz.add(entradasCampo);
+	// `construirEntradasCampo` deja los cuerpos dentro del grupo seleccionable `dispositivos`,
+	// pero también deben formar parte del registro plano que consume la animación. Sin este paso
+	// el motor de campo existía, se podía pinchar y funcionaba eléctricamente, pero su eje nunca
+	// recibía el estado de ResultadoSimulacion.
+	for (const d of aparatosDeCampo(proyecto)) {
+		const cuerpo = dispositivos.children.find((o) => o.userData.dispositivoId === d.id);
+		if (cuerpo) aparatos.push(cuerpo);
+	}
 	raiz.add(dispositivos);
 
 	// La señalética del frontal: placas y rótulos grabados. Van en la puerta y viajan con ella.

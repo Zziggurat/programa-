@@ -173,6 +173,38 @@ test('el editor permanece inerte hasta que termina el bootstrap del repositorio'
 		'el bootstrap no libera explícitamente la interacción');
 	const llamadas = fuente.match(/terminarBloqueoDePersistencia\(\)/g)?.length ?? 0;
 	assert.ok(llamadas >= 3, 'la ruta correcta o el fallback podrían dejar el editor bloqueado');
+	const desdeInicio = fuente.slice(fuente.indexOf('async function iniciarPersistenciaDocumental'));
+	const assets = desdeInicio.indexOf('await extraerAssetsInline()');
+	const componentes = desdeInicio.indexOf('instalarUIComponentesPersonalizados');
+	const desbloqueoExitoso = desdeInicio.indexOf('terminarBloqueoDePersistencia()', assets);
+	assert.ok(assets >= 0 && componentes > assets && desbloqueoExitoso > componentes,
+		'el editor se desbloquea antes de terminar assets y superficies de la biblioteca');
+	assert.match(fuente, /pagehide[\s\S]{0,220}ev\.persisted[\s\S]{0,80}return/,
+		'una página guardada en bfcache cierra IndexedDB y restaura luego un runtime destruido');
+});
+
+test('una vista de recuperación pendiente no admite edición ni autoguardado', () => {
+	const fuente = readFileSync(join(RAIZ, 'app/main.ts'), 'utf8');
+	assert.match(
+		fuente,
+		/function\s+sePuedeEditar[\s\S]{0,500}estaEsperandoRecuperacion\(\)[\s\S]{0,220}return false/,
+		'la escena permite mutar la vista derivada del snapshot antes de restaurarla',
+	);
+	assert.match(
+		fuente,
+		/function\s+autoguardar[\s\S]{0,350}estaEsperandoRecuperacion\(\)[\s\S]{0,40}return/,
+		'el autoguardado intenta publicar una vista de recuperación como contenido actual',
+	);
+	assert.match(
+		fuente,
+		/nombre-proyecto[^\n]*\.onchange[\s\S]{0,180}sePuedeEditar\(\)/,
+		'el nombre del proyecto evita la frontera común de edición',
+	);
+	assert.match(
+		fuente,
+		/function\s+extraerAssetsInline[\s\S]{0,300}estaEsperandoRecuperacion\(\)/,
+		'el bootstrap intenta extraer y guardar assets desde la vista de recuperación',
+	);
 });
 
 for (const archivo of MODULOS) {

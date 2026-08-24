@@ -30,6 +30,8 @@ export interface ContextoSimulacion {
 	escenario: () => Escenario;
 	/** Selecciona un aparato del tablero (al pinchar una fila del panel). */
 	seleccionar: (id: string | undefined) => void;
+	/** Sincroniza la visibilidad del cajón cuando Energizar lo fuerza fuera de su herramienta. */
+	refrescarPanel?: () => void;
 }
 
 /** Lo que el editor puede pedirle a la simulación una vez instalada. */
@@ -110,6 +112,9 @@ export function controlDeSimulacion(d: Dispositivo): ControlSimulacion | undefin
 	};
 }
 
+/** Duración humana mínima de un Enter/Espacio; siempre se suelta de forma automática. */
+export const DURACION_PULSO_SINTETICO_MS = 80;
+
 export type OperacionControl = 'accionar' | 'presionar' | 'soltar';
 
 export interface ResultadoOperacionControl {
@@ -123,6 +128,26 @@ export function textoEstadoVariador(v: EstadoVariador): string {
 	const estado = v.estado === 'sin-alimentacion' ? 'SIN ALIMENTACIÓN'
 		: v.estado === 'listo' ? 'READY' : v.estado === 'marcha' ? 'RUN' : 'FAULT';
 	return `${estado} · ${v.frecuenciaHz.toFixed(1)} Hz · ref. ${v.referenciaPorcentaje.toFixed(0)} %`;
+}
+
+/**
+ * Indica si el resultado puede cambiar únicamente porque avanza el reloj.
+ *
+ * El scheduler de la UI no debe decidir por la carcasa legacy: un controlador importado, un
+ * motor con perfil o un VFD en rampa dependen del tiempo igual que sus equivalentes nativos.
+ */
+export function requiereAvanceTemporal(
+	proyecto: Proyecto,
+	resultado: ResultadoSimulacion | undefined,
+	sobrecargas: Readonly<Record<string, number>>,
+): boolean {
+	return proyecto.dispositivos.some((d) => d.temporizacion?.segundos
+		|| (resolverComportamiento(d)?.clase === 'controlador'
+			&& /\b(retardo|m[ií]nimo)\b/i.test(d.programa ?? '')))
+		|| Object.keys(sobrecargas).length > 0
+		|| !!resultado?.motores.some((motor) => motor.estado === 'arrancando')
+		|| !!resultado?.variadores.some((variador) =>
+			Math.abs(variador.frecuenciaHz - variador.frecuenciaObjetivoHz) > 0.01);
 }
 
 /** Transición pura del estado runtime; la UI y los tests usan exactamente las mismas reglas. */
@@ -379,9 +404,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			// Solo se rehace si hay algo que dependa del tiempo; si no, es gastar por gastar.
 			// Un controlador con retardos o tiempos mínimos también depende del reloj: si no se
 			// rehiciera, su cuenta atrás se quedaría clavada y la maniobra nunca avanzaría.
-			const hayTiempo = proyecto().dispositivos.some((d) => d.temporizacion?.segundos
-				|| (d.tipo === 'plc' && /\b(retardo|m[ií]nimo)\b/i.test(d.programa ?? '')))
-				|| Object.keys(sobrecargaDesde).length > 0;
+			const hayTiempo = requiereAvanceTemporal(proyecto(), ultimaSim, sobrecargaDesde);
 			if (hayTiempo) recalcularSimulacion();
 		}, 200);
 	}
@@ -458,6 +481,11 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			(proyecto().gabinete?.colocaciones ?? []).map((c) => c.dispositivoId));
 		const mandos = proyecto().dispositivos.filter((d) => esMando(d));
 		if (mandos.length) {
+			// El reloj repinta este bloque. Si reemplaza el botón que tenía foco, Enter llega al
+			// documento y no al mando: para teclado el panel queda inoperable. Se conserva la identidad
+			// semántica y se enfoca su nuevo nodo después de reconstruirlo.
+			const mandoEnFoco = (document.activeElement as HTMLElement | null)
+				?.closest<HTMLElement>('[data-mando]')?.dataset.mando;
 			$('sim-mandos').innerHTML = '<h3 class="titulo-sim">Mandos</h3>' + mandos.map((d) => {
 				const st = estadoSim[d.id] ?? {};
 				const { texto, boton, encendido, deshabilitado } = estadoDelMando(d, st);
@@ -480,13 +508,27 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 						iniciarPuntero(ev.pointerId, id);
 						presionarEnSimulacion(id);
 					};
+					el.onkeydown = (ev) => {
+						if (ev.repeat || (ev.key !== 'Enter' && ev.key !== ' ')) return;
+						// El repintado reemplaza este botón durante keydown, así que no se puede esperar
+						// su keyup. Se consume el click nativo y se ejecuta un pulso completo con liberación segura.
+						ev.preventDefault();
+						pulsarSintetico(id);
+					};
 					el.onclick = (ev) => {
 						if (clickConsumido.has(id)) ev.preventDefault();
-						else accionarEnSimulacion(id); // teclado y `.click()` de compatibilidad
+						else if (pulsarSintetico(id)) {
+							// Enter/Espacio y `.click()` no tienen un intervalo pointerdown→pointerup. Se
+							// representan como un pulso completo, nunca como un toggle que deje pegado el mando.
+						}
 					};
 				} else {
 					el.onclick = () => { accionarEnSimulacion(id); };
 				}
+			}
+			if (mandoEnFoco) {
+				$('sim-mandos').querySelector<HTMLElement>(`[data-mando="${CSS.escape(mandoEnFoco)}"]`)
+					?.focus({ preventScroll: true });
 			}
 		}
 
@@ -767,12 +809,28 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		return operarMomento(dispositivoId, 'soltar');
 	}
 
+	function pulsarSintetico(dispositivoId: string): boolean {
+		if (!presionarEnSimulacion(dispositivoId)) return false;
+		window.setTimeout(() => soltarEnSimulacion(dispositivoId), DURACION_PULSO_SINTETICO_MS);
+		return true;
+	}
+
+	/** Borra exclusivamente runtime; el Proyecto y su diseño no se modifican. */
+	function limpiarRuntime(): void {
+		limpiarGestos();
+		estadoSim = {};
+		activosPrevios = new Set();
+		ultimaSim = undefined;
+		sobrecargaDesde = {};
+		ajustarRelojSim();
+	}
+
 	function aplicarEnergizado(activo: boolean): void {
 		energizado = activo;
-		if (!activo) limpiarGestos();
 		document.body.classList.toggle('modo-simulacion', activo);
 		$('btn-energizar').classList.toggle('activo', activo);
 		($('seccion-simulacion') as HTMLElement).hidden = !activo;
+		ctx.refrescarPanel?.();
 		if (activo) {
 			($('seccion-simulacion') as HTMLDetailsElement).open = true;
 			// El panel vive debajo de la lista de cables, y en un tablero con treinta cables se queda
@@ -783,8 +841,9 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			recalcularSimulacion();
 			avisar('Tablero energizado. Haz clic en un pulsador para accionarlo.', 'ok');
 		} else {
-			ultimaSim = undefined;
-			ajustarRelojSim();   // para el reloj y olvida las cuentas atrás
+			// Detener una sesión vuelve al estado operativo inicial. Un selector, sensor o protección
+			// accionado pertenece al runtime y no reaparece mágicamente en la próxima energización.
+			limpiarRuntime();
 			pintarSimulacion();
 			avisar('Tablero sin tensión.', 'info');
 		}
@@ -798,14 +857,11 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	 * hacer cuando el tablero se cambia entero.
 	 */
 	function volverAReposo(): void {
-		limpiarGestos();
-		estadoSim = {};
-		activosPrevios = new Set();
-		ultimaSim = undefined;
+		limpiarRuntime();
 		// El reloj también vuelve a cero: si no, los temporizadores seguirían con la cuenta de antes
 		// y un relé a la desconexión se quedaría enganchado sin motivo.
-		ajustarRelojSim();
-		recalcularSimulacion();
+		if (energizado) recalcularSimulacion();
+		else pintarSimulacion();
 	}
 
 	($('btn-energizar') as HTMLButtonElement).onclick = () => aplicarEnergizado(!energizado);

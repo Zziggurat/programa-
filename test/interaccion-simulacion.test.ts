@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 
 import { animarSimulacion } from '../app/animacion-sim.js';
@@ -36,6 +37,7 @@ const {
 	controlDeSimulacion,
 	estadoDelMando,
 	operarControl,
+	requiereAvanceTemporal,
 	textoEstadoVariador,
 } = await import('../app/ui-simulacion.js');
 
@@ -99,6 +101,64 @@ test('presionar/soltar modela el ciclo momentáneo y accionar conserva el toggle
 	assert.equal(soltado.estado.activo, false);
 	assert.equal(operarControl(pulsador, {}, 'accionar').estado.activo, true);
 	assert.equal(operarControl(pulsador, { activo: true }, 'accionar').estado.activo, false);
+});
+
+test('la UI reinicia térmicos y convierte teclado/click sintético en un pulso, no en un mando pegado', () => {
+	const fuente = readFileSync('app/ui-simulacion.ts', 'utf8');
+	assert.match(fuente, /function\s+limpiarRuntime[\s\S]{0,260}sobrecargaDesde\s*=\s*\{\}/,
+		'cambiar de tablero energizado conserva el cronómetro térmico de la sesión anterior');
+	assert.match(fuente,
+		/function\s+pulsarSintetico[\s\S]{0,260}presionarEnSimulacion\(dispositivoId\)[\s\S]{0,260}setTimeout\(\(\)\s*=>\s*soltarEnSimulacion\(dispositivoId\),\s*DURACION_PULSO_SINTETICO_MS\)/,
+		'Enter o `.click()` no programa la liberación del pulsador momentáneo');
+	assert.match(fuente,
+		/el\.onkeydown[\s\S]{0,300}ev\.preventDefault\(\)[\s\S]{0,120}pulsarSintetico\(id\)/,
+		'Enter/Espacio dependen de un click nativo que se pierde al repintar el botón');
+	assert.match(fuente,
+		/mandoEnFoco[\s\S]{0,1200}CSS\.escape\(mandoEnFoco\)[\s\S]{0,120}focus\(\{\s*preventScroll:\s*true\s*\}\)/,
+		'el repintado periódico reemplaza el botón y pierde el foco del teclado');
+	assert.match(fuente, /DURACION_PULSO_SINTETICO_MS\s*=\s*(?:[5-9]\d|\d{3,})/,
+		'el pulso sintético vuelve a soltarse antes de que el circuito pueda observarlo');
+	assert.match(fuente,
+		/seccion-simulacion[\s\S]{0,180}hidden\s*=\s*!activo[\s\S]{0,180}ctx\.refrescarPanel\?\.\(\)/,
+		'Energizar cambia `hidden` pero deja el cajón con el `display: none` anterior');
+	const main = readFileSync('app/main.ts', 'utf8');
+	assert.match(main, /instalarSimulacion\(\{[\s\S]{0,240}refrescarPanel:\s*pintarRail/,
+		'el editor no conecta el cambio de Energizar con el repintado real del rail');
+});
+
+test('el reloj sigue recalculando motores, rampas VFD y controladores perfilados que dependen del tiempo', () => {
+	const baseMotor = {
+		dispositivoId: 'm1', designacion: '-M1', alimentado: true,
+		fasesRequeridas: 3 as const, fasesPresentes: 3,
+		progresoArranque: 0.25, corrienteNominalA: 2, corrienteNominalEstimada: false,
+		corrienteEstimadaA: 12, duracionArranqueEstimadaS: 3,
+	};
+	assert.equal(requiereAvanceTemporal(proyecto([]), resultado({
+		motores: [{ ...baseMotor, estado: 'arrancando' }],
+	}), {}), true, 'el motor en arranque quedó congelado entre ticks');
+
+	const baseVfd: EstadoVariador = {
+		dispositivoId: 'vfd', designacion: '-U1', estado: 'marcha', alimentado: true,
+		run: true, habilitado: true, referenciaPorcentaje: 100,
+		frecuenciaHz: 10, frecuenciaObjetivoHz: 50,
+	};
+	assert.equal(requiereAvanceTemporal(proyecto([]), resultado({ variadores: [baseVfd] }), {}), true,
+		'la rampa del VFD quedó congelada entre ticks');
+	assert.equal(requiereAvanceTemporal(proyecto([]), resultado({
+		motores: [{ ...baseMotor, estado: 'marcha', progresoArranque: 1, corrienteEstimadaA: 2 }],
+		variadores: [{ ...baseVfd, frecuenciaHz: 50 }],
+	}), {}), false, 'un motor y un VFD estables mantuvieron trabajo periódico innecesario');
+
+	const controlador = dispositivo('plc-importado', {
+		version: 1, clase: 'controlador',
+		alimentacion: { entradas: ['L'], retornos: ['N'] },
+		salidasDigitales: [], salidasAnalogicas: [],
+	}, 'otro', ['L', 'N']);
+	controlador.programa = 'Q0.0 = I0.0 retardo 1 s';
+	assert.equal(requiereAvanceTemporal(proyecto([controlador]), resultado(), {}), true,
+		'un controlador importado dependió del tipo legacy para avanzar su temporizador');
+	assert.equal(requiereAvanceTemporal(proyecto([]), resultado(), { q1: 0 }), true,
+		'la curva térmica dejó de avanzar');
 });
 
 test('un selector mantenido recorre de forma estable sus dos o tres posiciones', () => {
@@ -183,6 +243,7 @@ function resultado(parcial: Partial<ResultadoSimulacion> = {}): ResultadoSimulac
 		variadores: [],
 		posicionesCargas: new Map(),
 		...parcial,
+		motores: parcial.motores ?? [],
 	};
 }
 

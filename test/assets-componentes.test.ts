@@ -28,6 +28,19 @@ test('la copia persistente conserva el asset y elimina solamente la URL runtime'
 	assert.equal(original.dispositivos[0].imagen, 'blob:runtime-anterior', 'no muta el editor');
 });
 
+test('una imagen grande con assetId no vuelve a incrustarse en cada fotografía de autoguardado', () => {
+	const original = proyectoConAsset();
+	original.dispositivos[0].imagen = `data:image/png;base64,${'A'.repeat(2_000_000)}`;
+	const primera = proyectoParaPersistir(original);
+	const segunda = proyectoParaPersistir(original);
+	assert.equal(primera.dispositivos[0].imagen, undefined);
+	assert.equal(segunda.dispositivos[0].imagen, undefined);
+	assert.ok(JSON.stringify(primera).length < 20_000,
+		'el asset grande volvió a copiarse dentro de la revisión del proyecto');
+	assert.equal(original.dispositivos[0].imagen?.length, 2_000_022,
+		'preparar el autoguardado mutó la imagen runtime');
+});
+
 test('hidratar deduplica lecturas, informa faltantes y revoca cada URL una sola vez', async () => {
 	const p = proyectoConAsset();
 	p.dispositivos.push({ ...structuredClone(p.dispositivos[0]), id: 'k2' });

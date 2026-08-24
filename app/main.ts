@@ -17,6 +17,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 import { BloqueTerminales, ClaseConductor, CLASE_POR_TIPO, Colocacion, Conductor, Dispositivo, OpcionesProyecto, Proyecto } from '../src/modelo/tipos.js';
+import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { cajaDeGabinete, crearProyecto, declarado, extremoTexto, opcionesDe } from '../src/modelo/proyecto.js';
 import {
 	AjustesDossier, BloqueDossier, FUENTES, SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion,
@@ -24,7 +25,7 @@ import {
 import { leerPrograma } from '../src/motores/logica.js';
 import { ArchivoInvalido, cargarProyecto, imagenAdmisible } from '../src/modelo/cargar.js';
 import { abrirVentana, cerrarVentana, cerrarVentanaDeArriba } from './ventanas.js';
-import { numerarDispositivos } from '../src/motores/numeracion.js';
+import { aplicarPlantilla, numerarDispositivos } from '../src/motores/numeracion.js';
 import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
@@ -77,8 +78,14 @@ import { longitudCoincidente3D } from './colisiones-cables.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
 import { GestorDocumentos, EstadoGuardadoDocumento } from './gestor-documentos.js';
 import { instalarUIProyectos } from './ui-proyectos.js';
+import {
+	instalarUIComponentesPersonalizados, type PanelComponentesPersonalizados,
+} from './ui-componentes-personalizados.js';
 import { base64ABytes, hidratarImagenesDeProyecto, proyectoParaPersistir } from '../src/componentes/assets.js';
-import { leerPaqueteProyecto } from '../src/componentes/personalizados.js';
+import {
+	instanciarComponentePersonalizado, leerPaqueteProyecto,
+	type DefinicionComponentePersonalizado,
+} from '../src/componentes/personalizados.js';
 import type { RepositorioProyectos } from '../src/persistencia/tipos.js';
 
 /** Bandera que inyecta el empaquetador: true solo en el build para las pruebas (QA=1). */
@@ -220,8 +227,18 @@ let gestorDocumentos: GestorDocumentos | undefined;
 let repositorioDocumentos: RepositorioProyectos | undefined;
 let cerrarRepositorioDocumentos: (() => void) | undefined;
 let recursosImagenActivos: { liberar(): void } | undefined;
+let panelComponentesPersonalizados: PanelComponentesPersonalizados | undefined;
 /** Hasta que la migración termine no se toca la clave legacy que constituye su fuente segura. */
 let persistenciaDocumentalPendiente = true;
+// El editor ya está renderizado mientras IndexedDB abre. Dejarlo interactivo aquí crearía una
+// ventana de pérdida: esas mutaciones aún no tienen documento y el bootstrap las reemplazaría.
+document.body.inert = true;
+document.body.classList.add('persistencia-pendiente');
+function terminarBloqueoDePersistencia(): void {
+	persistenciaDocumentalPendiente = false;
+	document.body.inert = false;
+	document.body.classList.remove('persistencia-pendiente');
+}
 /** Salvaguarda explícita si IndexedDB no está disponible; nunca se activa en silencio. */
 let usarFallbackLegacy = false;
 /** Congelado = hay algo guardado que no se ha podido leer y que NO se puede pisar todavía. */
@@ -325,6 +342,7 @@ function autoguardar(): void {
 	// Hay un proyecto guardado que no se ha podido leer. Hasta que el usuario diga qué hacer con
 	// él, no se escribe: sobrescribirlo sería destruir justo lo que está intentando recuperar.
 	if (guardadoCongelado) return;
+	if (gestorDocumentos?.estaEsperandoRecuperacion()) return;
 	if (gestorDocumentos) {
 		if (proyecto.esEjemplo) return;
 		try {
@@ -423,6 +441,24 @@ window.addEventListener('beforeunload', (ev) => {
 	if (estadoGuardado !== 'guardando' && estadoGuardado !== 'fallo') return;
 	ev.preventDefault();
 	ev.returnValue = '';
+});
+
+let cerrandoSesionDocumental = false;
+window.addEventListener('pagehide', (ev) => {
+	// En bfcache la página no se destruye: queda congelada y puede reaparecer con Atrás. Cerrar IDB,
+	// revocar sus blob: y marcar la sesión como cerrada dejaría ese documento restaurado sin runtime.
+	if (ev.persisted) return;
+	if (cerrandoSesionDocumental) return;
+	cerrandoSesionDocumental = true;
+	panelComponentesPersonalizados?.destruir();
+	recursosImagenActivos?.liberar();
+	const gestor = gestorDocumentos;
+	const cerrarRepositorio = cerrarRepositorioDocumentos;
+	// `pagehide` no permite bloquear el cierre, pero sí iniciar el flush ya encolado y cerrar la
+	// conexión después. `beforeunload` conserva el aviso si todavía figura «Guardando…».
+	void (gestor ? gestor.cerrar() : Promise.resolve())
+		.catch(() => undefined)
+		.finally(() => cerrarRepositorio?.());
 });
 
 recalcular();
@@ -556,6 +592,14 @@ function capturar(): boolean {
  * puede. Preguntar por algo que no vas a hacer es una forma rara de decir que no.
  */
 function sePuedeEditar(): boolean {
+	if (persistenciaDocumentalPendiente) {
+		avisar('La biblioteca local todavía se está abriendo.', 'info');
+		return false;
+	}
+	if (gestorDocumentos?.estaEsperandoRecuperacion()) {
+		avisar('Restaura una versión desde «Mis Tableros» antes de editar este proyecto.', 'info');
+		return false;
+	}
 	if (!proyecto.esEjemplo) return true;
 	avisarQueEsEjemplo();
 	return false;
@@ -2614,6 +2658,52 @@ function anadirDesdeCatalogo(plantillaId: string): void {
 	if (plantilla) colocarPlantilla(plantilla);
 }
 
+/** Coloca una fotografía estable de la definición; la biblioteca puede evolucionar sin mutarla. */
+function colocarComponentePersonalizado(
+	definicion: DefinicionComponentePersonalizado,
+	imagenUrl: string,
+): void {
+	const { anchoMm: ancho, altoMm: alto } = definicion.dimensiones;
+	const hueco = buscarHueco(ancho, alto);
+	if (!hueco) {
+		avisar('Añade primero un riel DIN para colocar el componente personalizado.', 'error');
+		return;
+	}
+	if (colocando) soltarColocacion();
+	if (!capturar()) return;
+	const clase = CLASE_POR_TIPO[definicion.tipoDispositivo];
+	let maximo = 0;
+	for (const existente of proyecto.dispositivos) {
+		if ((existente.clase ?? CLASE_POR_TIPO[existente.tipo]) === clase
+			&& !existente.funcion && !existente.ubicacion && existente.numero) {
+			maximo = Math.max(maximo, existente.numero);
+		}
+	}
+	const numero = maximo + 1;
+	const d = instanciarComponentePersonalizado(definicion, idUnico('d'), { imagenResuelta: imagenUrl });
+	d.numero = numero;
+	d.designacion = aplicarPlantilla(opcionesDe(proyecto).formatoDesignacion, { clase, n: numero });
+	d.congelado = true;
+	d.hojaId = proyecto.hojas[0]?.id;
+	d.posicion = { x: proyecto.dispositivos.length % 10, y: Math.floor(proyecto.dispositivos.length / 10) };
+	proyecto.dispositivos.push(d);
+	let x = hueco.x;
+	if (solapaCon(x, hueco.y, ancho, alto, d.id)) {
+		x = xLibreCercano(x, hueco.y, ancho, alto, d.id) ?? x;
+	}
+	const col = { dispositivoId: d.id, x, y: hueco.y, ancho, alto, rielId: hueco.rielId as string | undefined };
+	proyecto.gabinete!.colocaciones.push(col);
+	const rielTocado = extenderRielPara(col);
+	reconstruirDispositivoUno(d.id);
+	if (rielTocado) reconstruirEstructuraUno({ tipo: 'riel', id: rielTocado });
+	actualizarConservandoAparatos();
+	seleccionar(d.id);
+	colocando = { id: d.id };
+	renderer.domElement.style.cursor = 'copy';
+	ayudaDeEstado([`${d.designacion ?? definicion.nombre} · componente personalizado`,
+		'Clic · soltarlo en la placa', 'Esc · cancelar']);
+}
+
 /** Crea el aparato de una plantilla y lo coloca en el primer hueco libre de un riel. */
 function colocarPlantilla(plantilla: PlantillaAparato): void {
 	/*
@@ -2747,7 +2837,7 @@ function duplicarDispositivo(id: string): void {
 	const original = proyecto.dispositivos.find((d) => d.id === id);
 	const col = g?.colocaciones.find((c) => c.dispositivoId === id);
 	if (!g || !original || !col) { avisar('Selecciona un aparato colocado para duplicarlo.', 'info'); return; }
-	if (original.imagen) { avisar('Las imágenes de referencia no se duplican.', 'info'); return; }
+	if (esReferenciaVisualInerte(original)) { avisar('Las imágenes de referencia no se duplican.', 'info'); return; }
 
 	const clase = original.clase ?? CLASE_POR_TIPO[original.tipo];
 	let maximo = 0;
@@ -2904,7 +2994,7 @@ function pintarPaneles(): void {
 	pintarBalanceTermico();
 
 	// Estado vacío de bienvenida (solo si la placa no tiene aparatos y no se ha descartado).
-	const aparatos = proyecto.dispositivos.filter((d) => !d.campo && !d.imagen).length;
+	const aparatos = proyecto.dispositivos.filter((d) => !d.campo && !esReferenciaVisualInerte(d)).length;
 	($('bienvenida') as HTMLElement).hidden = aparatos > 0 || bienvenidaDescartada;
 }
 let bienvenidaDescartada = false;
@@ -3081,7 +3171,7 @@ function pintarFichaDeLoElegido(): void {
 
 	const otrosAparatos = proyecto.dispositivos.filter((x) => x.id !== d.id);
 
-	const esImagen = !!d.imagen;
+	const esImagen = esReferenciaVisualInerte(d);
 	const esEditor = modo === 'editor';
 	// División de modos:  Editor = colocar/mover/duplicar/eliminar y (en imágenes) marcar puntos.
 	//                     Trabajo = cablear y revisar.
@@ -4978,7 +5068,7 @@ function construirHandles(): void {
 	} else {
 		const d = proyecto.dispositivos.find((x) => x.id === sel!.id);
 		const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id);
-		if (d?.imagen && col) {
+		if (d && esReferenciaVisualInerte(d) && col) {
 			esfera(escenario.aEscena(col.x + col.ancho, col.y + col.alto, 12), { rol: 'esquina', sel }, 0xff8c1a);
 		}
 	}
@@ -5232,7 +5322,10 @@ function huellasQueEsquivarLosCables(): Huella[] {
 	const g = proyecto.gabinete;
 	if (!g) return [];
 	return g.colocaciones
-		.filter((c) => !proyecto.dispositivos.find((d) => d.id === c.dispositivoId)?.imagen)
+		.filter((c) => {
+			const d = proyecto.dispositivos.find((x) => x.id === c.dispositivoId);
+			return !d || !esReferenciaVisualInerte(d);
+		})
 		.map((c) => ({ x: c.x, y: c.y, ancho: c.ancho, alto: c.alto }));
 }
 
@@ -5410,7 +5503,7 @@ function validezDelPunto(p: { x: number; y: number; z?: number }, radio: number)
 	if (dentroDeDucto.size) return { ok: true };
 	for (const c of g.colocaciones) {
 		const d = proyecto.dispositivos.find((k) => k.id === c.dispositivoId);
-		if (d?.imagen) continue;   // las imágenes de referencia son para cablear encima
+		if (d && esReferenciaVisualInerte(d)) continue;   // las imágenes de referencia son para cablear encima
 		if (p.x > c.x - 2 && p.x < c.x + c.ancho + 2 && p.y > c.y - 2 && p.y < c.y + c.alto + 2) {
 			return { ok: false, motivo: `cruza por encima de ${d?.designacion ?? c.dispositivoId}` };
 		}
@@ -5638,7 +5731,8 @@ function solapaCon(x: number, y: number, ancho: number, alto: number, exceptoId:
 		// Lo que está montado en OTRA superficie no estorba: un piloto de puerta y un contactor de
 		// placa pueden estar en las mismas coordenadas porque los separa el fondo del armario.
 		if ((c.montaje ?? 'placa') !== 'placa') continue;
-		if (proyecto.dispositivos.find((z) => z.id === c.dispositivoId)?.imagen) continue;
+		const existente = proyecto.dispositivos.find((z) => z.id === c.dispositivoId);
+		if (existente && esReferenciaVisualInerte(existente)) continue;
 		const separados =
 			x + ancho + HOLGURA <= c.x || c.x + c.ancho + HOLGURA <= x ||
 			y + alto + HOLGURA <= c.y || c.y + c.alto + HOLGURA <= y;
@@ -5723,7 +5817,7 @@ function anadirPin(ev: PointerEvent): boolean {
 	if (!id) return false;
 	const d = proyecto.dispositivos.find((x) => x.id === id);
 	const col = proyecto.gabinete!.colocaciones.find((c) => c.dispositivoId === id);
-	if (!d?.imagen || !col) return false;
+	if (!d || !esReferenciaVisualInerte(d) || !col) return false;
 	// Se proyecta sobre el plano de LA IMAGEN, no sobre la placa: si la imagen se ha mandado al
 	// fondo o traído al frente, proyectar a z=0 dejaba el punto desplazado respecto de donde se
 	// pinchó, y más cuanto más girada estuviera la cámara.
@@ -5782,6 +5876,40 @@ async function editarCota(datos: DatosCota): Promise<void> {
 	pintarEstructura();
 }
 
+/**
+ * Un pulsador físico actúa desde pointerdown hasta pointerup, incluso si se suelta fuera del
+ * canvas. Los listeners existen solo durante ese gesto y se retiran juntos: no se acumulan.
+ */
+let gestoMomentaneoSim: { pointerId: number; id: string; limpiar(): void } | undefined;
+function presionarMandoEnEscena(id: string, pointerId: number): boolean {
+	if (gestoMomentaneoSim) {
+		const anterior = gestoMomentaneoSim;
+		gestoMomentaneoSim = undefined;
+		anterior.limpiar();
+		panelSim.soltar(anterior.id);
+	}
+	if (!panelSim.presionar(id)) return false;
+	const finalizar = (ev: PointerEvent) => {
+		if (ev.pointerId !== pointerId) return;
+		gestoMomentaneoSim?.limpiar();
+		gestoMomentaneoSim = undefined;
+		panelSim.soltar(id);
+		clicPendiente = undefined;
+		origenPuntero = undefined;
+		permitirOrbita(true);
+	};
+	const limpiar = () => {
+		window.removeEventListener('pointerup', finalizar, true);
+		window.removeEventListener('pointercancel', finalizar, true);
+	};
+	gestoMomentaneoSim = { pointerId, id, limpiar };
+	window.addEventListener('pointerup', finalizar, true);
+	window.addEventListener('pointercancel', finalizar, true);
+	permitirOrbita(false);
+	seleccionar(id);
+	return true;
+}
+
 renderer.domElement.addEventListener('pointerdown', (ev) => {
 	// Al volver al tablero, el teclado vuelve con él: si el foco se había quedado en un campo
 	// (el buscador del catálogo, una medida…), los atajos dejaban de responder sin avisar.
@@ -5798,6 +5926,22 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	superadoUmbral = false;
 	clicPendiente = undefined;
 	if (visualizacion) return; // en Visualización solo se mira: nada se selecciona ni se mueve
+	/*
+	 * ENERGIZAR CAMBIA LA SEMÁNTICA COMPLETA DEL LIENZO. Un mando momentáneo permanece activo
+	 * mientras el botón está apretado; los mantenidos se accionan solo si el gesto acaba siendo
+	 * clic. En ningún caso el evento cae después en arrastre, cableado o edición estructural.
+	 */
+	if (panelSim.energizado() && ev.button === 0) {
+		const clic = elementoBajoElPuntero(ev);
+		if (clic?.tipo === 'dispositivo' && panelSim.puedeAccionar(clic.id)) {
+			if (presionarMandoEnEscena(clic.id, ev.pointerId)) return;
+			clicPendiente = () => { if (panelSim.accionar(clic.id)) seleccionar(clic.id); };
+		} else {
+			const inspeccion = clic?.tipo === 'dispositivo' ? clic : undefined;
+			clicPendiente = () => aplicarSeleccion(inspeccion);
+		}
+		return;
+	}
 	/*
 	 * EN EL FRONTAL SE TRABAJA SOBRE LA PUERTA, y nada más. Aquí no se cablea, no se mueven
 	 * canaletas y no se pincha un aparato del interior por accidente a través de la chapa: el clic
@@ -5853,19 +5997,6 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		const btn = document.getElementById('btn-elegir-destino') as HTMLButtonElement | null;
 		if (btn) { btn.classList.remove('primario'); btn.textContent = '🎯 Elegir destino en el tablero'; }
 		return;
-	}
-
-	// Con el tablero ENERGIZADO, un clic sobre un aparato lo acciona: pulsa el pulsador, abre la
-	// protección, dispara el térmico. Tiene prioridad sobre todo lo demás porque en ese modo no se
-	// está editando el tablero, se está probando.
-	if (panelSim.energizado() && ev.button === 0) {
-		const clic = elementoBajoElPuntero(ev);
-		if (clic?.tipo === 'dispositivo' && panelSim.puedeAccionar(clic.id)) {
-			// Accionar es un CLIC, no un apretón: girando la vista desde encima de un pulsador
-			// no se arranca el motor.
-			clicPendiente = () => { if (panelSim.accionar(clic.id)) seleccionar(clic.id); };
-			return;
-		}
 	}
 
 	// Cableado por clic en los bornes (modo Trabajo, clic izquierdo): clic en un borne y luego
@@ -6178,7 +6309,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		} else {
 			const d = proyecto.dispositivos.find((x) => x.id === sel!.id)!;
 			const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id)!;
-			if (d.imagen) {
+			if (esReferenciaVisualInerte(d)) {
 				col.ancho = Math.max(40, Math.round((p.x - col.x) / 5) * 5);
 				col.alto = Math.max(40, Math.round((p.y - col.y) / 5) * 5);
 				reconstruirDispositivoUno(sel.id);
@@ -6446,6 +6577,7 @@ renderer.domElement.addEventListener('contextmenu', (ev) => {
 });
 
 window.addEventListener('keydown', (ev) => {
+	if (persistenciaDocumentalPendiente) return;
 	const foco = document.activeElement as HTMLElement | null;
 	const activo = foco?.tagName;
 	/*
@@ -6702,7 +6834,9 @@ async function eliminarEstructura(s: Seleccion): Promise<void> {
 /* ------------------------------ Barra superior ------------------------------ */
 
 ($('nombre-proyecto') as HTMLInputElement).onchange = (e) => {
-	proyecto.nombre = (e.target as HTMLInputElement).value || 'Tablero sin nombre';
+	const entrada = e.target as HTMLInputElement;
+	if (!sePuedeEditar()) { entrada.value = proyecto.nombre; return; }
+	proyecto.nombre = entrada.value || 'Tablero sin nombre';
 	recalcular();
 };
 
@@ -7141,6 +7275,7 @@ const panelSim = instalarSimulacion({
 	proyecto: () => proyecto,
 	escenario: () => escenario,
 	seleccionar,
+	refrescarPanel: pintarRail,
 });
 
 
@@ -7375,7 +7510,8 @@ function copiarSeleccionados(): void {
 	if (!g || ids.length === 0) { avisar('Selecciona uno o más aparatos para copiarlos.', 'info'); return; }
 	const cols = ids
 		.map((id) => ({ col: g.colocaciones.find((c) => c.dispositivoId === id), d: proyecto.dispositivos.find((x) => x.id === id) }))
-		.filter((x): x is { col: NonNullable<typeof x.col>; d: Dispositivo } => !!x.col && !!x.d && !x.d.imagen);
+		.filter((x): x is { col: NonNullable<typeof x.col>; d: Dispositivo } =>
+			!!x.col && !!x.d && !esReferenciaVisualInerte(x.d));
 	if (cols.length === 0) { avisar('Las imágenes de referencia no se copian.', 'info'); return; }
 	// Las posiciones se guardan RELATIVAS a la esquina del grupo, para pegarlo entero donde quepa.
 	const x0 = Math.min(...cols.map((c) => c.col.x));
@@ -7981,7 +8117,8 @@ const panelInicio = instalarInicio({
 
 /** Convierte imágenes inline antiguas en assets una sola vez; la escena conserva su URL runtime. */
 async function extraerAssetsInline(): Promise<void> {
-	if (!repositorioDocumentos || !gestorDocumentos || proyecto.esEjemplo) return;
+	if (!repositorioDocumentos || !gestorDocumentos || proyecto.esEjemplo
+		|| gestorDocumentos.estaEsperandoRecuperacion()) return;
 	let cambio = false;
 	for (const d of proyecto.dispositivos) {
 		if (d.assetId || !d.imagen) continue;
@@ -8003,13 +8140,20 @@ async function extraerAssetsInline(): Promise<void> {
  */
 async function iniciarPersistenciaDocumental(): Promise<void> {
 	let rawLegacy: string | null = null;
+	let gestorDuranteArranque: GestorDocumentos | undefined;
+	let cerrarDuranteArranque: (() => void) | undefined;
 	try { rawLegacy = localStorage.getItem(CLAVE_AUTOSAVE); } catch { /* el repositorio puede funcionar igual */ }
 	try {
 		const abierto = await abrirRepositorioProyectosIndexedDB();
+		cerrarDuranteArranque = abierto.cerrar;
 		const gestor = new GestorDocumentos({
 			repositorio: abierto.repositorio,
 			crearProyectoInicial: proyectoNuevo,
 			alCambiarEstado: reflejarEstadoDocumental,
+			alErrorRecuperacion: (error) => avisar(
+				`El tablero está guardado, pero no se pudo crear una versión de recuperación: ${nombreDeError(error)}`,
+				'error',
+			),
 			aplicarProyecto: async (nuevo, contexto) => {
 				const recursos = await hidratarImagenesDeProyecto(nuevo,
 					(id) => abierto.repositorio.abrirAsset(id));
@@ -8030,29 +8174,78 @@ async function iniciarPersistenciaDocumental(): Promise<void> {
 				}
 			},
 		});
+		gestorDuranteArranque = gestor;
 		const resultado = await gestor.inicializar(rawLegacy);
 		repositorioDocumentos = abierto.repositorio;
 		cerrarRepositorioDocumentos = abierto.cerrar;
 		gestorDocumentos = gestor;
 		guardadoCongelado = false;
-		persistenciaDocumentalPendiente = false;
 		usarFallbackLegacy = false;
-		await extraerAssetsInline();
-		instalarUIProyectos({
-			gestor,
-			crearProyecto: proyectoNuevo,
-			abrirEjemplos: panelInicio.abrirBiblioteca,
-			importarArchivo: importarArchivoProyecto,
-			exportarActivo: exportarProyectoActual,
-			listarRecuperaciones: () => abierto.repositorio.listarRecuperaciones(),
-		});
+		// Desde aquí la fuente de verdad ya es IndexedDB. Un fallo de una integración secundaria no
+		// puede cerrar el repositorio y dejar en memoria un Proyecto con `assetId` inaccesibles para
+		// después fingir que se volvió al autosave legacy. Se degrada esa superficie, no los datos.
+		try {
+			await extraerAssetsInline();
+		} catch (error) {
+			avisar(`La biblioteca está activa, pero algunas imágenes antiguas no pudieron convertirse en assets: ${nombreDeError(error)}`, 'error');
+		}
+		try {
+			instalarUIProyectos({
+				gestor,
+				crearProyecto: proyectoNuevo,
+				abrirEjemplos: panelInicio.abrirBiblioteca,
+				importarArchivo: importarArchivoProyecto,
+				exportarActivo: exportarProyectoActual,
+				listarRecuperaciones: () => abierto.repositorio.listarRecuperaciones(),
+			});
+		} catch (error) {
+			avisar(`Los tableros siguen guardándose, pero no se pudo montar «Mis Tableros»: ${nombreDeError(error)}`, 'error');
+		}
+		try {
+			panelComponentesPersonalizados?.destruir();
+			panelComponentesPersonalizados = instalarUIComponentesPersonalizados({
+				repositorio: abierto.repositorio,
+				colocar: (definicion, imagenUrl) => {
+					if (modo !== 'editor') aplicarModo('editor');
+					colocarComponentePersonalizado(definicion, imagenUrl);
+				},
+				confirmar: (mensaje) => confirmar(mensaje, {
+					ok: /^¿Eliminar/i.test(mensaje) ? 'Eliminar' : 'Continuar',
+					peligro: /^¿Eliminar/i.test(mensaje),
+				}),
+			});
+			const botonComponentes = $('btn-componentes-personalizados') as HTMLButtonElement;
+			botonComponentes.disabled = false;
+			botonComponentes.onclick = () => { void panelComponentesPersonalizados?.abrir(); };
+		} catch (error) {
+			panelComponentesPersonalizados?.destruir();
+			panelComponentesPersonalizados = undefined;
+			const botonComponentes = $('btn-componentes-personalizados') as HTMLButtonElement;
+			botonComponentes.disabled = true;
+			botonComponentes.onclick = null;
+			avisar(`Los tableros siguen guardándose, pero no se pudo montar «Mis Componentes»: ${nombreDeError(error)}`, 'error');
+		}
+		// El editor solo se vuelve interactivo cuando el documento, los assets y las fronteras visibles
+		// han terminado (o se han degradado explícitamente sin abandonar IndexedDB).
+		terminarBloqueoDePersistencia();
 		if (resultado.migracion.estado === 'cuarentena') {
 			avisar('El autoguardado antiguo no era legible: quedó intacto en Recuperación.', 'error');
 		} else if (resultado.migracion.estado === 'reparable') {
 			avisar('El autoguardado antiguo se migró, pero requiere revisar las reparaciones indicadas.', 'info');
 		}
 	} catch (e) {
-		persistenciaDocumentalPendiente = false;
+		// Solo un fallo al abrir/inicializar el repositorio permite volver al flujo legacy. Una vez
+		// publicado el gestor, las integraciones secundarias se aíslan arriba y nunca llegan aquí.
+		const gestorFallido = gestorDocumentos ?? gestorDuranteArranque;
+		const cerrarFallido = cerrarRepositorioDocumentos ?? cerrarDuranteArranque;
+		gestorDocumentos = undefined;
+		repositorioDocumentos = undefined;
+		cerrarRepositorioDocumentos = undefined;
+		panelComponentesPersonalizados?.destruir();
+		panelComponentesPersonalizados = undefined;
+		try { await gestorFallido?.cerrar(); } catch { /* el error original es el que importa */ }
+		try { cerrarFallido?.(); } catch { /* conexión ya cerrada */ }
+		terminarBloqueoDePersistencia();
 		usarFallbackLegacy = true;
 		estadoGuardado = 'fallo';
 		pintarEstadoGuardado(nombreDeError(e));
@@ -8431,6 +8624,30 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Lo que hay guardado en el navegador ahora mismo, tal cual. */
 		autoguardado: () => localStorage.getItem(CLAVE_AUTOSAVE),
+		/** Frontera observable de la biblioteca: espera el bootstrap y nunca muta documentos. */
+		esperarPersistencia: async () => {
+			await persistenciaLista;
+			if (!gestorDocumentos) throw new Error('La biblioteca IndexedDB no está disponible');
+			await gestorDocumentos.flush();
+			return gestorDocumentos.documentoActivo();
+		},
+		/** Identidades y revisiones visibles para comprobar aislamiento A/B/C/A. */
+		documentos: async () => {
+			await persistenciaLista;
+			return gestorDocumentos?.listar() ?? [];
+		},
+		snapshots: async () => {
+			await persistenciaLista;
+			return gestorDocumentos?.listarSnapshots() ?? [];
+		},
+		documentoActivo: () => ({
+			...gestorDocumentos?.documentoActivo(),
+			ejemplo: gestorDocumentos?.estaMostrandoEjemplo() ?? false,
+		}),
+		componentesPersonalizados: async () => {
+			await persistenciaLista;
+			return repositorioDocumentos?.listarComponentes() ?? [];
+		},
 		/** Nº de cables realmente dibujados en 3D (para detectar «cables fantasma»). */
 		cablesDibujados: () => new Set(
 			mallasDeCable().flatMap((g) => g.children.map((m) => m.userData.conductorId as string)).filter(Boolean),
@@ -9863,6 +10080,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			return {
 				energizado: panelSim.energizado(),
 				conductoresVivos: r?.conductoresVivos.size ?? 0,
+				conductoresVivosIds: [...(r?.conductoresVivos ?? [])].sort(),
 				bornesVivos: r?.vivos.size ?? 0,
 				activos: [...(r?.activos ?? [])],
 				funcionando: r?.funcionando ?? [],
@@ -9888,6 +10106,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		estadoSim: () => Object.entries(panelSim.estadoDeLosMandos()).map(([id, st]) => ({ id, ...st })),
 		/** Acciona un aparato como si se hubiera pinchado en él con el tablero energizado. */
 		accionar: (id: string) => panelSim.accionar(id),
+		presionar: (id: string) => panelSim.presionar(id),
+		soltar: (id: string) => panelSim.soltar(id),
 		/** Cuántos tubos de cable están de verdad ILUMINADOS en la escena (lo que se ve). */
 		/**
 		 * Las PIEZAS animadas de un aparato: dónde están y cómo alumbran.
