@@ -17,8 +17,11 @@ import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { MemoriaLogica, memoriaLogicaVacia } from '../src/motores/logica.js';
 import {
 	EstadoAparato, EstadoTablero, EstadoVariador, MemoriaTiempos, ResultadoSimulacion,
-	formatearA, memoriaVacia, simular,
+	actualizarProteccionesRuntime, formatearA, memoriaVacia, simular,
 } from '../src/motores/simulacion.js';
+import {
+	ETIQUETA_FALLO_RUNTIME, cambiarFalloRuntime, fallosCompatibles,
+} from '../src/motores/fallos-runtime.js';
 import { emisionDeCable } from './animacion-sim.js';
 import { Escenario } from './escena3d.js';
 import { avisar, escaparHtml } from './dialogos.js';
@@ -83,7 +86,8 @@ export type ControlSimulacion =
 		reposo: number;
 	}
 	| { clase: 'sensor'; analogico: boolean }
-	| { clase: 'proteccion'; rearmable: boolean; termico: boolean }
+	| { clase: 'proteccion'; rearmable: boolean; termico: boolean;
+		funcion: 'termico' | 'termomagnetico' | 'fusible' | 'diferencial' | 'no-declarada' }
 	| { clase: 'seccionador' };
 
 /**
@@ -108,7 +112,8 @@ export function controlDeSimulacion(d: Dispositivo): ControlSimulacion | undefin
 	return {
 		clase: 'proteccion',
 		rearmable: perfil.rearmable,
-		termico: ids.has('95') && !ids.has('A1'),
+		termico: perfil.funcion === 'termico' || ids.has('95') && !ids.has('A1'),
+		funcion: perfil.funcion === 'seccionamiento' || !perfil.funcion ? 'no-declarada' : perfil.funcion,
 	};
 }
 
@@ -126,7 +131,8 @@ export interface ResultadoOperacionControl {
 /** Texto compacto y estable para el estado contractual de un variador. */
 export function textoEstadoVariador(v: EstadoVariador): string {
 	const estado = v.estado === 'sin-alimentacion' ? 'SIN ALIMENTACIÓN'
-		: v.estado === 'listo' ? 'READY' : v.estado === 'marcha' ? 'RUN' : 'FAULT';
+		: v.estado === 'listo' ? 'READY' : v.estado === 'marcha' ? 'RUN'
+			: v.estado === 'decel' ? 'DECEL' : 'FAULT';
 	return `${estado} · ${v.frecuenciaHz.toFixed(1)} Hz · ref. ${v.referenciaPorcentaje.toFixed(0)} %`;
 }
 
@@ -146,6 +152,10 @@ export function requiereAvanceTemporal(
 			&& /\b(retardo|m[ií]nimo)\b/i.test(d.programa ?? '')))
 		|| Object.keys(sobrecargas).length > 0
 		|| !!resultado?.motores.some((motor) => motor.estado === 'arrancando')
+		|| !!resultado?.motores.some((motor) => motor.estado === 'desacelerando')
+		|| !!resultado?.protecciones.some((p) => p.estado === 'calentando')
+		|| !!resultado?.disparos.length
+		|| !!resultado?.fallos.some((f) => f.tipo === 'sobrecarga' || f.tipo === 'perdida-fase')
 		|| !!resultado?.variadores.some((variador) =>
 			Math.abs(variador.frecuenciaHz - variador.frecuenciaObjetivoHz) > 0.01);
 }
@@ -193,9 +203,16 @@ export function operarControl(
 		return { atendido: true, cambio: true, estado: siguiente };
 	}
 	if (siguiente.disparado) {
-		if (!control.rearmable) return { atendido: true, cambio: false, estado: siguiente };
+		if (!control.rearmable) {
+			if (control.funcion !== 'fusible') return { atendido: true, cambio: false, estado: siguiente };
+			delete siguiente.disparado;
+			siguiente.cerrado = true;
+			siguiente.reemplazoFusibleSolicitado = true;
+			return { atendido: true, cambio: true, estado: siguiente };
+		}
 		siguiente.disparado = false;
 		siguiente.cerrado = true;
+		siguiente.rearmeSolicitado = true;
 		return { atendido: true, cambio: true, estado: siguiente };
 	}
 	if (control.termico) {
@@ -246,7 +263,7 @@ export function estadoDelMando(
 		return { texto: abierto ? 'abierto' : 'cerrado', boton: abierto ? 'Cerrar' : 'Abrir', encendido: abierto };
 	}
 	if (st.disparado && !control.rearmable) {
-		return { texto: 'FUNDIDO · requiere sustitución', boton: 'No rearmable', encendido: true, deshabilitado: true };
+		return { texto: 'FUNDIDO · requiere sustitución', boton: 'Reemplazar fusible', encendido: true };
 	}
 	if (st.disparado) return { texto: 'DISPARADO', boton: 'Rearmar', encendido: true };
 	if (control.termico) {
@@ -288,8 +305,6 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	let ultimoTic = 0;
 	/** Cuántas veces más rápido corre el reloj de la maniobra que el de la pared. */
 	let velocidadSim = 1;
-	/** Instantes en que cada protección empezó a ver corriente de más, para cronometrar su disparo. */
-	let sobrecargaDesde: Record<string, number> = {};
 	/**
 	 * El panel se repinta al presionar y reemplaza el propio botón que recibió `pointerdown`.
 	 * Por eso el final del gesto vive temporalmente en `window`, no en el nodo efímero. Cada gesto
@@ -345,30 +360,25 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	 */
 	function aplicarDisparos(): void {
 		if (!ultimaSim || !relojSim) return;
-		const ahora = relojSim.ahora;
-		const activos = new Set<string>();
-		for (const d of ultimaSim.disparos) {
-			activos.add(d.dispositivoId);
-			if (sobrecargaDesde[d.dispositivoId] === undefined) sobrecargaDesde[d.dispositivoId] = ahora;
-			const llevaS = (ahora - sobrecargaDesde[d.dispositivoId]) / 1000;
-			if (llevaS < d.segundos) continue;
-			estadoSim[d.dispositivoId] = { ...(estadoSim[d.dispositivoId] ?? {}), disparado: true };
-			delete sobrecargaDesde[d.dispositivoId];
-			avisar(`⚡ ${d.designacion} ha DISPARADO — ${d.explicacion}`, 'error');
-			// Al abrirse cambia el circuito entero: se vuelve a resolver con la protección abierta.
-			ultimaSim = simular(proyecto(), estadoSim, activosPrevios, relojSim);
-			activosPrevios = ultimaSim.activos;
-			return;
+		const actualizado = actualizarProteccionesRuntime(
+			proyecto(), estadoSim, ultimaSim, relojSim.ahora, relojSim.memoria,
+		);
+		estadoSim = actualizado.estado;
+		for (const evento of actualizado.eventos) {
+			avisar(`⚡ ${evento.designacion}: ${evento.estado.toUpperCase()} por ${evento.causa} `
+				+ `(${evento.origen}).`, 'error');
 		}
-		// La falta desapareció antes de que saltara: el cronómetro se olvida (como el bimetal, que se enfría).
-		for (const id of Object.keys(sobrecargaDesde)) if (!activos.has(id)) delete sobrecargaDesde[id];
+		if (!actualizado.cambio) return;
+		// Un disparo/reemplazo cambia la topología; se resuelve inmediatamente con el nuevo estado.
+		ultimaSim = simular(proyecto(), estadoSim, activosPrevios, relojSim);
+		activosPrevios = ultimaSim.activos;
 	}
 
 	/** Arranca o para el reloj según esté el tablero energizado. */
 	function ajustarRelojSim(): void {
 		if (tickSim !== undefined) { clearInterval(tickSim); tickSim = undefined; }
 		$('sim-transcurrido').textContent = '0,0 s';
-		if (!energizado) { relojSim = undefined; sobrecargaDesde = {}; return; }
+		if (!energizado) { relojSim = undefined; return; }
 		relojSim = { ahora: 0, memoria: memoriaVacia(), logica: memoriaLogicaVacia() };
 		ultimoTic = performance.now();
 		tickSim = window.setInterval(() => {
@@ -404,7 +414,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			// Solo se rehace si hay algo que dependa del tiempo; si no, es gastar por gastar.
 			// Un controlador con retardos o tiempos mínimos también depende del reloj: si no se
 			// rehiciera, su cuenta atrás se quedaría clavada y la maniobra nunca avanzaría.
-			const hayTiempo = requiereAvanceTemporal(proyecto(), ultimaSim, sobrecargaDesde);
+			const hayTiempo = requiereAvanceTemporal(proyecto(), ultimaSim, {});
 			if (hayTiempo) recalcularSimulacion();
 		}, 200);
 	}
@@ -451,6 +461,8 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		avisos.innerHTML = '';
 		$('sim-consumo').innerHTML = '';
 		$('sim-carga').innerHTML = '';
+		$('sim-fallos').innerHTML = '';
+		$('sim-referencias-vfd').innerHTML = '';
 		$('sim-sondas').innerHTML = '';
 		$('sim-controladores').innerHTML = '';
 		if (!r) return;
@@ -529,6 +541,66 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			if (mandoEnFoco) {
 				$('sim-mandos').querySelector<HTMLElement>(`[data-mando="${CSS.escape(mandoEnFoco)}"]`)
 					?.focus({ preventScroll: true });
+			}
+		}
+
+		/* Fallos de ensayo visibles: la misma transición pública que usan las regresiones rápidas. */
+		const conFallos = proyecto().dispositivos
+			.map((d) => ({ d, opciones: fallosCompatibles(d) }))
+			.filter((x) => x.opciones.length > 0);
+		if (conFallos.length) {
+			$('sim-fallos').innerHTML = '<h3 class="titulo-sim">Fallas de ensayo</h3>'
+				+ conFallos.map(({ d, opciones }) => {
+					const actual = opciones.find((f) => estadoSim[d.id]?.fallos?.includes(f)) ?? '';
+					return `<label class="fila-sonda fila-fallo"><span class="des-sim">${escaparHtml(d.designacion ?? d.id)}</span>`
+						+ `<select data-fallo="${escaparHtml(d.id)}"><option value="">Sin fallo</option>`
+						+ opciones.map((f) => `<option value="${f}"${actual === f ? ' selected' : ''}>`
+							+ `${escaparHtml(ETIQUETA_FALLO_RUNTIME[f])}</option>`).join('')
+						+ '</select></label>';
+				}).join('');
+			for (const el of $('sim-fallos').querySelectorAll<HTMLSelectElement>('[data-fallo]')) {
+				el.onchange = () => {
+					const id = el.dataset.fallo!;
+					const d = proyecto().dispositivos.find((x) => x.id === id);
+					if (!d) return;
+					let st = { ...(estadoSim[id] ?? {}) };
+					for (const f of fallosCompatibles(d)) st = cambiarFalloRuntime(st, f, false);
+					if (el.value) st = cambiarFalloRuntime(st, el.value as Parameters<typeof cambiarFalloRuntime>[1], true);
+					estadoSim[id] = st;
+					recalcularSimulacion();
+					avisar(el.value ? `${d.designacion ?? id}: ${ETIQUETA_FALLO_RUNTIME[el.value as keyof typeof ETIQUETA_FALLO_RUNTIME]} (inyectado).`
+						: `${d.designacion ?? id}: fallo de ensayo retirado.`, el.value ? 'error' : 'info');
+				};
+			}
+		}
+
+		/* Referencia VFD operable: escribe únicamente runtime, en la unidad declarada por el perfil. */
+		const mandosVfd = proyecto().dispositivos.flatMap((d) => {
+			const perfil = resolverComportamiento(d);
+			if (perfil?.clase !== 'variador') return [];
+			const actual = r.variadores.find((v) => v.dispositivoId === d.id)?.referenciaPorcentaje ?? 0;
+			return [{ d, perfil, actual }];
+		});
+		if (mandosVfd.length) {
+			$('sim-referencias-vfd').innerHTML = '<h3 class="titulo-sim">Referencia de variadores</h3>'
+				+ mandosVfd.map(({ d, perfil, actual }) => {
+					const hz = perfil.frecuencia.minimaHz
+						+ (perfil.frecuencia.maximaHz - perfil.frecuencia.minimaHz) * actual / 100;
+					return `<label class="fila-sonda fila-referencia-vfd"><span class="des-sim">${escaparHtml(d.designacion ?? d.id)}</span>`
+						+ `<input type="range" min="0" max="100" step="1" value="${actual}" data-ref-vfd="${escaparHtml(d.id)}">`
+						+ `<span class="valor-sonda">${actual.toFixed(0)} % · ${hz.toFixed(1)} Hz</span></label>`;
+				}).join('');
+			for (const el of $('sim-referencias-vfd').querySelectorAll<HTMLInputElement>('[data-ref-vfd]')) {
+				el.oninput = () => {
+					const id = el.dataset.refVfd!;
+					const d = proyecto().dispositivos.find((x) => x.id === id);
+					const perfil = d ? resolverComportamiento(d) : undefined;
+					if (perfil?.clase !== 'variador') return;
+					const pct = Number(el.value);
+					const [min, max] = perfil.referencia.rango;
+					estadoSim[id] = { ...(estadoSim[id] ?? {}), valor: min + (max - min) * pct / 100 };
+					recalcularSimulacion();
+				};
 			}
 		}
 
@@ -712,8 +784,45 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			fila.className = `fila-sim variador ${v.estado}`;
 			fila.innerHTML = '<span class="punto-sim"></span>'
 				+ `<span class="des-sim">${escaparHtml(v.designacion)}</span>`
-				+ `<span class="que-sim">${textoEstadoVariador(v)}</span>`;
+				+ `<span class="que-sim">${textoEstadoVariador(v)}</span>`
+				+ (v.estado === 'falla'
+					? `<button data-reset-vfd="${escaparHtml(v.dispositivoId)}"${v.resetPermitido ? '' : ' disabled'}>`
+						+ `${v.resetPermitido ? 'RESET' : 'Retira la causa'}</button>` : '');
 			fila.onclick = () => seleccionar(v.dispositivoId);
+			cont.appendChild(fila);
+		}
+		for (const el of cont.querySelectorAll<HTMLButtonElement>('[data-reset-vfd]')) {
+			el.onclick = (ev) => {
+				ev.stopPropagation();
+				const id = el.dataset.resetVfd!;
+				estadoSim[id] = { ...(estadoSim[id] ?? {}), resetFallo: true };
+				recalcularSimulacion();
+				delete estadoSim[id].resetFallo;
+				const v = ultimaSim?.variadores.find((x) => x.dispositivoId === id);
+				avisar(v?.estado === 'listo' ? `${v.designacion}: RESET aceptado; requiere una nueva orden RUN.`
+					: `${v?.designacion ?? id}: RESET rechazado mientras la causa siga activa.`,
+					v?.estado === 'listo' ? 'ok' : 'error');
+			};
+		}
+		for (const m of r.motores) {
+			const fila = document.createElement('div');
+			fila.className = `fila-sim motor ${m.estado}`;
+			const velocidad = m.rpmEstimada !== undefined ? `${m.rpmEstimada} rpm estimadas`
+				: `${m.velocidadPorcentaje.toFixed(0)} % relativo`;
+			fila.innerHTML = '<span class="punto-sim"></span>'
+				+ `<span class="des-sim">${escaparHtml(m.designacion)}</span>`
+				+ `<span class="que-sim">${m.estado.toUpperCase()} · ${m.frecuenciaElectricaHz.toFixed(1)} Hz · ${velocidad}</span>`;
+			fila.onclick = () => seleccionar(m.dispositivoId);
+			cont.appendChild(fila);
+		}
+		for (const p of r.protecciones) {
+			const fila = document.createElement('div');
+			fila.className = `fila-sim proteccion ${p.estado}`;
+			fila.innerHTML = '<span class="punto-sim"></span>'
+				+ `<span class="des-sim">${escaparHtml(p.designacion)}</span>`
+				+ `<span class="que-sim">${p.estado.toUpperCase()}`
+				+ `${p.estado === 'calentando' ? ` · térmica ${(p.cargaTermica * 100).toFixed(0)} %` : ''}</span>`;
+			fila.onclick = () => seleccionar(p.dispositivoId);
 			cont.appendChild(fila);
 		}
 
@@ -821,7 +930,6 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		estadoSim = {};
 		activosPrevios = new Set();
 		ultimaSim = undefined;
-		sobrecargaDesde = {};
 		ajustarRelojSim();
 	}
 

@@ -210,6 +210,9 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 	const motoresPorId = new Map(
 		(e.energizado ? e.resultado?.motores ?? [] : []).map((m) => [m.dispositivoId, m]),
 	);
+	const proteccionesPorId = new Map(
+		(e.energizado ? e.resultado?.protecciones ?? [] : []).map((p) => [p.dispositivoId, p]),
+	);
 
 	/*
 	 * --- LOS CABLES RESPIRAN, Y BRILLAN SEGÚN LO QUE LLEVAN ---
@@ -265,6 +268,7 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		const posicionCarga = e.energizado ? e.resultado?.posicionesCargas.get(id) : undefined;
 		const variador = variadoresPorId.get(id);
 		const motor = motoresPorId.get(id);
+		const proteccion = proteccionesPorId.get(id);
 
 		/* --- Contactor y relé: la armadura entra cuando la bobina tira --- */
 		for (const m of p.armadura) {
@@ -275,8 +279,9 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 
 		/* --- Protecciones: palanca y mirilla --- */
 		const esCorte = perfil?.clase === 'proteccion';
-		const abierto = esCorte && st.cerrado === false;
-		const disparado = esCorte && !!st.disparado;
+		const abierto = esCorte && (proteccion?.estado === 'abierto' || !proteccion && st.cerrado === false);
+		const disparado = esCorte && (proteccion?.estado === 'disparado'
+			|| proteccion?.estado === 'fundido' || !proteccion && !!st.disparado);
 		for (const m of p.palanca) {
 			const base = p.reposo.get(m);
 			// Abierta baja del todo; disparada se queda a medias, que es como avisa de que ha saltado.
@@ -418,8 +423,8 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 				|| perfilEjecutable?.clase === 'mando') && (!!st.activo
 					|| (perfilEjecutable.clase === 'mando' && st.posicion !== undefined
 						&& st.posicion !== perfilEjecutable.reposo));
-			const fallo = variador?.estado === 'falla'
-				|| (perfilEjecutable?.clase === 'proteccion' && !!st.disparado);
+			const fallo = variador?.estado === 'falla' || motor?.estado === 'falla'
+				|| proteccion?.estado === 'disparado' || proteccion?.estado === 'fundido';
 			const activoGenerico = !!perfilEjecutable && e.energizado
 				&& (enMarcha || posicionActiva || entradaActiva
 				|| variador?.estado === 'listo' || variador?.estado === 'marcha' || fallo);

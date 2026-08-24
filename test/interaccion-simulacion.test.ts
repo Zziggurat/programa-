@@ -103,10 +103,11 @@ test('presionar/soltar modela el ciclo momentáneo y accionar conserva el toggle
 	assert.equal(operarControl(pulsador, { activo: true }, 'accionar').estado.activo, false);
 });
 
-test('la UI reinicia térmicos y convierte teclado/click sintético en un pulso, no en un mando pegado', () => {
+test('la UI reinicia el runtime y convierte teclado/click sintético en un pulso, no en un mando pegado', () => {
 	const fuente = readFileSync('app/ui-simulacion.ts', 'utf8');
-	assert.match(fuente, /function\s+limpiarRuntime[\s\S]{0,260}sobrecargaDesde\s*=\s*\{\}/,
-		'cambiar de tablero energizado conserva el cronómetro térmico de la sesión anterior');
+	assert.match(fuente,
+		/function\s+limpiarRuntime[\s\S]{0,260}estadoSim\s*=\s*\{\}[\s\S]{0,260}ajustarRelojSim\(\)/,
+		'cambiar de tablero energizado conserva el estado o la memoria temporal de la sesión anterior');
 	assert.match(fuente,
 		/function\s+pulsarSintetico[\s\S]{0,260}presionarEnSimulacion\(dispositivoId\)[\s\S]{0,260}setTimeout\(\(\)\s*=>\s*soltarEnSimulacion\(dispositivoId\),\s*DURACION_PULSO_SINTETICO_MS\)/,
 		'Enter o `.click()` no programa la liberación del pulsador momentáneo');
@@ -143,6 +144,7 @@ test('el reloj sigue recalculando motores, rampas VFD y controladores perfilados
 		dispositivoId: 'vfd', designacion: '-U1', estado: 'marcha', alimentado: true,
 		run: true, habilitado: true, referenciaPorcentaje: 100,
 		frecuenciaHz: 10, frecuenciaObjetivoHz: 50, frecuenciaNominalHz: 50,
+		falloEnclavado: false, resetPermitido: false, runBloqueadoHastaSoltar: false,
 	};
 	assert.equal(requiereAvanceTemporal(proyecto([]), resultado({ variadores: [baseVfd] }), {}), true,
 		'la rampa del VFD quedó congelada entre ticks');
@@ -189,23 +191,22 @@ test('un selector mantenido recorre de forma estable sus dos o tres posiciones',
 test('fusible fundido no rearma por clic y un perfil de protección importado sí respeta rearmable', () => {
 	const fusible = dispositivo('f1', {
 		version: 1, clase: 'proteccion', polos: [{ entrada: '1', salida: '2' }],
-		contactos: [], rearmable: false,
+		contactos: [], rearmable: false, funcion: 'fusible',
 	});
 	const intento = operarControl(fusible, { disparado: true, cerrado: false }, 'accionar');
 	assert.equal(intento.atendido, true);
-	assert.equal(intento.cambio, false);
-	assert.deepEqual(intento.estado, { disparado: true, cerrado: false });
+	assert.equal(intento.cambio, true);
+	assert.deepEqual(intento.estado, { cerrado: true, reemplazoFusibleSolicitado: true });
 	assert.deepEqual(estadoDelMando(fusible, intento.estado), {
-		texto: 'FUNDIDO · requiere sustitución', boton: 'No rearmable', encendido: true,
-		deshabilitado: true,
+		texto: 'cerrado', boton: 'Abrir', encendido: false,
 	});
 
 	const disyuntorImportado = dispositivo('q1', {
 		version: 1, clase: 'proteccion', polos: [{ entrada: '1', salida: '2' }],
-		contactos: [], rearmable: true,
+		contactos: [], rearmable: true, funcion: 'termomagnetico',
 	});
 	const rearmado = operarControl(disyuntorImportado, { disparado: true }, 'accionar');
-	assert.deepEqual(rearmado.estado, { disparado: false, cerrado: true });
+	assert.deepEqual(rearmado.estado, { disparado: false, cerrado: true, rearmeSolicitado: true });
 });
 
 test('un seccionador abre/cierra, pero nunca se presenta ni actúa como protección disparada', () => {
@@ -243,6 +244,8 @@ function resultado(parcial: Partial<ResultadoSimulacion> = {}): ResultadoSimulac
 		arranques: [],
 		controladores: [],
 		variadores: [],
+		protecciones: [],
+		fallos: [],
 		posicionesCargas: new Map(),
 		...parcial,
 		motores: parcial.motores ?? [],
@@ -300,6 +303,32 @@ test('motor y válvula se animan por efecto/resultado, no por el tipo de carcasa
 	});
 	assert.equal(eje.malla.rotation.x, giro, 'el eje siguió girando sin resultado activo');
 	assert.equal(vastago.malla.position.y, 4.8);
+});
+
+test('la velocidad visual del motor deriva del resultado: 10 Hz gira cinco veces más lento que 50 Hz', () => {
+	const motor = dispositivo('m-v2', {
+		version: 1, clase: 'carga',
+		alimentacion: { fases: ['1'], retornos: ['2'], fasesMinimas: 1 }, efecto: 'giro',
+	});
+	const lento = grupoConPieza(motor.id, 'eje');
+	const rapido = grupoConPieza(motor.id, 'eje');
+	const estadoMotor = (velocidadActual: number, hz: number) => ({
+		dispositivoId: motor.id, designacion: '-M1', estado: 'marcha' as const, alimentado: true,
+		fasesRequeridas: 1 as const, fasesPresentes: 1, progresoArranque: 1,
+		frecuenciaElectricaHz: hz, velocidadObjetivo: velocidadActual, velocidadActual,
+		velocidadPorcentaje: velocidadActual * 100, rpmOrigen: 'no-disponible' as const,
+		corrienteNominalA: 2, corrienteNominalEstimada: false, corrienteEstimadaA: 2,
+		duracionArranqueEstimadaS: 3,
+	});
+	animarSimulacion({
+		grupos: [lento.grupo], proyecto: proyecto([motor]),
+		resultado: resultado({ motores: [estadoMotor(0.2, 10)] }), estado: {}, energizado: true, dt: 1, reloj: 1,
+	});
+	animarSimulacion({
+		grupos: [rapido.grupo], proyecto: proyecto([motor]),
+		resultado: resultado({ motores: [estadoMotor(1, 50)] }), estado: {}, energizado: true, dt: 1, reloj: 1,
+	});
+	assert.ok(Math.abs(rapido.malla.rotation.x / lento.malla.rotation.x - 5) < 1e-9);
 });
 
 test('una imagen perfilada sin piezas recibe realce genérico reversible desde el resultado', () => {
@@ -382,10 +411,14 @@ test('display de variador distingue sin alimentación/READY/RUN/FAULT y la anima
 		frecuenciaObjetivoHz: 30,
 		frecuenciaNominalHz: 50,
 		frecuenciaHz: hz,
+		falloEnclavado: estadoVfd === 'falla',
+		resetPermitido: false,
+		runBloqueadoHastaSoltar: false,
 	});
 	assert.match(textoEstadoVariador(estado('sin-alimentacion', 0)), /^SIN ALIMENTACIÓN/);
 	assert.match(textoEstadoVariador(estado('listo', 0)), /^READY/);
 	assert.match(textoEstadoVariador(estado('marcha', 25)), /^RUN · 25\.0 Hz/);
+	assert.match(textoEstadoVariador(estado('decel', 20)), /^DECEL · 20\.0 Hz/);
 	assert.match(textoEstadoVariador(estado('falla', 0)), /^FAULT/);
 
 	animarSimulacion({
@@ -401,4 +434,13 @@ test('display de variador distingue sin alimentación/READY/RUN/FAULT y la anima
 		estado: {}, energizado: true, dt: 0.016, reloj: 2,
 	});
 	assert.equal(material.emissive.getHex(), 0xd32f2f);
+});
+
+test('la UI expone fallos y referencia VFD por controles visibles de runtime', () => {
+	const fuente = readFileSync('app/ui-simulacion.ts', 'utf8');
+	assert.match(fuente, /data-fallo=/, 'los fallos solo se pueden introducir mediante hooks de QA');
+	assert.match(fuente, /data-ref-vfd=/, 'la referencia VFD no tiene un mando visible');
+	assert.match(fuente, /estadoSim\[id\][\s\S]{0,180}valor:/,
+		'la referencia visible no escribe el estado runtime que consume el motor');
+	assert.match(fuente, /data-reset-vfd=/, 'FAULT no tiene una acción RESET visible');
 });
