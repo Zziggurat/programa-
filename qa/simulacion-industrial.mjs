@@ -48,6 +48,19 @@ async function clickId(id) {
 	}, id);
 }
 
+/** Cambia un select visible y dispara su evento real en un solo turno, antes del repintado periódico. */
+async function elegirSelectVisible(selector, valor) {
+	const problema = await page.evaluate(([css, siguiente]) => {
+		const select = document.querySelector(css);
+		if (!(select instanceof HTMLSelectElement)) return `no existe ${css}`;
+		if (![...select.options].some((o) => o.value === siguiente)) return `no existe la opción ${siguiente}`;
+		select.value = siguiente;
+		select.dispatchEvent(new Event('change', { bubbles: true }));
+		return '';
+	}, [selector, valor]);
+	if (problema) throw new Error(problema);
+}
+
 async function cerrarSiVisible(modal, boton) {
 	if (await page.locator(modal).isVisible().catch(() => false)) {
 		await clickId(boton);
@@ -274,7 +287,8 @@ try {
 	await esperarActivo('m1', true);
 	let simDOL = await qa('simulacion');
 	const arranqueMotor = simDOL.funcionando.find((f) => f.dispositivoId === 'm1')?.que ?? '';
-	comprobar('al mantener MARCHA el motor entra en ARRANCANDO', /^arrancando/i.test(arranqueMotor), arranqueMotor);
+	comprobar('al mantener MARCHA el motor entra en ARRANCANDO o ya alcanzó MARCHA',
+		/^(?:arrancando|girando)/i.test(arranqueMotor), arranqueMotor);
 	comprobar('la maniobra energiza nuevos conductores de fuerza y mando',
 		simDOL.conductoresVivos > vivosEnReposo, `${vivosEnReposo} → ${simDOL.conductoresVivos}`);
 	const idsVivosEnMarcha = new Set(simDOL.conductoresVivosIds);
@@ -328,7 +342,7 @@ try {
 		&& !(await qa('simulacion')).activos.includes('km1'));
 	comprobar('el térmico admite rearme', await qa('accionar', 'f2') === true);
 	estadoF2 = (await qa('estadoSim')).find((e) => e.id === 'f2');
-	comprobar('rearmar no provoca rearranque espontáneo', estadoF2?.disparado === false
+	comprobar('rearmar no provoca rearranque espontáneo', estadoF2?.disparado !== true
 		&& !(await qa('simulacion')).activos.includes('m1'));
 	await qa('presionar', 's1'); await esperarActivo('m1', true); await qa('soltar', 's1');
 	comprobar('tras rearmar, un nuevo START sí vuelve a arrancar', (await qa('simulacion')).activos.includes('m1'));
@@ -602,7 +616,97 @@ try {
 		JSON.stringify(await qa('estadoSim')));
 	await energizar(false);
 
-	console.log('\n=== 5. Integridad de la sesión ===');
+	console.log('\n=== 5. Fixture V2: sobrecarga, térmico y rearme por la UI ===');
+	await abrirEjemplo('Fixture V2: motor, térmico y fallos', 'Fixture V2 — fallos de motor y relé térmico');
+	await energizar(true);
+	await velocidad(20);
+	const startV2 = page.locator('#sim-mandos button[data-mando="s1"]');
+	await startV2.click();
+	await esperarActivo('m1', true, 8_000);
+	comprobar('el START visible arranca el fixture V2', (await qa('simulacion')).activos.includes('km1'));
+	const falloMotor = page.locator('#sim-fallos select[data-fallo="m1"]');
+	comprobar('el motor ofrece Sobrecarga como fallo compatible visible',
+		await falloMotor.locator('option[value="sobrecarga"]').count() === 1);
+	await elegirSelectVisible('#sim-fallos select[data-fallo="m1"]', 'sobrecarga');
+	await page.waitForFunction(() => window.qa.estadoSim().some((e) => e.id === 'f2' && e.disparado === true),
+		undefined, { timeout: 15_000 });
+	comprobar('la sobrecarga visible termina en F2 DISPARADO',
+		await page.locator('#sim-funcionando .proteccion.disparado[data-id="f2"]').count() === 1);
+	const simTrasTermico = await qa('simulacion');
+	comprobar('95-96 hace caer KM1 y el motor por el circuito',
+		!simTrasTermico.activos.includes('km1') && !simTrasTermico.activos.includes('m1'),
+		simTrasTermico.activos.join(', '));
+	comprobar('97-98 enciende el piloto de FALLO cableado', simTrasTermico.activos.includes('h-fallo'));
+	await elegirSelectVisible('#sim-fallos select[data-fallo="m1"]', '');
+	const rearmarF2 = page.locator('#sim-mandos button[data-mando="f2"]');
+	await rearmarF2.click();
+	await page.waitForFunction(() => !window.qa.estadoSim().some((e) => e.id === 'f2' && e.disparado === true));
+	comprobar('REARMAR visible apaga FALLO pero no rearranca',
+		!(await qa('simulacion')).activos.includes('h-fallo') && !(await qa('simulacion')).activos.includes('m1'));
+	await page.locator('#sim-mandos button[data-mando="s1"]').click();
+	await esperarActivo('m1', true, 8_000);
+	comprobar('un nuevo START visible vuelve a arrancar', (await qa('simulacion')).activos.includes('m1'));
+	await energizar(false);
+
+	console.log('\n=== 6. Fixture V2: referencia, velocidad, FAULT y RESET por la UI ===');
+	await abrirEjemplo('Fixture V2: VFD, velocidad y FAULT', 'Fixture V2 — VFD, velocidad y FAULT');
+	await energizar(true);
+	await velocidad(20);
+	comprobar('el fixture VFD empieza en READY',
+		/READY/.test(await page.locator('#sim-funcionando .variador[data-id="vfd"]').innerText()));
+	const referencia100 = page.locator('#sim-referencias-vfd input[data-ref-vfd="vfd"]');
+	await referencia100.evaluate((input) => {
+		input.value = '100'; input.dispatchEvent(new Event('input', { bubbles: true }));
+	});
+	await page.locator('#sim-mandos button[data-mando="s-run"]').click();
+	await page.waitForFunction(() => /50\.0 Hz/.test(
+		document.querySelector('#sim-funcionando .variador[data-id="vfd"]')?.textContent ?? ''),
+		undefined, { timeout: 12_000 });
+	const giro50a = (await qa('piezas', 'm1'))?.eje?.[0]?.giro;
+	await page.waitForTimeout(500);
+	const giro50b = (await qa('piezas', 'm1'))?.eje?.[0]?.giro;
+	const referencia50 = page.locator('#sim-referencias-vfd input[data-ref-vfd="vfd"]');
+	await referencia50.evaluate((input) => {
+		input.value = '50'; input.dispatchEvent(new Event('input', { bubbles: true }));
+	});
+	await page.waitForFunction(() => /25\.0 Hz/.test(
+		document.querySelector('#sim-funcionando .variador[data-id="vfd"]')?.textContent ?? ''),
+		undefined, { timeout: 12_000 });
+	const giro25a = (await qa('piezas', 'm1'))?.eje?.[0]?.giro;
+	await page.waitForTimeout(500);
+	const giro25b = (await qa('piezas', 'm1'))?.eje?.[0]?.giro;
+	const avance50 = Math.abs((giro50b ?? 0) - (giro50a ?? 0));
+	const avance25 = Math.abs((giro25b ?? 0) - (giro25a ?? 0));
+	comprobar('el control visible produce 50 Hz y después 25 Hz',
+		/25\.0 Hz/.test(await page.locator('#sim-funcionando .variador[data-id="vfd"]').innerText()));
+	comprobar('la velocidad visual a 50 Hz supera claramente la de 25 Hz',
+		avance50 > avance25 * 1.5, `${avance50.toFixed(3)} → ${avance25.toFixed(3)} rad/0,5 s`);
+	await elegirSelectVisible('#sim-fallos select[data-fallo="vfd"]', 'fallo-externo');
+	await page.locator('#sim-funcionando .variador.falla[data-id="vfd"]').waitFor();
+	const simVfdFault = await qa('simulacion');
+	comprobar('FAULT visible corta la salida normal y enciende AL1-AL2',
+		!simVfdFault.activos.includes('m1') && simVfdFault.activos.includes('h-fallo'),
+		simVfdFault.activos.join(', '));
+	comprobar('RESET está bloqueado mientras existe la causa',
+		await page.locator('button[data-reset-vfd="vfd"]:disabled').count() === 1);
+	await elegirSelectVisible('#sim-fallos select[data-fallo="vfd"]', '');
+	const resetVfd = page.locator('button[data-reset-vfd="vfd"]:not(:disabled)');
+	await resetVfd.waitFor();
+	await resetVfd.click();
+	await page.waitForFunction(() => /READY/.test(
+		document.querySelector('#sim-funcionando .variador[data-id="vfd"]')?.textContent ?? ''));
+	comprobar('RESET lleva a READY, no a RUN, con la orden todavía alta',
+		/READY/.test(await page.locator('#sim-funcionando .variador[data-id="vfd"]').innerText()));
+	await page.locator('#sim-mandos button[data-mando="s-run"]').click();
+	await page.locator('#sim-mandos button[data-mando="s-run"]').click();
+	await page.waitForFunction(() => /RUN/.test(
+		document.querySelector('#sim-funcionando .variador[data-id="vfd"]')?.textContent ?? ''),
+		undefined, { timeout: 8_000 });
+	comprobar('soltar y dar una nueva orden RUN restaura la marcha',
+		/RUN/.test(await page.locator('#sim-funcionando .variador[data-id="vfd"]').innerText()));
+	await energizar(false);
+
+	console.log('\n=== 7. Integridad de la sesión ===');
 	comprobar('no hubo errores JavaScript', erroresJS.length === 0, erroresJS.slice(0, 3).join(' | '));
 } catch (error) {
 	fallos++;

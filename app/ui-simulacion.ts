@@ -782,6 +782,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		for (const v of r.variadores) {
 			const fila = document.createElement('div');
 			fila.className = `fila-sim variador ${v.estado}`;
+			fila.dataset.id = v.dispositivoId;
 			fila.innerHTML = '<span class="punto-sim"></span>'
 				+ `<span class="des-sim">${escaparHtml(v.designacion)}</span>`
 				+ `<span class="que-sim">${textoEstadoVariador(v)}</span>`
@@ -807,6 +808,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		for (const m of r.motores) {
 			const fila = document.createElement('div');
 			fila.className = `fila-sim motor ${m.estado}`;
+			fila.dataset.id = m.dispositivoId;
 			const velocidad = m.rpmEstimada !== undefined ? `${m.rpmEstimada} rpm estimadas`
 				: `${m.velocidadPorcentaje.toFixed(0)} % relativo`;
 			fila.innerHTML = '<span class="punto-sim"></span>'
@@ -818,6 +820,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		for (const p of r.protecciones) {
 			const fila = document.createElement('div');
 			fila.className = `fila-sim proteccion ${p.estado}`;
+			fila.dataset.id = p.dispositivoId;
 			fila.innerHTML = '<span class="punto-sim"></span>'
 				+ `<span class="des-sim">${escaparHtml(p.designacion)}</span>`
 				+ `<span class="que-sim">${p.estado.toUpperCase()}`
