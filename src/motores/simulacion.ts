@@ -471,6 +471,8 @@ const MAX_PASADAS = 24;
  * son los de un motor concreto —eso está en su placa— pero sí los que hacen ver el problema.
  */
 const VECES_ARRANQUE = 6;
+/** Sobrecarga severa inyectada para ensayo; no es una corriente calculada ni un dato de placa. */
+const VECES_SOBRECARGA_INYECTADA = 4;
 const SEGUNDOS_ARRANQUE = 3;
 const SEGUNDOS_PARADA = 2;
 const TOLERANCIA_TENSION = 0.1;
@@ -1282,7 +1284,8 @@ function estadoMotor(
 
 function corrienteFallaMotor(nominal: number, motivo: EstadoMotor['motivoFalla']): number {
 	if (motivo === 'motor-bloqueado') return Math.round(nominal * VECES_ARRANQUE * 10) / 10;
-	if (motivo === 'sobrecarga' || motivo === 'perdida-fase') return Math.round(nominal * 1.5 * 10) / 10;
+	if (motivo === 'sobrecarga') return Math.round(nominal * VECES_SOBRECARGA_INYECTADA * 10) / 10;
+	if (motivo === 'perdida-fase') return Math.round(nominal * 1.5 * 10) / 10;
 	return 0;
 }
 

@@ -38,6 +38,8 @@ test('fixture industrial V2: el térmico tira KM por 95-96, señaliza por 97-98 
 	const propuesta = r.disparos.find((x) => x.dispositivoId === 'f2');
 	assert.ok(propuesta?.motivo === 'sobrecarga' && propuesta.segundos > 0,
 		'la sobrecarga del motor no llegó al térmico por el camino eléctrico');
+	assert.ok(propuesta.segundos < 120,
+		`la condición inyectada no es observable en una sesión de ensayo: ${propuesta.segundos} s`);
 	actualizarProteccionesRuntime(p, estado, r, 1100, memoria);
 	const mitad = actualizarProteccionesRuntime(p, estado, r, 1100 + propuesta.segundos * 500, memoria);
 	assert.equal(mitad.cambio, false);
