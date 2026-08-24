@@ -234,25 +234,18 @@ export class GestorDocumentos {
 		};
 	}
 
-	private async aplicarConRollback(
+	private async aplicarAtomico(
 		proyecto: Proyecto,
 		contexto: ContextoAplicacionProyecto,
-		anterior = this.vistaActual(),
 	): Promise<void> {
-		try {
-			await this.aplicarProyecto(clonar(proyecto), contexto);
-		} catch (error) {
-			// El callback se contrata como atómico, pero volver a aplicar la vista anterior también
-			// protege a integraciones futuras que fallen después de tocar estado superficial.
-			if (anterior) {
-				try {
-					await this.aplicarProyecto(clonar(anterior.proyecto), anterior.contexto);
-				} catch (rollback) {
-					throw errorCompuesto('Falló aplicar el proyecto y también restaurar la vista anterior.', error, rollback);
-				}
-			}
-			throw error;
-		}
+		/*
+		 * `AplicarProyecto` se contrata como una operación atómica: si lanza, la vista, su historial
+		 * y cualquier estado superficial ya quedaron como estaban. Volver a aplicar aquí el proyecto
+		 * anterior no es un rollback inocuo: para el editor es otra apertura de documento y, por
+		 * tanto, limpia Undo/Redo. La restauración explícita sigue perteneciendo a los fallos que
+		 * ocurren DESPUÉS de un montaje correcto (por ejemplo, al publicar el marcador activo).
+		 */
+		await this.aplicarProyecto(clonar(proyecto), contexto);
 	}
 
 	/**
@@ -485,7 +478,7 @@ export class GestorDocumentos {
 		const contexto: ContextoAplicacionProyecto = {
 			origen, documentoId: documento.id, ejemplo: false, guardarAlFinal: false,
 		};
-		await this.aplicarConRollback(documento.proyecto, contexto, anterior);
+		await this.aplicarAtomico(documento.proyecto, contexto);
 		try {
 			await this.repositorio.marcarProyectoActivo(documento.id);
 		} catch (error) {
@@ -511,7 +504,18 @@ export class GestorDocumentos {
 		this.comprobarInicializado();
 		await this.prepararSalida();
 		const documento = await this.repositorio.crear({ proyecto: clonar(proyecto), nombre });
-		return this.publicarDocumento(documento, 'crear');
+		try {
+			return await this.publicarDocumento(documento, 'crear');
+		} catch (error) {
+			// `crear` ya escribió el sobre antes de comprobar que la UI pudiera montarlo. Si el montaje
+			// falla, ese documento nunca llegó a ser activo y debe desaparecer de la biblioteca.
+			try {
+				await this.repositorio.eliminar(documento.id, documento.revision);
+			} catch (rollback) {
+				throw errorCompuesto('No se pudo montar el documento nuevo ni retirar su registro incompleto.', error, rollback);
+			}
+			throw error;
+		}
 	}
 
 	async abrir(id: string): Promise<DocumentoProyecto> {
@@ -549,7 +553,7 @@ export class GestorDocumentos {
 		if (id !== this.actual!.id) return renombrado;
 		this.actual = renombrado;
 		if (!this.ejemplo) {
-			await this.aplicarConRollback(renombrado.proyecto, {
+			await this.aplicarAtomico(renombrado.proyecto, {
 				origen: 'renombrar', documentoId: id, ejemplo: false, guardarAlFinal: false,
 			});
 		}
@@ -605,7 +609,7 @@ export class GestorDocumentos {
 		// Se comprueba que la UI puede montar la versión ANTES de convertirla en el contenido actual.
 		// Si después falla la transacción (conflicto/almacenamiento), se devuelve la pantalla a la
 		// versión vigente. Así nunca queda una vista restaurada respaldada por una revisión antigua.
-		await this.aplicarConRollback(snapshot.proyecto, contexto, anterior);
+		await this.aplicarAtomico(snapshot.proyecto, contexto);
 		let documento: DocumentoProyecto;
 		try {
 			documento = await this.repositorio.restaurarSnapshot(
@@ -657,7 +661,7 @@ export class GestorDocumentos {
 			origen: 'eliminar', documentoId: reemplazo.id, ejemplo: false, guardarAlFinal: false,
 		};
 		try {
-			await this.aplicarConRollback(reemplazo.proyecto, contexto, anteriorVista);
+			await this.aplicarAtomico(reemplazo.proyecto, contexto);
 		} catch (error) {
 			if (reemplazoCreado) {
 				try { await this.repositorio.eliminar(reemplazoCreado.id, reemplazoCreado.revision); }
@@ -692,7 +696,7 @@ export class GestorDocumentos {
 		await this.prepararSalida();
 		const ejemplo = clonar(proyecto);
 		ejemplo.esEjemplo = true;
-		await this.aplicarConRollback(ejemplo, {
+		await this.aplicarAtomico(ejemplo, {
 			origen: 'ejemplo', ejemplo: true, guardarAlFinal: false,
 		});
 		this.ejemplo = ejemplo;

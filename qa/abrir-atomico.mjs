@@ -1,12 +1,12 @@
 /**
- * ABRIR UN PROYECTO ES TODO O NADA: proyecto, historial Y guardado.
+ * ABRIR UN PROYECTO ES TODO O NADA: proyecto, historial Y repositorio.
  *
  * Tercera auditoría, TS3-P2-03. Al abrir un archivo, `capturar()` mete el estado actual en la pila
  * de deshacer y VACÍA la de rehacer antes de que el proyecto nuevo esté montado. Si el montaje
  * falla, el `catch` devuelve `proyecto` a su sitio —eso ya estaba arreglado, TS2-P1-01— pero no
  * las pilas: queda un paso de deshacer que no deshace nada y, sobre todo, se ha perdido TODO lo
- * que hubiera para rehacer. Y `actualizarTodo()` autoguarda por el camino, así que el navegador
- * puede quedarse con el proyecto a medio montar.
+ * que hubiera para rehacer. El guardado actual vive en IndexedDB y tampoco puede quedar un
+ * documento fantasma en la biblioteca si el montaje rechazó el archivo.
  *
  * El informe lo dice tal cual: «No se reprodujo una excepción natural postvalidación en el
  * recorrido normal; es un defecto condicional de atomicidad. Debe probarse inyectando un fallo
@@ -30,22 +30,20 @@ const must = (n, c, x = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : '
 const qa = (fn, ...a) => p.evaluate(([f, args]) => window.qa[f](...args), [fn, a]);
 
 /**
- * Espera a que salga el «tienes trabajo sin descargar» y contesta que sí. Devuelve si llegó a
- * salir. Espera de verdad —hasta 8 s— porque bajo carga tarda, y una espera fija hacía que la
- * prueba midiera el estado de un archivo que nunca se abrió.
+ * Importar ya no reemplaza ni descarta el tablero actual: crea otra identidad en la biblioteca.
+ * Por eso no debe aparecer la antigua confirmación destructiva. Si reaparece, se desbloquea para
+ * que la suite pueda terminar y se devuelve `false` como regresión, sin medir un diálogo colgado.
  */
-async function esperarDialogo() {
-	try {
-		// 20 s y no 8: con la máquina cargada —dentro de la batería entera— la página va lenta y el
-		// diálogo tarda más en salir. Con 8 s esta condición previa fallaba una vez de cada dos.
-		await p.waitForSelector('#modal-dialogo:not([hidden])', { timeout: 20_000 });
-	} catch {
-		return false;
-	}
+async function esperarOperacionSinDialogo(completada, timeout = 20_000) {
+	const resultado = await Promise.race([
+		p.waitForFunction(completada, null, { timeout }).then(() => 'completada'),
+		p.waitForSelector('#modal-dialogo:not([hidden])', { timeout }).then(() => 'dialogo'),
+	]);
+	if (resultado === 'completada') return true;
 	await p.evaluate(() => document.getElementById('dialogo-ok')?.click());
-	// Y se espera a que se cierre, para que la siguiente llamada no dé por bueno ESTE diálogo.
 	await p.waitForSelector('#modal-dialogo[hidden]', { timeout: 10_000 }).catch(() => {});
-	return true;
+	await p.waitForFunction(completada, null, { timeout });
+	return false;
 }
 
 await p.goto(`http://127.0.0.1:${servidor.address().port}/?qa=1&inicio=0`);
@@ -59,8 +57,10 @@ await p.waitForTimeout(200);
  * por `capturar()` —cambiar el nombre del proyecto, por ejemplo, NO entra en el historial— y no
  * depende de dónde esté el ratón.
  */
+await qa('esperarPersistencia');
 await p.evaluate(() => document.getElementById('btn-empezar-blanco')?.click());
-await p.waitForTimeout(250);
+await p.waitForFunction(() => document.getElementById('bienvenida')?.hidden === true, null, { timeout: 20_000 });
+await qa('esperarPersistencia');
 // El catálogo vive en el cajón real de «Añadir»; se abre como lo haría una persona.
 await p.locator('#hta-anadir').click();
 await p.waitForSelector('#seccion-catalogo:not([hidden])');
@@ -74,11 +74,14 @@ await p.evaluate(() => document.getElementById('btn-deshacer')?.click()); await 
  * 12 de las pruebas de aceptación del informe: «proyecto, Undo, Redo y autosave deben quedar byte a
  * byte iguales». Contar aparatos dejaría pasar un cambio que no añade ni quita ninguno.
  */
+const documentoAntes = await qa('esperarPersistencia');
 const antes = {
 	historial: await qa('historial'),
 	aparatos: (await qa('proyecto')).dispositivos.length,
 	proyecto: JSON.stringify(await qa('proyecto')),
-	guardado: await qa('autoguardado'),
+	documentoId: documentoAntes.id,
+	guardado: JSON.stringify(documentoAntes.proyecto),
+	biblioteca: (await qa('documentos')).map((d) => d.id).sort(),
 };
 console.log(`\nestado de partida: deshacer=${antes.historial.deshacer} rehacer=${antes.historial.rehacer} aparatos=${antes.aparatos}`);
 must('CONDICIÓN PREVIA: hay pila de deshacer', antes.historial.deshacer > 0, String(antes.historial.deshacer));
@@ -104,27 +107,19 @@ await p.evaluate((texto) => {
 	entrada.files = dt.files;
 	entrada.dispatchEvent(new Event('change', { bubbles: true }));
 }, otro);
-/*
- * Hay trabajo sin descargar, así que antes de abrir otro archivo pregunta. Hay que contestar que
- * sí: sin esto la apertura se queda esperando y la prueba mide el estado de un archivo que nunca
- * se llegó a abrir —pasaba todo, y no comprobaba nada—.
- *
- * Se ESPERA al diálogo en vez de mirar si está a los 500 ms. Con un `waitForTimeout` fijo la
- * prueba se volvía inestable en cuanto la máquina iba cargada: dentro de la batería completa el
- * diálogo tardaba más en salir, el clic no llegaba y salían dos fallos que en solitario no
- * aparecían. Un número de milisegundos puesto a ojo no es una espera, es una apuesta.
- */
-const preguntó = await esperarDialogo();
-must('CONDICIÓN PREVIA: avisa de que hay trabajo sin descargar', preguntó);
-// Se espera al AVISO de que no se pudo abrir, que es cuando la operación ha terminado de verdad.
-await p.waitForFunction(() => /no se pudo/i.test(document.getElementById('toast')?.textContent ?? ''),
-	{ timeout: 15_000 }).catch(() => {});
+const sinDialogoAlFallar = await esperarOperacionSinDialogo(
+	() => /no se pudo/i.test(document.getElementById('toast')?.textContent ?? ''),
+);
+must('importar como otro tablero no pide descartar el actual', sinDialogoAlFallar);
 
+const documentoDespues = await qa('esperarPersistencia');
 const despues = {
 	historial: await qa('historial'),
 	aparatos: (await qa('proyecto')).dispositivos.length,
 	proyecto: JSON.stringify(await qa('proyecto')),
-	guardado: await qa('autoguardado'),
+	documentoId: documentoDespues.id,
+	guardado: JSON.stringify(documentoDespues.proyecto),
+	biblioteca: (await qa('documentos')).map((d) => d.id).sort(),
 };
 console.log(`estado tras el fallo: deshacer=${despues.historial.deshacer} rehacer=${despues.historial.rehacer} aparatos=${despues.aparatos}`);
 
@@ -138,9 +133,14 @@ must('la pila de DESHACER no crece con un paso que no hizo nada',
 must('la pila de REHACER sigue entera',
 	despues.historial.rehacer === antes.historial.rehacer,
 	`${antes.historial.rehacer} → ${despues.historial.rehacer}`);
-must('lo guardado en el navegador NO es el proyecto que no se pudo abrir',
+must('el documento activo conserva su identidad', despues.documentoId === antes.documentoId,
+	`${antes.documentoId} → ${despues.documentoId}`);
+must('IndexedDB NO contiene el proyecto que no se pudo montar',
 	!(despues.guardado ?? '').includes('EL QUE NO SE DEBE ABRIR'));
-must('lo guardado en el navegador sigue siendo lo de antes', despues.guardado === antes.guardado);
+must('el documento guardado sigue siendo lo de antes', despues.guardado === antes.guardado);
+must('el montaje fallido no deja un documento fantasma en la biblioteca',
+	JSON.stringify(despues.biblioteca) === JSON.stringify(antes.biblioteca),
+	`${antes.biblioteca.length} → ${despues.biblioteca.length} tableros`);
 
 /* Y el editor tiene que seguir vivo: rehacer devuelve lo que había, sin recargar la página. */
 console.log('\n--- y el editor sigue funcionando ---');
@@ -166,7 +166,6 @@ await p.evaluate((texto) => {
 	entrada.files = dt.files;
 	entrada.dispatchEvent(new Event('change', { bubbles: true }));
 }, otro);
-await esperarDialogo();
 /*
  * SE ESPERA A QUE EL ARCHIVO ESTÉ ABIERTO, no un puñado de milisegundos.
  *
@@ -175,14 +174,16 @@ await esperarDialogo();
  * `console.log` de depuración —que hablan con la página y tardan— empezaba a pasar, que es la
  * señal inconfundible de que la prueba mide un reloj y no un hecho.
  */
-await p.waitForFunction(() => window.qa.proyecto().nombre === 'EL QUE NO SE DEBE ABRIR',
-	{ timeout: 20_000 });
-await p.waitForTimeout(300);
+const sinDialogoAlAbrir = await esperarOperacionSinDialogo(
+	() => window.qa.documentoActivo().proyecto?.nombre === 'EL QUE NO SE DEBE ABRIR',
+);
+must('abrir como otro tablero tampoco pide descartar el anterior', sinDialogoAlAbrir);
 
+const documentoBueno = await qa('esperarPersistencia');
 const bueno = {
 	historial: await qa('historial'),
 	nombre: (await qa('proyecto')).nombre,
-	guardado: await qa('autoguardado'),
+	guardado: JSON.stringify(documentoBueno.proyecto),
 };
 console.log(`tras abrirlo bien: deshacer=${bueno.historial.deshacer} rehacer=${bueno.historial.rehacer} nombre=${bueno.nombre}`);
 must('el archivo se abre de verdad', bueno.nombre === 'EL QUE NO SE DEBE ABRIR', bueno.nombre);
@@ -190,7 +191,8 @@ must('abre con el historial de deshacer limpio', bueno.historial.deshacer === 0,
 	`${previo.deshacer} → ${bueno.historial.deshacer}`);
 must('abre con el historial de rehacer limpio', bueno.historial.rehacer === 0,
 	String(bueno.historial.rehacer));
-must('queda guardado en el navegador', (bueno.guardado ?? '').includes('EL QUE NO SE DEBE ABRIR'));
+must('queda guardado como documento activo en IndexedDB',
+	(bueno.guardado ?? '').includes('EL QUE NO SE DEBE ABRIR'));
 
 /*
  * PEGAR TAMPOCO PUEDE QUEDARSE A MEDIAS.
@@ -220,10 +222,11 @@ await p.keyboard.press('Control+v'); await p.waitForTimeout(700);
 const trasPegar = (await qa('proyecto')).dispositivos.length;
 must('CONDICIÓN PREVIA: copiar y pegar funciona', trasPegar === 3, `${trasPegar} aparatos`);
 
+const documentoAntesDeRomper = await qa('esperarPersistencia');
 const antesDeRomper = {
 	aparatos: trasPegar,
 	historial: await qa('historial'),
-	guardado: await qa('autoguardado'),
+	guardado: JSON.stringify(documentoAntesDeRomper.proyecto),
 };
 await qa('romperProximoMontaje');
 await p.keyboard.press('Control+v');
@@ -231,17 +234,18 @@ await p.keyboard.press('Control+v');
 await p.waitForFunction(() => /no se pudo/i.test(document.getElementById('toast')?.textContent ?? ''),
 	{ timeout: 15_000 }).catch(() => {});
 await p.waitForTimeout(300);
+const documentoTrasRomper = await qa('esperarPersistencia');
 const trasRomper = {
 	aparatos: (await qa('proyecto')).dispositivos.length,
 	historial: await qa('historial'),
-	guardado: await qa('autoguardado'),
+	guardado: JSON.stringify(documentoTrasRomper.proyecto),
 };
 must('pegar con el render roto no deja medio aparato puesto',
 	trasRomper.aparatos === antesDeRomper.aparatos,
 	`${antesDeRomper.aparatos} → ${trasRomper.aparatos} aparatos`);
 must('ni toca el historial', trasRomper.historial.deshacer === antesDeRomper.historial.deshacer,
 	`${antesDeRomper.historial.deshacer} → ${trasRomper.historial.deshacer}`);
-must('ni deja lo pegado a medias guardado en el navegador',
+must('ni deja lo pegado a medias guardado en IndexedDB',
 	trasRomper.guardado === antesDeRomper.guardado);
 
 console.log(fallos === 0 ? '\n=== TODO OK ✔ ===' : `\n=== ${fallos} FALLOS ===`);

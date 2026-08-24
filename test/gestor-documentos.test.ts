@@ -355,9 +355,11 @@ test('fallar al montar B deja A guardado, visible y activo; B nunca se confirma'
 	let repositorio!: RepositorioInstrumentado;
 	let pantalla: Proyecto | undefined;
 	let activoDuranteB: string | undefined;
+	let intentosDeMontarB = 0;
 	const e = entorno({
 		aplicarProyecto: async (proyecto) => {
 			if (proyecto.nombre === 'B') {
+				intentosDeMontarB++;
 				activoDuranteB = await repositorio.obtenerProyectoActivo();
 				throw new Error('render B falló');
 			}
@@ -369,6 +371,8 @@ test('fallar al montar B deja A guardado, visible y activo; B nunca se confirma'
 	const cambioA = a.proyecto;
 	cambioA.datos = { cliente: 'A ya guardado' };
 	e.gestor.programarGuardado(cambioA);
+	// En el editor real la pantalla ya es el objeto que se editó antes de programar su guardado.
+	pantalla = structuredClone(cambioA);
 	const b = await repositorio.crear({ proyecto: proyectoValido('B') });
 
 	await assert.rejects(e.gestor.abrir(b.id), /render B falló/);
@@ -377,6 +381,27 @@ test('fallar al montar B deja A guardado, visible y activo; B nunca se confirma'
 	assert.equal(await repositorio.obtenerProyectoActivo(), a.id);
 	assert.equal(e.gestor.documentoActivo()?.id, a.id);
 	assert.equal(pantalla?.datos?.cliente, 'A ya guardado');
+	assert.equal(intentosDeMontarB, 1, 'el gestor intentó un segundo montaje destructivo como rollback');
+});
+
+test('crear un documento que la UI no puede montar no deja un proyecto fantasma', async () => {
+	let intentos = 0;
+	const e = entorno({
+		aplicarProyecto: (proyecto) => {
+			if (proyecto.nombre !== 'B no montable') return;
+			intentos++;
+			throw new Error('geometría no montable');
+		},
+	});
+	const a = (await e.gestor.inicializar()).documento;
+
+	await assert.rejects(e.gestor.crear(proyectoValido('B no montable')), /geometría no montable/);
+
+	assert.equal(intentos, 1);
+	assert.deepEqual((await e.gestor.listar()).map((documento) => documento.id), [a.id]);
+	assert.equal(e.gestor.documentoActivo()?.id, a.id);
+	assert.equal(await e.repositorio.obtenerProyectoActivo(), a.id);
+	assert.equal(e.pantalla()?.nombre, a.proyecto.nombre);
 });
 
 test('si falla el marcador activo después del montaje, la vista y la identidad vuelven a A', async () => {
@@ -526,6 +551,8 @@ test('una versión que no se puede montar no altera contenido, revisión ni iden
 	revisionB.datos!.revision = 'B';
 	e.gestor.programarGuardado(revisionB);
 	await e.gestor.flush();
+	// Igual que en la UI: guardar una edición no vuelve a montarla; ya está visible.
+	pantalla = structuredClone(revisionB);
 	const antes = e.gestor.documentoActivo()!;
 	bloquearRevisionA = true;
 
