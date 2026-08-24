@@ -350,10 +350,7 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		 * moderada porque el motor no calcula RPM, par ni deslizamiento. No se conserva un estado de
 		 * animación alternativo que pueda seguir girando después de que el circuito se detenga.
 		 */
-		const factorGiro = motor
-			? motor.estado === 'marcha' ? 1
-				: motor.estado === 'arrancando' ? 0.2 + 0.8 * motor.progresoArranque : 0
-			: enMarcha ? 1 : 0;
+		const factorGiro = motor ? motor.velocidadActual : enMarcha ? 1 : 0;
 		if (p.eje.length && perfil?.clase === 'carga' && perfil.efecto === 'giro' && factorGiro > 0) {
 			const tension = d.tensionNominal ?? 220;
 			// 220 V como referencia: ~9 rad/s. Se acota para que ni se pare ni maree.

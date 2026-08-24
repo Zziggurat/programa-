@@ -59,6 +59,7 @@ import { Conductor, Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tip
 import {
 	ComportamientoSimulacion, ReferenciaAnalogicaSimulacion, resolverComportamiento,
 } from '../modelo/comportamiento.js';
+import { FalloRuntimeActivo, OrigenMagnitudSimulacion, TipoFalloRuntime, tieneFallo } from './fallos-runtime.js';
 import { claveBorne } from '../modelo/proyecto.js';
 import { tensionSecundariaDe } from './tensiones.js';
 import {
@@ -78,6 +79,10 @@ export interface EstadoAparato {
 	posicion?: number;
 	/** Variadores y electrónica: fallo activo que inhibe la salida. */
 	fallo?: boolean;
+	/** Condiciones de ensayo de esta sesión. Nunca se serializan dentro de Proyecto. */
+	fallos?: TipoFalloRuntime[];
+	/** Pulso runtime de reset para equipos con fallo enclavado. */
+	resetFallo?: boolean;
 	/** Salidas DIGITALES de un controlador que el usuario fuerza a ON, por su id de borne. */
 	salidas?: string[];
 	/**
@@ -116,9 +121,12 @@ export interface MemoriaTiempos {
 	/** Relés cuya temporización ya se cumplió: sus contactos están conmutados. */
 	cumplidos: string[];
 	/** Frecuencia efectiva y último instante confirmado de cada variador. */
-	variadores?: Record<string, { frecuenciaHz: number; actualizadoEn: number }>;
-	/** Instante (ms) en que cada motor recibió alimentación continua para este arranque. */
-	motores?: Record<string, { arranqueDesde: number }>;
+	variadores?: Record<string, {
+		frecuenciaHz: number; actualizadoEn: number;
+		falloEnclavado?: boolean; runBloqueadoHastaSoltar?: boolean;
+	}>;
+	/** Velocidad mecánica relativa. Es runtime y no modifica datos de placa ni el Proyecto. */
+	motores?: Record<string, { velocidadRelativa: number; actualizadoEn: number }>;
 }
 
 export function memoriaVacia(): MemoriaTiempos {
@@ -133,6 +141,7 @@ export interface EstadoVariador {
 	run: boolean;
 	habilitado: boolean;
 	referenciaPorcentaje: number;
+	frecuenciaNominalHz: number;
 	frecuenciaObjetivoHz: number;
 	frecuenciaHz: number;
 }
@@ -146,7 +155,7 @@ export interface EstadoVariador {
 export interface EstadoMotor {
 	dispositivoId: string;
 	designacion: string;
-	estado: 'detenido' | 'arrancando' | 'marcha' | 'falla';
+	estado: 'detenido' | 'arrancando' | 'marcha' | 'desacelerando' | 'falla';
 	alimentado: boolean;
 	/** Fases distintas exigidas por el perfil funcional, no por la carcasa ni por `tipo`. */
 	fasesRequeridas: 1 | 3;
@@ -160,6 +169,16 @@ export interface EstadoMotor {
 	tensionCorrecta?: boolean;
 	/** Fracción 0..1 de la duración estimada de arranque. */
 	progresoArranque: number;
+	/** Frecuencia eléctrica que manda sobre el motor; calculada de red o de la salida VFD. */
+	frecuenciaElectricaHz: number;
+	/** Velocidad mecánica 0..1 respecto de la frecuencia nominal del proyecto/perfil. */
+	velocidadObjetivo: number;
+	velocidadActual: number;
+	velocidadPorcentaje: number;
+	/** Solo existe si el perfil declara polos magnéticos. */
+	rpmSincronas?: number;
+	rpmEstimada?: number;
+	rpmOrigen: OrigenMagnitudSimulacion | 'no-disponible';
 	/** Corriente nominal declarada o estimada para el aparato. */
 	corrienteNominalA: number;
 	/** True cuando faltó corriente de placa y se usó el supuesto genérico del perfil de motor. */
@@ -169,7 +188,8 @@ export interface EstadoMotor {
 	/** Duración genérica estimada del transitorio de arranque. */
 	duracionArranqueEstimadaS: number;
 	/** Solo existe para un fallo runtime explícito; no se deduce silenciosamente de una etiqueta. */
-	motivoFalla?: 'fallo-declarado' | 'disparo-declarado';
+	motivoFalla?: 'fallo-declarado' | 'disparo-declarado' | 'perdida-fase' | 'subtension'
+		| 'sobretension' | 'sobrecarga' | 'motor-bloqueado';
 }
 
 /** Lo que hay que saber de un temporizador para enseñarlo: cuánto lleva y cuánto le falta. */
@@ -425,6 +445,7 @@ const MAX_PASADAS = 24;
  */
 const VECES_ARRANQUE = 6;
 const SEGUNDOS_ARRANQUE = 3;
+const SEGUNDOS_PARADA = 2;
 const TOLERANCIA_TENSION = 0.1;
 
 /**
@@ -1059,6 +1080,7 @@ function estadoVariador(
 		estado: !alimentado ? 'sin-alimentacion' : falla ? 'falla'
 			: (run && habilitado) || entregaSalida ? 'marcha' : 'listo',
 		alimentado, run, habilitado, referenciaPorcentaje: Math.round(referenciaPorcentaje * 100) / 100,
+		frecuenciaNominalHz: perfil.frecuencia.maximaHz,
 		frecuenciaObjetivoHz: Math.round(frecuenciaObjetivoHz * 100) / 100,
 		frecuenciaHz: Math.round(frecuenciaHz * 100) / 100,
 	};
@@ -1097,13 +1119,15 @@ function estadoMotor(
 	d: Dispositivo,
 	vivos: Map<string, BorneVivo>,
 	estado: EstadoTablero,
+	variadores: readonly EstadoVariador[],
+	frecuenciaRedHz: number,
 	reloj?: { ahora: number; memoria: MemoriaTiempos },
 ): EstadoMotor {
 	const perfil = resolverComportamiento(d);
 	if (perfil?.clase !== 'carga' || perfil.efecto !== 'giro') {
 		throw new Error(`estadoMotor recibió un aparato sin perfil de giro: ${d.id}`);
 	}
-	const alimentado = tieneCircuitoCompleto(d, vivos);
+	const alimentacionCompletaAhora = tieneCircuitoCompleto(d, vivos);
 	const nominal = corrienteDe(d);
 	const fuentesPresentes = new Set(perfil.alimentacion.fases
 		.map((id) => vivos.get(`${d.id}::${id}`))
@@ -1113,8 +1137,35 @@ function estadoMotor(
 	const tensionNominalV = d.tensionNominal && d.tensionNominal > 0 ? d.tensionNominal : undefined;
 	const tensionCorrecta = tensionRecibidaV === undefined || tensionNominalV === undefined ? undefined
 		: Math.abs(tensionRecibidaV - tensionNominalV) / tensionNominalV <= TOLERANCIA_TENSION;
-	const motivoFalla = estado[d.id]?.fallo === true ? 'fallo-declarado' as const
-		: estado[d.id]?.disparado === true ? 'disparo-declarado' as const : undefined;
+	const st = estado[d.id];
+	const perdidaFaseFisica = perfil.alimentacion.fasesMinimas === 3
+		&& fuentesPresentes.size > 0 && fuentesPresentes.size < 3;
+	const motivoFalla = st?.fallo === true ? 'fallo-declarado' as const
+		: st?.disparado === true ? 'disparo-declarado' as const
+			: tieneFallo(st, 'perdida-fase') || perdidaFaseFisica ? 'perdida-fase' as const
+				: tieneFallo(st, 'subtension') ? 'subtension' as const
+					: tieneFallo(st, 'sobretension') ? 'sobretension' as const
+						: tieneFallo(st, 'motor-bloqueado') ? 'motor-bloqueado' as const
+							: tieneFallo(st, 'sobrecarga') ? 'sobrecarga' as const : undefined;
+	const alimentado = alimentacionCompletaAhora && !tieneFallo(st, 'perdida-fase');
+	const idsVariador = new Set(perfil.alimentacion.fases
+		.map((id) => vivos.get(`${d.id}::${id}`)?.fuente.split('::')[0])
+		.filter((id): id is string => !!id && variadores.some((v) => v.dispositivoId === id)));
+	const variador = idsVariador.size === 1
+		? variadores.find((v) => v.dispositivoId === [...idsVariador][0]) : undefined;
+	const frecuenciaElectricaHz = alimentado ? variador?.frecuenciaHz ?? frecuenciaRedHz : 0;
+	const frecuenciaNominalHz = variador ? Math.max(1, variador.frecuenciaNominalHz)
+		: Math.max(1, frecuenciaRedHz);
+	const velocidadObjetivo = motivoFalla ? 0
+		: Math.max(0, Math.min(1, frecuenciaElectricaHz / frecuenciaNominalHz));
+	const dinamica = perfil.dinamicaMotor;
+	const duracionArranqueS = dinamica?.tiempoArranqueS ?? SEGUNDOS_ARRANQUE;
+	const duracionParadaS = dinamica?.tiempoParadaS ?? SEGUNDOS_PARADA;
+	const polosMotor = dinamica?.polos;
+	const rpmSincronas = polosMotor ? 120 * frecuenciaElectricaHz / polosMotor : undefined;
+	const rpmMecanicas = (velocidad: number): number | undefined => polosMotor === undefined ? undefined
+		: Math.round(120 * frecuenciaNominalHz / polosMotor * velocidad
+			* (1 - (dinamica?.deslizamiento ?? 0)));
 	const base = {
 		dispositivoId: d.id,
 		designacion: d.designacion ?? d.id,
@@ -1126,35 +1177,62 @@ function estadoMotor(
 		tensionCorrecta,
 		corrienteNominalA: nominal,
 		corrienteNominalEstimada: !(d.corrienteNominal !== undefined && d.corrienteNominal > 0),
-		duracionArranqueEstimadaS: SEGUNDOS_ARRANQUE,
+		duracionArranqueEstimadaS: duracionArranqueS,
+		frecuenciaElectricaHz: Math.round(frecuenciaElectricaHz * 100) / 100,
+		velocidadObjetivo,
+		rpmSincronas: rpmSincronas === undefined ? undefined : Math.round(rpmSincronas),
+		rpmOrigen: polosMotor ? 'estimado' as const : 'no-disponible' as const,
 	};
 
 	if (reloj) reloj.memoria.motores ??= {};
-	if (motivoFalla) {
-		if (reloj) delete reloj.memoria.motores![d.id];
-		return { ...base, estado: 'falla', progresoArranque: 0, corrienteEstimadaA: 0, motivoFalla };
-	}
-	if (!alimentado) {
-		if (reloj) delete reloj.memoria.motores![d.id];
-		return { ...base, estado: 'detenido', progresoArranque: 0, corrienteEstimadaA: 0 };
-	}
 	if (!reloj) {
-		return { ...base, estado: 'marcha', progresoArranque: 1, corrienteEstimadaA: nominal };
+		const velocidadActual = motivoFalla || !alimentado ? 0 : velocidadObjetivo;
+		return {
+			...base,
+			estado: motivoFalla ? 'falla' : alimentado ? 'marcha' : 'detenido',
+			progresoArranque: velocidadActual,
+			velocidadActual,
+			velocidadPorcentaje: Math.round(velocidadActual * 1000) / 10,
+			rpmEstimada: rpmMecanicas(velocidadActual),
+			corrienteEstimadaA: motivoFalla ? corrienteFallaMotor(nominal, motivoFalla) : alimentado ? nominal : 0,
+			motivoFalla,
+		};
 	}
 
 	const memoria = reloj.memoria.motores!;
-	memoria[d.id] ??= { arranqueDesde: reloj.ahora };
-	const transcurridosS = Math.max(0, reloj.ahora - memoria[d.id].arranqueDesde) / 1000;
-	const progresoArranque = Math.max(0, Math.min(1, transcurridosS / SEGUNDOS_ARRANQUE));
-	if (progresoArranque < 1) {
-		return {
-			...base,
-			estado: 'arrancando',
-			progresoArranque,
-			corrienteEstimadaA: Math.round(nominal * VECES_ARRANQUE * 10) / 10,
-		};
-	}
-	return { ...base, estado: 'marcha', progresoArranque: 1, corrienteEstimadaA: nominal };
+	const anterior = memoria[d.id] ?? { velocidadRelativa: 0, actualizadoEn: reloj.ahora };
+	const dt = Math.max(0, reloj.ahora - anterior.actualizadoEn) / 1000;
+	const sube = velocidadObjetivo > anterior.velocidadRelativa;
+	const duracion = sube ? duracionArranqueS : duracionParadaS;
+	const maxCambio = duracion > 0 ? dt / duracion : 1;
+	const velocidadActual = anterior.velocidadRelativa + Math.sign(velocidadObjetivo - anterior.velocidadRelativa)
+		* Math.min(Math.abs(velocidadObjetivo - anterior.velocidadRelativa), maxCambio);
+	memoria[d.id] = { velocidadRelativa: velocidadActual, actualizadoEn: reloj.ahora };
+	const progresoArranque = velocidadObjetivo > 0
+		? Math.max(0, Math.min(1, velocidadActual / velocidadObjetivo)) : 0;
+	const enTransicion = Math.abs(velocidadActual - velocidadObjetivo) > 0.001;
+	const estadoMotor: EstadoMotor['estado'] = motivoFalla ? 'falla'
+		: velocidadObjetivo > velocidadActual + 0.001 ? 'arrancando'
+			: velocidadObjetivo < velocidadActual - 0.001 ? 'desacelerando'
+				: velocidadActual > 0.001 ? 'marcha' : 'detenido';
+	const corrienteEstimadaA = motivoFalla ? corrienteFallaMotor(nominal, motivoFalla)
+		: estadoMotor === 'arrancando' ? Math.round(nominal * VECES_ARRANQUE * 10) / 10
+			: alimentado ? nominal : 0;
+	return {
+		...base, estado: estadoMotor, progresoArranque,
+		velocidadActual: Math.max(0, Math.min(1, velocidadActual)),
+		velocidadPorcentaje: Math.round(Math.max(0, Math.min(1, velocidadActual)) * 1000) / 10,
+		rpmEstimada: rpmMecanicas(velocidadActual),
+		corrienteEstimadaA,
+		motivoFalla,
+		...(enTransicion ? {} : { velocidadActual: velocidadObjetivo }),
+	};
+}
+
+function corrienteFallaMotor(nominal: number, motivo: EstadoMotor['motivoFalla']): number {
+	if (motivo === 'motor-bloqueado') return Math.round(nominal * VECES_ARRANQUE * 10) / 10;
+	if (motivo === 'sobrecarga' || motivo === 'perdida-fase') return Math.round(nominal * 1.5 * 10) / 10;
+	return 0;
 }
 
 function proteccionRearmable(d: Dispositivo): boolean {
@@ -1470,7 +1548,7 @@ export function simular(
 		});
 	}
 	const motores = aparatos.filter(esMotorFuncional)
-		.map((d) => estadoMotor(d, vivos, estado, reloj));
+		.map((d) => estadoMotor(d, vivos, estado, variadores, proyecto.opciones?.frecuenciaHz ?? 50, reloj));
 	const motoresPorId = new Map(motores.map((motor) => [motor.dispositivoId, motor]));
 	if (reloj?.memoria.motores) {
 		const idsPresentes = new Set(motores.map((motor) => motor.dispositivoId));

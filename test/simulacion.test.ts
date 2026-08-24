@@ -730,7 +730,7 @@ test('MOTOR TRIFÁSICO: dos bornes con la misma fase no satisfacen tres fases di
 			presentes: r.motores[0].fasesPresentes,
 			tension: r.motores[0].tensionRecibidaV,
 		},
-		{ estado: 'detenido', alimentado: false, requeridas: 3, presentes: 2, tension: 380 },
+		{ estado: 'falla', alimentado: false, requeridas: 3, presentes: 2, tension: 380 },
 	);
 	assert.ok(!r.activos.has('m1'));
 	assert.ok(!gira(r, '-M1'));
@@ -782,22 +782,25 @@ test('MOTOR: detenido → arrancando → marcha → falla usa memoria runtime y 
 	assert.equal(estadoMotor(r).estado, 'marcha');
 	assert.equal(estadoMotor(r).corrienteEstimadaA, 5);
 
-	// Cortar la protección borra el instante del arranque; rearmar no puede recuperar RPM ficticias.
+	// Cortar la protección inicia una parada mecánica; rearmar durante la inercia no recupera marcha.
 	r = simular(p, { q1: { cerrado: false } }, r.activos, { ahora: 3100, memoria });
-	assert.equal(estadoMotor(r).estado, 'detenido');
+	assert.equal(estadoMotor(r).estado, 'desacelerando');
 	assert.equal(estadoMotor(r).corrienteEstimadaA, 0);
-	r = simular(p, {}, r.activos, { ahora: 4000, memoria });
+	r = simular(p, { q1: { cerrado: false } }, r.activos, { ahora: 5200, memoria });
+	assert.equal(estadoMotor(r).estado, 'detenido');
+	r = simular(p, {}, r.activos, { ahora: 5300, memoria });
 	assert.equal(estadoMotor(r).estado, 'arrancando');
-	assert.equal(estadoMotor(r).progresoArranque, 0);
+	assert.ok(estadoMotor(r).progresoArranque < 0.04);
 
-	r = simular(p, { m1: { fallo: true } }, r.activos, { ahora: 4100, memoria });
+	r = simular(p, { m1: { fallo: true } }, r.activos, { ahora: 5400, memoria });
 	assert.equal(estadoMotor(r).estado, 'falla');
 	assert.equal(estadoMotor(r).motivoFalla, 'fallo-declarado');
 	assert.ok(!r.activos.has('m1'), 'un motor en falla sigue publicado como activo');
 	assert.ok(!gira(r, '-M1'), 'un motor en falla sigue descrito como girando');
-	r = simular(p, {}, r.activos, { ahora: 4200, memoria });
+	r = simular(p, { m1: { fallo: true } }, r.activos, { ahora: 6500, memoria });
+	r = simular(p, {}, r.activos, { ahora: 6600, memoria });
 	assert.equal(estadoMotor(r).estado, 'arrancando', 'al quitar la falla recuperó una marcha anterior');
-	assert.equal(estadoMotor(r).progresoArranque, 0);
+	assert.ok(estadoMotor(r).progresoArranque < 0.04);
 });
 
 test('MOTOR: una carga importada con efecto giro ejecuta el mismo contrato que el motor nativo', () => {

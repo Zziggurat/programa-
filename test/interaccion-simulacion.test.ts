@@ -132,6 +132,8 @@ test('el reloj sigue recalculando motores, rampas VFD y controladores perfilados
 		fasesRequeridas: 3 as const, fasesPresentes: 3,
 		progresoArranque: 0.25, corrienteNominalA: 2, corrienteNominalEstimada: false,
 		corrienteEstimadaA: 12, duracionArranqueEstimadaS: 3,
+		frecuenciaElectricaHz: 50, velocidadObjetivo: 1, velocidadActual: 0.25,
+		velocidadPorcentaje: 25, rpmOrigen: 'no-disponible' as const,
 	};
 	assert.equal(requiereAvanceTemporal(proyecto([]), resultado({
 		motores: [{ ...baseMotor, estado: 'arrancando' }],
@@ -140,7 +142,7 @@ test('el reloj sigue recalculando motores, rampas VFD y controladores perfilados
 	const baseVfd: EstadoVariador = {
 		dispositivoId: 'vfd', designacion: '-U1', estado: 'marcha', alimentado: true,
 		run: true, habilitado: true, referenciaPorcentaje: 100,
-		frecuenciaHz: 10, frecuenciaObjetivoHz: 50,
+		frecuenciaHz: 10, frecuenciaObjetivoHz: 50, frecuenciaNominalHz: 50,
 	};
 	assert.equal(requiereAvanceTemporal(proyecto([]), resultado({ variadores: [baseVfd] }), {}), true,
 		'la rampa del VFD quedó congelada entre ticks');
@@ -378,6 +380,7 @@ test('display de variador distingue sin alimentación/READY/RUN/FAULT y la anima
 		habilitado: true,
 		referenciaPorcentaje: 60,
 		frecuenciaObjetivoHz: 30,
+		frecuenciaNominalHz: 50,
 		frecuenciaHz: hz,
 	});
 	assert.match(textoEstadoVariador(estado('sin-alimentacion', 0)), /^SIN ALIMENTACIÓN/);
