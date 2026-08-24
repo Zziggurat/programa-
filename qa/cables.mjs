@@ -28,7 +28,13 @@ const jsClick = (id) => page.evaluate((i) => document.getElementById(i)?.click()
 const qa = (fn, ...a) => page.evaluate(([f, args]) => window.qa[f](...args), [fn, a]);
 const proyecto = () => qa('proyecto');
 const nConductores = async () => (await proyecto()).conductores.length;
-const toast = async () => (await page.isVisible('#toast')) ? (await page.textContent('#toast')) : '';
+// Visibilidad y texto deben observarse en el mismo turno del navegador. Con render por software,
+// hacer primero `isVisible()` y después `textContent()` puede cruzar el temporizador de 3,2 s del
+// aviso: la UI mostró correctamente el mensaje, pero la segunda consulta ya lo encuentra oculto.
+const toast = () => page.evaluate(() => {
+	const e = document.getElementById('toast');
+	return e && !e.hidden && getComputedStyle(e).display !== 'none' ? (e.textContent ?? '') : '';
+});
 const cursor = () => page.evaluate(() => getComputedStyle(document.querySelector('#escena canvas')).cursor);
 
 /** Carga el tablero de control de la biblioteca (el que usan estas comprobaciones). */

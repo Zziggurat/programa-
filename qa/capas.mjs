@@ -19,8 +19,14 @@ const AQUI=dirname(fileURLToPath(import.meta.url)); const { servidor: s } = awai
 const b=await abrirNavegador(chromium);
 const p=await b.newPage({viewport:{width:1500,height:900}});
 let fallos=0; const must=(n,c,x='')=>{if(!c)fallos++;console.log(`${c?'OK  ':'FAIL'}  ${n}${x?' → '+x:''}`);};
+// El arranque documental bloquea el <body> mientras monta IndexedDB. Un reloj fijo puede vencer
+// antes en una campaña cargada y convertir el bloqueo deliberado en un falso fallo de capas.
+const esperarEditorListo = () => p.waitForFunction(() =>
+  !document.body.classList.contains('persistencia-pendiente') && !document.body.inert,
+  null, { timeout: 30_000 });
 
-await p.goto(`http://127.0.0.1:${s.address().port}/?qa=1&inicio=0`); await p.waitForTimeout(1500);
+await p.goto(`http://127.0.0.1:${s.address().port}/?qa=1&inicio=0`);
+await esperarEditorListo(); await p.waitForTimeout(1500);
 await p.evaluate(()=>document.getElementById('btn-cerrar-ayuda')?.click());
 
 /** ¿Todos los controles de este overlay reciben el clic de verdad? */
@@ -76,6 +82,7 @@ for (const id of ['modal-ayuda','modal-ejemplos','modal-proyecto','modal-dialogo
  */
 console.log('--- una ventana encima de otra ---');
 await p.reload();
+await esperarEditorListo();
 await p.waitForTimeout(1600);
 // Se abre la guía con su botón: al recargar ya no salta sola —solo lo hace la primera visita— y
 // la situación que importa es la misma, la guía delante y alguien que quiere ver un ejemplo.
