@@ -363,6 +363,25 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 		});
 	}
 
+	async eliminarYActivar(id: string, revisionEsperada: number, reemplazoId: string): Promise<void> {
+		if (id === reemplazoId) throw new Error('El proyecto eliminado no puede ser su propio reemplazo.');
+		const ahora = this.ahora();
+		await this.backend.transaccion(['projects', 'snapshots', 'metadata'], 'readwrite', async (tx) => {
+			const documento = await this.registro(tx, id);
+			this.comprobarRevision(documento, revisionEsperada);
+			await this.documento(tx, reemplazoId);
+			await tx.eliminar('projects', id);
+			const snapshots = await tx.listar<SnapshotProyecto>('snapshots');
+			for (const snapshot of snapshots) {
+				if (snapshot.projectId === id) await tx.eliminar('snapshots', snapshot.id);
+			}
+			const metadata: MetadataProyectoActivo = {
+				id: CLAVE_PROYECTO_ACTIVO, projectId: reemplazoId, actualizadoEn: ahora,
+			};
+			await tx.guardar('metadata', CLAVE_PROYECTO_ACTIVO, metadata);
+		});
+	}
+
 	private async snapshotInterno(
 		tx: TransaccionPersistencia,
 		documento: DocumentoProyecto,

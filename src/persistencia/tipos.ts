@@ -148,6 +148,8 @@ export interface RepositorioProyectos {
 	duplicar(id: string, nombre?: string): Promise<DocumentoProyecto>;
 	renombrar(id: string, nombre: string, revisionEsperada: number): Promise<DocumentoProyecto>;
 	eliminar(id: string, revisionEsperada: number): Promise<void>;
+	/** Elimina un proyecto y publica otro como activo dentro de la misma transacción. */
+	eliminarYActivar(id: string, revisionEsperada: number, reemplazoId: string): Promise<void>;
 	crearSnapshot(id: string, motivo?: MotivoSnapshot): Promise<SnapshotProyecto>;
 	listarSnapshots(id: string): Promise<SnapshotProyecto[]>;
 	restaurarSnapshot(id: string, snapshotId: string, revisionEsperada: number): Promise<DocumentoProyecto>;

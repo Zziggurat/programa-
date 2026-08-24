@@ -280,6 +280,25 @@ test('metadata activa usa una frontera tipada y se limpia al eliminar el proyect
 	assert.equal(await repositorio.obtenerProyectoActivo(), undefined);
 });
 
+test('eliminar y activar es una sola transacción para proyecto, snapshots y marcador', async () => {
+	const { backend, repositorio } = entorno();
+	const a = await repositorio.crear({ proyecto: proyectoValido('A') });
+	const b = await repositorio.crear({ proyecto: proyectoValido('B') });
+	await repositorio.crearSnapshot(a.id, 'manual');
+	await repositorio.marcarProyectoActivo(a.id);
+	backend.fallarProximaTransaccion(new Error('fallo atómico simulado'));
+	await assert.rejects(repositorio.eliminarYActivar(a.id, a.revision, b.id), /fallo atómico simulado/);
+	assert.equal((await repositorio.abrir(a.id)).id, a.id);
+	assert.equal((await repositorio.abrir(b.id)).id, b.id);
+	assert.equal((await repositorio.listarSnapshots(a.id)).length, 1);
+	assert.equal(await repositorio.obtenerProyectoActivo(), a.id);
+
+	await repositorio.eliminarYActivar(a.id, a.revision, b.id);
+	await assert.rejects(repositorio.abrir(a.id), ProyectoNoEncontrado);
+	assert.equal(await backend.contar('snapshots'), 0);
+	assert.equal(await repositorio.obtenerProyectoActivo(), b.id);
+});
+
 test('biblioteca custom crea, abre y lista definiciones con clonación defensiva', async () => {
 	const { backend, repositorio } = entorno();
 	const asset = await repositorio.guardarAsset('image/png', new Uint8Array([1, 2, 3, 4]));

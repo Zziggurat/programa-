@@ -22,7 +22,7 @@ import type {
 	ResultadoMigracionLegacy,
 	SnapshotProyecto,
 } from '../src/persistencia/tipos.js';
-import { ProyectoNoEncontrado } from '../src/persistencia/tipos.js';
+import { ProyectoNoEncontrado, ProyectoPersistenciaInvalido } from '../src/persistencia/tipos.js';
 
 export type OrigenAplicacionProyecto =
 	| 'inicializacion'
@@ -139,6 +139,11 @@ export class GestorDocumentos {
 	private generacionGuardada = 0;
 	private cerrado = false;
 	private inicializado = false;
+	/**
+	 * `actual` es aquí una vista derivada de un snapshot, no el contenido vigente del store. Se
+	 * conserva la revisión real del sobre para que una restauración explícita pueda reemplazarlo.
+	 */
+	private recuperacionPendiente = false;
 
 	constructor(opciones: OpcionesGestorDocumentos) {
 		this.repositorio = opciones.repositorio;
@@ -173,6 +178,11 @@ export class GestorDocumentos {
 		return this.ejemplo !== undefined;
 	}
 
+	/** El documento visible procede de un snapshot, pero el registro corrupto sigue intacto. */
+	estaEsperandoRecuperacion(): boolean {
+		return this.recuperacionPendiente;
+	}
+
 	private comprobarAbierto(): void {
 		if (this.cerrado) throw new Error('El gestor de documentos ya está cerrado.');
 	}
@@ -181,6 +191,12 @@ export class GestorDocumentos {
 		this.comprobarAbierto();
 		if (!this.inicializado || !this.actual) {
 			throw new Error('El gestor de documentos todavía no fue inicializado.');
+		}
+	}
+
+	private comprobarRecuperacionResuelta(): void {
+		if (this.recuperacionPendiente) {
+			throw new Error('El proyecto activo está corrupto; restaura una versión de recuperación antes de modificarlo.');
 		}
 	}
 
@@ -241,8 +257,8 @@ export class GestorDocumentos {
 
 	/**
 	 * Migra primero la copia antigua y solo después decide qué documento abrir. Un marcador activo
-	 * huérfano se limpia; un documento corrupto, en cambio, se propaga para que recuperación pueda
-	 * intervenir en vez de abrir silenciosamente otro tablero.
+	 * huérfano se limpia. Si el documento está corrupto pero conserva snapshots válidos, monta el
+	 * más reciente como vista de recuperación sin publicarlo ni modificar el registro dañado.
 	 */
 	async inicializar(autosaveLegacy?: string | null): Promise<ResultadoInicializacionDocumentos> {
 		this.comprobarAbierto();
@@ -251,13 +267,24 @@ export class GestorDocumentos {
 		const migracion = await this.repositorio.migrarAutosaveLegacy(autosaveLegacy);
 		let idActivo = await this.repositorio.obtenerProyectoActivo();
 		let documento: DocumentoProyecto | undefined;
+		let recuperacionPendiente = false;
 		if (idActivo) {
 			try {
 				documento = await this.repositorio.abrir(idActivo);
 			} catch (error) {
-				if (!(error instanceof ProyectoNoEncontrado)) throw error;
-				await this.repositorio.marcarProyectoActivo(undefined);
-				idActivo = undefined;
+				if (error instanceof ProyectoNoEncontrado) {
+					await this.repositorio.marcarProyectoActivo(undefined);
+					idActivo = undefined;
+				} else if (error instanceof ProyectoPersistenciaInvalido) {
+					const resumen = (await this.repositorio.listar()).find((item) => item.id === idActivo);
+					const snapshot = (await this.repositorio.listarSnapshots(idActivo))[0];
+					// Sin una versión válida no existe contenido honesto que el editor pueda montar.
+					if (!resumen || !snapshot) throw error;
+					documento = { ...resumen, proyecto: clonar(snapshot.proyecto) };
+					recuperacionPendiente = true;
+				} else {
+					throw error;
+				}
 			}
 		}
 
@@ -276,11 +303,14 @@ export class GestorDocumentos {
 		});
 		// Incluso si había un marcador, se escribe DESPUÉS del montaje; si el callback lanza no se
 		// publica como activo un documento que esta versión de la UI no pudo mostrar.
-		await this.repositorio.marcarProyectoActivo(documento.id);
+		if (!recuperacionPendiente) await this.repositorio.marcarProyectoActivo(documento.id);
 		this.actual = documento;
+		this.recuperacionPendiente = recuperacionPendiente;
 		this.inicializado = true;
-		this.emitirGuardado(documento);
-		await this.intentarSnapshot(() => this.crearSnapshotModeradoDe(documento, false, 'apertura'));
+		if (!recuperacionPendiente) {
+			this.emitirGuardado(documento);
+			await this.intentarSnapshot(() => this.crearSnapshotModeradoDe(documento, false, 'apertura'));
+		}
 		return { documento: clonar(documento), migracion };
 	}
 
@@ -293,6 +323,7 @@ export class GestorDocumentos {
 	 */
 	programarGuardado(proyecto: Proyecto): number | undefined {
 		this.comprobarInicializado();
+		this.comprobarRecuperacionResuelta();
 		if (this.ejemplo) return undefined;
 		const documentoId = this.actual!.id;
 		const generacion = ++this.generacion;
@@ -432,12 +463,14 @@ export class GestorDocumentos {
 	/** Punto explícito para eventos importantes; programar una edición nunca llama a este método. */
 	async crearSnapshotModerado(forzar = false): Promise<SnapshotProyecto | undefined> {
 		this.comprobarInicializado();
+		this.comprobarRecuperacionResuelta();
 		if (this.ejemplo) return undefined;
 		await this.flush();
 		return this.crearSnapshotModeradoDe(this.actual!, forzar);
 	}
 
 	private async prepararSalida(): Promise<void> {
+		this.comprobarRecuperacionResuelta();
 		await this.flush();
 		// Una versión al abandonar el documento permite volver tras una edición grande, pero la
 		// ventana temporal y la revisión impiden convertir cada navegación en un Git interno.
@@ -494,6 +527,7 @@ export class GestorDocumentos {
 		opciones: OpcionesDuplicarDocumento = {},
 	): Promise<DocumentoProyecto> {
 		this.comprobarInicializado();
+		this.comprobarRecuperacionResuelta();
 		if (id === this.actual!.id) await this.flush();
 		const copia = await this.repositorio.duplicar(id, nombre);
 		if (!opciones.activar) return copia;
@@ -503,6 +537,7 @@ export class GestorDocumentos {
 
 	async renombrar(id: string, nombre: string): Promise<DocumentoProyecto> {
 		this.comprobarInicializado();
+		this.comprobarRecuperacionResuelta();
 		let base: DocumentoProyecto;
 		if (id === this.actual!.id) {
 			await this.flush();
@@ -528,6 +563,7 @@ export class GestorDocumentos {
 	 */
 	async aceptarReparacion(id: string): Promise<DocumentoProyecto> {
 		this.comprobarInicializado();
+		this.comprobarRecuperacionResuelta();
 		let base: DocumentoProyecto;
 		if (id === this.actual!.id) {
 			if (this.ejemplo) throw new Error('Vuelve a tu tablero antes de aceptar una reparación.');
@@ -586,6 +622,7 @@ export class GestorDocumentos {
 			throw error;
 		}
 		this.actual = documento;
+		this.recuperacionPendiente = false;
 		// `restaurarSnapshot` crea atómicamente otra versión (`antes-de-restaurar`). Se relee solo
 		// cuando vuelva a hacer falta; no se adivina cuál ganó si el reloj tiene la misma marca.
 		this.ultimoSnapshotPorProyecto.delete(documento.id);
@@ -594,12 +631,13 @@ export class GestorDocumentos {
 	}
 
 	/**
-	 * Eliminar el documento visible prepara y aplica primero un reemplazo. El marcador cambia solo
-	 * después de que ese reemplazo se pueda mostrar; si borrar falla, marcador y vista vuelven al
-	 * documento anterior.
+	 * Eliminar el documento visible prepara y aplica primero un reemplazo. Después, borrar el viejo
+	 * y publicar el marcador nuevo ocurre en una única transacción; si falla, la vista vuelve al
+	 * documento anterior y cualquier tablero técnico recién creado se compensa.
 	 */
 	async eliminar(id: string): Promise<void> {
 		this.comprobarInicializado();
+		this.comprobarRecuperacionResuelta();
 		if (id !== this.actual!.id) {
 			const documento = await this.repositorio.abrir(id);
 			await this.repositorio.eliminar(id, documento.revision);
@@ -614,28 +652,29 @@ export class GestorDocumentos {
 		const reemplazo = otro
 			? await this.repositorio.abrir(otro.id)
 			: await this.repositorio.crear({ proyecto: clonar(this.crearProyectoInicial()) });
+		const reemplazoCreado = otro ? undefined : reemplazo;
 		const contexto: ContextoAplicacionProyecto = {
 			origen: 'eliminar', documentoId: reemplazo.id, ejemplo: false, guardarAlFinal: false,
 		};
-		await this.aplicarConRollback(reemplazo.proyecto, contexto, anteriorVista);
 		try {
-			await this.repositorio.marcarProyectoActivo(reemplazo.id);
+			await this.aplicarConRollback(reemplazo.proyecto, contexto, anteriorVista);
 		} catch (error) {
-			try {
-				await this.aplicarProyecto(clonar(anteriorVista.proyecto), anteriorVista.contexto);
-			} catch (rollback) {
-				throw errorCompuesto(
-					'No se pudo confirmar el reemplazo ni restaurar la vista anterior.', error, rollback,
-				);
+			if (reemplazoCreado) {
+				try { await this.repositorio.eliminar(reemplazoCreado.id, reemplazoCreado.revision); }
+				catch (rollback) {
+					throw errorCompuesto('No se pudo montar el reemplazo ni retirar el tablero técnico.', error, rollback);
+				}
 			}
 			throw error;
 		}
 		try {
-			await this.repositorio.eliminar(id, anteriorDocumento.revision);
+			await this.repositorio.eliminarYActivar(id, anteriorDocumento.revision, reemplazo.id);
 		} catch (error) {
 			try {
-				await this.repositorio.marcarProyectoActivo(anteriorDocumento.id);
 				await this.aplicarProyecto(clonar(anteriorVista.proyecto), anteriorVista.contexto);
+				if (reemplazoCreado) {
+					await this.repositorio.eliminar(reemplazoCreado.id, reemplazoCreado.revision);
+				}
 			} catch (rollback) {
 				throw errorCompuesto('Falló eliminar el documento y también restaurar la sesión anterior.', error, rollback);
 			}

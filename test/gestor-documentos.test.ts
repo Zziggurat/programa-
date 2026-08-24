@@ -11,6 +11,7 @@ import type { Proyecto } from '../src/modelo/tipos.js';
 import {
 	BackendPersistenciaMemoria,
 	ConflictoRevision,
+	ProyectoPersistenciaInvalido,
 	RepositorioProyectosCore,
 } from '../src/persistencia/index.js';
 import type {
@@ -50,6 +51,7 @@ class RepositorioInstrumentado extends RepositorioProyectosCore {
 	bloquearSiguienteGuardado?: Diferido;
 	guardadoBloqueado?: () => void;
 	fallarSiguienteMarcador?: Error;
+	fallarSiguienteEliminacionActiva?: Error;
 
 	override async guardar(
 		id: string,
@@ -72,6 +74,19 @@ class RepositorioInstrumentado extends RepositorioProyectosCore {
 			throw error;
 		}
 		return super.marcarProyectoActivo(projectId);
+	}
+
+	override async eliminarYActivar(
+		id: string,
+		revisionEsperada: number,
+		reemplazoId: string,
+	): Promise<void> {
+		if (this.fallarSiguienteEliminacionActiva) {
+			const error = this.fallarSiguienteEliminacionActiva;
+			this.fallarSiguienteEliminacionActiva = undefined;
+			throw error;
+		}
+		return super.eliminarYActivar(id, revisionEsperada, reemplazoId);
 	}
 }
 
@@ -141,6 +156,82 @@ test('inicializa desde legacy, lo monta y solo entonces confirma su identidad ac
 	assert.deepEqual(eventos, ['aplicar:inicializacion:ninguno']);
 	assert.equal(await repositorio.obtenerProyectoActivo(), resultado.documento.id);
 	assert.equal(gestor.documentoActivo()?.id, resultado.documento.id);
+});
+
+test('un activo corrupto conserva la biblioteca y queda bloqueado hasta restaurar un snapshot', async () => {
+	const e = entorno();
+	const creado = await e.repositorio.crear({ proyecto: proyectoValido('Recuperable') });
+	const snapshot = await e.repositorio.crearSnapshot(creado.id);
+	await e.repositorio.marcarProyectoActivo(creado.id);
+	await e.backend.transaccion(['projects'], 'readwrite', async (tx) => {
+		const registro = await tx.obtener<DocumentoProyecto>('projects', creado.id);
+		assert.ok(registro);
+		await tx.guardar('projects', creado.id, { ...registro, proyecto: { formato: 'roto' } });
+	});
+
+	let creoInicial = false;
+	const estados: EstadoGuardadoDocumento[] = [];
+	let pantalla: Proyecto | undefined;
+	const gestor = new GestorDocumentos({
+		repositorio: e.repositorio,
+		crearProyectoInicial: () => { creoInicial = true; return proyectoValido('No debe crearse'); },
+		aplicarProyecto: (proyecto) => { pantalla = structuredClone(proyecto); },
+		alCambiarEstado: (estado) => estados.push(estado),
+	});
+	const inicial = await gestor.inicializar();
+
+	assert.equal(gestor.estaEsperandoRecuperacion(), true);
+	assert.equal(inicial.documento.id, creado.id);
+	assert.equal(inicial.documento.revision, creado.revision);
+	assert.equal(pantalla?.nombre, 'Recuperable');
+	assert.equal(creoInicial, false);
+	assert.equal((await gestor.listar())[0].id, creado.id);
+	assert.deepEqual((await gestor.listarSnapshots()).map((s) => s.id), [snapshot.id]);
+	assert.equal(await e.repositorio.obtenerProyectoActivo(), creado.id);
+	assert.equal(estados.length, 0, 'una vista de recuperación no debe anunciar contenido corrupto como guardado');
+	assert.throws(
+		() => gestor.programarGuardado(inicial.documento.proyecto),
+		/restaura una versión de recuperación/i,
+	);
+	await assert.rejects(e.repositorio.abrir(creado.id), ProyectoPersistenciaInvalido);
+
+	const restaurado = await gestor.restaurarSnapshot(snapshot.id);
+	assert.equal(restaurado.id, creado.id);
+	assert.equal(restaurado.revision, creado.revision + 1);
+	assert.equal(restaurado.proyecto.nombre, 'Recuperable');
+	assert.equal(gestor.estaEsperandoRecuperacion(), false);
+	assert.equal((await e.repositorio.abrir(creado.id)).proyecto.nombre, 'Recuperable');
+	assert.equal(estados.at(-1)?.estado, 'guardado');
+});
+
+test('si la UI rechaza el snapshot, la recuperación pendiente y el registro corrupto siguen intactos', async () => {
+	const e = entorno();
+	const creado = await e.repositorio.crear({ proyecto: proyectoValido('Vista segura') });
+	const snapshot = await e.repositorio.crearSnapshot(creado.id);
+	await e.repositorio.marcarProyectoActivo(creado.id);
+	await e.backend.transaccion(['projects'], 'readwrite', async (tx) => {
+		const registro = await tx.obtener<DocumentoProyecto>('projects', creado.id);
+		assert.ok(registro);
+		await tx.guardar('projects', creado.id, { ...registro, proyecto: { formato: 'roto' } });
+	});
+
+	let pantalla: Proyecto | undefined;
+	const gestor = new GestorDocumentos({
+		repositorio: e.repositorio,
+		crearProyectoInicial: () => proyectoValido('No debe crearse'),
+		aplicarProyecto: (proyecto, contexto) => {
+			if (contexto.origen === 'restaurar') throw new Error('snapshot no renderizable');
+			pantalla = structuredClone(proyecto);
+		},
+	});
+	await gestor.inicializar();
+
+	await assert.rejects(gestor.restaurarSnapshot(snapshot.id), /snapshot no renderizable/);
+	assert.equal(gestor.estaEsperandoRecuperacion(), true);
+	assert.equal(gestor.documentoActivo()?.revision, creado.revision);
+	assert.equal(pantalla?.nombre, 'Vista segura');
+	assert.equal(await e.repositorio.obtenerProyectoActivo(), creado.id);
+	await assert.rejects(e.repositorio.abrir(creado.id), ProyectoPersistenciaInvalido);
 });
 
 test('la cola fotografía entradas, coalesce una ráfaga y publica estados reales', async () => {
@@ -464,6 +555,43 @@ test('duplicar, renombrar y eliminar respetan identidad y revisión de la biblio
 	assert.equal(gestor.documentoActivo()?.id, b.id);
 	assert.equal(await repositorio.obtenerProyectoActivo(), b.id);
 	assert.equal(pantalla()?.nombre, 'Reemplazo B');
+});
+
+test('eliminar el último tablero no filtra su reemplazo técnico si falla vista o almacenamiento', async () => {
+	let fallarVista = false;
+	const e = entorno({
+		aplicarProyecto: (_proyecto, contexto) => {
+			if (fallarVista && contexto.origen === 'eliminar') throw new Error('vista no montable');
+		},
+	});
+	const a = (await e.gestor.inicializar()).documento;
+	fallarVista = true;
+	await assert.rejects(e.gestor.eliminar(a.id), /vista no montable/);
+	assert.deepEqual((await e.gestor.listar()).map((d) => d.id), [a.id]);
+	assert.equal(await e.repositorio.obtenerProyectoActivo(), a.id);
+	assert.equal(e.gestor.documentoActivo()?.id, a.id);
+	assert.equal(e.pantalla()?.nombre, a.proyecto.nombre);
+
+	fallarVista = false;
+	e.repositorio.fallarSiguienteEliminacionActiva = new Error('disco lleno al eliminar');
+	await assert.rejects(e.gestor.eliminar(a.id), /disco lleno al eliminar/);
+	assert.deepEqual((await e.gestor.listar()).map((d) => d.id), [a.id]);
+	assert.equal(await e.repositorio.obtenerProyectoActivo(), a.id);
+	assert.equal(e.gestor.documentoActivo()?.id, a.id);
+	assert.equal(e.pantalla()?.nombre, a.proyecto.nombre);
+});
+
+test('un fallo al eliminar conserva intacto el reemplazo preexistente', async () => {
+	const e = entorno();
+	const a = (await e.gestor.inicializar()).documento;
+	const b = await e.gestor.crear(proyectoValido('B'));
+	await e.gestor.abrir(a.id);
+	e.repositorio.fallarSiguienteEliminacionActiva = new Error('fallo de tx compuesta');
+	await assert.rejects(e.gestor.eliminar(a.id), /fallo de tx compuesta/);
+	assert.deepEqual((await e.gestor.listar()).map((d) => d.id).sort(), [a.id, b.id].sort());
+	assert.equal(await e.repositorio.obtenerProyectoActivo(), a.id);
+	assert.equal(e.gestor.documentoActivo()?.id, a.id);
+	assert.equal(e.pantalla()?.nombre, a.proyecto.nombre);
 });
 
 test('cerrar espera el guardado pendiente y rechaza cualquier uso posterior', async () => {

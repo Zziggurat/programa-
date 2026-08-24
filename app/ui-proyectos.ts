@@ -33,6 +33,7 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 	async function pintar(): Promise<void> {
 		const turno = ++pintando;
 		const activo = ctx.gestor.documentoActivo();
+		const esperandoRecuperacion = ctx.gestor.estaEsperandoRecuperacion();
 		const documentos = await ctx.gestor.listar();
 		if (turno !== pintando) return;
 		lista.innerHTML = documentos.length ? '' : '<p class="vacio-biblioteca">Todavía no hay tableros guardados.</p>';
@@ -42,12 +43,15 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 			tarjeta.dataset.documentoId = d.id;
 			tarjeta.innerHTML = `<div class="documento-info"><h3>${escaparHtml(d.nombre)}</h3>`
 				+ `<p>Modificado ${escaparHtml(fecha(d.modificadoEn))} · revisión ${d.revision}</p>`
-				+ `${d.estado === 'requiere-revision' ? '<strong>⚠ Requiere revisar una migración reparada</strong>' : ''}</div>`
+				+ `${esperandoRecuperacion && d.id === activo?.id
+					? '<strong>⚠ El contenido actual está dañado; restaura una versión antes de continuar</strong>'
+					: d.estado === 'requiere-revision' ? '<strong>⚠ Requiere revisar una migración reparada</strong>' : ''}</div>`
 				+ '<div class="acciones-documento"></div>';
 			const acciones = tarjeta.querySelector('.acciones-documento')!;
 			const boton = (texto: string, titulo: string, accion: () => Promise<void>) => {
 				const b = document.createElement('button'); b.className = 'boton'; b.textContent = texto; b.title = titulo;
 				b.onclick = async () => { b.disabled = true; try { await accion(); } finally { b.disabled = false; } };
+				if (esperandoRecuperacion) b.disabled = true;
 				acciones.appendChild(b); return b;
 			};
 			const abrir = boton(d.id === activo?.id && !ctx.gestor.estaMostrandoEjemplo() ? 'Abierto' : 'Abrir',
@@ -56,7 +60,8 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 					avisar(`Tablero «${d.nombre}» abierto`, 'ok');
 				});
 			abrir.classList.add('primario');
-			abrir.disabled = d.id === activo?.id && !ctx.gestor.estaMostrandoEjemplo();
+			abrir.disabled = esperandoRecuperacion
+				|| d.id === activo?.id && !ctx.gestor.estaMostrandoEjemplo();
 			boton('Renombrar', 'Cambiar el nombre sin cambiar la identidad', async () => {
 				const nombre = await pedirTexto('Nuevo nombre del tablero', d.nombre);
 				if (!nombre) return; await ctx.gestor.renombrar(d.id, nombre); await pintar();
@@ -85,7 +90,9 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 			lista.appendChild(tarjeta);
 		}
 
-		recuperacion.innerHTML = '';
+		recuperacion.innerHTML = esperandoRecuperacion
+			? '<p class="error-biblioteca">El proyecto activo no se puede leer. Elige una versión válida para recuperarlo; el registro dañado no se modificará hasta que confirmes.</p>'
+			: '';
 		const snapshots = activo && !ctx.gestor.estaMostrandoEjemplo()
 			? await ctx.gestor.listarSnapshots()
 			: [];
@@ -103,7 +110,10 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 			};
 			fila.appendChild(b); recuperacion.appendChild(fila);
 		}
-		if (!snapshots.length) recuperacion.innerHTML = '<p class="vacio-biblioteca">No hay versiones anteriores de este tablero.</p>';
+		if (!snapshots.length) recuperacion.insertAdjacentHTML(
+			'beforeend',
+			'<p class="vacio-biblioteca">No hay versiones anteriores de este tablero.</p>',
+		);
 
 		const antiguas = await ctx.listarRecuperaciones();
 		if (turno !== pintando) return;
