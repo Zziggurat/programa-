@@ -278,6 +278,7 @@ function tableroVfdV2(run = true, importado = true): Proyecto {
 		mando: { run: 'RUN' }, referencia: { borne: 'AI', comun: 'COM', unidad: 'V', rango: [0, 10] },
 		salida: { u: 'U', v: 'V', w: 'W', tensionV: 400 },
 		frecuencia: { minimaHz: 0, maximaHz: 50, rampaHzS: 10 },
+		contactoFallo: { entrada: 'AL1', salida: 'AL2', reposo: 'abierto', funcion: 'auxiliar' },
 	};
 	p.dispositivos = [
 		{
@@ -286,7 +287,7 @@ function tableroVfdV2(run = true, importado = true): Proyecto {
 		},
 		{
 			id: 'vfd', tipo: importado ? 'otro' : 'variador', imagen: importado ? 'asset://vfd-importado' : undefined,
-			bornes: ['L', 'N', 'RUN', 'AI', 'COM', 'U', 'V', 'W'].map((id) => ({ id })),
+			bornes: ['L', 'N', 'RUN', 'AI', 'COM', 'U', 'V', 'W', 'AL1', 'AL2'].map((id) => ({ id })),
 			comportamiento: perfilVfd,
 		},
 		{
@@ -298,11 +299,17 @@ function tableroVfdV2(run = true, importado = true): Proyecto {
 				dinamicaMotor: { polos: 4, tiempoArranqueS: 2, tiempoParadaS: 2 },
 			},
 		},
+		{
+			id: 'piloto-fallo', tipo: 'piloto', tensionNominal: 230, corrienteNominal: 0.02,
+			bornes: [{ id: 'X1' }, { id: 'X2' }],
+		},
 	];
 	p.conductores = [
 		cable('p1', ['red', 'L'], ['vfd', 'L']), cable('p2', ['red', 'N'], ['vfd', 'N']),
 		cable('m1', ['vfd', 'U'], ['motor', 'U1']), cable('m2', ['vfd', 'V'], ['motor', 'V1']),
 		cable('m3', ['vfd', 'W'], ['motor', 'W1']),
+		cable('al1', ['red', 'L'], ['vfd', 'AL1']), cable('al2', ['vfd', 'AL2'], ['piloto-fallo', 'X1']),
+		cable('aln', ['piloto-fallo', 'X2'], ['red', 'N']),
 	];
 	if (run) p.conductores.push(cable('run', ['red', 'L'], ['vfd', 'RUN']));
 	return p;
@@ -331,14 +338,18 @@ test('VFD V2: RUN, DECEL, FAULT enclavado, RESET seguro y nueva orden RUN', () =
 	assert.equal(r.variadores[0].estado, 'falla');
 	assert.equal(r.variadores[0].frecuenciaHz, 0);
 	assert.equal(r.motores[0].estado, 'desacelerando');
+	assert.equal(r.activos.has('piloto-fallo'), true, 'FAULT no cerró la salida de alarma declarada');
 	r = simular(p, { vfd: { valor: 5, resetFallo: true, fallos: ['fallo-externo'] } }, r.activos,
 		{ ahora: 7700, memoria });
 	assert.equal(r.variadores[0].estado, 'falla', 'RESET aceptó mientras seguía presente la causa');
 
 	r = simular(p, { vfd: { valor: 5 } }, r.activos, { ahora: 8000, memoria });
 	assert.equal(r.variadores[0].estado, 'falla', 'retirar la causa borró el FAULT enclavado');
+	assert.equal(r.variadores[0].motivoFalla, 'fallo-externo', 'el enclavamiento perdió la causa visible');
+	assert.equal(r.activos.has('piloto-fallo'), true, 'el contacto de alarma cayó antes del RESET');
 	r = simular(p, { vfd: { valor: 5, resetFallo: true } }, r.activos, { ahora: 8100, memoria });
 	assert.equal(r.variadores[0].estado, 'listo');
+	assert.equal(r.activos.has('piloto-fallo'), false, 'RESET no abrió el contacto de alarma NA');
 	assert.equal(r.variadores[0].runBloqueadoHastaSoltar, true);
 	r = simular(p, { vfd: { valor: 5 } }, r.activos, { ahora: 8200, memoria });
 	assert.equal(r.variadores[0].estado, 'listo', 'RESET se convirtió en RUN con la orden aún alta');

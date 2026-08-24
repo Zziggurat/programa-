@@ -127,6 +127,7 @@ export interface MemoriaTiempos {
 	variadores?: Record<string, {
 		frecuenciaHz: number; actualizadoEn: number;
 		falloEnclavado?: boolean; runBloqueadoHastaSoltar?: boolean;
+		motivoFalla?: EstadoVariador['motivoFalla'];
 	}>;
 	/** Velocidad mecánica relativa. Es runtime y no modifica datos de placa ni el Proyecto. */
 	motores?: Record<string, { velocidadRelativa: number; actualizadoEn: number }>;
@@ -1098,10 +1099,12 @@ function estadoVariador(
 	const anterior = reloj?.memoria.variadores?.[d.id];
 	let falloEnclavado = anterior?.falloEnclavado === true || motivoActual !== undefined;
 	let runBloqueadoHastaSoltar = anterior?.runBloqueadoHastaSoltar === true;
+	let motivoFalla = motivoActual ?? anterior?.motivoFalla;
 	const resetPermitido = falloEnclavado && motivoActual === undefined && alimentado;
 	if (st?.resetFallo && resetPermitido) {
 		falloEnclavado = false;
 		runBloqueadoHastaSoltar = true;
+		motivoFalla = undefined;
 	}
 	if (!run) runBloqueadoHastaSoltar = false;
 	const runEfectivo = run && !runBloqueadoHastaSoltar;
@@ -1126,7 +1129,7 @@ function estadoVariador(
 		estado: !alimentado ? 'sin-alimentacion' : falloEnclavado ? 'falla'
 			: frecuenciaObjetivoHz < frecuenciaHz - 0.01 ? 'decel'
 				: (runEfectivo && habilitado) || entregaSalida ? 'marcha' : 'listo',
-		alimentado, falloEnclavado, resetPermitido, runBloqueadoHastaSoltar, motivoFalla: motivoActual,
+		alimentado, falloEnclavado, resetPermitido, runBloqueadoHastaSoltar, motivoFalla,
 		run, habilitado, referenciaPorcentaje: Math.round(referenciaPorcentaje * 100) / 100,
 		frecuenciaNominalHz: perfil.frecuencia.maximaHz,
 		frecuenciaObjetivoHz: Math.round(frecuenciaObjetivoHz * 100) / 100,
@@ -1467,6 +1470,7 @@ export function simular(
 	}
 	let prop: Propagacion = { vivos, alcances: [], conductorEntre: new Map() };
 	let fuentesVariadores: Fuente[] = [];
+	let variadoresEnFalla = new Set<string>();
 
 	/*
 	 * LOS RETARDOS DEL PROGRAMA SE CUENTAN CON EL CIRCUITO YA RESUELTO, NO A MEDIO RESOLVER.
@@ -1495,7 +1499,8 @@ export function simular(
 	 */
 	while (pasadas < MAX_PASADAS && !estable) {
 		pasadas++;
-		prop = propagar(proyecto, aparatos, [...fuentes, ...fuentesVariadores], estado, activos, vivos, conmutados, salidasDePrograma);
+		prop = propagar(proyecto, aparatos, [...fuentes, ...fuentesVariadores], estado, activos, vivos,
+			conmutados, salidasDePrograma, variadoresEnFalla);
 		const nuevosVivos = prop.vivos;
 		// Copia limpia por pasada: parte de la historia REAL y se descarta al terminar la pasada.
 		const memoriaTanteo = reloj ? clonarMemoriaLogica(memoriaLogica) : undefined;
@@ -1525,6 +1530,10 @@ export function simular(
 			return perfil?.clase === 'variador'
 				? [estadoVariador(d, perfil, proyecto, estado, nuevosVivos, analogicas, reloj)] : [];
 		});
+		const nuevosVariadoresEnFalla = new Set(estadosVariadores
+			.filter((v) => v.estado === 'falla').map((v) => v.dispositivoId));
+		const cambiaronContactosFallo = !igualesConjuntos(variadoresEnFalla, nuevosVariadoresEnFalla);
+		variadoresEnFalla = nuevosVariadoresEnFalla;
 		const nuevasFuentesVariadores = fuentesDeVariadores(aparatos, estadosVariadores);
 		const cambiaronFuentesVariadores = !igualesConjuntos(
 			new Set(fuentesVariadores.map((f) => f.clave)), new Set(nuevasFuentesVariadores.map((f) => f.clave)),
@@ -1541,7 +1550,7 @@ export function simular(
 		}
 		conmutados = aplicarTemporizadores(aparatos, nuevosActivos, reloj);
 		estable = igualesClaves(vivos, nuevosVivos) && igualesConjuntos(activos, nuevosActivos)
-			&& !cambiaronFuentesVariadores;
+			&& !cambiaronFuentesVariadores && !cambiaronContactosFallo;
 		vivos = nuevosVivos;
 		activos = nuevosActivos;
 
@@ -1588,6 +1597,7 @@ export function simular(
 				frecuenciaHz: v.frecuenciaHz, actualizadoEn: reloj.ahora,
 				falloEnclavado: v.falloEnclavado,
 				runBloqueadoHastaSoltar: v.runBloqueadoHastaSoltar,
+				motivoFalla: v.motivoFalla,
 			};
 		}
 	}
@@ -1951,10 +1961,17 @@ function fallosActivos(
 			origen: p.origen ?? 'estimado', descripcion: p.causa ? `Actuó por ${p.causa}.` : 'Protección accionada.',
 		});
 	}
-	for (const v of variadores) if (v.estado === 'falla') salida.push({
-		dispositivoId: v.dispositivoId, designacion: v.designacion, tipo: 'vfd-fault',
-		origen: 'estimado', descripcion: 'El variador mantiene un FAULT de runtime.',
-	});
+	for (const v of variadores) if (v.estado === 'falla') {
+		const inyectado = v.motivoFalla === 'fallo-externo' || v.motivoFalla === 'subtension'
+			|| v.motivoFalla === 'sobrecarga';
+		salida.push({
+			dispositivoId: v.dispositivoId, designacion: v.designacion, tipo: 'vfd-fault',
+			origen: inyectado ? 'inyectado' : 'estimado',
+			descripcion: v.motivoFalla
+				? `El variador mantiene un FAULT de runtime por ${v.motivoFalla}.`
+				: 'El variador mantiene un FAULT de runtime.',
+		});
+	}
 	return salida;
 }
 
@@ -2078,6 +2095,7 @@ function propagar(
 	vivosPrevios: Map<string, BorneVivo>,
 	conmutados: Set<string>,
 	salidasDePrograma: ReadonlyMap<string, Set<string>> = new Map(),
+	variadoresEnFalla: ReadonlySet<string> = new Set(),
 ): Propagacion {
 	// Grafo: borne ↔ borne por conductores, puentes de bornero y contactos cerrados.
 	const vecinos = new Map<string, string[]>();
@@ -2132,6 +2150,13 @@ function propagar(
 		const manda = d.rol?.tipo === 'esclavo' ? d.rol.maestroId : d.id;
 		for (const [a, b] of contactosCerrados(d, conSalidas, conmutados.has(manda))) {
 			unir(`${d.id}::${a}`, `${d.id}::${b}`);
+		}
+		const perfil = resolverComportamiento(d);
+		if (perfil?.clase === 'variador' && perfil.contactoFallo) {
+			const enFalla = variadoresEnFalla.has(d.id);
+			const cerrado = perfil.contactoFallo.reposo === 'cerrado' ? !enFalla : enFalla;
+			if (cerrado) unir(`${d.id}::${perfil.contactoFallo.entrada}`,
+				`${d.id}::${perfil.contactoFallo.salida}`);
 		}
 	}
 
