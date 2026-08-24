@@ -143,8 +143,12 @@ export function memoriaVacia(): MemoriaTiempos {
 export interface EstadoVariador {
 	dispositivoId: string;
 	designacion: string;
-	estado: 'sin-alimentacion' | 'listo' | 'marcha' | 'falla';
+	estado: 'sin-alimentacion' | 'listo' | 'marcha' | 'decel' | 'falla';
 	alimentado: boolean;
+	falloEnclavado: boolean;
+	resetPermitido: boolean;
+	runBloqueadoHastaSoltar: boolean;
+	motivoFalla?: 'fallo-externo' | 'perdida-fase' | 'subtension' | 'sobrecarga' | 'fallo-declarado';
 	run: boolean;
 	habilitado: boolean;
 	referenciaPorcentaje: number;
@@ -1079,14 +1083,34 @@ function estadoVariador(
 	const run = vivos.get(`${d.id}::${perfil.mando.run}`)?.papel === 'fase';
 	const habilitado = !perfil.mando.habilitacion
 		|| vivos.get(`${d.id}::${perfil.mando.habilitacion}`)?.papel === 'fase';
-	const falla = estado[d.id]?.fallo === true || estado[d.id]?.disparado === true;
+	const st = estado[d.id];
+	const fasesPresentes = new Set(perfil.alimentacion.fases
+		.map((id) => vivos.get(`${d.id}::${id}`))
+		.filter((v): v is BorneVivo => v?.papel === 'fase')
+		.map((v) => v.fuente)).size;
+	const perdidaFaseFisica = perfil.alimentacion.fasesMinimas === 3
+		&& fasesPresentes > 0 && fasesPresentes < 3;
+	const motivoActual = st?.fallo === true || st?.disparado === true ? 'fallo-declarado' as const
+		: tieneFallo(st, 'fallo-externo') ? 'fallo-externo' as const
+			: tieneFallo(st, 'perdida-fase') || perdidaFaseFisica ? 'perdida-fase' as const
+				: tieneFallo(st, 'subtension') ? 'subtension' as const
+					: tieneFallo(st, 'sobrecarga') ? 'sobrecarga' as const : undefined;
+	const anterior = reloj?.memoria.variadores?.[d.id];
+	let falloEnclavado = anterior?.falloEnclavado === true || motivoActual !== undefined;
+	let runBloqueadoHastaSoltar = anterior?.runBloqueadoHastaSoltar === true;
+	const resetPermitido = falloEnclavado && motivoActual === undefined && alimentado;
+	if (st?.resetFallo && resetPermitido) {
+		falloEnclavado = false;
+		runBloqueadoHastaSoltar = true;
+	}
+	if (!run) runBloqueadoHastaSoltar = false;
+	const runEfectivo = run && !runBloqueadoHastaSoltar;
 	const referenciaPorcentaje = porcentajeReferencia(d, perfil.referencia, proyecto, estado, vivos, analogicas);
 	const pedido = perfil.frecuencia.minimaHz
 		+ (perfil.frecuencia.maximaHz - perfil.frecuencia.minimaHz) * referenciaPorcentaje / 100;
-	const frecuenciaObjetivoHz = alimentado && habilitado && run && !falla ? pedido : 0;
+	const frecuenciaObjetivoHz = alimentado && habilitado && runEfectivo && !falloEnclavado ? pedido : 0;
 	let frecuenciaHz = frecuenciaObjetivoHz;
 	if (reloj) {
-		const anterior = reloj.memoria.variadores?.[d.id];
 		if (!anterior) frecuenciaHz = 0;
 		else {
 			const dt = Math.max(0, reloj.ahora - anterior.actualizadoEn) / 1000;
@@ -1095,13 +1119,15 @@ function estadoVariador(
 			frecuenciaHz = anterior.frecuenciaHz + Math.sign(diferencia) * Math.min(Math.abs(diferencia), maxCambio);
 		}
 	}
-	if (!alimentado || falla) frecuenciaHz = 0;
-	const entregaSalida = alimentado && !falla && frecuenciaHz > 0;
+	if (!alimentado || falloEnclavado) frecuenciaHz = 0;
+	const entregaSalida = alimentado && !falloEnclavado && frecuenciaHz > 0;
 	return {
 		dispositivoId: d.id, designacion: d.designacion ?? d.id,
-		estado: !alimentado ? 'sin-alimentacion' : falla ? 'falla'
-			: (run && habilitado) || entregaSalida ? 'marcha' : 'listo',
-		alimentado, run, habilitado, referenciaPorcentaje: Math.round(referenciaPorcentaje * 100) / 100,
+		estado: !alimentado ? 'sin-alimentacion' : falloEnclavado ? 'falla'
+			: frecuenciaObjetivoHz < frecuenciaHz - 0.01 ? 'decel'
+				: (runEfectivo && habilitado) || entregaSalida ? 'marcha' : 'listo',
+		alimentado, falloEnclavado, resetPermitido, runBloqueadoHastaSoltar, motivoFalla: motivoActual,
+		run, habilitado, referenciaPorcentaje: Math.round(referenciaPorcentaje * 100) / 100,
 		frecuenciaNominalHz: perfil.frecuencia.maximaHz,
 		frecuenciaObjetivoHz: Math.round(frecuenciaObjetivoHz * 100) / 100,
 		frecuenciaHz: Math.round(frecuenciaHz * 100) / 100,
@@ -1117,7 +1143,7 @@ function fuentesDeVariadores(
 		const perfil = resolverComportamiento(d);
 		if (perfil?.clase !== 'variador') continue;
 		const e = porId.get(d.id);
-		if (!e || e.estado !== 'marcha' || e.frecuenciaHz <= 0) continue;
+		if (!e || !['marcha', 'decel'].includes(e.estado) || e.frecuenciaHz <= 0) continue;
 		for (const borne of [perfil.salida.u, perfil.salida.v, perfil.salida.w]) {
 			salida.push({ clave: `${d.id}::${borne}`, tension: perfil.salida.tensionV, papel: 'fase', trifasica: true });
 		}
@@ -1558,7 +1584,11 @@ export function simular(
 	if (reloj) {
 		reloj.memoria.variadores ??= {};
 		for (const v of variadores) {
-			reloj.memoria.variadores[v.dispositivoId] = { frecuenciaHz: v.frecuenciaHz, actualizadoEn: reloj.ahora };
+			reloj.memoria.variadores[v.dispositivoId] = {
+				frecuenciaHz: v.frecuenciaHz, actualizadoEn: reloj.ahora,
+				falloEnclavado: v.falloEnclavado,
+				runBloqueadoHastaSoltar: v.runBloqueadoHastaSoltar,
+			};
 		}
 	}
 	for (const v of variadores) {

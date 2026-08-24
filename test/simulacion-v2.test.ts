@@ -268,3 +268,102 @@ test('disyuntor/guardamotor V2: térmica y magnética comparten contrato sin pro
 	assert.deepEqual(disparo.eventos.map((e) => [e.estado, e.causa, e.origen]),
 		[['disparado', 'cortocircuito', 'inyectado']]);
 });
+
+function tableroVfdV2(run = true, importado = true): Proyecto {
+	const p = crearProyecto('VFD V2');
+	p.opciones = { ...p.opciones, frecuenciaHz: 50 };
+	const perfilVfd: ComportamientoSimulacion = {
+		version: 1, clase: 'variador',
+		alimentacion: { fases: ['L'], retornos: ['N'], fasesMinimas: 1 },
+		mando: { run: 'RUN' }, referencia: { borne: 'AI', comun: 'COM', unidad: 'V', rango: [0, 10] },
+		salida: { u: 'U', v: 'V', w: 'W', tensionV: 400 },
+		frecuencia: { minimaHz: 0, maximaHz: 50, rampaHzS: 10 },
+	};
+	p.dispositivos = [
+		{
+			id: 'red', tipo: 'otro', clase: 'W', campo: true, descripcion: 'Red', tensionNominal: 230,
+			bornes: [{ id: 'L', tipo: 'L' }, { id: 'N', tipo: 'N' }],
+		},
+		{
+			id: 'vfd', tipo: importado ? 'otro' : 'variador', imagen: importado ? 'asset://vfd-importado' : undefined,
+			bornes: ['L', 'N', 'RUN', 'AI', 'COM', 'U', 'V', 'W'].map((id) => ({ id })),
+			comportamiento: perfilVfd,
+		},
+		{
+			id: 'motor', tipo: 'otro', imagen: 'asset://motor-importado', corrienteNominal: 3, tensionNominal: 400,
+			bornes: ['U1', 'V1', 'W1'].map((id) => ({ id, tipo: 'L' as const })),
+			comportamiento: {
+				version: 1, clase: 'carga', efecto: 'giro',
+				alimentacion: { fases: ['U1', 'V1', 'W1'], retornos: [], fasesMinimas: 3 },
+				dinamicaMotor: { polos: 4, tiempoArranqueS: 2, tiempoParadaS: 2 },
+			},
+		},
+	];
+	p.conductores = [
+		cable('p1', ['red', 'L'], ['vfd', 'L']), cable('p2', ['red', 'N'], ['vfd', 'N']),
+		cable('m1', ['vfd', 'U'], ['motor', 'U1']), cable('m2', ['vfd', 'V'], ['motor', 'V1']),
+		cable('m3', ['vfd', 'W'], ['motor', 'W1']),
+	];
+	if (run) p.conductores.push(cable('run', ['red', 'L'], ['vfd', 'RUN']));
+	return p;
+}
+
+test('VFD V2: RUN, DECEL, FAULT enclavado, RESET seguro y nueva orden RUN', () => {
+	const p = tableroVfdV2();
+	const memoria = memoriaVacia();
+	let estado = { vfd: { valor: 10 } };
+	let r = simular(p, estado, undefined, { ahora: 0, memoria });
+	assert.equal(r.variadores[0].estado, 'marcha');
+	assert.equal(r.variadores[0].frecuenciaHz, 0);
+	r = simular(p, estado, r.activos, { ahora: 5000, memoria });
+	assert.equal(r.variadores[0].frecuenciaHz, 50);
+	assert.equal(r.motores[0].velocidadPorcentaje, 100);
+
+	estado = { vfd: { valor: 5 } };
+	r = simular(p, estado, r.activos, { ahora: 6000, memoria });
+	assert.equal(r.variadores[0].estado, 'decel');
+	assert.equal(r.variadores[0].frecuenciaHz, 40);
+	r = simular(p, estado, r.activos, { ahora: 7500, memoria });
+	assert.equal(r.variadores[0].frecuenciaHz, 25);
+
+	const conFallo = { vfd: { valor: 5, fallos: ['fallo-externo'] as TipoFalloRuntime[] } };
+	r = simular(p, conFallo, r.activos, { ahora: 7600, memoria });
+	assert.equal(r.variadores[0].estado, 'falla');
+	assert.equal(r.variadores[0].frecuenciaHz, 0);
+	assert.equal(r.motores[0].estado, 'desacelerando');
+	r = simular(p, { vfd: { valor: 5, resetFallo: true, fallos: ['fallo-externo'] } }, r.activos,
+		{ ahora: 7700, memoria });
+	assert.equal(r.variadores[0].estado, 'falla', 'RESET aceptó mientras seguía presente la causa');
+
+	r = simular(p, { vfd: { valor: 5 } }, r.activos, { ahora: 8000, memoria });
+	assert.equal(r.variadores[0].estado, 'falla', 'retirar la causa borró el FAULT enclavado');
+	r = simular(p, { vfd: { valor: 5, resetFallo: true } }, r.activos, { ahora: 8100, memoria });
+	assert.equal(r.variadores[0].estado, 'listo');
+	assert.equal(r.variadores[0].runBloqueadoHastaSoltar, true);
+	r = simular(p, { vfd: { valor: 5 } }, r.activos, { ahora: 8200, memoria });
+	assert.equal(r.variadores[0].estado, 'listo', 'RESET se convirtió en RUN con la orden aún alta');
+
+	const sinRun = tableroVfdV2(false);
+	r = simular(sinRun, { vfd: { valor: 5 } }, r.activos, { ahora: 8300, memoria });
+	assert.equal(r.variadores[0].estado, 'listo');
+	r = simular(p, { vfd: { valor: 5 } }, r.activos, { ahora: 8400, memoria });
+	assert.equal(r.variadores[0].estado, 'marcha');
+	assert.ok(r.variadores[0].frecuenciaHz > 0, 'una nueva orden RUN no volvió a arrancar');
+});
+
+test('VFD → motor: 10/25/50 Hz producen velocidades distintas y perfiles importados equivalentes', () => {
+	const ejecutar = (voltios: number, importado: boolean) => {
+		const r = simular(tableroVfdV2(true, importado), { vfd: { valor: voltios } });
+		return {
+			hz: r.variadores[0].frecuenciaHz,
+			velocidad: r.motores[0].velocidadPorcentaje,
+			rpm: r.motores[0].rpmEstimada,
+		};
+	};
+	assert.deepEqual(ejecutar(5, true), ejecutar(5, false));
+	assert.deepEqual([ejecutar(2, true), ejecutar(5, true), ejecutar(10, true)], [
+		{ hz: 10, velocidad: 20, rpm: 300 },
+		{ hz: 25, velocidad: 50, rpm: 750 },
+		{ hz: 50, velocidad: 100, rpm: 1500 },
+	]);
+});

@@ -416,7 +416,7 @@ test('variador v1: ENABLE inhibe RUN y la rampa avanza una sola vez por tick', (
 	r = simular(sinRun, { vfd: { valor: 10 } }, r.activos, { ahora: 6000, memoria });
 	assert.equal(r.variadores[0].run, false);
 	assert.equal(r.variadores[0].frecuenciaHz, 40);
-	assert.equal(r.variadores[0].estado, 'marcha', 'el VFD anunció READY mientras aún entregaba frecuencia');
+	assert.equal(r.variadores[0].estado, 'decel', 'el VFD no anunció DECEL mientras aún entregaba frecuencia');
 	assert.equal(r.activos.has('motor'), true, 'la salida U/V/W desapareció antes de acabar la desaceleración');
 
 	r = simular(sinRun, { vfd: { valor: 10 } }, r.activos, { ahora: 11000, memoria });
