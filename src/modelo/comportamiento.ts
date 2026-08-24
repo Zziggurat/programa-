@@ -62,6 +62,8 @@ export type ComportamientoSimulacion =
 		polos: ParBornesSimulacion[];
 		contactos: ContactoSimulacion[];
 		rearmable: boolean;
+		/** Capacidad física explícita. Ausente solo en perfiles V1 antiguos. */
+		funcion?: 'termico' | 'termomagnetico' | 'fusible' | 'diferencial' | 'seccionamiento';
 	}
 	| {
 		version: 1;
@@ -86,6 +88,8 @@ export type ComportamientoSimulacion =
 		referencia: ReferenciaAnalogicaSimulacion;
 		salida: { u: string; v: string; w: string; tensionV: number };
 		frecuencia: { minimaHz: number; maximaHz: number; rampaHzS: number };
+		/** Contacto opcional que cambia cuando el runtime entra en FAULT. */
+		contactoFallo?: ContactoSimulacion;
 	}
 	| {
 		version: 1;
@@ -93,6 +97,13 @@ export type ComportamientoSimulacion =
 		alimentacion: { fases: string[]; retornos: string[]; fasesMinimas: 1 | 3 };
 		efecto: 'giro' | 'luz' | 'movimiento' | 'calor' | 'reactivo' | 'generico';
 		mandoAnalogico?: ReferenciaAnalogicaSimulacion & { invertido?: boolean };
+		/** Parámetros mecánicos opcionales; la ausencia se publica como estimación, nunca como placa. */
+		dinamicaMotor?: {
+			polos?: number;
+			tiempoArranqueS?: number;
+			tiempoParadaS?: number;
+			deslizamiento?: number;
+		};
 	}
 	| {
 		version: 1;
@@ -248,8 +259,14 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 		}
 		case 'proteccion': {
 			const ps = pares(bruto.polos); const cs = contactos(bruto.contactos);
+			const funciones = ['termico', 'termomagnetico', 'fusible', 'diferencial', 'seccionamiento'];
+			const funcion = bruto.funcion === undefined ? undefined
+				: typeof bruto.funcion === 'string' && funciones.includes(bruto.funcion)
+					? bruto.funcion as Extract<ComportamientoSimulacion, { clase: 'proteccion' }>['funcion'] : null;
 			return ps && cs && typeof bruto.rearmable === 'boolean'
-				? { version: 1, clase: bruto.clase, polos: ps, contactos: cs, rearmable: bruto.rearmable }
+				&& funcion !== null
+				? { version: 1, clase: bruto.clase, polos: ps, contactos: cs, rearmable: bruto.rearmable,
+					...(funcion === undefined ? {} : { funcion }) }
 				: undefined;
 		}
 		case 'mando': {
@@ -299,11 +316,14 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 				&& bruto.frecuencia.maximaHz > 0 ? bruto.frecuencia.maximaHz : undefined;
 			const rampaHzS = typeof bruto.frecuencia.rampaHzS === 'number' && Number.isFinite(bruto.frecuencia.rampaHzS)
 				&& bruto.frecuencia.rampaHzS > 0 ? bruto.frecuencia.rampaHzS : undefined;
+			const contactoFallo = bruto.contactoFallo === undefined ? undefined : contacto(bruto.contactoFallo);
+			if (bruto.contactoFallo !== undefined && !contactoFallo) return undefined;
 			return fases && retornos && fasesMinimas && run && referencia && u && v && w && tensionV
 				&& minimaHz !== undefined && maximaHz !== undefined && maximaHz >= minimaHz && rampaHzS
 				? { version: 1, clase: bruto.clase, alimentacion: { fases, retornos, fasesMinimas },
 					mando: { run, habilitacion }, referencia, salida: { u, v, w, tensionV },
-					frecuencia: { minimaHz, maximaHz, rampaHzS } }
+					frecuencia: { minimaHz, maximaHz, rampaHzS },
+					...(contactoFallo === undefined ? {} : { contactoFallo }) }
 				: undefined;
 		}
 		case 'carga': {
@@ -318,10 +338,31 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 			const invertidoBruto = esObjeto(bruto.mandoAnalogico) ? bruto.mandoAnalogico.invertido : undefined;
 			if (invertidoBruto !== undefined && typeof invertidoBruto !== 'boolean') return undefined;
 			const invertido = typeof invertidoBruto === 'boolean' ? invertidoBruto : undefined;
+			let dinamicaMotor: Extract<ComportamientoSimulacion, { clase: 'carga' }>['dinamicaMotor'];
+			if (bruto.dinamicaMotor !== undefined) {
+				if (!esObjeto(bruto.dinamicaMotor)) return undefined;
+				const dm = bruto.dinamicaMotor;
+				const opcionalPositivo = (v: unknown, entero = false): number | undefined | null =>
+					v === undefined ? undefined : typeof v === 'number' && Number.isFinite(v) && v > 0
+						&& (!entero || Number.isInteger(v)) ? v : null;
+				const polos = opcionalPositivo(dm.polos, true);
+				const tiempoArranqueS = opcionalPositivo(dm.tiempoArranqueS);
+				const tiempoParadaS = opcionalPositivo(dm.tiempoParadaS);
+				const deslizamiento = dm.deslizamiento === undefined ? undefined
+					: typeof dm.deslizamiento === 'number' && Number.isFinite(dm.deslizamiento)
+						&& dm.deslizamiento >= 0 && dm.deslizamiento < 0.2 ? dm.deslizamiento : null;
+				if ([polos, tiempoArranqueS, tiempoParadaS, deslizamiento].includes(null)) return undefined;
+				dinamicaMotor = {};
+				if (typeof polos === 'number') dinamicaMotor.polos = polos;
+				if (typeof tiempoArranqueS === 'number') dinamicaMotor.tiempoArranqueS = tiempoArranqueS;
+				if (typeof tiempoParadaS === 'number') dinamicaMotor.tiempoParadaS = tiempoParadaS;
+				if (typeof deslizamiento === 'number') dinamicaMotor.deslizamiento = deslizamiento;
+			}
 			return fases && retornos && fasesMinimas && typeof bruto.efecto === 'string' && efectos.includes(bruto.efecto)
 				? { version: 1, clase: bruto.clase, alimentacion: { fases, retornos, fasesMinimas },
 					efecto: bruto.efecto as Extract<ComportamientoSimulacion, { clase: 'carga' }>['efecto'],
-					mandoAnalogico: mando ? { ...mando, invertido } : undefined }
+					mandoAnalogico: mando ? { ...mando, invertido } : undefined,
+					...(dinamicaMotor === undefined ? {} : { dinamicaMotor }) }
 				: undefined;
 		}
 		case 'pasivo': {
@@ -382,6 +423,18 @@ const comunLegacy = (d: Pick<Dispositivo, 'bornes'>, salida: string): string | u
 	if (familia !== salida && ids.has(familia)) return familia;
 	return primerBorne(d.bornes, ['+24', '+V']);
 };
+
+function funcionProteccionLegacy(
+	tipo: TipoDispositivo,
+	ids: ReadonlySet<string>,
+): Extract<ComportamientoSimulacion, { clase: 'proteccion' }>['funcion'] | undefined {
+	if (tipo === 'fusible') return 'fusible';
+	if (tipo === 'diferencial') return 'diferencial';
+	if (tipo === 'seccionador') return 'seccionamiento';
+	if (tipo === 'rele' && ids.has('95') && !ids.has('A1')) return 'termico';
+	if (tipo === 'disyuntor' || tipo === 'guardamotor') return 'termomagnetico';
+	return undefined;
+}
 
 /**
  * Valida referencias y coherencia interna. Una lista vacía significa perfil apto para ejecutar.
@@ -455,6 +508,7 @@ export function validarComportamiento(
 			if (c.mando.habilitacion) borne(c.mando.habilitacion, 'mando.habilitacion');
 			revisarReferencia(c.referencia, 'referencia');
 			borne(c.salida.u, 'salida.u'); borne(c.salida.v, 'salida.v'); borne(c.salida.w, 'salida.w');
+			if (c.contactoFallo) revisarPar(c.contactoFallo, 'contactoFallo');
 			if (new Set([c.salida.u, c.salida.v, c.salida.w]).size !== 3) errores.push('U, V y W deben ser tres bornes distintos');
 			if (c.frecuencia.maximaHz < c.frecuencia.minimaHz || c.frecuencia.rampaHzS <= 0) errores.push('la frecuencia o su rampa no son válidas');
 			break;
@@ -468,6 +522,8 @@ export function validarComportamiento(
 				errores.push('la alimentación monofásica no declara retorno');
 			}
 			if (c.mandoAnalogico) revisarReferencia(c.mandoAnalogico, 'mandoAnalogico');
+			if (c.dinamicaMotor?.polos !== undefined && (!Number.isInteger(c.dinamicaMotor.polos)
+				|| c.dinamicaMotor.polos < 2)) errores.push('dinamicaMotor.polos debe ser un entero de al menos 2');
 			break;
 		case 'pasivo': c.conexiones.forEach((p, i) => revisarPar(p, `conexiones[${i}]`)); break;
 		case 'sin-comportamiento': break;
@@ -480,7 +536,14 @@ export function validarComportamiento(
  * IEC actual. Una referencia con imagen y sin perfil queda inerte: la imagen no prueba función.
  */
 export function resolverComportamiento(d: Dispositivo): ComportamientoSimulacion | undefined {
-	if (d.comportamiento) return validarComportamiento(d).length ? undefined : d.comportamiento;
+	if (d.comportamiento) {
+		if (validarComportamiento(d).length) return undefined;
+		if (d.comportamiento.clase === 'proteccion' && !d.comportamiento.funcion) {
+			const funcion = funcionProteccionLegacy(d.tipo, new Set(d.bornes.map((b) => b.id)));
+			return funcion ? { ...d.comportamiento, funcion } : d.comportamiento;
+		}
+		return d.comportamiento;
+	}
 	if (d.imagen) return undefined;
 	const bornes = d.bornes;
 	const ids = new Set(bornes.map((b) => b.id));
@@ -497,7 +560,7 @@ export function resolverComportamiento(d: Dispositivo): ComportamientoSimulacion
 		|| d.tipo === 'rele' && ids.has('95')) {
 		return {
 			version: 1, clase: 'proteccion', polos: polosIEC(d), contactos: contactosIEC(d),
-			rearmable: d.tipo !== 'fusible',
+			rearmable: d.tipo !== 'fusible', funcion: funcionProteccionLegacy(d.tipo, ids),
 		};
 	}
 	if (d.tipo === 'pulsador' || d.tipo === 'selector') {

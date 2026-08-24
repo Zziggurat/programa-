@@ -48,6 +48,10 @@ export interface ParametrosConstruccionPerfil {
 	posiciones?: 2 | 3;
 	reposo?: number;
 	rearmable?: boolean;
+	polosMotor?: number;
+	tiempoArranqueS?: number;
+	tiempoParadaS?: number;
+	deslizamiento?: number;
 	unidadReferencia?: 'V' | 'porcentaje';
 	referenciaMin?: number;
 	referenciaMax?: number;
@@ -286,7 +290,10 @@ export function construirComportamientoPerfil(
 		const polos = pares('polo-entrada', 'polo-salida', 'polo');
 		const cs = contactos();
 		if (!polos.length) errores.push('la protección necesita al menos un polo');
-		comportamiento = { version: 1, clase: 'proteccion', polos, contactos: cs, rearmable: tipo === 'fusible' ? false : parametros.rearmable ?? true };
+		const funcion = tipo === 'fusible' ? 'fusible' as const : tipo === 'diferencial' ? 'diferencial' as const
+			: tipo === 'seccionador' ? 'seccionamiento' as const : 'termomagnetico' as const;
+		comportamiento = { version: 1, clase: 'proteccion', polos, contactos: cs,
+			rearmable: tipo === 'fusible' ? false : parametros.rearmable ?? true, funcion };
 	} else if (tipo === 'pulsador' || tipo === 'selector') {
 		const posiciones = tipo === 'selector' ? parametros.posiciones ?? 2 : 2;
 		const reposo = Math.trunc(numero(parametros.reposo, 0));
@@ -362,7 +369,18 @@ export function construirComportamientoPerfil(
 			const borne = uno('referencia-analogica', 'la referencia analógica'); const comun = uno('comun-analogico', 'el común analógico');
 			if (borne && comun) mandoAnalogico = { borne, comun, unidad: parametros.unidadReferencia ?? 'V', rango: [numero(parametros.referenciaMin, 0), numero(parametros.referenciaMax, 10)] };
 		}
-		comportamiento = { version: 1, clase: 'carga', alimentacion: { fases, retornos, fasesMinimas }, efecto, ...(mandoAnalogico ? { mandoAnalogico } : {}) };
+		const dinamicaMotor = tipo === 'motor' ? {
+			...(Number.isInteger(parametros.polosMotor) && parametros.polosMotor! >= 2
+				? { polos: parametros.polosMotor } : {}),
+			...(Number.isFinite(parametros.tiempoArranqueS) && parametros.tiempoArranqueS! > 0
+				? { tiempoArranqueS: parametros.tiempoArranqueS } : {}),
+			...(Number.isFinite(parametros.tiempoParadaS) && parametros.tiempoParadaS! > 0
+				? { tiempoParadaS: parametros.tiempoParadaS } : {}),
+			...(Number.isFinite(parametros.deslizamiento) && parametros.deslizamiento! >= 0
+				&& parametros.deslizamiento! < 0.2 ? { deslizamiento: parametros.deslizamiento } : {}),
+		} : undefined;
+		comportamiento = { version: 1, clase: 'carga', alimentacion: { fases, retornos, fasesMinimas }, efecto,
+			...(mandoAnalogico ? { mandoAnalogico } : {}), ...(dinamicaMotor ? { dinamicaMotor } : {}) };
 	} else if (tipo === 'bornero') {
 		const conexiones = pares('pasivo-a', 'pasivo-b', 'paso');
 		if (!conexiones.length) errores.push('el bornero necesita al menos un par de paso');
