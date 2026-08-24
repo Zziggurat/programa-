@@ -261,6 +261,10 @@ test('un detector PNP no da señal en reposo y sí al detectar', () => {
 		cable(['red', 'N'], ['h', 'X2'], 'c4'),
 	];
 	assert.ok(!gira(simular(p), '-H1'), 'el detector da señal sin detectar nada');
+	const sinRetorno = structuredClone(p);
+	sinRetorno.conductores = sinRetorno.conductores.filter((c) => c.id !== 'c2');
+	assert.ok(!gira(simular(sinRetorno, { s1: { activo: true } }), '-H1'),
+		'el detector entrega señal sin recibir su retorno de alimentación');
 	assert.ok(gira(simular(p, { s1: { activo: true } }), '-H1'),
 		'el detector no entrega +24 V por su salida al detectar');
 });
@@ -699,6 +703,37 @@ test('pero un motor de 220 entre las tres fases de 380 sí se avisa', () => {
 	const r = simular(p);
 	assert.equal(r.tensionesEquivocadas.length, 1, 'un motor de 220 a 380 pasa desapercibido');
 	assert.equal(r.tensionesEquivocadas[0].recibe, 380);
+	assert.deepEqual(
+		{
+			recibida: r.motores[0].tensionRecibidaV,
+			nominal: r.motores[0].tensionNominalV,
+			correcta: r.motores[0].tensionCorrecta,
+		},
+		{ recibida: 380, nominal: 220, correcta: false },
+		'el estado funcional debe publicar la misma anomalía sin fingir un modelo térmico',
+	);
+});
+
+test('MOTOR TRIFÁSICO: dos bornes con la misma fase no satisfacen tres fases distintas', () => {
+	const p = tableroCarga({
+		tensionRed: 380, trifasica: true,
+		carga: { tipo: 'motor', tensionNominal: 380, corrienteNominal: 3, polos: 3, bornes: tresBornes },
+	});
+	const tercera = p.conductores.find((c) => c.id === 'c4')!;
+	tercera.de.borneId = 'L2'; // A=L1, B=L2 y C=L2: hay tensión, pero solo dos fases distintas.
+	const r = simular(p);
+	assert.deepEqual(
+		{
+			estado: r.motores[0].estado,
+			alimentado: r.motores[0].alimentado,
+			requeridas: r.motores[0].fasesRequeridas,
+			presentes: r.motores[0].fasesPresentes,
+			tension: r.motores[0].tensionRecibidaV,
+		},
+		{ estado: 'detenido', alimentado: false, requeridas: 3, presentes: 2, tension: 380 },
+	);
+	assert.ok(!r.activos.has('m1'));
+	assert.ok(!gira(r, '-M1'));
 });
 
 test('PUNTA DE ARRANQUE: un motor pide seis veces su nominal al arrancar en directo', () => {
@@ -708,7 +743,129 @@ test('PUNTA DE ARRANQUE: un motor pide seis veces su nominal al arrancar en dire
 	assert.ok(a, 'no se calcula la punta de arranque');
 	assert.equal(a!.nominal, 5);
 	assert.equal(a!.punta, 30, '5 A × 6 = 30 A');
+	assert.equal(a!.duracionEstimadaS, 3, 'la duración genérica del arranque debe ser explícita');
 	assert.ok(a!.protecciones.some((x) => x.designacion === '-Q1'), 'no ve la protección de delante');
+});
+
+test('MOTOR: detenido → arrancando → marcha → falla usa memoria runtime y se reinicia al cortar', () => {
+	const p = tableroCarga({
+		tensionRed: 220, calibre: 16,
+		carga: { tipo: 'motor', tensionNominal: 220, corrienteNominal: 5, bornes: dosBornes },
+	});
+	const memoria = memoriaVacia();
+	const estadoMotor = (r: ReturnType<typeof simular>) => {
+		const motor = r.motores.find((m) => m.dispositivoId === 'm1');
+		assert.ok(motor, 'el resultado no publica el estado contractual del motor');
+		return motor!;
+	};
+
+	let r = simular(p, {}, undefined, { ahora: 0, memoria });
+	assert.deepEqual(
+		{
+			estado: estadoMotor(r).estado,
+			progreso: estadoMotor(r).progresoArranque,
+			corriente: estadoMotor(r).corrienteEstimadaA,
+			duracion: estadoMotor(r).duracionArranqueEstimadaS,
+			fases: [estadoMotor(r).fasesPresentes, estadoMotor(r).fasesRequeridas],
+			tension: [estadoMotor(r).tensionRecibidaV, estadoMotor(r).tensionCorrecta],
+			corrienteNominalEstimada: estadoMotor(r).corrienteNominalEstimada,
+		},
+		{
+			estado: 'arrancando', progreso: 0, corriente: 30, duracion: 3,
+			fases: [1, 1], tension: [220, true], corrienteNominalEstimada: false,
+		},
+	);
+	r = simular(p, {}, r.activos, { ahora: 1500, memoria });
+	assert.equal(estadoMotor(r).estado, 'arrancando');
+	assert.equal(estadoMotor(r).progresoArranque, 0.5);
+	r = simular(p, {}, r.activos, { ahora: 3000, memoria });
+	assert.equal(estadoMotor(r).estado, 'marcha');
+	assert.equal(estadoMotor(r).corrienteEstimadaA, 5);
+
+	// Cortar la protección borra el instante del arranque; rearmar no puede recuperar RPM ficticias.
+	r = simular(p, { q1: { cerrado: false } }, r.activos, { ahora: 3100, memoria });
+	assert.equal(estadoMotor(r).estado, 'detenido');
+	assert.equal(estadoMotor(r).corrienteEstimadaA, 0);
+	r = simular(p, {}, r.activos, { ahora: 4000, memoria });
+	assert.equal(estadoMotor(r).estado, 'arrancando');
+	assert.equal(estadoMotor(r).progresoArranque, 0);
+
+	r = simular(p, { m1: { fallo: true } }, r.activos, { ahora: 4100, memoria });
+	assert.equal(estadoMotor(r).estado, 'falla');
+	assert.equal(estadoMotor(r).motivoFalla, 'fallo-declarado');
+	assert.ok(!r.activos.has('m1'), 'un motor en falla sigue publicado como activo');
+	assert.ok(!gira(r, '-M1'), 'un motor en falla sigue descrito como girando');
+	r = simular(p, {}, r.activos, { ahora: 4200, memoria });
+	assert.equal(estadoMotor(r).estado, 'arrancando', 'al quitar la falla recuperó una marcha anterior');
+	assert.equal(estadoMotor(r).progresoArranque, 0);
+});
+
+test('MOTOR: una carga importada con efecto giro ejecuta el mismo contrato que el motor nativo', () => {
+	const crear = (importado: boolean) => {
+		const p = tableroCarga({
+			tensionRed: 220, calibre: 16,
+			carga: { tipo: 'motor', tensionNominal: 220, corrienteNominal: 5, bornes: dosBornes },
+		});
+		if (importado) {
+			const d = p.dispositivos.find((x) => x.id === 'm1')!;
+			d.tipo = 'otro';
+			d.comportamiento = {
+				version: 1,
+				clase: 'carga',
+				alimentacion: { fases: ['A'], retornos: ['B'], fasesMinimas: 1 },
+				efecto: 'giro',
+			};
+		}
+		return p;
+	};
+	const ejecutar = (importado: boolean) => {
+		const memoria = memoriaVacia();
+		const p = crear(importado);
+		const inicio = simular(p, {}, undefined, { ahora: 0, memoria });
+		const marcha = simular(p, {}, inicio.activos, { ahora: 3000, memoria });
+		return {
+			inicio: inicio.motores[0],
+			marcha: marcha.motores[0],
+			consumo: marcha.consumos[0]?.corriente,
+			arranque: marcha.arranques[0],
+			activo: marcha.activos.has('m1'),
+		};
+	};
+
+	const nativo = ejecutar(false);
+	const importado = ejecutar(true);
+	assert.deepEqual(importado, nativo);
+	assert.equal(importado.inicio?.estado, 'arrancando');
+	assert.equal(importado.marcha?.estado, 'marcha');
+	assert.equal(importado.arranque?.punta, 30);
+});
+
+test('MOTOR: el supuesto de corriente sin placa es idéntico para carcasa nativa e imagen perfilada', () => {
+	const ejecutar = (importado: boolean) => {
+		const p = tableroCarga({
+			tensionRed: 220, calibre: 16,
+			carga: { tipo: 'motor', tensionNominal: 220, bornes: dosBornes },
+		});
+		if (importado) {
+			const d = p.dispositivos.find((x) => x.id === 'm1')!;
+			d.tipo = 'otro';
+			d.imagen = 'asset://motor-importado';
+			d.comportamiento = {
+				version: 1, clase: 'carga',
+				alimentacion: { fases: ['A'], retornos: ['B'], fasesMinimas: 1 }, efecto: 'giro',
+			};
+		}
+		const r = simular(p);
+		return {
+			motor: r.motores[0], consumo: r.consumos[0]?.corriente, arranque: r.arranques[0]?.punta,
+		};
+	};
+	const nativo = ejecutar(false);
+	const importado = ejecutar(true);
+	assert.deepEqual(importado, nativo);
+	assert.equal(importado.motor.corrienteNominalA, 3.5);
+	assert.equal(importado.motor.corrienteNominalEstimada, true);
+	assert.equal(importado.arranque, 21);
 });
 
 test('un automático de curva B salta en el arranque de un motor, y se dice', () => {
@@ -852,6 +1009,21 @@ test('PLC: el programa lee lo que pasa en el tablero, no un mundo aparte', () =>
 	const conAlarma = simular(p, { s1: { activo: true }, s2: { activo: true } });
 	assert.deepEqual(conAlarma.controladores[0].salidas, [], 'la alarma no paró la salida');
 	assert.ok(!conAlarma.activos.has('k1'));
+});
+
+test('PLC: una entrada unida solo al retorno no se interpreta como activa', () => {
+	const p = tableroConPLC('DO1 = DI1');
+	p.conductores = p.conductores.filter((c) => c.id !== 'c3' && c.id !== 'c4');
+	p.conductores.push({
+		id: 'di-retorno',
+		de: { dispositivoId: 'red', borneId: 'N' },
+		a: { dispositivoId: 'a1', borneId: 'DI1' },
+	});
+	const r = simular(p);
+	assert.deepEqual(r.controladores[0].entradas, [],
+		'la lista de entradas incluyó retorno, alimentación o salidas del PLC');
+	assert.deepEqual(r.controladores[0].salidas, []);
+	assert.equal(r.activos.has('a1::DO1'), false, '0 V activó una entrada digital');
 });
 
 test('PLC: una sonda cableada da su valor, y el programa decide con él', () => {

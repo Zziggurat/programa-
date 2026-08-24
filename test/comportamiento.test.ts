@@ -76,6 +76,144 @@ test('el perfil explícito manda sobre tipo/IEC y la imagen legacy sin perfil qu
 	assert.deepEqual(contactosCerrados(conOtroTipo, {}, true), [['line', 'load'], ['common-no', 'no']]);
 });
 
+test('sensor, protección y pasivo importados ejecutan el perfil aunque su carcasa sea otro', () => {
+	const proteccion: Dispositivo = {
+		id: 'q-importado', tipo: 'otro',
+		bornes: ['entrada', 'salida', 'alarma-comun', 'alarma-nc', 'alarma-na'].map((id) => ({ id })),
+		comportamiento: {
+			version: 1, clase: 'proteccion', rearmable: true,
+			polos: [{ entrada: 'entrada', salida: 'salida' }],
+			contactos: [
+				{ entrada: 'alarma-comun', salida: 'alarma-nc', reposo: 'cerrado', funcion: 'auxiliar' },
+				{ entrada: 'alarma-comun', salida: 'alarma-na', reposo: 'abierto', funcion: 'auxiliar' },
+			],
+		},
+	};
+	assert.deepEqual(contactosCerrados(proteccion, {}, false), [
+		['entrada', 'salida'], ['alarma-comun', 'alarma-nc'],
+	]);
+	assert.deepEqual(contactosCerrados(proteccion, { disparado: true }, false), [
+		['alarma-comun', 'alarma-na'],
+	]);
+	assert.deepEqual(contactosCerrados(proteccion, { cerrado: false }, false), [
+		['alarma-comun', 'alarma-na'],
+	], 'abrir manualmente la protección no conmutó su contacto de estado');
+
+	const sensor: Dispositivo = {
+		id: 'b-importado', tipo: 'otro',
+		bornes: ['positivo', 'cero', 'salida', 'seco-comun', 'seco-na'].map((id) => ({ id })),
+		comportamiento: {
+			version: 1, clase: 'sensor',
+			alimentacion: { entrada: 'positivo', retorno: 'cero' },
+			salidaDigital: { borne: 'salida', tomaDe: 'positivo' },
+			contactos: [{
+				entrada: 'seco-comun', salida: 'seco-na', reposo: 'abierto', funcion: 'auxiliar',
+			}],
+		},
+	};
+	assert.deepEqual(contactosCerrados(sensor, {}, false), []);
+	assert.deepEqual(contactosCerrados(sensor, { activo: true }, false), [
+		['seco-comun', 'seco-na'], ['positivo', 'salida'],
+	]);
+
+	const pasivo: Dispositivo = {
+		id: 'x-importado', tipo: 'otro', bornes: [{ id: 'a' }, { id: 'b' }],
+		comportamiento: { version: 1, clase: 'pasivo', conexiones: [{ entrada: 'a', salida: 'b' }] },
+	};
+	assert.deepEqual(contactosCerrados(pasivo, {}, false), [['a', 'b']]);
+	assert.deepEqual(contactosCerrados({
+		...pasivo, puentesInternos: [['a', 'b']],
+		comportamiento: { version: 1, clase: 'sin-comportamiento', motivo: 'no verificado' },
+	}, {}, false), [], 'un perfil explícitamente inerte cayó al puente legacy');
+
+	const termicoLegacy: Dispositivo = {
+		id: 'f-legacy', tipo: 'rele',
+		bornes: ['1', '2', '3', '4', '5', '6', '95', '96', '97', '98'].map((id) => ({ id })),
+	};
+	assert.deepEqual(contactosCerrados(termicoLegacy, {}, false), [
+		['1', '2'], ['3', '4'], ['5', '6'], ['95', '96'],
+	]);
+	assert.deepEqual(contactosCerrados(termicoLegacy, { disparado: true }, false), [['97', '98']],
+		'el adaptador de perfil perdió los auxiliares 95-96/97-98 del térmico legacy');
+
+	const sensorLegacy: Dispositivo = {
+		id: 'b-legacy', tipo: 'sensor', bornes: [{ id: '1' }, { id: '2' }],
+	};
+	assert.deepEqual(contactosCerrados(sensorLegacy, {}, false), []);
+	assert.deepEqual(contactosCerrados(sensorLegacy, { activo: true }, false), [['1', '2']],
+		'el adaptador de perfil perdió el contacto NA 1/2 de campo legacy');
+});
+
+test('un bornero legacy no conecta pares numerados sin un puente explícito', () => {
+	const bornes = ['1', '2', '3', '4'].map((id) => ({ id, etiqueta: id, tipo: 'control' as const }));
+	const bornero: Dispositivo = { id: 'x1', tipo: 'bornero', bornes };
+	assert.deepEqual(contactosCerrados(bornero, {}, false), []);
+	assert.deepEqual(contactosCerrados({ ...bornero, puentesInternos: [['1', '2']] }, {}, false), [['1', '2']]);
+});
+
+test('una protección importada participa en corriente, sobrecarga y cortocircuito por su perfil', () => {
+	const proteccion: Dispositivo = {
+		id: 'q-custom', tipo: 'otro', corrienteNominal: 1, curvaDisparo: 'B',
+		bornes: [{ id: 'linea' }, { id: 'carga' }],
+		comportamiento: {
+			version: 1, clase: 'proteccion', rearmable: true, contactos: [],
+			polos: [{ entrada: 'linea', salida: 'carga' }],
+		},
+	};
+	const p = base24V();
+	p.dispositivos.push(proteccion, {
+		id: 'r-carga', tipo: 'resistencia', tensionNominal: 24, corrienteNominal: 8,
+		bornes: [{ id: 'X1' }, { id: 'X2' }],
+	});
+	p.conductores = [
+		cable('sob-1', ['red', 'L'], ['q-custom', 'linea']),
+		cable('sob-2', ['q-custom', 'carga'], ['r-carga', 'X1']),
+		cable('sob-3', ['r-carga', 'X2'], ['red', 'N']),
+	];
+	const sobrecarga = simular(p);
+	assert.ok((sobrecarga.cargaPorAparato.get('q-custom')?.corriente ?? 0) >= 8);
+	assert.equal(sobrecarga.disparos.some((d) => d.dispositivoId === 'q-custom'
+		&& d.motivo === 'sobrecarga'), true);
+	const invertido = structuredClone(p);
+	invertido.dispositivos.reverse();
+	invertido.conductores.reverse();
+	const sobrecargaInvertida = simular(invertido);
+	assert.deepEqual(
+		sobrecargaInvertida.disparos.map((d) => `${d.dispositivoId}:${d.motivo}`).sort(),
+		sobrecarga.disparos.map((d) => `${d.dispositivoId}:${d.motivo}`).sort(),
+		'invertir dispositivos/conductores cambió el disparo perfilado',
+	);
+
+	const corto = base24V();
+	corto.dispositivos.push(proteccion);
+	corto.conductores = [
+		cable('cc-1', ['red', 'L'], ['q-custom', 'linea']),
+		cable('cc-2', ['q-custom', 'carga'], ['red', 'N']),
+	];
+	const resultadoCorto = simular(corto);
+	assert.equal(resultadoCorto.cortocircuitos.some((f) =>
+		f.proteccionesAguasArriba.includes('q-custom')), true,
+	'el corto aguas abajo no se atribuyó a la protección perfilada');
+	assert.equal(resultadoCorto.disparos.some((d) => d.dispositivoId === 'q-custom'
+		&& d.motivo === 'cortocircuito'), true);
+
+	const rele: Dispositivo = {
+		id: 'k-aux', tipo: 'rele', corrienteNominal: 0.01,
+		bornes: ['A1', 'A2', '13', '14'].map((id) => ({ id })),
+	};
+	assert.equal(resolverComportamiento(rele)?.clase, 'contactos-electromagneticos');
+	const corteManual: Dispositivo = {
+		...proteccion, id: 's-corte', tipo: 'seccionador', corrienteNominal: 0.01,
+	};
+	assert.equal(resolverComportamiento(corteManual)?.clase, 'proteccion');
+	const sinCarga = base24V();
+	sinCarga.dispositivos.push(rele, corteManual);
+	const resultadoSinCarga = simular(sinCarga);
+	assert.equal(resultadoSinCarga.disparos.some((d) => d.dispositivoId === rele.id
+		|| d.dispositivoId === corteManual.id), false,
+		'un relé común o un seccionador se degradó a protección automática por `tipo`');
+});
+
 test('el cargador conserva un perfil válido y elimina uno que refiere bornes inexistentes', () => {
 	const p = crearProyecto('Persistencia de comportamiento');
 	p.hojas = [{ id: 'h1', numero: 1, titulo: 'Hoja 1' }];
@@ -99,21 +237,35 @@ test('un contactor importado con perfil conmuta igual que el contactor nativo', 
 		id: 'kn', tipo: 'contactor', bornes: ['A1', 'A2', '1', '2', '13', '14', '21', '22'].map((id) => ({ id })),
 	};
 	const pilotos: Dispositivo[] = [
-		{ id: 'hn', tipo: 'piloto', tensionNominal: 24, bornes: [{ id: 'X1' }, { id: 'X2' }] },
-		{ id: 'hi', tipo: 'piloto', tensionNominal: 24, bornes: [{ id: 'X1' }, { id: 'X2' }] },
+		...['hn-polo', 'hn-na', 'hn-nc', 'hi-polo', 'hi-na', 'hi-nc'].map((id) => ({
+			id, tipo: 'piloto' as const, tensionNominal: 24,
+			bornes: [{ id: 'X1' }, { id: 'X2' }],
+		})),
 	];
 	p.dispositivos.push(nativo, CONTACTOR_IMPORTADO, ...pilotos);
 	p.conductores = [
 		cable('c1', ['red', 'L'], ['kn', 'A1']), cable('c2', ['kn', 'A2'], ['red', 'N']),
-		cable('c3', ['red', 'L'], ['kn', '1']), cable('c4', ['kn', '2'], ['hn', 'X1']), cable('c5', ['hn', 'X2'], ['red', 'N']),
+		cable('c3', ['red', 'L'], ['kn', '1']), cable('c4', ['kn', '2'], ['hn-polo', 'X1']), cable('c5', ['hn-polo', 'X2'], ['red', 'N']),
 		cable('c6', ['red', 'L'], ['ki', 'coil+']), cable('c7', ['ki', 'coil-'], ['red', 'N']),
-		cable('c8', ['red', 'L'], ['ki', 'line']), cable('c9', ['ki', 'load'], ['hi', 'X1']), cable('c10', ['hi', 'X2'], ['red', 'N']),
+		cable('c8', ['red', 'L'], ['ki', 'line']), cable('c9', ['ki', 'load'], ['hi-polo', 'X1']), cable('c10', ['hi-polo', 'X2'], ['red', 'N']),
+		cable('c11', ['red', 'L'], ['kn', '13']), cable('c12', ['kn', '14'], ['hn-na', 'X1']), cable('c13', ['hn-na', 'X2'], ['red', 'N']),
+		cable('c14', ['red', 'L'], ['kn', '21']), cable('c15', ['kn', '22'], ['hn-nc', 'X1']), cable('c16', ['hn-nc', 'X2'], ['red', 'N']),
+		cable('c17', ['red', 'L'], ['ki', 'common-no']), cable('c18', ['ki', 'no'], ['hi-na', 'X1']), cable('c19', ['hi-na', 'X2'], ['red', 'N']),
+		cable('c20', ['red', 'L'], ['ki', 'common-nc']), cable('c21', ['ki', 'nc'], ['hi-nc', 'X1']), cable('c22', ['hi-nc', 'X2'], ['red', 'N']),
 	];
+	const reposo = structuredClone(p);
+	reposo.conductores = reposo.conductores.filter((c) => c.id !== 'c1' && c.id !== 'c6');
+	const r0 = simular(reposo);
+	assert.equal(r0.activos.has('hn-nc'), true, 'el NC nativo no condujo en reposo');
+	assert.equal(r0.activos.has('hi-nc'), true, 'el NC importado no condujo en reposo');
+	for (const id of ['hn-polo', 'hn-na', 'hi-polo', 'hi-na']) assert.equal(r0.activos.has(id), false, `${id} condujo en reposo`);
+
 	const r = simular(p);
 	assert.ok(r.activos.has('kn'), 'la bobina nativa no entró');
 	assert.ok(r.activos.has('ki'), 'la bobina importada no entró');
-	assert.ok(r.activos.has('hn'), 'el polo nativo no alimentó su carga');
-	assert.ok(r.activos.has('hi'), 'el polo explícito importado no alimentó su carga');
+	for (const id of ['hn-polo', 'hn-na', 'hi-polo', 'hi-na']) assert.ok(r.activos.has(id), `${id} no condujo en trabajo`);
+	assert.equal(r.activos.has('hn-nc'), false, 'el NC nativo no abrió en trabajo');
+	assert.equal(r.activos.has('hi-nc'), false, 'el NC importado no abrió en trabajo');
 });
 
 test('un PLC desconectado no ejecuta el programa aunque su entrada tenga tensión', () => {
@@ -138,10 +290,17 @@ test('AO end-to-end: 5 V de la DSL son 50 % internos y 5 V físicos, no 0,5 V', 
 			bornes: ['+24', '0V', 'UI1', 'AO1', 'AOC'].map((id) => ({ id, tipo: 'control' as const })),
 		},
 		{ id: 'b1', tipo: 'sensor', bornes: [{ id: 'S', tipo: 'senal' }] },
+		{
+			id: 'x-custom', tipo: 'otro', bornes: [{ id: 'entrada' }, { id: 'salida' }],
+			comportamiento: {
+				version: 1, clase: 'pasivo', conexiones: [{ entrada: 'entrada', salida: 'salida' }],
+			},
+		},
 	);
 	p.conductores = [
 		cable('c1', ['red', 'L'], ['a1', '+24']), cable('c2', ['red', 'N'], ['a1', '0V']),
-		cable('c3', ['b1', 'S'], ['a1', 'UI1']),
+		cable('c3', ['b1', 'S'], ['x-custom', 'entrada']),
+		cable('c4', ['x-custom', 'salida'], ['a1', 'UI1']),
 	];
 	const r = simular(p, { b1: { valor: 50 } });
 	assert.equal(r.analogicas.get('a1::AO1'), 50);
@@ -252,19 +411,47 @@ test('variador v1: ENABLE inhibe RUN y la rampa avanza una sola vez por tick', (
 	assert.equal(r.variadores[0].frecuenciaHz, 10, 'una rampa de 10 Hz/s avanzó más de una vez dentro del punto fijo');
 	r = simular(p, { vfd: { valor: 10 } }, r.activos, { ahora: 5000, memoria });
 	assert.equal(r.variadores[0].frecuenciaHz, 50);
+
+	const sinRun = tableroVariador(false);
+	r = simular(sinRun, { vfd: { valor: 10 } }, r.activos, { ahora: 6000, memoria });
+	assert.equal(r.variadores[0].run, false);
+	assert.equal(r.variadores[0].frecuenciaHz, 40);
+	assert.equal(r.variadores[0].estado, 'marcha', 'el VFD anunció READY mientras aún entregaba frecuencia');
+	assert.equal(r.activos.has('motor'), true, 'la salida U/V/W desapareció antes de acabar la desaceleración');
+
+	r = simular(sinRun, { vfd: { valor: 10 } }, r.activos, { ahora: 11000, memoria });
+	assert.equal(r.variadores[0].frecuenciaHz, 0);
+	assert.equal(r.variadores[0].estado, 'listo');
+	assert.equal(r.activos.has('motor'), false, 'el motor siguió alimentado después de llegar a 0 Hz');
 });
 
 test('la referencia del variador llega desde una AO cableada, sin leer el modelo interno', () => {
 	const p = tableroVariador();
-	p.dispositivos.push({
-		id: 'plc', tipo: 'plc', rangoSalidaAnalogica: [0, 10],
-		bornes: ['+24', '0V', 'AO1', 'AOC'].map((id) => ({ id, tipo: 'control' as const })),
-	});
+	p.dispositivos.push(
+		{
+			id: 'plc', tipo: 'plc', rangoSalidaAnalogica: [0, 10],
+			bornes: ['+24', '0V', 'AO1', 'AOC'].map((id) => ({ id, tipo: 'control' as const })),
+		},
+		{
+			id: 'x-custom', tipo: 'otro', bornes: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }],
+			comportamiento: { version: 1, clase: 'pasivo', conexiones: [
+				{ entrada: 'a', salida: 'b' }, { entrada: 'c', salida: 'd' },
+			] },
+		},
+	);
 	p.conductores.push(
 		cable('plc-p', ['red', 'L'], ['plc', '+24']), cable('plc-n', ['red', 'N'], ['plc', '0V']),
-		cable('ref', ['plc', 'AO1'], ['vfd', 'SPEED']), cable('ref-com', ['plc', 'AOC'], ['vfd', 'ACOM']),
+		cable('ref-a', ['plc', 'AO1'], ['x-custom', 'a']),
+		cable('ref-b', ['x-custom', 'b'], ['vfd', 'SPEED']),
 	);
-	const r = simular(p, { plc: { analogicas: { AO1: 60 } } });
+	let r = simular(p, { plc: { analogicas: { AO1: 60 } } });
+	assert.equal(r.variadores[0].referenciaPorcentaje, 0,
+		'una señal analógica sin su común se aceptó como referencia válida');
+	p.conductores.push(
+		cable('ref-com-a', ['plc', 'AOC'], ['x-custom', 'c']),
+		cable('ref-com-b', ['x-custom', 'd'], ['vfd', 'ACOM']),
+	);
+	r = simular(p, { plc: { analogicas: { AO1: 60 } } });
 	assert.equal(r.variadores[0].referenciaPorcentaje, 60);
 	assert.equal(r.variadores[0].frecuenciaObjetivoHz, 30);
 });
@@ -293,6 +480,38 @@ test('una válvula con perfil modulante expone posición 0-100 y cae a cero sin 
 	p.conductores = p.conductores.filter((c) => c.id !== 'v1');
 	r = simular(p, { plc: { analogicas: { AO1: 40 } } });
 	assert.equal(r.posicionesCargas.get('yv'), 0);
+});
+
+test('una carga importada sin corriente de placa conserva el supuesto y texto de su perfil', () => {
+	const p = base24V();
+	p.dispositivos.push(
+		{
+			id: 'h-nativo', tipo: 'piloto', bornes: [{ id: 'X1' }, { id: 'X2' }],
+		},
+		{
+			id: 'h-importado', tipo: 'otro', imagen: 'data:image/png;base64,AA==',
+			bornes: [{ id: 'positivo' }, { id: 'retorno' }],
+			comportamiento: {
+				version: 1, clase: 'carga',
+				alimentacion: { fases: ['positivo'], retornos: ['retorno'], fasesMinimas: 1 },
+				efecto: 'luz',
+			},
+		},
+	);
+	p.conductores = [
+		cable('n-l', ['red', 'L'], ['h-nativo', 'X1']), cable('n-n', ['red', 'N'], ['h-nativo', 'X2']),
+		cable('i-l', ['red', 'L'], ['h-importado', 'positivo']),
+		cable('i-n', ['red', 'N'], ['h-importado', 'retorno']),
+	];
+	const r = simular(p);
+	const consumos = new Map(r.consumos.map((c) => [c.dispositivoId, c.corriente]));
+	assert.equal(consumos.get('h-nativo'), 0.02);
+	assert.equal(consumos.get('h-importado'), consumos.get('h-nativo'),
+		'la carcasa `otro` cambió la corriente supuesta del mismo perfil luminoso');
+	const textos = new Map(r.funcionando.map((f) => [f.dispositivoId, f.que]));
+	assert.match(textos.get('h-nativo') ?? '', /^encendido/);
+	assert.equal(textos.get('h-importado'), textos.get('h-nativo'),
+		'la carcasa visual cambió la descripción funcional de la misma carga');
 });
 
 test('mando explícito: pulsador momentáneo y selector mantenido de tres posiciones', () => {

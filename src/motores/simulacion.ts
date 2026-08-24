@@ -117,10 +117,12 @@ export interface MemoriaTiempos {
 	cumplidos: string[];
 	/** Frecuencia efectiva y último instante confirmado de cada variador. */
 	variadores?: Record<string, { frecuenciaHz: number; actualizadoEn: number }>;
+	/** Instante (ms) en que cada motor recibió alimentación continua para este arranque. */
+	motores?: Record<string, { arranqueDesde: number }>;
 }
 
 export function memoriaVacia(): MemoriaTiempos {
-	return { desdeConectado: {}, desdeSoltado: {}, cumplidos: [], variadores: {} };
+	return { desdeConectado: {}, desdeSoltado: {}, cumplidos: [], variadores: {}, motores: {} };
 }
 
 export interface EstadoVariador {
@@ -133,6 +135,41 @@ export interface EstadoVariador {
 	referenciaPorcentaje: number;
 	frecuenciaObjetivoHz: number;
 	frecuenciaHz: number;
+}
+
+/**
+ * Estado funcional mínimo de un motor durante una sesión de simulación.
+ *
+ * La corriente y la duración de arranque son estimaciones genéricas, no datos de placa ni un
+ * modelo electromecánico. El runtime vive en `MemoriaTiempos`; nunca se persiste en `Proyecto`.
+ */
+export interface EstadoMotor {
+	dispositivoId: string;
+	designacion: string;
+	estado: 'detenido' | 'arrancando' | 'marcha' | 'falla';
+	alimentado: boolean;
+	/** Fases distintas exigidas por el perfil funcional, no por la carcasa ni por `tipo`. */
+	fasesRequeridas: 1 | 3;
+	/** Orígenes de fase distintos que llegan ahora a los bornes declarados por el perfil. */
+	fasesPresentes: number;
+	/** Tensión efectiva calculada por la misma regla que alimenta los diagnósticos del tablero. */
+	tensionRecibidaV?: number;
+	/** Tensión de placa persistida; si falta, el simulador no inventa una validación. */
+	tensionNominalV?: number;
+	/** Ausente cuando no hay tensión de placa o todavía no puede medirse la alimentación. */
+	tensionCorrecta?: boolean;
+	/** Fracción 0..1 de la duración estimada de arranque. */
+	progresoArranque: number;
+	/** Corriente nominal declarada o estimada para el aparato. */
+	corrienteNominalA: number;
+	/** True cuando faltó corriente de placa y se usó el supuesto genérico del perfil de motor. */
+	corrienteNominalEstimada: boolean;
+	/** Corriente funcional usada para describir este estado; la punta sigue siendo estimada. */
+	corrienteEstimadaA: number;
+	/** Duración genérica estimada del transitorio de arranque. */
+	duracionArranqueEstimadaS: number;
+	/** Solo existe para un fallo runtime explícito; no se deduce silenciosamente de una etiqueta. */
+	motivoFalla?: 'fallo-declarado' | 'disparo-declarado';
 }
 
 /** Lo que hay que saber de un temporizador para enseñarlo: cuánto lleva y cuánto le falta. */
@@ -276,6 +313,8 @@ export interface ResultadoSimulacion {
 	controladores: EstadoControlador[];
 	/** Estado funcional de cada variador con perfil ejecutable. */
 	variadores: EstadoVariador[];
+	/** Estado contractual de las cargas cuyo perfil declara efecto de giro. */
+	motores: EstadoMotor[];
 	/** Posición 0..100 de cargas modulantes, por id de aparato. */
 	posicionesCargas: Map<string, number>;
 }
@@ -343,6 +382,8 @@ export interface Arranque {
 	punta: number;
 	/** Veces la nominal. Es la del arranque directo: con estrella-triángulo o arrancador es menor. */
 	veces: number;
+	/** Duración genérica estimada durante la que se considera la punta. */
+	duracionEstimadaS: number;
 	/** Protecciones que ven esa punta y qué hacen con ella. */
 	protecciones: { designacion: string; calibre: number; disparaEnS?: number }[];
 	/** True si alguna protección dispararía durante el arranque. */
@@ -359,6 +400,20 @@ const CONSUME: Set<TipoDispositivo> = new Set([
 	'motor', 'valvula', 'resistencia', 'piloto', 'condensador',
 ]);
 
+/**
+ * Capacidades de corte que todavía no están discriminadas dentro del perfil `proteccion`.
+ * El perfil decide primero; el tipo solo separa las excepciones honestas que el contrato v1 aún
+ * agrupa: un seccionador no dispara y un diferencial v1 no calcula sobrecorriente ni residual.
+ */
+function protegeSobrecorriente(d: Dispositivo): boolean {
+	return resolverComportamiento(d)?.clase === 'proteccion'
+		&& d.tipo !== 'seccionador' && d.tipo !== 'diferencial';
+}
+
+function protegeCortocircuito(d: Dispositivo): boolean {
+	return protegeSobrecorriente(d) && d.tipo !== 'rele';
+}
+
 const MAX_PASADAS = 24;
 
 /**
@@ -370,18 +425,22 @@ const MAX_PASADAS = 24;
  */
 const VECES_ARRANQUE = 6;
 const SEGUNDOS_ARRANQUE = 3;
+const TOLERANCIA_TENSION = 0.1;
 
 /**
  * Tensión que le está llegando de verdad a un consumo.
  *
- * Entre fase y retorno es la de la fuente. Entre TRES FASES distintas es la compuesta, que es √3
- * veces la de fase: un motor conectado a las tres fases de una red de 220 V por fase trabaja a
- * 380, y confundirlo sería decirle a alguien que su motor de 380 está mal conectado cuando está
- * perfecto.
+ * Entre fase y retorno es la de la fuente. Entre DOS O MÁS FASES distintas es la compuesta, que
+ * es √3 veces la de fase: un motor al que le falta una fase sigue teniendo 380 V entre las otras
+ * dos, aunque no cumpla sus tres fases requeridas. Confundir ambos diagnósticos ocultaría justo la
+ * pérdida de fase que hay que enseñar.
  */
 function tensionDeEmpleo(d: Dispositivo, vivos: Map<string, BorneVivo>): number | undefined {
+	const perfil = resolverComportamiento(d);
+	const bornesAlimentacion = perfil?.clase === 'carga'
+		? new Set([...perfil.alimentacion.fases, ...perfil.alimentacion.retornos]) : undefined;
 	const conTension = d.bornes
-		.filter((b) => b.tipo !== 'PE')
+		.filter((b) => b.tipo !== 'PE' && (!bornesAlimentacion || bornesAlimentacion.has(b.id)))
 		.map((b) => vivos.get(`${d.id}::${b.id}`))
 		.filter((v): v is BorneVivo => !!v);
 	if (conTension.length === 0) return undefined;
@@ -389,8 +448,8 @@ function tensionDeEmpleo(d: Dispositivo, vivos: Map<string, BorneVivo>): number 
 	if (fases.length === 0) return undefined;
 	const distintas = new Set(fases.map((v) => v.fuente));
 	const sistema = Math.max(...fases.map((v) => v.tension));
-	// Entre tres fases se trabaja a la tensión COMPUESTA, que es la declarada del sistema.
-	if (distintas.size >= 3) return sistema;
+	// Entre dos o más fases se trabaja a la tensión COMPUESTA, que es la declarada del sistema.
+	if (distintas.size >= 2) return sistema;
 	// Entre una fase y el neutro de una red trifásica se trabaja a la SIMPLE: 380/√3 = 220. Por
 	// eso el circuito de mando de 220 V de un tablero trifásico está bien, y decir lo contrario
 	// sería mandar a alguien a revisar un cableado impecable.
@@ -444,6 +503,32 @@ export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaM
 		}
 		return pares;
 	}
+	if (comportamiento?.clase === 'proteccion') {
+		const accionada = estado.cerrado === false || estado.disparado === true;
+		if (!accionada) {
+			for (const p of comportamiento.polos) pares.push([p.entrada, p.salida]);
+		}
+		for (const c of comportamiento.contactos) {
+			const cerrado = c.reposo === 'cerrado' ? !accionada : accionada;
+			if (cerrado) pares.push([c.entrada, c.salida]);
+		}
+		return pares;
+	}
+	if (comportamiento?.clase === 'sensor') {
+		const activo = estado.activo === true;
+		for (const c of comportamiento.contactos) {
+			const cerrado = c.reposo === 'cerrado' ? !activo : activo;
+			if (cerrado) pares.push([c.entrada, c.salida]);
+		}
+		if (activo && comportamiento.salidaDigital) {
+			pares.push([comportamiento.salidaDigital.tomaDe, comportamiento.salidaDigital.borne]);
+		}
+		return pares;
+	}
+	if (comportamiento?.clase === 'pasivo') {
+		return comportamiento.conexiones.map((p) => [p.entrada, p.salida]);
+	}
+	if (comportamiento?.clase === 'sin-comportamiento') return pares;
 
 	if (CONMUTA.has(d.tipo)) {
 		// Un relé TÉRMICO se declara como «rele» pero no se parece en nada a un relé auxiliar: no
@@ -790,6 +875,33 @@ function controladorAlimentado(d: Dispositivo, vivos: Map<string, BorneVivo>): b
 	return entradas.some((a) => retornos.some((b) => a.papel !== b.papel));
 }
 
+/** Un sensor alimentado solo puede entregar señal si recibe fase/+ y su retorno. */
+function sensorAlimentado(d: Dispositivo, vivos: Map<string, BorneVivo>): boolean {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase !== 'sensor' || !perfil.alimentacion) return true;
+	const entrada = vivos.get(`${d.id}::${perfil.alimentacion.entrada}`);
+	const retorno = vivos.get(`${d.id}::${perfil.alimentacion.retorno}`);
+	return entrada?.papel === 'fase' && retorno?.papel === 'retorno';
+}
+
+/** Bornes unidos por una entidad pasiva; nunca atraviesa contactos ni cargas. */
+function bornesDePaso(d: Dispositivo, borne: string): string[] {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase !== 'pasivo') return [];
+	const salida = new Set<string>();
+	for (const par of perfil.conexiones) {
+		if (par.entrada === borne) salida.add(par.salida);
+		else if (par.salida === borne) salida.add(par.entrada);
+	}
+	// Los peines de borna son conexiones instaladas en el proyecto, no parte de la definición del
+	// aparato. Se aplican también a un bornero personalizado con perfil pasivo.
+	for (const grupo of d.puentes ?? []) {
+		if (!grupo.includes(borne)) continue;
+		for (const otro of grupo) if (otro !== borne) salida.add(otro);
+	}
+	return [...salida];
+}
+
 type PerfilVariador = Extract<ComportamientoSimulacion, { clase: 'variador' }>;
 
 function alimentacionCompleta(
@@ -806,10 +918,11 @@ function alimentacionCompleta(
 	return fases.length > 0 && retornos.some((r) => fases.some((f) => r.papel !== f.papel));
 }
 
-/** Busca una AO por el cable de señal, atravesando únicamente borneros y sus puentes. */
+/** Busca una AO por el cable de señal, atravesando únicamente entidades pasivas y sus puentes. */
 function valorAnalogicoCableadoA(
 	dispositivoId: string,
 	borneId: string,
+	comunId: string,
 	proyecto: Proyecto,
 	vivos: Map<string, BorneVivo>,
 	analogicas: ReadonlyMap<string, number>,
@@ -825,23 +938,20 @@ function valorAnalogicoCableadoA(
 		if (dueño !== dispositivoId) {
 			const pct = analogicas.get(aqui);
 			const origen = porId.get(dueño);
-			if (pct !== undefined && origen && controladorAlimentado(origen, vivos)) {
-				return unidades === 'porcentaje' ? pct : salidaAnalogicaEn(origen, borne, pct).voltios;
+			if (pct !== undefined && origen && controladorAlimentado(origen, vivos)
+				&& esSalidaAnalogicaDe(origen, borne)) {
+				const salida = salidaAnalogicaEn(origen, borne, pct);
+				const comunConectado = salida.referencia !== undefined && hayContinuidadPasiva(
+					`${dispositivoId}::${comunId}`, `${dueño}::${salida.referencia}`, proyecto, porId,
+				);
+				if (comunConectado) return unidades === 'porcentaje' ? pct : salida.voltios;
 			}
-			if (origen?.tipo !== 'bornero') continue;
-			for (const [a, b] of origen.puentesInternos ?? []) {
-				const otro = a === borne ? b : b === borne ? a : undefined;
-				if (otro) {
-					const clave = `${dueño}::${otro}`;
-					if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
-				}
-			}
-			for (const grupo of origen.puentes ?? []) {
-				if (!grupo.includes(borne)) continue;
-				for (const otro of grupo) {
-					const clave = `${dueño}::${otro}`;
-					if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
-				}
+			if (!origen) continue;
+			const pasos = bornesDePaso(origen, borne);
+			if (!pasos.length && resolverComportamiento(origen)?.clase !== 'pasivo') continue;
+			for (const otro of pasos) {
+				const clave = `${dueño}::${otro}`;
+				if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
 			}
 		}
 		for (const c of proyecto.conductores) {
@@ -856,6 +966,43 @@ function valorAnalogicoCableadoA(
 	return undefined;
 }
 
+/**
+ * Comprueba la continuidad del segundo hilo de una señal sin atravesar contactos ni aparatos.
+ * La referencia puede pasar por bornas/puentes, exactamente igual que el hilo de señal.
+ */
+function hayContinuidadPasiva(
+	desde: string,
+	hasta: string,
+	proyecto: Proyecto,
+	porId = new Map(proyecto.dispositivos.map((x) => [x.id, x])),
+): boolean {
+	if (desde === hasta) return true;
+	const vistos = new Set<string>([desde]);
+	const cola = [desde];
+	while (cola.length && vistos.size < 400) {
+		const aqui = cola.shift()!;
+		const [dueño, borne] = aqui.split('::');
+		const dispositivo = porId.get(dueño);
+		if (dispositivo && resolverComportamiento(dispositivo)?.clase === 'pasivo') {
+			for (const otro of bornesDePaso(dispositivo, borne)) {
+				const clave = `${dueño}::${otro}`;
+				if (clave === hasta) return true;
+				if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
+			}
+		}
+		for (const c of proyecto.conductores) {
+			const mio = c.de.dispositivoId === dueño && c.de.borneId === borne;
+			const suyo = c.a.dispositivoId === dueño && c.a.borneId === borne;
+			if (!mio && !suyo) continue;
+			const otro = mio ? c.a : c.de;
+			const clave = `${otro.dispositivoId}::${otro.borneId}`;
+			if (clave === hasta) return true;
+			if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
+		}
+	}
+	return false;
+}
+
 function porcentajeReferencia(
 	d: Dispositivo,
 	referencia: ReferenciaAnalogicaSimulacion,
@@ -867,7 +1014,9 @@ function porcentajeReferencia(
 	const directo = estado[d.id]?.valor;
 	const valor = Number.isFinite(directo)
 		? directo!
-		: valorAnalogicoCableadoA(d.id, referencia.borne, proyecto, vivos, analogicas, referencia.unidad);
+		: valorAnalogicoCableadoA(
+			d.id, referencia.borne, referencia.comun, proyecto, vivos, analogicas, referencia.unidad,
+		);
 	if (valor === undefined) return 0;
 	const [min, max] = referencia.rango;
 	if (max <= min) return 0;
@@ -904,9 +1053,11 @@ function estadoVariador(
 		}
 	}
 	if (!alimentado || falla) frecuenciaHz = 0;
+	const entregaSalida = alimentado && !falla && frecuenciaHz > 0;
 	return {
 		dispositivoId: d.id, designacion: d.designacion ?? d.id,
-		estado: !alimentado ? 'sin-alimentacion' : falla ? 'falla' : run && habilitado ? 'marcha' : 'listo',
+		estado: !alimentado ? 'sin-alimentacion' : falla ? 'falla'
+			: (run && habilitado) || entregaSalida ? 'marcha' : 'listo',
 		alimentado, run, habilitado, referenciaPorcentaje: Math.round(referenciaPorcentaje * 100) / 100,
 		frecuenciaObjetivoHz: Math.round(frecuenciaObjetivoHz * 100) / 100,
 		frecuenciaHz: Math.round(frecuenciaHz * 100) / 100,
@@ -928,6 +1079,82 @@ function fuentesDeVariadores(
 		}
 	}
 	return salida;
+}
+
+/** Un motor lo define su contrato funcional, también cuando su imagen usa una carcasa `otro`. */
+function esMotorFuncional(d: Dispositivo): boolean {
+	const perfil = resolverComportamiento(d);
+	return perfil?.clase === 'carga' && perfil.efecto === 'giro';
+}
+
+/**
+ * Resuelve el estado mínimo del motor sin escribirlo en el Proyecto.
+ *
+ * Sin reloj se conserva el modo de cálculo instantáneo usado por informes y tests históricos. Con
+ * reloj, `MemoriaTiempos` permite distinguir el transitorio estimado de tres segundos de la marcha.
+ */
+function estadoMotor(
+	d: Dispositivo,
+	vivos: Map<string, BorneVivo>,
+	estado: EstadoTablero,
+	reloj?: { ahora: number; memoria: MemoriaTiempos },
+): EstadoMotor {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase !== 'carga' || perfil.efecto !== 'giro') {
+		throw new Error(`estadoMotor recibió un aparato sin perfil de giro: ${d.id}`);
+	}
+	const alimentado = tieneCircuitoCompleto(d, vivos);
+	const nominal = corrienteDe(d);
+	const fuentesPresentes = new Set(perfil.alimentacion.fases
+		.map((id) => vivos.get(`${d.id}::${id}`))
+		.filter((v): v is BorneVivo => v?.papel === 'fase')
+		.map((v) => v.fuente));
+	const tensionRecibidaV = tensionDeEmpleo(d, vivos);
+	const tensionNominalV = d.tensionNominal && d.tensionNominal > 0 ? d.tensionNominal : undefined;
+	const tensionCorrecta = tensionRecibidaV === undefined || tensionNominalV === undefined ? undefined
+		: Math.abs(tensionRecibidaV - tensionNominalV) / tensionNominalV <= TOLERANCIA_TENSION;
+	const motivoFalla = estado[d.id]?.fallo === true ? 'fallo-declarado' as const
+		: estado[d.id]?.disparado === true ? 'disparo-declarado' as const : undefined;
+	const base = {
+		dispositivoId: d.id,
+		designacion: d.designacion ?? d.id,
+		alimentado,
+		fasesRequeridas: perfil.alimentacion.fasesMinimas,
+		fasesPresentes: fuentesPresentes.size,
+		tensionRecibidaV,
+		tensionNominalV,
+		tensionCorrecta,
+		corrienteNominalA: nominal,
+		corrienteNominalEstimada: !(d.corrienteNominal !== undefined && d.corrienteNominal > 0),
+		duracionArranqueEstimadaS: SEGUNDOS_ARRANQUE,
+	};
+
+	if (reloj) reloj.memoria.motores ??= {};
+	if (motivoFalla) {
+		if (reloj) delete reloj.memoria.motores![d.id];
+		return { ...base, estado: 'falla', progresoArranque: 0, corrienteEstimadaA: 0, motivoFalla };
+	}
+	if (!alimentado) {
+		if (reloj) delete reloj.memoria.motores![d.id];
+		return { ...base, estado: 'detenido', progresoArranque: 0, corrienteEstimadaA: 0 };
+	}
+	if (!reloj) {
+		return { ...base, estado: 'marcha', progresoArranque: 1, corrienteEstimadaA: nominal };
+	}
+
+	const memoria = reloj.memoria.motores!;
+	memoria[d.id] ??= { arranqueDesde: reloj.ahora };
+	const transcurridosS = Math.max(0, reloj.ahora - memoria[d.id].arranqueDesde) / 1000;
+	const progresoArranque = Math.max(0, Math.min(1, transcurridosS / SEGUNDOS_ARRANQUE));
+	if (progresoArranque < 1) {
+		return {
+			...base,
+			estado: 'arrancando',
+			progresoArranque,
+			corrienteEstimadaA: Math.round(nominal * VECES_ARRANQUE * 10) / 10,
+		};
+	}
+	return { ...base, estado: 'marcha', progresoArranque: 1, corrienteEstimadaA: nominal };
 }
 
 function proteccionRearmable(d: Dispositivo): boolean {
@@ -952,9 +1179,15 @@ function leerControlador(
 ): LecturaControlador {
 	const activos = new Set<string>();
 	const valores: Record<string, number> = {};
+	const perfil = resolverComportamiento(d);
+	const reservados = perfil?.clase === 'controlador' ? new Set([
+		...perfil.alimentacion.entradas, ...perfil.alimentacion.retornos,
+		...perfil.salidasDigitales.flatMap((s) => [s.borne, s.comun]),
+		...perfil.salidasAnalogicas.flatMap((s) => [s.borne, s.referencia]),
+	]) : new Set<string>();
 	for (const b of d.bornes) {
-		if (vivos.has(`${d.id}::${b.id}`)) activos.add(b.id);
-		if (esBorneDeAlimentacion(b)) continue;
+		if (!reservados.has(b.id) && vivos.get(`${d.id}::${b.id}`)?.papel === 'fase') activos.add(b.id);
+		if (reservados.has(b.id) || esBorneDeAlimentacion(b)) continue;
 		const v = sondaCableadaA(d.id, b.id, proyecto, estado);
 		if (v !== undefined) valores[b.id] = v;
 	}
@@ -974,7 +1207,7 @@ function esBorneDeAlimentacion(b: { id: string; tipo?: string }): boolean {
 }
 
 /**
- * Qué sonda hay al final del hilo de esta entrada, ATRAVESANDO LOS BORNEROS.
+ * Qué sonda hay al final del hilo de esta entrada, ATRAVESANDO ENTIDADES PASIVAS.
  *
  * Antes esto miraba solo el aparato que había al otro lado del conductor, y en un tablero de
  * verdad al otro lado NUNCA hay una sonda: hay una borna. Todo lo que va a campo pasa por el
@@ -982,7 +1215,7 @@ function esBorneDeAlimentacion(b: { id: string; tipo?: string }): boolean {
  * cableaba como se cablea. Ahora se sigue el hilo de borna en borna, incluidos los puentes del
  * peine, hasta dar con un aparato que entregue un número.
  *
- * Solo se atraviesan borneros: un contacto o una bobina en medio cortan la búsqueda, porque
+ * Solo se atraviesan perfiles pasivos: un contacto o una bobina en medio cortan la búsqueda, porque
  * eléctricamente ya no es el mismo hilo de señal.
  */
 function sondaCableadaA(
@@ -1003,13 +1236,13 @@ function sondaCableadaA(
 			if (v !== undefined) return v;
 			// Un bornero es un trozo de cable con tornillos: se sigue de largo. Cualquier otra cosa
 			// (un relé, un contactor, una fuente) corta el hilo de señal.
-			if (porId.get(dueño)?.tipo !== 'bornero') continue;
-			for (const grupo of porId.get(dueño)?.puentes ?? []) {
-				if (!grupo.includes(borne)) continue;
-				for (const otro of grupo) {
-					const clave = `${dueño}::${otro}`;
-					if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
-				}
+			const paso = porId.get(dueño);
+			if (!paso) continue;
+			const vecinos = bornesDePaso(paso, borne);
+			if (!vecinos.length && resolverComportamiento(paso)?.clase !== 'pasivo') continue;
+			for (const otro of vecinos) {
+				const clave = `${dueño}::${otro}`;
+				if (!vistos.has(clave)) { vistos.add(clave); cola.push(clave); }
 			}
 		}
 		for (const c of proyecto.conductores) {
@@ -1236,17 +1469,32 @@ export function simular(
 			que: `variador en marcha · ${v.frecuenciaHz.toFixed(1)} Hz`,
 		});
 	}
+	const motores = aparatos.filter(esMotorFuncional)
+		.map((d) => estadoMotor(d, vivos, estado, reloj));
+	const motoresPorId = new Map(motores.map((motor) => [motor.dispositivoId, motor]));
+	if (reloj?.memoria.motores) {
+		const idsPresentes = new Set(motores.map((motor) => motor.dispositivoId));
+		for (const id of Object.keys(reloj.memoria.motores)) {
+			if (!idsPresentes.has(id)) delete reloj.memoria.motores[id];
+		}
+	}
 	for (const d of aparatos) {
-		if (resolverComportamiento(d)?.clase === 'variador') continue;
+		const perfil = resolverComportamiento(d);
+		if (perfil?.clase === 'variador') continue;
 		const etiqueta = d.designacion ?? d.id;
-		if (CONSUME.has(d.tipo)) {
+		if (CONSUME.has(d.tipo) || perfil?.clase === 'carga') {
+			const motor = motoresPorId.get(d.id);
+			if (motor?.estado === 'detenido' || motor?.estado === 'falla') continue;
 			if (tieneCircuitoCompleto(d, vivos)) {
 				activos.add(d.id);
 				const corriente = corrienteDe(d);
 				funcionando.push({
 					dispositivoId: d.id,
 					designacion: etiqueta,
-					que: `${queHace(d)} · ${formatearA(corriente)}`,
+					que: motor?.estado === 'arrancando'
+						? `arrancando (${Math.round(motor.progresoArranque * 100)} %) · `
+							+ `${formatearA(motor.corrienteEstimadaA)} estimados`
+						: `${motor ? 'girando' : queHace(d)} · ${formatearA(corriente)}`,
 				});
 				consumos.push({
 					dispositivoId: d.id,
@@ -1288,10 +1536,9 @@ export function simular(
 	const cortocircuitos = buscarCortocircuitos(prop, aparatos);
 	const cargaPorAparato = new Map<string, CargaAparato>();
 	const disparos: Disparo[] = [];
-	const PROTEGE = new Set<TipoDispositivo>(['disyuntor', 'diferencial', 'guardamotor', 'fusible', 'rele']);
 	for (const d of aparatos) {
 		const corriente = porAparato.get(d.id) ?? 0;
-		if (corriente === 0 && !PROTEGE.has(d.tipo)) continue;
+		if (corriente === 0 && !protegeSobrecorriente(d)) continue;
 		const nominal = calibreDe(d);
 		const carga: CargaAparato = {
 			dispositivoId: d.id,
@@ -1302,7 +1549,7 @@ export function simular(
 		};
 		cargaPorAparato.set(d.id, carga);
 		// Sobrecarga: la protección ve más corriente de la que aguanta y acaba disparando.
-		if (PROTEGE.has(d.tipo) && nominal && estado[d.id]?.disparado !== true) {
+		if (protegeSobrecorriente(d) && nominal && estado[d.id]?.disparado !== true) {
 			const segundos = tiempoDeDisparo(corriente, nominal, d.curvaDisparo);
 			if (segundos !== undefined) {
 				disparos.push({
@@ -1374,7 +1621,7 @@ export function simular(
 		const recibe = tensionDeEmpleo(d, vivos);
 		if (recibe === undefined) continue;
 		// Un 10 % de margen: 220/230 V y 380/400 V son la misma red, no un error de cableado.
-		if (Math.abs(recibe - d.tensionNominal) / d.tensionNominal <= 0.1) continue;
+		if (Math.abs(recibe - d.tensionNominal) / d.tensionNominal <= TOLERANCIA_TENSION) continue;
 		const alta = recibe > d.tensionNominal;
 		tensionesEquivocadas.push({
 			dispositivoId: d.id,
@@ -1398,13 +1645,13 @@ export function simular(
 	const arranques: Arranque[] = [];
 	for (const c of consumos) {
 		const d = aparatos.find((x) => x.id === c.dispositivoId)!;
-		if (d.tipo !== 'motor' || !c.corriente) continue;
+		if (!esMotorFuncional(d) || !c.corriente) continue;
 		const punta = Math.round(c.corriente * VECES_ARRANQUE * 10) / 10;
 		const protecciones: Arranque['protecciones'] = [];
 		for (const carga of cargaPorAparato.values()) {
 			if (carga.nominal === undefined || carga.corriente < c.corriente - 1e-9) continue;
 			const p = aparatos.find((x) => x.id === carga.dispositivoId)!;
-			if (!PROTEGE.has(p.tipo)) continue;
+			if (!protegeSobrecorriente(p)) continue;
 			protecciones.push({
 				designacion: carga.designacion,
 				calibre: carga.nominal,
@@ -1417,6 +1664,7 @@ export function simular(
 			nominal: c.corriente,
 			punta,
 			veces: VECES_ARRANQUE,
+			duracionEstimadaS: SEGUNDOS_ARRANQUE,
 			protecciones,
 			// Solo cuenta como problema si dispararía DENTRO del arranque: una curva térmica que
 			// tarda un minuto no molesta a un arranque de tres segundos.
@@ -1503,7 +1751,7 @@ export function simular(
 		disparos,
 		tensionesEquivocadas,
 		arranques,
-		controladores, variadores, posicionesCargas,
+		controladores, variadores, motores, posicionesCargas,
 		temporizadores: cuentasAtras(aparatos, activos, reloj),
 	};
 }
@@ -1593,6 +1841,12 @@ function propagar(
 		if (resolverComportamiento(d)?.clase === 'controlador' && !controladorAlimentado(d, vivosPrevios)) {
 			conSalidas = { ...conSalidas, salidas: [] };
 		}
+		// Un detector alimentado no puede crear su salida activa solo porque el usuario marque que
+		// está detectando. Su +V y su retorno deben existir en la pasada anterior; los contactos
+		// secos, que no declaran alimentación, conservan su comportamiento mecánico.
+		if (resolverComportamiento(d)?.clase === 'sensor' && !sensorAlimentado(d, vivosPrevios)) {
+			conSalidas = { ...conSalidas, activo: false };
+		}
 		/*
 		 * QUÉ BOBINA MANDA EN ESTE APARATO.
 		 *
@@ -1668,7 +1922,10 @@ function bobinaAlimentada(d: Dispositivo, vivos: Map<string, BorneVivo>): boolea
  */
 function tieneCircuitoCompleto(d: Dispositivo, vivos: Map<string, BorneVivo>): boolean {
 	const perfil = resolverComportamiento(d);
-	if (d.comportamiento && perfil?.clase === 'carga') {
+	// Todo motor (nativo o importado) usa su contrato de fases. Para las demás cargas legacy se
+	// conserva la lectura histórica de potenciales porque sus rótulos antiguos no siempre describen
+	// roles; un perfil persistente explícito sí es fuente de verdad para cualquier carcasa.
+	if (perfil?.clase === 'carga' && (d.comportamiento || perfil.efecto === 'giro')) {
 		return alimentacionCompleta(d, perfil.alimentacion, vivos);
 	}
 	const conTension = d.bornes
@@ -1768,8 +2025,21 @@ function cuentasAtras(
  */
 function corrienteDe(d: Dispositivo): number {
 	if (d.corrienteNominal !== undefined && d.corrienteNominal > 0) return d.corrienteNominal;
+	const perfil = resolverComportamiento(d);
+	// El origen visual o el `tipo` de catálogo no puede cambiar el mismo supuesto funcional.
+	// Los valores son exactamente los fallbacks legacy; solo cambia la fuente de verdad que elige
+	// cuál corresponde cuando una imagen/importación declara un perfil explícito.
+	if (perfil?.clase === 'carga') {
+		switch (perfil.efecto) {
+			case 'giro': return 3.5;
+			case 'movimiento': return 0.3;
+			case 'luz': return 0.02;
+			case 'calor': return 6;
+			case 'reactivo': return 0.5;
+			case 'generico': return 0.1;
+		}
+	}
 	switch (d.tipo) {
-		case 'motor': return 3.5;
 		case 'resistencia': return 6;
 		case 'valvula': return 0.3;
 		case 'piloto': return 0.02;
@@ -1889,7 +2159,6 @@ function buscarCortocircuitos(prop: Propagacion, aparatos: Dispositivo[]): Corto
 
 /** Protecciones que hay entre la fuente y un punto, de la más cercana al punto a la más lejana. */
 function proteccionesEnCamino(alcance: Alcance, punto: string, aparatos: Dispositivo[]): string[] {
-	const ES_PROTECCION = new Set<TipoDispositivo>(['disyuntor', 'diferencial', 'guardamotor', 'fusible']);
 	const salida: string[] = [];
 	const visto = new Set<string>();
 	let actual: string | undefined = punto;
@@ -1900,7 +2169,7 @@ function proteccionesEnCamino(alcance: Alcance, punto: string, aparatos: Disposi
 		const dueñoA = actual.split('::')[0];
 		if (dueñoA === anterior.split('::')[0]) {
 			const d = aparatos.find((x) => x.id === dueñoA);
-			if (d && ES_PROTECCION.has(d.tipo) && !salida.includes(d.id)) salida.push(d.id);
+			if (d && protegeCortocircuito(d) && !salida.includes(d.id)) salida.push(d.id);
 		}
 		actual = anterior;
 	}
@@ -1927,6 +2196,17 @@ export function tiempoDeDisparo(corriente: number, nominal: number, curva?: stri
 }
 
 function queHace(d: Dispositivo): string {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase === 'carga') {
+		switch (perfil.efecto) {
+			case 'giro': return 'girando';
+			case 'movimiento': return 'abierta';
+			case 'luz': return 'encendido';
+			case 'calor': return 'calentando';
+			case 'reactivo':
+			case 'generico': return 'con tensión';
+		}
+	}
 	switch (d.tipo) {
 		case 'motor': return 'girando';
 		case 'valvula': return 'abierta';

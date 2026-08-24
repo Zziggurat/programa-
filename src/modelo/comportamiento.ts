@@ -131,7 +131,11 @@ export const MATRIZ_FIDELIDAD_SIMULACION = {
 		fusible: { nivel: 'parcial', participacion: 'Corte por sobrecorriente estimada.', limitacion: 'El estado de sustitución no está modelado.' },
 		seccionador: { nivel: 'parcial', participacion: 'Apertura y cierre de polos.', limitacion: 'Sin enclavamientos ni poder de corte.' },
 		variador: { nivel: 'parcial', participacion: 'Potencia, RUN/ENABLE, referencia, U/V/W y rampa de frecuencia.', limitacion: 'Salida trifásica conceptual; sin PWM, par, frenado ni modelo de fallo interno.' },
-		motor: { nivel: 'parcial', participacion: 'Carga y giro binario.', limitacion: 'Sin par, velocidad, transición de arranque ni fallo.' },
+		motor: {
+			nivel: 'parcial',
+			participacion: 'Estados detenido/arrancando/marcha/falla; valida fases distintas y tensión, con punta y duración estimadas.',
+			limitacion: 'Las anomalías se diagnostican pero no modelan par, RPM, deslizamiento, pérdida de fase ni térmica interna.',
+		},
 		pulsador: { nivel: 'parcial', participacion: 'Conmuta contactos NA/NC con modo momentáneo explícito.', limitacion: 'La duración física depende del cliente que entrega el estado.' },
 		selector: { nivel: 'parcial', participacion: 'Selector mantenido de dos o tres posiciones y contactos por posición.', limitacion: 'Sin llave, retorno por resorte ni secuencias de leva.' },
 		piloto: { nivel: 'simulado', participacion: 'Carga binaria e indicación luminosa.', limitacion: 'No modela vida útil o destrucción por sobretensión.' },
@@ -139,9 +143,9 @@ export const MATRIZ_FIDELIDAD_SIMULACION = {
 		valvula: { nivel: 'parcial', participacion: 'Carga binaria o posición modulante 0-100 % por perfil.', limitacion: 'Sin presión, caudal ni tiempo mecánico de carrera.' },
 		resistencia: { nivel: 'parcial', participacion: 'Carga de corriente declarada.', limitacion: 'Sin cálculo R/P ni temperatura.' },
 		condensador: { nivel: 'parcial', participacion: 'Carga genérica.', limitacion: 'Sin carga, descarga, reactancia ni transitorio.' },
-		bornero: { nivel: 'parcial', participacion: 'Conectividad pasiva y puentes.', limitacion: 'La señal analógica no atraviesa todos los puentes internos.' },
+		bornero: { nivel: 'parcial', participacion: 'Conectividad pasiva, puentes y continuidad de señales analógicas.', limitacion: 'Sin resistencia de contacto ni accesorios de desconexión o prueba.' },
 		cable: { nivel: 'sin-comportamiento', participacion: 'El tipo de dispositivo no participa.', limitacion: 'Los conductores del proyecto son otra entidad y sí participan.' },
-		otro: { nivel: 'parcial', participacion: 'Una acometida legacy puede actuar como fuente.', limitacion: 'El resto carece de contrato común.' },
+		otro: { nivel: 'parcial', participacion: 'Ejecuta cualquier perfil explícito válido; una acometida legacy puede actuar como fuente.', limitacion: 'Sin perfil explícito queda inerte salvo una acometida legacy reconocible.' },
 	},
 } as const satisfies { version: 2; tipos: Record<TipoDispositivo, FilaFidelidadSimulacion> };
 
@@ -341,6 +345,14 @@ const contactosIEC = (d: Pick<Dispositivo, 'bornes'>): ContactoSimulacion[] => {
 		if (ids.has(comunNA) && ids.has(na)) salida.push({ entrada: comunNA, salida: na, reposo: 'abierto', funcion: 'auxiliar' });
 		else if (ids.has(comun) && ids.has(na)) salida.push({ entrada: comun, salida: na, reposo: 'abierto', funcion: 'auxiliar' });
 	}
+	// Contactos de señalización normalizados de relés térmicos/protecciones. No siguen el patrón
+	// x1-x2 / x3-x4 de los auxiliares ordinarios, pero sí tienen semántica explícita IEC.
+	if (ids.has('95') && ids.has('96')) {
+		salida.push({ entrada: '95', salida: '96', reposo: 'cerrado', funcion: 'auxiliar' });
+	}
+	if (ids.has('97') && ids.has('98')) {
+		salida.push({ entrada: '97', salida: '98', reposo: 'abierto', funcion: 'auxiliar' });
+	}
 	return salida;
 };
 
@@ -449,6 +461,12 @@ export function validarComportamiento(
 		case 'carga':
 			c.alimentacion.fases.forEach((x, i) => borne(x, `alimentacion.fases[${i}]`));
 			c.alimentacion.retornos.forEach((x, i) => borne(x, `alimentacion.retornos[${i}]`));
+			if (new Set(c.alimentacion.fases).size < c.alimentacion.fasesMinimas) {
+				errores.push('faltan entradas de fase distintas para alimentar la carga');
+			}
+			if (c.alimentacion.fasesMinimas === 1 && !c.alimentacion.retornos.length) {
+				errores.push('la alimentación monofásica no declara retorno');
+			}
 			if (c.mandoAnalogico) revisarReferencia(c.mandoAnalogico, 'mandoAnalogico');
 			break;
 		case 'pasivo': c.conexiones.forEach((p, i) => revisarPar(p, `conexiones[${i}]`)); break;
@@ -492,10 +510,19 @@ export function resolverComportamiento(d: Dispositivo): ComportamientoSimulacion
 		const entrada = primerBorne(bornes, ['+24', '+']);
 		const retorno = primerBorne(bornes, ['0V', '-']);
 		const senal = bornes.find((b) => b.tipo === 'senal')?.id;
+		const salidaDigital = entrada && senal ? { borne: senal, tomaDe: entrada } : undefined;
+		let contactos = contactosIEC(d);
+		// Compatibilidad para contactos de campo legacy rotulados simplemente 1/2. Antes el motor
+		// los tomaba como NA por `tipo === sensor`; el adaptador preserva esa regla dentro del perfil.
+		if (!contactos.length && !salidaDigital) {
+			contactos = polosIEC(d).map((p) => ({
+				entrada: p.entrada, salida: p.salida, reposo: 'abierto' as const, funcion: 'auxiliar' as const,
+			}));
+		}
 		return {
-			version: 1, clase: 'sensor', contactos: contactosIEC(d),
+			version: 1, clase: 'sensor', contactos,
 			alimentacion: entrada && retorno ? { entrada, retorno } : undefined,
-			salidaDigital: entrada && senal ? { borne: senal, tomaDe: entrada } : undefined,
+			salidaDigital,
 		};
 	}
 	if (d.tipo === 'plc') {
@@ -543,10 +570,22 @@ export function resolverComportamiento(d: Dispositivo): ComportamientoSimulacion
 		const retornos = bornes.filter((b) => b.tipo === 'N' || /^(N|0V|X2|A2)$/.test(b.id)).map((b) => b.id);
 		const efecto = d.tipo === 'motor' ? 'giro' : d.tipo === 'piloto' ? 'luz' : d.tipo === 'valvula'
 			? 'movimiento' : d.tipo === 'resistencia' ? 'calor' : 'reactivo';
-		return { version: 1, clase: 'carga', alimentacion: { fases, retornos, fasesMinimas: d.polos && d.polos >= 3 ? 3 : 1 }, efecto };
+		// Los motores legacy de tres hilos no siempre guardaban `polos: 3`. Tres entradas de fase y
+		// ningún retorno son evidencia estructural suficiente; exigir un neutro los dejaba parados y
+		// hacía que el mismo motor cambiara de lógica al importarlo con un perfil explícito.
+		const fasesMinimas = d.tipo === 'motor'
+			&& ((d.polos ?? 0) >= 3 || retornos.length === 0 && new Set(fases).size >= 3) ? 3 : 1;
+		return { version: 1, clase: 'carga', alimentacion: { fases, retornos, fasesMinimas }, efecto };
 	}
 	if (d.tipo === 'bornero') {
-		return { version: 1, clase: 'pasivo', conexiones: polosIEC(d) };
+		// La numeración 1, 2, 3... no implica continuidad eléctrica. Los puentes
+		// de proyecto se procesan desde `puentes`; el adaptador solo conserva las
+		// conexiones internas que el dispositivo declara de forma persistente.
+		return {
+			version: 1,
+			clase: 'pasivo',
+			conexiones: (d.puentesInternos ?? []).map(([entrada, salida]) => ({ entrada, salida })),
+		};
 	}
 	const esAcometida = d.campo && bornes.some((b) => b.tipo === 'L')
 		&& (d.clase === 'W' || /acometida|red|alimentaci/i.test(d.descripcion ?? ''));
