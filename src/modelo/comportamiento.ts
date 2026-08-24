@@ -116,7 +116,7 @@ export type ComportamientoSimulacion =
 		motivo: string;
 	};
 
-export type NivelFidelidadSimulacion = 'simulado' | 'parcial' | 'sin-comportamiento';
+export type NivelFidelidadSimulacion = 'completa-v2' | 'completa-v1' | 'parcial' | 'sin-comportamiento';
 
 export interface FilaFidelidadSimulacion {
 	nivel: NivelFidelidadSimulacion;
@@ -129,27 +129,27 @@ export interface FilaFidelidadSimulacion {
  * añadir una familia al modelo obliga a declarar qué sabe hacer el motor con ella.
  */
 export const MATRIZ_FIDELIDAD_SIMULACION = {
-	version: 2,
+	version: 3,
 	tipos: {
 		plc: { nivel: 'parcial', participacion: 'Programa, entradas y salidas digitales/0-10 V.', limitacion: 'DSL limitada; no IEC 61131-3.' },
 		fuente: { nivel: 'parcial', participacion: 'Crea un secundario si el primario está alimentado.', limitacion: 'Sin límite de potencia, eficiencia ni fallo.' },
 		transformador: { nivel: 'parcial', participacion: 'Crea un secundario aislado condicionado por el primario.', limitacion: 'Sin impedancia, pérdidas ni saturación.' },
-		contactor: { nivel: 'simulado', participacion: 'Bobina, polos y auxiliares NA/NC.', limitacion: 'Sin tiempos mecánicos ni desgaste.' },
-		rele: { nivel: 'parcial', participacion: 'Bobina y contactos, con temporización opcional.', limitacion: 'Relé auxiliar y térmico comparten aún la misma familia.' },
-		disyuntor: { nivel: 'parcial', participacion: 'Corte, sobrecarga y cortocircuito estimado.', limitacion: 'Sin impedancia ni Icc calculada.' },
-		guardamotor: { nivel: 'parcial', participacion: 'Corte y disparo por sobrecarga estimada.', limitacion: 'Sin pérdida de fase ni coordinación.' },
-		diferencial: { nivel: 'parcial', participacion: 'Corte manual y polos.', limitacion: 'No calcula corriente residual ni sensibilidad.' },
-		fusible: { nivel: 'parcial', participacion: 'Corte por sobrecorriente estimada.', limitacion: 'El estado de sustitución no está modelado.' },
+		contactor: { nivel: 'completa-v1', participacion: 'Bobina, polos y auxiliares NA/NC.', limitacion: 'Sin tiempos mecánicos ni desgaste.' },
+		rele: { nivel: 'completa-v2', participacion: 'Relé auxiliar/temporizado y térmico con acumulación, enfriamiento, 95-96 y 97-98.', limitacion: 'Curva térmica funcional estimada; sin modelo de bimetal certificado.' },
+		disyuntor: { nivel: 'completa-v2', participacion: 'ABIERTO/CERRADO/DISPARADO, térmica simplificada y magnética funcional.', limitacion: 'Sin impedancia, Icc exacta ni selectividad certificada.' },
+		guardamotor: { nivel: 'completa-v2', participacion: 'Corte y disparo térmico/magnético, con fallos de motor compatibles.', limitacion: 'Pérdida de fase y sobrecarga son aproximaciones; sin coordinación certificada.' },
+		diferencial: { nivel: 'completa-v2', participacion: 'CERRADO/ABIERTO/DISPARADO por fuga a tierra inyectada.', limitacion: 'No calcula corriente residual: la fuga se identifica expresamente como inyectada.' },
+		fusible: { nivel: 'completa-v2', participacion: 'OK/FUNDIDO, no rearmable y reemplazo explícito.', limitacion: 'Curva de fusión estimada; sin energía pasante I²t certificada.' },
 		seccionador: { nivel: 'parcial', participacion: 'Apertura y cierre de polos.', limitacion: 'Sin enclavamientos ni poder de corte.' },
-		variador: { nivel: 'parcial', participacion: 'Potencia, RUN/ENABLE, referencia, U/V/W y rampa de frecuencia.', limitacion: 'Salida trifásica conceptual; sin PWM, par, frenado ni modelo de fallo interno.' },
+		variador: { nivel: 'completa-v2', participacion: 'SIN ALIMENTACIÓN/READY/RUN/DECEL/FAULT, rampa, reset seguro y U/V/W.', limitacion: 'Salida trifásica conceptual; sin PWM, par ni frenado regenerativo.' },
 		motor: {
-			nivel: 'parcial',
-			participacion: 'Estados detenido/arrancando/marcha/falla; valida fases distintas y tensión, con punta y duración estimadas.',
-			limitacion: 'Las anomalías se diagnostican pero no modelan par, RPM, deslizamiento, pérdida de fase ni térmica interna.',
+			nivel: 'completa-v2',
+			participacion: 'DETENIDO/ARRANCANDO/MARCHA/DESACELERANDO/FALLO, fases, Hz, velocidad y RPM opcionales.',
+			limitacion: 'Dinámica, corriente de arranque y RPM son estimadas; sin par electromagnético ni modelo térmico interno certificado.',
 		},
 		pulsador: { nivel: 'parcial', participacion: 'Conmuta contactos NA/NC con modo momentáneo explícito.', limitacion: 'La duración física depende del cliente que entrega el estado.' },
 		selector: { nivel: 'parcial', participacion: 'Selector mantenido de dos o tres posiciones y contactos por posición.', limitacion: 'Sin llave, retorno por resorte ni secuencias de leva.' },
-		piloto: { nivel: 'simulado', participacion: 'Carga binaria e indicación luminosa.', limitacion: 'No modela vida útil o destrucción por sobretensión.' },
+		piloto: { nivel: 'completa-v1', participacion: 'Carga binaria e indicación luminosa.', limitacion: 'No modela vida útil o destrucción por sobretensión.' },
 		sensor: { nivel: 'parcial', participacion: 'Contacto seco, PNP simple o valor funcional.', limitacion: 'Sin modelo eléctrico 0-10 V/4-20 mA completo.' },
 		valvula: { nivel: 'parcial', participacion: 'Carga binaria o posición modulante 0-100 % por perfil.', limitacion: 'Sin presión, caudal ni tiempo mecánico de carrera.' },
 		resistencia: { nivel: 'parcial', participacion: 'Carga de corriente declarada.', limitacion: 'Sin cálculo R/P ni temperatura.' },
@@ -158,7 +158,7 @@ export const MATRIZ_FIDELIDAD_SIMULACION = {
 		cable: { nivel: 'sin-comportamiento', participacion: 'El tipo de dispositivo no participa.', limitacion: 'Los conductores del proyecto son otra entidad y sí participan.' },
 		otro: { nivel: 'parcial', participacion: 'Ejecuta cualquier perfil explícito válido; una acometida legacy puede actuar como fuente.', limitacion: 'Sin perfil explícito queda inerte salvo una acometida legacy reconocible.' },
 	},
-} as const satisfies { version: 2; tipos: Record<TipoDispositivo, FilaFidelidadSimulacion> };
+} as const satisfies { version: 3; tipos: Record<TipoDispositivo, FilaFidelidadSimulacion> };
 
 const esObjeto = (v: unknown): v is Record<string, unknown> =>
 	typeof v === 'object' && v !== null && !Array.isArray(v);

@@ -46,11 +46,12 @@ const base24V = (): Proyecto => {
 	return p;
 };
 
-test('la matriz de fidelidad v2 cubre exactamente los 22 TipoDispositivo', () => {
-	assert.equal(MATRIZ_FIDELIDAD_SIMULACION.version, 2);
+test('la matriz de fidelidad v3 cubre exactamente los 22 TipoDispositivo', () => {
+	assert.equal(MATRIZ_FIDELIDAD_SIMULACION.version, 3);
 	assert.deepEqual(Object.keys(MATRIZ_FIDELIDAD_SIMULACION.tipos).sort(), [...TIPOS].sort());
 	for (const tipo of TIPOS) {
-		assert.match(MATRIZ_FIDELIDAD_SIMULACION.tipos[tipo].nivel, /^(simulado|parcial|sin-comportamiento)$/);
+		assert.match(MATRIZ_FIDELIDAD_SIMULACION.tipos[tipo].nivel,
+			/^(completa-v2|completa-v1|parcial|sin-comportamiento)$/);
 	}
 });
 

@@ -165,7 +165,13 @@ export const PERFILES_BASE = {
 		{ clave: 'frecuenciaMinHz', etiqueta: 'Frecuencia mínima (Hz)', tipo: 'numero', valorInicial: 0, min: 0 },
 		{ clave: 'frecuenciaMaxHz', etiqueta: 'Frecuencia máxima (Hz)', tipo: 'numero', valorInicial: 50, min: 0 },
 		{ clave: 'rampaHzS', etiqueta: 'Rampa (Hz/s)', tipo: 'numero', valorInicial: 10, min: 0.01 }]),
-	motor: perfil('motor', 'Motor', 'Carga de giro monofásica o trifásica.', ['carga-fase', 'carga-retorno', 'proteccion', 'sin-asignar'], [P.tension, P.corriente, P.potencia, P.fases]),
+	motor: perfil('motor', 'Motor', 'Carga de giro monofásica o trifásica.', ['carga-fase', 'carga-retorno', 'proteccion', 'sin-asignar'], [
+		P.tension, P.corriente, P.potencia, P.fases,
+		{ clave: 'polosMotor', etiqueta: 'Polos magnéticos (opcional)', tipo: 'numero', min: 2, paso: 2 },
+		{ clave: 'tiempoArranqueS', etiqueta: 'Tiempo de arranque (s)', tipo: 'numero', valorInicial: 3, min: 0.1, paso: 0.1 },
+		{ clave: 'tiempoParadaS', etiqueta: 'Tiempo de parada (s)', tipo: 'numero', valorInicial: 2, min: 0.1, paso: 0.1 },
+		{ clave: 'deslizamiento', etiqueta: 'Deslizamiento estimado (0–0,19)', tipo: 'numero', min: 0, max: 0.19, paso: 0.01 },
+	]),
 	pulsador: perfil('pulsador', 'Pulsador', 'Mando momentáneo con contactos NA/NC.', [...R.contactos, 'sin-asignar'], [
 		{ clave: 'modoMando', etiqueta: 'Modo', tipo: 'seleccion', valorInicial: 'momentaneo', opciones: [
 			{ valor: 'momentaneo', etiqueta: 'Momentáneo' }, { valor: 'mantenido', etiqueta: 'Mantenido' },
