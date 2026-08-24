@@ -15,7 +15,11 @@ export type TipoFalloRuntime =
 	| 'cortocircuito'
 	| 'fuga-tierra'
 	| 'motor-bloqueado'
-	| 'fallo-externo';
+	| 'fallo-externo'
+	| 'proteccion-disparada'
+	| 'termico-disparado'
+	| 'fusible-fundido'
+	| 'vfd-fault';
 
 export type OrigenMagnitudSimulacion = 'calculado' | 'estimado' | 'inyectado' | 'no-modelado';
 
@@ -34,6 +38,10 @@ export const ETIQUETA_FALLO_RUNTIME: Readonly<Record<TipoFalloRuntime, string>> 
 	'fuga-tierra': 'Fuga a tierra simulada',
 	'motor-bloqueado': 'Motor bloqueado',
 	'fallo-externo': 'Fallo externo',
+	'proteccion-disparada': 'Protección disparada',
+	'termico-disparado': 'Relé térmico disparado',
+	'fusible-fundido': 'Fusible fundido',
+	'vfd-fault': 'VFD en FAULT',
 };
 
 /**

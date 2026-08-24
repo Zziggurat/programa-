@@ -8,7 +8,9 @@ import type { Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import {
 	cambiarFalloRuntime, fallosCompatibles, type TipoFalloRuntime,
 } from '../src/motores/fallos-runtime.js';
-import { memoriaVacia, simular } from '../src/motores/simulacion.js';
+import {
+	actualizarProteccionesRuntime, contactosCerrados, memoriaVacia, simular,
+} from '../src/motores/simulacion.js';
 
 const proteccion = (
 	funcion: Extract<ComportamientoSimulacion, { clase: 'proteccion' }>['funcion'],
@@ -140,4 +142,129 @@ test('motor V2: sin polos publica velocidad relativa y no inventa RPM', () => {
 	assert.equal(r.motores[0].velocidadPorcentaje, 100);
 	assert.equal(r.motores[0].rpmEstimada, undefined);
 	assert.equal(r.motores[0].rpmOrigen, 'no-disponible');
+});
+
+function tableroProteccionV2(
+	funcion: 'termico' | 'termomagnetico' | 'fusible' | 'diferencial',
+	importada = false,
+): Proyecto {
+	const p = crearProyecto(`Protección ${funcion}`);
+	const tipo = importada ? 'otro' as const : funcion === 'termico' ? 'rele' as const
+		: funcion === 'fusible' ? 'fusible' as const : funcion === 'diferencial' ? 'diferencial' as const
+			: 'disyuntor' as const;
+	const proteccion: Dispositivo = {
+		id: 'proteccion', tipo, corrienteNominal: 4,
+		bornes: ['I', 'O', '95', '96', '97', '98'].map((id) => ({ id })),
+		comportamiento: {
+			version: 1, clase: 'proteccion', funcion, rearmable: funcion !== 'fusible',
+			polos: [{ entrada: 'I', salida: 'O' }],
+			contactos: [
+				{ entrada: '95', salida: '96', reposo: 'cerrado', funcion: 'auxiliar' },
+				{ entrada: '97', salida: '98', reposo: 'abierto', funcion: 'auxiliar' },
+			],
+		},
+	};
+	p.dispositivos = [
+		{
+			id: 'red', tipo: 'otro', clase: 'W', campo: true, descripcion: 'Red', tensionNominal: 230,
+			bornes: [{ id: 'L', tipo: 'L' }, { id: 'N', tipo: 'N' }],
+		},
+		proteccion,
+		{
+			id: 'carga', tipo: 'resistencia', corrienteNominal: 1,
+			bornes: [{ id: 'A', tipo: 'L' }, { id: 'B', tipo: 'N' }],
+		},
+	];
+	p.conductores = [
+		cable('c1', ['red', 'L'], ['proteccion', 'I']), cable('c2', ['proteccion', 'O'], ['carga', 'A']),
+		cable('c3', ['red', 'N'], ['carga', 'B']),
+	];
+	return p;
+}
+
+test('relé térmico V2: acumula, dispara 95-96/97-98 y el rearme no crea una orden de marcha', () => {
+	const p = tableroProteccionV2('termico');
+	const memoria = memoriaVacia();
+	let estado = { proteccion: { fallos: ['sobrecarga'] as TipoFalloRuntime[] } };
+	let r = simular(p, estado, undefined, { ahora: 0, memoria });
+	let avance = actualizarProteccionesRuntime(p, estado, r, 0, memoria);
+	assert.equal(avance.cambio, false);
+	avance = actualizarProteccionesRuntime(p, estado, r, 4000, memoria);
+	assert.equal(memoria.protecciones?.proteccion.cargaTermica, 0.5);
+	assert.equal(avance.cambio, false);
+	avance = actualizarProteccionesRuntime(p, estado, r, 8000, memoria);
+	assert.equal(avance.eventos[0].estado, 'disparado');
+	estado = avance.estado as typeof estado;
+	assert.deepEqual(contactosCerrados(p.dispositivos[1], estado.proteccion, false), [['97', '98']]);
+	r = simular(p, estado, undefined, { ahora: 8000, memoria });
+	assert.equal(r.protecciones[0].estado, 'disparado');
+	assert.equal(r.activos.has('carga'), false);
+
+	const sinCausa = cambiarFalloRuntime(estado.proteccion, 'sobrecarga', false);
+	const rearme = { ...estado, proteccion: { ...sinCausa, rearmeSolicitado: true } };
+	const rearmado = actualizarProteccionesRuntime(p, rearme, r, 8100, memoria);
+	assert.equal(rearmado.estado.proteccion.disparado, undefined);
+	assert.equal(rearmado.estado.proteccion.rearmeSolicitado, undefined);
+	assert.equal(simular(p, rearmado.estado).activos.has('carga'), true,
+		'el rearme restaura contactos de potencia, pero no inventa mandos ajenos al circuito');
+});
+
+test('fusible V2: FUNDIDO no rearma; REEMPLAZAR funciona y se funde otra vez si la causa sigue', () => {
+	const p = tableroProteccionV2('fusible', true);
+	const memoria = memoriaVacia();
+	let estado = { proteccion: { fallos: ['cortocircuito'] as TipoFalloRuntime[] } };
+	let r = simular(p, estado, undefined, { ahora: 0, memoria });
+	let avance = actualizarProteccionesRuntime(p, estado, r, 0, memoria);
+	assert.equal(avance.eventos[0].estado, 'fundido');
+	estado = avance.estado as typeof estado;
+	assert.equal(simular(p, estado).protecciones[0].estado, 'fundido');
+
+	const reemplazoConCausa = { ...estado, proteccion: { ...estado.proteccion, reemplazoFusibleSolicitado: true } };
+	avance = actualizarProteccionesRuntime(p, reemplazoConCausa, r, 100, memoria);
+	assert.equal(avance.estado.proteccion.disparado, true, 'la causa persistente no puede quedar oculta al reemplazar');
+
+	const sinCausa = cambiarFalloRuntime(avance.estado.proteccion, 'cortocircuito', false);
+	const reemplazo = { ...avance.estado, proteccion: { ...sinCausa, reemplazoFusibleSolicitado: true } };
+	r = simular(p, reemplazo, undefined, { ahora: 200, memoria });
+	avance = actualizarProteccionesRuntime(p, reemplazo, r, 200, memoria);
+	assert.equal(avance.estado.proteccion.disparado, undefined);
+	assert.equal(simular(p, avance.estado).protecciones[0].estado, 'cerrado');
+});
+
+test('diferencial V2: la fuga es inyectada, no una residual falsamente calculada', () => {
+	const p = tableroProteccionV2('diferencial');
+	const memoria = memoriaVacia();
+	const estado = { proteccion: { fallos: ['fuga-tierra'] as TipoFalloRuntime[] } };
+	const r = simular(p, estado, undefined, { ahora: 0, memoria });
+	const avance = actualizarProteccionesRuntime(p, estado, r, 0, memoria);
+	assert.deepEqual(avance.eventos.map((e) => [e.causa, e.origen]), [['fuga-tierra', 'inyectado']]);
+	assert.equal(simular(p, avance.estado).protecciones[0].estado, 'disparado');
+});
+
+test('disyuntor/guardamotor V2: térmica y magnética comparten contrato sin prometer Icc', () => {
+	const ejecutarSobrecarga = (importada: boolean) => {
+		const p = tableroProteccionV2('termomagnetico', importada);
+		p.dispositivos.find((d) => d.id === 'carga')!.corrienteNominal = 6;
+		const memoria = memoriaVacia();
+		const r = simular(p, {}, undefined, { ahora: 0, memoria });
+		const propuesta = r.disparos.find((d) => d.dispositivoId === 'proteccion');
+		assert.ok(propuesta?.segundos && propuesta.motivo === 'sobrecarga');
+		actualizarProteccionesRuntime(p, {}, r, 0, memoria);
+		const final = actualizarProteccionesRuntime(p, {}, r, propuesta!.segundos * 1000, memoria);
+		return {
+			evento: final.eventos.map((e) => [e.estado, e.causa, e.origen]),
+			estado: simular(p, final.estado).protecciones[0].estado,
+		};
+	};
+	assert.deepEqual(ejecutarSobrecarga(true), ejecutarSobrecarga(false),
+		'la imagen/carcasa importada cambió el mecanismo termomagnético');
+
+	const guardamotor = tableroProteccionV2('termomagnetico');
+	guardamotor.dispositivos.find((d) => d.id === 'proteccion')!.tipo = 'guardamotor';
+	const memoria = memoriaVacia();
+	const estado = { proteccion: { fallos: ['cortocircuito'] as TipoFalloRuntime[] } };
+	const r = simular(guardamotor, estado, undefined, { ahora: 0, memoria });
+	const disparo = actualizarProteccionesRuntime(guardamotor, estado, r, 0, memoria);
+	assert.deepEqual(disparo.eventos.map((e) => [e.estado, e.causa, e.origen]),
+		[['disparado', 'cortocircuito', 'inyectado']]);
 });

@@ -83,6 +83,9 @@ export interface EstadoAparato {
 	fallos?: TipoFalloRuntime[];
 	/** Pulso runtime de reset para equipos con fallo enclavado. */
 	resetFallo?: boolean;
+	/** Acciones de un solo ciclo; la UI las consume al actualizar el runtime. */
+	rearmeSolicitado?: boolean;
+	reemplazoFusibleSolicitado?: boolean;
 	/** Salidas DIGITALES de un controlador que el usuario fuerza a ON, por su id de borne. */
 	salidas?: string[];
 	/**
@@ -127,10 +130,14 @@ export interface MemoriaTiempos {
 	}>;
 	/** Velocidad mecánica relativa. Es runtime y no modifica datos de placa ni el Proyecto. */
 	motores?: Record<string, { velocidadRelativa: number; actualizadoEn: number }>;
+	/** Integrador térmico simplificado de protecciones; 0 frío, 1 umbral de disparo. */
+	protecciones?: Record<string, { cargaTermica: number; actualizadoEn: number }>;
 }
 
 export function memoriaVacia(): MemoriaTiempos {
-	return { desdeConectado: {}, desdeSoltado: {}, cumplidos: [], variadores: {}, motores: {} };
+	return {
+		desdeConectado: {}, desdeSoltado: {}, cumplidos: [], variadores: {}, motores: {}, protecciones: {},
+	};
 }
 
 export interface EstadoVariador {
@@ -190,6 +197,17 @@ export interface EstadoMotor {
 	/** Solo existe para un fallo runtime explícito; no se deduce silenciosamente de una etiqueta. */
 	motivoFalla?: 'fallo-declarado' | 'disparo-declarado' | 'perdida-fase' | 'subtension'
 		| 'sobretension' | 'sobrecarga' | 'motor-bloqueado';
+}
+
+export interface EstadoProteccion {
+	dispositivoId: string;
+	designacion: string;
+	funcion: 'termico' | 'termomagnetico' | 'fusible' | 'diferencial' | 'seccionamiento' | 'no-declarada';
+	estado: 'abierto' | 'cerrado' | 'calentando' | 'disparado' | 'fundido';
+	rearmable: boolean;
+	cargaTermica: number;
+	causa?: 'sobrecarga' | 'cortocircuito' | 'perdida-fase' | 'fuga-tierra' | 'manual';
+	origen?: OrigenMagnitudSimulacion;
 }
 
 /** Lo que hay que saber de un temporizador para enseñarlo: cuánto lleva y cuánto le falta. */
@@ -335,6 +353,10 @@ export interface ResultadoSimulacion {
 	variadores: EstadoVariador[];
 	/** Estado contractual de las cargas cuyo perfil declara efecto de giro. */
 	motores: EstadoMotor[];
+	/** Estado mecánico/térmico de cada protección ejecutable. */
+	protecciones: EstadoProteccion[];
+	/** Fallos activos, con procedencia explícita. */
+	fallos: (FalloRuntimeActivo & { dispositivoId: string; designacion: string })[];
 	/** Posición 0..100 de cargas modulantes, por id de aparato. */
 	posicionesCargas: Map<string, number>;
 }
@@ -1562,18 +1584,21 @@ export function simular(
 		const etiqueta = d.designacion ?? d.id;
 		if (CONSUME.has(d.tipo) || perfil?.clase === 'carga') {
 			const motor = motoresPorId.get(d.id);
-			if (motor?.estado === 'detenido' || motor?.estado === 'falla') continue;
+			if (motor?.estado === 'detenido') continue;
 			if (tieneCircuitoCompleto(d, vivos)) {
-				activos.add(d.id);
-				const corriente = corrienteDe(d);
-				funcionando.push({
-					dispositivoId: d.id,
-					designacion: etiqueta,
-					que: motor?.estado === 'arrancando'
-						? `arrancando (${Math.round(motor.progresoArranque * 100)} %) · `
-							+ `${formatearA(motor.corrienteEstimadaA)} estimados`
-						: `${motor ? 'girando' : queHace(d)} · ${formatearA(corriente)}`,
-				});
+				const corriente = motor?.corrienteEstimadaA && motor.estado === 'falla'
+					? motor.corrienteEstimadaA : corrienteDe(d);
+				if (motor?.estado !== 'falla') {
+					activos.add(d.id);
+					funcionando.push({
+						dispositivoId: d.id,
+						designacion: etiqueta,
+						que: motor?.estado === 'arrancando'
+							? `arrancando (${Math.round(motor.progresoArranque * 100)} %) · `
+								+ `${formatearA(motor.corrienteEstimadaA)} estimados`
+							: `${motor ? 'girando' : queHace(d)} · ${formatearA(corriente)}`,
+					});
+				}
 				consumos.push({
 					dispositivoId: d.id,
 					designacion: etiqueta,
@@ -1817,6 +1842,8 @@ export function simular(
 		salidasAnalogicas.set(clave, salidaAnalogicaEn(d, borne, pct));
 	}
 
+	const protecciones = estadosProtecciones(aparatos, estado, reloj?.memoria);
+	const fallos = fallosActivos(aparatos, estado, motores, protecciones, variadores);
 	return {
 		vivos, conductoresVivos, activos, funcionando, avisos, analogicas, salidasAnalogicas,
 		pasadas, oscila: !estable,
@@ -1829,9 +1856,145 @@ export function simular(
 		disparos,
 		tensionesEquivocadas,
 		arranques,
-		controladores, variadores, motores, posicionesCargas,
+		controladores, variadores, motores, protecciones, fallos, posicionesCargas,
 		temporizadores: cuentasAtras(aparatos, activos, reloj),
 	};
+}
+
+function estadosProtecciones(
+	aparatos: readonly Dispositivo[],
+	estado: EstadoTablero,
+	memoria?: MemoriaTiempos,
+): EstadoProteccion[] {
+	return aparatos.flatMap((d) => {
+		const perfil = resolverComportamiento(d);
+		if (perfil?.clase !== 'proteccion') return [];
+		const st = estado[d.id] ?? {};
+		const funcion = perfil.funcion ?? 'no-declarada';
+		const cargaTermica = memoria?.protecciones?.[d.id]?.cargaTermica ?? 0;
+		const disparado = st.disparado === true;
+		const causa = tieneFallo(st, 'fuga-tierra') ? 'fuga-tierra' as const
+			: tieneFallo(st, 'cortocircuito') ? 'cortocircuito' as const
+				: tieneFallo(st, 'perdida-fase') ? 'perdida-fase' as const
+					: tieneFallo(st, 'sobrecarga') ? 'sobrecarga' as const
+						: disparado ? 'manual' as const : undefined;
+		const abierto = st.cerrado === false;
+		const estadoProteccion: EstadoProteccion['estado'] = disparado
+			? funcion === 'fusible' ? 'fundido' : 'disparado'
+			: abierto ? 'abierto' : cargaTermica > 0.001 ? 'calentando' : 'cerrado';
+		return [{
+			dispositivoId: d.id, designacion: d.designacion ?? d.id, funcion,
+			estado: estadoProteccion, rearmable: perfil.rearmable,
+			cargaTermica: Math.round(Math.max(0, Math.min(1, cargaTermica)) * 1000) / 1000,
+			causa,
+			origen: causa && causa !== 'manual' ? 'inyectado' : causa ? 'estimado' : undefined,
+		}];
+	});
+}
+
+function fallosActivos(
+	aparatos: readonly Dispositivo[],
+	estado: EstadoTablero,
+	motores: readonly EstadoMotor[],
+	protecciones: readonly EstadoProteccion[],
+	variadores: readonly EstadoVariador[],
+): (FalloRuntimeActivo & { dispositivoId: string; designacion: string })[] {
+	const salida: (FalloRuntimeActivo & { dispositivoId: string; designacion: string })[] = [];
+	for (const d of aparatos) for (const tipo of estado[d.id]?.fallos ?? []) {
+		salida.push({
+			dispositivoId: d.id, designacion: d.designacion ?? d.id, tipo,
+			origen: 'inyectado', descripcion: `Condición inyectada para el ensayo: ${tipo}.`,
+		});
+	}
+	for (const m of motores) if (m.motivoFalla === 'perdida-fase'
+		&& !tieneFallo(estado[m.dispositivoId], 'perdida-fase')) {
+		salida.push({
+			dispositivoId: m.dispositivoId, designacion: m.designacion, tipo: 'perdida-fase',
+			origen: 'calculado', descripcion: `${m.fasesPresentes}/${m.fasesRequeridas} fases eléctricamente distintas.`,
+		});
+	}
+	for (const p of protecciones) if (p.estado === 'disparado' || p.estado === 'fundido') {
+		salida.push({
+			dispositivoId: p.dispositivoId, designacion: p.designacion,
+			tipo: p.estado === 'fundido' ? 'fusible-fundido'
+				: p.funcion === 'termico' ? 'termico-disparado' : 'proteccion-disparada',
+			origen: p.origen ?? 'estimado', descripcion: p.causa ? `Actuó por ${p.causa}.` : 'Protección accionada.',
+		});
+	}
+	for (const v of variadores) if (v.estado === 'falla') salida.push({
+		dispositivoId: v.dispositivoId, designacion: v.designacion, tipo: 'vfd-fault',
+		origen: 'estimado', descripcion: 'El variador mantiene un FAULT de runtime.',
+	});
+	return salida;
+}
+
+export interface EventoProteccionRuntime {
+	dispositivoId: string;
+	designacion: string;
+	estado: 'disparado' | 'fundido';
+	causa: EstadoProteccion['causa'];
+	origen: OrigenMagnitudSimulacion;
+}
+
+/**
+ * Integra calentamiento/enfriamiento y devuelve el siguiente EstadoTablero runtime.
+ * No modifica Proyecto. Un cortocircuito o una fuga inyectada actúan inmediatamente; una
+ * sobrecarga usa la curva estimada que ya publica ResultadoSimulacion.
+ */
+export function actualizarProteccionesRuntime(
+	proyecto: Proyecto,
+	estado: EstadoTablero,
+	resultado: ResultadoSimulacion,
+	ahora: number,
+	memoria: MemoriaTiempos,
+): { estado: EstadoTablero; cambio: boolean; eventos: EventoProteccionRuntime[] } {
+	memoria.protecciones ??= {};
+	let siguiente = estado;
+	let cambio = false;
+	const eventos: EventoProteccionRuntime[] = [];
+	const escribir = (id: string, st: EstadoAparato) => {
+		if (siguiente === estado) siguiente = { ...estado };
+		siguiente[id] = st; cambio = true;
+	};
+	for (const d of proyecto.dispositivos) {
+		const perfil = resolverComportamiento(d);
+		if (perfil?.clase !== 'proteccion' || perfil.funcion === 'seccionamiento') continue;
+		const st = siguiente[d.id] ?? {};
+		let mem = memoria.protecciones[d.id] ?? { cargaTermica: 0, actualizadoEn: ahora };
+		const dt = Math.max(0, ahora - mem.actualizadoEn) / 1000;
+		if (st.rearmeSolicitado || st.reemplazoFusibleSolicitado) {
+			mem = { cargaTermica: 0, actualizadoEn: ahora };
+			const limpio = { ...st };
+			delete limpio.rearmeSolicitado; delete limpio.reemplazoFusibleSolicitado;
+			delete limpio.disparado; limpio.cerrado = true;
+			escribir(d.id, limpio);
+		}
+		const estadoActual = siguiente[d.id] ?? st;
+		const porCircuito = resultado.disparos.find((x) => x.dispositivoId === d.id);
+		const fuga = perfil.funcion === 'diferencial' && tieneFallo(estadoActual, 'fuga-tierra');
+		const cortoInyectado = tieneFallo(estadoActual, 'cortocircuito');
+		const sobrecargaInyectada = tieneFallo(estadoActual, 'sobrecarga')
+			|| tieneFallo(estadoActual, 'perdida-fase');
+		const instantaneo = fuga || cortoInyectado || porCircuito?.motivo === 'cortocircuito';
+		const segundos = porCircuito?.motivo === 'sobrecarga' ? porCircuito.segundos
+			: sobrecargaInyectada ? 8 : undefined;
+		let carga = mem.cargaTermica;
+		if (instantaneo) carga = 1;
+		else if (segundos !== undefined) carga = Math.min(1, carga + dt / Math.max(0.05, segundos));
+		else carga = Math.max(0, carga - dt / 12);
+		memoria.protecciones[d.id] = { cargaTermica: carga, actualizadoEn: ahora };
+		if (carga < 1 || estadoActual.disparado) continue;
+		const causa: EstadoProteccion['causa'] = fuga ? 'fuga-tierra'
+			: cortoInyectado || porCircuito?.motivo === 'cortocircuito' ? 'cortocircuito'
+				: tieneFallo(estadoActual, 'perdida-fase') ? 'perdida-fase' : 'sobrecarga';
+		escribir(d.id, { ...estadoActual, disparado: true });
+		eventos.push({
+			dispositivoId: d.id, designacion: d.designacion ?? d.id,
+			estado: perfil.funcion === 'fusible' ? 'fundido' : 'disparado', causa,
+			origen: fuga || cortoInyectado || sobrecargaInyectada ? 'inyectado' : 'estimado',
+		});
+	}
+	return { estado: siguiente, cambio, eventos };
 }
 
 /** Calibre efectivo de un aparato de corte: el nominal, o el tope de su rango de regulación. */
