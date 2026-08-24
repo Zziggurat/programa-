@@ -97,11 +97,11 @@ if (suites.length === 0) {
  * El marcador es `has("qa")`, que sobrevive a la minificación y solo existe en la construcción de
  * pruebas. Vale más pararse aquí y decir qué hay que hacer.
  */
-const bundle = existsSync(join(RAIZ, 'app', 'dist', 'assets'))
-	? readdirSync(join(RAIZ, 'app', 'dist', 'assets')).find((f) => f.endsWith('.js'))
-	: undefined;
-const conSonda = bundle
-	&& readFileSync(join(RAIZ, 'app', 'dist', 'assets', bundle), 'utf8').includes('has("qa")');
+const bundles = existsSync(join(RAIZ, 'app', 'dist', 'assets'))
+	? readdirSync(join(RAIZ, 'app', 'dist', 'assets')).filter((f) => f.endsWith('.js'))
+	: [];
+const conSonda = bundles.some((bundle) =>
+	readFileSync(join(RAIZ, 'app', 'dist', 'assets', bundle), 'utf8').includes('has("qa")'));
 if (!conSonda && suites.some((s) => !NECESITAN_EMPAQUETADO.has(s))) {
 	console.error('\n⚠️  app/dist está construido SIN la sonda de pruebas.\n'
 		+ '   Las suites hablan con `window.qa`, que solo existe si se construye así:\n\n'

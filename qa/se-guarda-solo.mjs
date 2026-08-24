@@ -57,7 +57,8 @@ const ANCHO_CM = 83;
 
 try {
 	await pagina.goto(`${url}/?qa=1`, { waitUntil: 'domcontentloaded' });
-	await pagina.waitForFunction(() => !!window.qa);
+	await pagina.waitForFunction(() => !!window.qa?.esperarPersistencia);
+	await pagina.evaluate(() => window.qa.esperarPersistencia());
 	await abrirEjemploDesdeLaInterfaz();
 
 	console.log('\n--- modificar mediante la interfaz real ---');
@@ -79,7 +80,8 @@ try {
 
 	console.log('\n--- recargar el navegador ---');
 	await pagina.reload({ waitUntil: 'domcontentloaded' });
-	await pagina.waitForFunction(() => !!window.qa);
+	await pagina.waitForFunction(() => !!window.qa?.esperarPersistencia);
+	await pagina.evaluate(() => window.qa.esperarPersistencia());
 	const recargado = await estadoPersistente();
 	comprobar('el nombre sobrevivió a la recarga', recargado.nombre === NOMBRE, recargado.nombre);
 	comprobar('el ancho sobrevivió a la recarga', recargado.ancho === ANCHO_CM * 10, `${recargado.ancho} mm`);
