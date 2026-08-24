@@ -6,6 +6,7 @@
 import { Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import { fixturePuertaSemantica } from './fixture-puerta.js';
+import { fixtureFallosIndustriales, fixtureVariadorV2 } from './fixtures-simulacion-v2.js';
 import { tableroEjemplo } from './tablero-ejemplo.js';
 
 export interface EjemploTablero {
@@ -1097,5 +1098,43 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'El cable violeta del sensor termina en la bornera y no aparece en el mazo de puerta.',
 		],
 		crear: fixturePuertaSemantica,
+	},
+	{
+		id: 'fixture-fallos-v2',
+		titulo: 'Fixture V2: motor, térmico y fallos',
+		resumen: 'Arranque directo pequeño para ensayar sobrecarga, 95-96, 97-98 y rearme seguro.',
+		queHace: 'Arranca un motor trifásico mediante START/STOP y demuestra que una sobrecarga de runtime '
+			+ 'hace actuar al relé térmico a través del mismo circuito de mando.',
+		comoFunciona: [
+			'START excita KM1 y su auxiliar 13-14 mantiene la orden al soltar el pulsador.',
+			'El piloto MARCHA está conectado a la bobina y solo luce mientras KM1 permanece excitado.',
+			'Una sobrecarga calienta F2; al disparar abre 95-96, cierra 97-98 y enciende FALLO.',
+			'Rearmar F2 restaura los contactos, pero exige una nueva pulsación START.',
+		],
+		aprender: [
+			'Inyecta Sobrecarga en M1 desde Fallas de ensayo y observa el calentamiento de F2.',
+			'Comprueba que KM1 cae por 95-96; el motor no se apaga mediante una excepción por id.',
+			'Retira la causa, rearma F2 y pulsa START otra vez.',
+		],
+		crear: fixtureFallosIndustriales,
+	},
+	{
+		id: 'fixture-vfd-v2',
+		titulo: 'Fixture V2: VFD, velocidad y FAULT',
+		resumen: 'Circuito compacto para probar RUN, referencia, rampa, FAULT, RESET y velocidad del motor.',
+		queHace: 'Un selector entrega RUN al VFD; la referencia visible regula de 0 a 50 Hz y el contacto '
+			+ 'de alarma alimenta un piloto cuando el fallo queda enclavado.',
+		comoFunciona: [
+			'Con Q1 cerrado y RUN abierto, U1 queda READY.',
+			'RUN y la referencia determinan la frecuencia; la velocidad y RPM del motor derivan del resultado.',
+			'FAULT corta U/V/W y cierra AL1-AL2; el motor desacelera y el piloto rojo se enciende.',
+			'Tras retirar la causa, RESET lleva a READY y una nueva orden RUN es obligatoria.',
+		],
+		aprender: [
+			'Compara 10, 25 y 50 Hz con la velocidad visual y las RPM estimadas del motor de cuatro polos.',
+			'Prueba RESET con la causa presente y después de retirarla.',
+			'Observa que AL1-AL2 pertenece al circuito: el piloto no lee un estado visual paralelo.',
+		],
+		crear: fixtureVariadorV2,
 	},
 ];
