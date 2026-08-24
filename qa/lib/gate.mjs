@@ -2,7 +2,7 @@
  * Gate de navegador que debe estar verde en cada PR.
  *
  * Solo contiene regresiones deterministas, con exit code real y sin inspección humana. Las suites
- * rojas por bugs conocidos (`cables-fusion`) y las campañas de estrés/visuales se ejecutan aparte.
+ * pesadas o focalizadas (`cables-fusion` y las campañas nuevas) se ejecutan aparte.
  */
 export const GATE_OFICIAL = Object.freeze([
 	'abrir-atomico',
