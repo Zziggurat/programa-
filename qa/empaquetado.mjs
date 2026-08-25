@@ -23,6 +23,7 @@ import { abrirNavegador, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARCHIVO = join(AQUI, '..', 'dist-final', 'TableroStudio.html');
+const ARCHIVO_DESKTOP = join(AQUI, '..', 'desktop', 'app.html');
 mkdirSync(join(AQUI, '_salida'), { recursive: true });
 
 if (!existsSync(ARCHIVO)) {
@@ -36,6 +37,7 @@ const must = (n, c, extra = '') => { if (!c) fallos++; console.log(`${c ? 'OK  '
 /* ---------- 1. El archivo en sí ---------- */
 console.log('--- 1. El archivo que se entrega ---');
 const html = readFileSync(ARCHIVO, 'utf8');
+const htmlDesktop = existsSync(ARCHIVO_DESKTOP) ? readFileSync(ARCHIVO_DESKTOP, 'utf8') : '';
 const kb = Math.round(html.length / 1024);
 must('el archivo pesa lo que pesa una aplicación completa', html.length > 1_000_000, `${kb} KB`);
 must('lleva el estilo dentro', /<style>[\s\S]{2000,}<\/style>/.test(html));
@@ -47,6 +49,10 @@ must('no quedan referencias a archivos externos',
 	!/<script[^>]+src=|<link[^>]+stylesheet|https?:\/\//i.test(marcado));
 // Si esto falla, el empaquetado lleva dentro el andamiaje de las pruebas.
 must('no lleva dentro la sonda de pruebas', !html.includes('puntoParaAgarrar'));
+const buildId = html.match(/<meta name="tablerostudio-build" content="([A-F0-9]{10})">/)?.[1];
+must('declara un Build ID de contenido', !!buildId, buildId ?? 'ausente');
+must('desktop/app.html corresponde byte a byte a la misma build', htmlDesktop === html,
+	htmlDesktop ? `Build ${buildId}` : 'desktop/app.html ausente');
 // El marcado de los diálogos vive en index.html: comprobamos que el empaquetador lo copió.
 for (const id of ['modal-proyecto', 'modal-controlador', 'modal-drc', 'modal-ayuda',
 	'modal-ejemplos', 'seccion-termico', 'estado-guardado', 'menu-archivo', 'inicio', 'mundo']) {
@@ -55,16 +61,29 @@ for (const id of ['modal-proyecto', 'modal-controlador', 'modal-drc', 'modal-ayu
 
 /* ---------- 2. Arranca de verdad, abierto con doble clic ---------- */
 console.log('\n--- 2. Arranca abriéndolo con doble clic (file://) ---');
-const browser = await abrirNavegador(chromium);
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+let browser;
+let page;
 const errs = [];
+const peticionesExternas = [];
+try {
+browser = await abrirNavegador(chromium);
+page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errs.push(m.text()); });
+page.on('console', (m) => {
+	if (m.type() !== 'error' || /favicon|404/i.test(m.text())) return;
+	const origen = m.location().url ? ` @ ${m.location().url}:${m.location().lineNumber ?? 0}` : '';
+	errs.push(m.text() + origen);
+});
+page.on('request', (peticion) => {
+	if (/^https?:/i.test(peticion.url())) peticionesExternas.push(peticion.url());
+});
 
 await page.goto(`file://${ARCHIVO}`, { waitUntil: 'load' });
 await page.waitForTimeout(2200);
 
 must('la aplicación arranca sin errores de JavaScript', errs.length === 0, errs.slice(0, 3).join(' | '));
+must('el Build ID del archivo está disponible en runtime',
+	await page.evaluate((id) => window.__TABLEROSTUDIO_BUILD_ID__ === id, buildId), buildId);
 
 // Lo PRIMERO que se ve al abrir es la ventana de inicio, no el gabinete: aquí se elige
 // herramienta. Es el único sitio donde se prueba tal cual lo vive el usuario, porque el resto
@@ -83,10 +102,47 @@ must('el lienzo tiene tamaño real', await page.evaluate(() => {
 const cerrar = async (id) => { if (await page.isVisible(`#${id}`)) await page.click(`#${id}`); };
 await cerrar('btn-cerrar-ayuda'); await page.waitForTimeout(200);
 
+await page.click('#btn-aprender');
+await page.click('#btn-ayuda');
+must('el mismo Build ID aparece discretamente en Acerca de',
+	(await page.locator('#acerca-de').innerText()).includes(buildId), await page.locator('#acerca-de').innerText());
+await cerrar('btn-cerrar-ayuda');
+
 must('está el catálogo de aparatos', await page.evaluate(
 	() => document.querySelectorAll('#catalogo .item-catalogo').length > 20));
 must('está la barra con sus herramientas', await page.evaluate(
 	() => document.querySelectorAll('#barra button').length > 10));
+must('Energizar y sus controles V2/V3 forman parte del entregable',
+	await page.isVisible('#btn-energizar') && await page.locator('#sim-velocidad').count() === 1
+		&& await page.locator('#sim-sondas').count() === 1 && await page.locator('#sim-fallos').count() === 1);
+
+// IndexedDB y Mis Tableros se ejercitan antes de abrir un ejemplo: no basta con que exista el botón.
+const idbFunciona = await page.evaluate(() => new Promise((resolve) => {
+	const req = indexedDB.open('qa-entrega-idb', 1);
+	req.onupgradeneeded = () => req.result.createObjectStore('datos');
+	req.onerror = () => resolve(false);
+	req.onsuccess = () => {
+		const db = req.result;
+		const tx = db.transaction('datos', 'readwrite');
+		tx.objectStore('datos').put('ok', 'clave');
+		tx.oncomplete = () => { db.close(); resolve(true); };
+		tx.onerror = () => { db.close(); resolve(false); };
+	};
+}));
+must('IndexedDB permite una transacción real bajo file://', idbFunciona);
+await page.click('#btn-archivo'); await page.click('#btn-mis-tableros');
+await page.locator('#modal-tableros').waitFor({ state: 'visible' });
+must('Mis Tableros abre la biblioteca persistente', await page.isVisible('#btn-nuevo-biblioteca'));
+await page.click('#btn-nuevo-biblioteca');
+await page.locator('#modal-tableros').waitFor({ state: 'hidden' });
+await page.locator('#nombre-proyecto').fill('QA Entrega Offline');
+await page.locator('#nombre-proyecto').press('Tab');
+await page.waitForTimeout(500);
+await page.click('#btn-archivo'); await page.click('#btn-mis-tableros');
+await page.locator('#modal-tableros').waitFor({ state: 'visible' });
+must('el nombre escrito persiste y aparece en Mis Tableros',
+	await page.locator('.tarjeta-documento', { hasText: 'QA Entrega Offline' }).count() === 1);
+await page.locator('#btn-cerrar-tableros').click();
 
 /* ---------- 3. Se puede trabajar: añadir, verificar, ver el térmico ---------- */
 console.log('\n--- 3. Se puede trabajar con él ---');
@@ -97,6 +153,9 @@ await cerrar('btn-cerrar-explicacion'); await page.waitForTimeout(300);
 // Más abajo se añade un aparato del catálogo, y un ejemplo es de solo lectura: se trabaja sobre
 // una copia, igual que hace el usuario con «Hacer una copia para trabajar».
 await trabajarSobreCopia(page);
+// La copia puede repintar la explicación del ejemplo en equipos lentos; se cierra después de que
+// la transición haya terminado, antes de usar la herramienta visible Añadir.
+await cerrar('btn-cerrar-explicacion');
 
 const aparatos = await page.evaluate(() => document.querySelectorAll('#lista-dispositivos li').length);
 must('se carga un tablero de ejemplo con sus aparatos', aparatos > 5, `${aparatos} aparatos`);
@@ -111,7 +170,7 @@ must('el balance térmico se calcula', /\d+([.,]\d+)?\s*°C/.test(termico), term
 
 // Añadir un aparato del catálogo: la interacción básica del programa. El ejemplo deja la
 // aplicación en modo Trabajo, donde el catálogo está oculto a propósito (ahí solo se cablea).
-await page.click('#modo-editor'); await page.waitForTimeout(400);
+await page.click('#hta-anadir'); await page.waitForTimeout(400);
 must('en modo Editor vuelve el catálogo', await page.isVisible('#catalogo'));
 await page.locator('#catalogo .item-catalogo').first().click(); await page.waitForTimeout(600);
 must('se puede añadir un aparato del catálogo',
@@ -152,9 +211,40 @@ const proyecto = await bajar('#btn-guardar', /\.json$/i, '#btn-archivo');
 must('guarda el proyecto en un archivo', proyecto.ok && proyecto.bytes > 500,
 	`${proyecto.nombre} · ${proyecto.bytes ?? 0} bytes`);
 
+/* ---------- 5. El vertical slice V3 existe también en el artefacto offline ---------- */
+console.log('\n--- 5. Instrumentación V3 dentro del HTML entregado ---');
+await page.click('#btn-aprender');
+await page.click('#btn-ejemplos');
+await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
+await page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V3: temperatura, PLC y válvula' })
+	.getByRole('button', { name: /Abrir y estudiar/i }).click();
+if (await page.isVisible('#modal-dialogo')) { await page.click('#dialogo-ok'); }
+await page.waitForFunction(() => document.getElementById('nombre-proyecto')?.value
+	=== 'Fixture V3 — temperatura, PLC y válvula modulante');
+await cerrar('btn-cerrar-explicacion');
+await page.click('#btn-energizar');
+await page.locator('#sim-sondas input[data-sonda="tt1"]').waitFor();
+const panelV3 = (await page.locator('#sim-controladores').innerText()).replace(/\s+/g, ' ');
+const aoV3 = (await page.locator('#sim-funcionando .analogica', { hasText: '-A1:AO1' }).innerText()).replace(/\s+/g, ' ');
+must('el HTML offline ejecuta 50 °C → 12 mA → AI 50 °C',
+	/AI1:\s*12\.00 mA\s*→\s*50\.0 °C/.test(panelV3), panelV3);
+must('el HTML offline ejecuta AO=6 V y válvula modulante',
+	/6\.00 V\s*·\s*60 %/.test(aoV3)
+		&& /comando 60 %/.test(await page.locator('#sim-funcionando .posicion-carga').innerText()), aoV3);
+must('la UI offline ofrece el fallo de lazo V3',
+	await page.locator('#sim-fallos select[data-fallo="tt1"] option[value="circuito-analogico-abierto"]').count() === 1);
+must('no hizo ninguna petición HTTP externa obligatoria', peticionesExternas.length === 0,
+	peticionesExternas.slice(0, 3).join(' | '));
+
 must('sigue sin errores de JavaScript después de trabajar', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 await page.screenshot({ path: join(AQUI, '_salida', 'empaquetado.png') });
-await browser.close();
+} catch (error) {
+	fallos++;
+	console.error(`ERROR NO CONTROLADO: ${error?.stack ?? error}`);
+} finally {
+	try { await page?.close(); } catch (error) { fallos++; console.error(`No se pudo cerrar la página: ${error.message}`); }
+	try { await browser?.close(); } catch (error) { fallos++; console.error(`No se pudo cerrar Chromium: ${error.message}`); }
+}
 console.log(`\n=== ${fallos === 0 ? 'TODO OK ✔' : fallos + ' FALLO(S) ✗'} ===`);
 process.exit(fallos === 0 ? 0 : 1);

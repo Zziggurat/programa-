@@ -15,10 +15,8 @@ import { numerarDispositivos } from '../src/motores/numeracion.js';
 import { avisar, confirmar, escaparHtml, pedirTexto, responderDialogo } from './dialogos.js';
 import { abrirVentana, cerrarVentana } from './ventanas.js';
 
-/** Los pone el empaquetador (`app/vite.config.ts`) a partir de `package.json` y de git. */
+/** Lo pone Vite a partir de package.json; el empaquetador añade el Build ID de contenido. */
 declare const __VERSION__: string;
-declare const __COMMIT__: string;
-declare const __FECHA_BUILD__: string;
 
 /** Lo que la ventana de inicio necesita del editor para hacer su trabajo. */
 export interface ContextoInicio {
@@ -81,16 +79,14 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 	/*
 	 * QUÉ COPIA ES ESTA. Tercera auditoría, TS3-P3-03.
 	 *
-	 * «La raíz declara versión 0.1.0 y el escritorio 1.0.0. Unificar una versión de producto y
-	 * mostrar versión, commit/build ID y fecha en Acerca de». Las dos versiones ya son la misma;
-	 * esto es la parte que se ve. Va en la guía porque es la ventana que todo el mundo encuentra,
-	 * y es exactamente lo que hay que pedirle a quien avisa de un fallo.
+	 * La versión se ve también en un build web normal. En el HTML offline, el empaquetador añade a
+	 * este mismo texto el hash de contenido; no se usa el SHA del commit porque crearía una
+	 * dependencia circular al versionar el propio artefacto generado.
 	 *
 	 * Se pone con `textContent`, no con `innerHTML`: son tres cadenas que mete el empaquetador y no
 	 * llevan marcado ninguno.
 	 */
-	$('acerca-de').textContent
-		= `TableroStudio ${__VERSION__} · build ${__COMMIT__} · ${__FECHA_BUILD__}`;
+	$('acerca-de').textContent = `TableroStudio ${__VERSION__}`;
 
 	($('btn-ayuda') as HTMLButtonElement).onclick = () => abrirVentana('modal-ayuda');
 	($('btn-cerrar-ayuda') as HTMLButtonElement).onclick = () => cerrarVentana('modal-ayuda');

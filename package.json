@@ -40,7 +40,8 @@
     "qa:dossier": "node qa/dossier-editable.mjs",
     "qa:cubierta": "node qa/cubierta-obra.mjs",
     "extraer-planta": "python3 herramientas/extraer-planta.py",
-    "qa:empaquetado": "npm run empaquetar && node qa/empaquetado.mjs",
+    "qa:empaquetado": "node qa/empaquetado.mjs",
+    "entrega:check": "node herramientas/verificar-entrega.mjs",
     "qa:auditoria": "vite build app --mode qa && node qa/todas.mjs --gate",
     "check": "tsc --noEmit -p tsconfig.app.json"
   },

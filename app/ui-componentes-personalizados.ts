@@ -68,19 +68,6 @@ interface EstadoEditor {
 	previewUrl?: string;
 }
 
-const css = `
-#${ID_RAIZ}[hidden]{display:none!important}#${ID_RAIZ}{position:fixed;inset:0;z-index:12000;background:#08111dcc;display:grid;place-items:center;font:14px/1.4 system-ui,sans-serif;color:#eaf1f8}
-#${ID_RAIZ} *{box-sizing:border-box}#${ID_RAIZ} .cp-ventana{width:min(1180px,96vw);height:min(820px,94vh);background:#111c29;border:1px solid #38506a;border-radius:12px;box-shadow:0 24px 80px #000a;display:flex;flex-direction:column;overflow:hidden}
-#${ID_RAIZ} header{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #2e4054;background:#162536}#${ID_RAIZ} header h2{font-size:18px;margin:0;flex:1}
-#${ID_RAIZ} button,#${ID_RAIZ} input,#${ID_RAIZ} select,#${ID_RAIZ} textarea{font:inherit}#${ID_RAIZ} button{border:1px solid #526d89;background:#21364b;color:#f2f7fb;border-radius:6px;padding:7px 11px;cursor:pointer}#${ID_RAIZ} button:hover{background:#2a4662}#${ID_RAIZ} button:disabled{opacity:.45;cursor:default}#${ID_RAIZ} .primario{background:#176eae;border-color:#3ca0e9}#${ID_RAIZ} .peligro{color:#ffb9b9;border-color:#a14a4a}
-#${ID_RAIZ} .cp-cuerpo{flex:1;min-height:0;overflow:auto;padding:16px}#${ID_RAIZ} .cp-barra{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}#${ID_RAIZ} .cp-barra .estado{margin-left:auto;color:#aac0d4}
-#${ID_RAIZ} .cp-lista{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}#${ID_RAIZ} .cp-tarjeta{border:1px solid #30475e;background:#152334;border-radius:9px;padding:12px;display:grid;grid-template-columns:72px 1fr;gap:10px}#${ID_RAIZ} .cp-tarjeta img{width:72px;height:72px;object-fit:contain;background:#e8edf2;border-radius:5px}#${ID_RAIZ} .cp-tarjeta h3{font-size:15px;margin:0 0 3px}#${ID_RAIZ} .cp-tarjeta p{margin:2px 0;color:#aebfd0;font-size:12px}#${ID_RAIZ} .cp-acciones{grid-column:1/-1;display:flex;gap:5px;flex-wrap:wrap}#${ID_RAIZ} .cp-vacio{color:#aebfd0;text-align:center;padding:50px}
-#${ID_RAIZ} .cp-editor{display:grid;grid-template-columns:minmax(310px,42%) 1fr;gap:16px;min-height:0}#${ID_RAIZ} .cp-panel{border:1px solid #30475e;border-radius:8px;padding:12px;background:#132130;min-width:0}#${ID_RAIZ} .cp-panel h3{margin:0 0 10px;font-size:15px}#${ID_RAIZ} label{display:grid;gap:4px;color:#c1d0de}#${ID_RAIZ} input,#${ID_RAIZ} select,#${ID_RAIZ} textarea{width:100%;background:#0b1520;color:#eef5fb;border:1px solid #405a74;border-radius:5px;padding:7px}#${ID_RAIZ} textarea{min-height:70px;resize:vertical}#${ID_RAIZ} .cp-campos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-bottom:12px}
-#${ID_RAIZ} .cp-preview{position:relative;display:inline-block;max-width:100%;background:#e9eef2;border:1px dashed #698097;border-radius:6px;min-width:240px;min-height:180px;cursor:crosshair;vertical-align:top}#${ID_RAIZ} .cp-preview img{display:block;max-width:100%;max-height:330px;min-width:240px;min-height:180px;object-fit:contain}#${ID_RAIZ} .cp-marca{position:absolute;width:14px;height:14px;border-radius:50%;background:#ffbf32;border:2px solid #17212b;transform:translate(-50%,-50%);pointer-events:none}#${ID_RAIZ} .cp-marca span{position:absolute;left:10px;top:-8px;background:#101a25e8;color:white;padding:1px 4px;border-radius:3px;font-size:10px;white-space:nowrap}
-#${ID_RAIZ} table{width:100%;border-collapse:collapse;font-size:12px}#${ID_RAIZ} th,#${ID_RAIZ} td{border-bottom:1px solid #2d4257;padding:5px;text-align:left}#${ID_RAIZ} td input,#${ID_RAIZ} td select{padding:5px;min-width:70px}#${ID_RAIZ} .cp-scroll{overflow:auto;max-height:315px}#${ID_RAIZ} .cp-sugerencias{margin:10px 0;padding:9px;background:#0d1824;border-radius:6px;color:#b9cad9;font-size:12px}#${ID_RAIZ} .cp-sugerencias ul{margin:6px 0 0;padding-left:18px}#${ID_RAIZ} .cp-fidelidad{padding:8px;border-left:3px solid #d89b3c;background:#241f18;color:#e8d8bb;margin:8px 0;font-size:12px}#${ID_RAIZ} .cp-errores{white-space:pre-wrap;padding:9px;border-radius:6px;background:#2a171b;color:#ffb9c0;min-height:38px}#${ID_RAIZ} .cp-ok{background:#13281e;color:#aee9c4}#${ID_RAIZ} .cp-pie{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
-@media(max-width:760px){#${ID_RAIZ} .cp-editor{grid-template-columns:1fr}#${ID_RAIZ} .cp-campos{grid-template-columns:1fr}#${ID_RAIZ} .cp-ventana{width:100vw;height:100vh;border-radius:0}}
-`;
-
 const clonar = <T>(valor: T): T => structuredClone(valor);
 const esObjeto = (valor: unknown): valor is Record<string, unknown> =>
 	typeof valor === 'object' && valor !== null && !Array.isArray(valor);
@@ -195,8 +182,6 @@ function parametrosDesde(d: DefinicionComponentePersonalizado): ParametrosConstr
 
 export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPersonalizados): PanelComponentesPersonalizados {
 	if (document.getElementById(ID_RAIZ)) throw new Error('La UI de Mis Componentes ya está instalada.');
-	const estilo = document.createElement('style'); estilo.dataset.uiComponentesPersonalizados = '1'; estilo.textContent = css;
-	document.head.appendChild(estilo);
 	const raiz = document.createElement('div'); raiz.id = ID_RAIZ; raiz.hidden = true;
 	raiz.innerHTML = '<section class="cp-ventana" role="dialog" aria-modal="true" aria-labelledby="cp-titulo">'
 		+ '<header><h2 id="cp-titulo">Mis Componentes</h2><button type="button" data-cp="cerrar" aria-label="Cerrar">✕</button></header>'
@@ -506,7 +491,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		refrescar: pintarBiblioteca, cerrar,
 		destruir: () => {
 			if (urlTemporal) URL.revokeObjectURL(urlTemporal); for (const url of urls.values()) URL.revokeObjectURL(url);
-			urls.clear(); raiz.remove(); estilo.remove();
+			urls.clear(); raiz.remove();
 		},
 	};
 }

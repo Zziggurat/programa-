@@ -1,0 +1,4 @@
+# Artefactos derivados autocontenidos: pueden contener whitespace significativo dentro de
+# literales JavaScript minificados y no son revisables como un diff de millones de caracteres.
+dist-final/TableroStudio.html binary
+desktop/app.html binary

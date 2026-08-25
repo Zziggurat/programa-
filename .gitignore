@@ -3,7 +3,6 @@ dist/
 app/dist/
 desktop/node_modules/
 desktop/instaladores/
-desktop/app.html
 qa/_*.png
 qa/_*.mjs
 qa/_salida/

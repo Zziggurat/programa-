@@ -62,7 +62,12 @@ Otros comandos útiles:
 npm test        # tests de los motores y de la geometría de cables
 npm run qa      # pruebas automáticas sobre el editor 3D real (ver abajo)
 npm run ejemplo # genera la documentación de un tablero real en ejemplo/salida/
+npm run empaquetar    # regenera los dos HTML offline desde la fuente
+npm run entrega:check # falla si alguno de esos HTML quedó obsoleto
 ```
+
+El flujo reproducible de entrega y los checks separados de CI están documentados en
+[`docs/entrega-ci.md`](docs/entrega-ci.md).
 
 ### Pruebas automáticas del editor (`qa/`)
 
