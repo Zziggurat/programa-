@@ -136,7 +136,7 @@ export function textoEstadoVariador(v: EstadoVariador): string {
 	const electrica = v.referenciaElectrica?.valorElectrico === undefined ? ''
 		: ` · ${v.referenciaElectrica.valorElectrico.toFixed(2)} ${v.referenciaElectrica.unidadElectrica}`;
 	return `${estado} · ${v.frecuenciaHz.toFixed(1)} Hz · ref. ${v.referenciaPorcentaje.toFixed(0)} %${electrica}`
-		+ (v.calidadReferencia === 'normal' ? '' : ` · ${v.calidadReferencia.toUpperCase().replaceAll('-', ' ')}`);
+		+ ` · ${v.calidadReferencia.toUpperCase().replaceAll('-', ' ')}`;
 }
 
 /**

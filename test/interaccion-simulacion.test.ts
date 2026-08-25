@@ -425,6 +425,8 @@ test('display de variador distingue sin alimentación/READY/RUN/FAULT y la anima
 	assert.match(textoEstadoVariador(estado('marcha', 25)), /^RUN · 25\.0 Hz/);
 	assert.match(textoEstadoVariador(estado('decel', 20)), /^DECEL · 20\.0 Hz/);
 	assert.match(textoEstadoVariador(estado('falla', 0)), /^FAULT/);
+	assert.match(textoEstadoVariador(estado('marcha', 25)), /NORMAL$/,
+		'la calidad saludable también debe ser visible: no solo se muestran los fallos');
 
 	animarSimulacion({
 		grupos: [pantalla.grupo], proyecto: proyecto([vfd]),

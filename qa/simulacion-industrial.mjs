@@ -115,6 +115,15 @@ async function velocidad(valor) {
 	await page.locator('#sim-velocidad').selectOption(String(valor));
 }
 
+async function ponerSondaVisible(id, valor) {
+	const selector = `#sim-sondas input[data-sonda="${id}"]`;
+	await page.locator(selector).waitFor();
+	await page.locator(selector).evaluate((input, siguiente) => {
+		input.value = String(siguiente);
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+	}, valor);
+}
+
 /** Resultado eléctrico y panel en el mismo turno del navegador: no mezcla lados de una transferencia. */
 async function fotoConPanel() {
 	return page.evaluate(() => ({
@@ -706,7 +715,69 @@ try {
 		/RUN/.test(await page.locator('#sim-funcionando .variador[data-id="vfd"]').innerText()));
 	await energizar(false);
 
-	console.log('\n=== 7. Integridad de la sesión ===');
+	console.log('\n=== 7. Fixture V3: 4–20 mA, AI/AO, válvula y fail-safe visibles ===');
+	await abrirEjemplo('Fixture V3: temperatura, PLC y válvula',
+		'Fixture V3 — temperatura, PLC y válvula modulante');
+	await energizar(true);
+	await velocidad(20);
+	await ponerSondaVisible('tt1', 50);
+	await page.waitForFunction(() => {
+		const panel = document.querySelector('#sim-controladores')?.textContent ?? '';
+		return /AI1:\s*12\.00 mA\s*→\s*50\.0 °C/.test(panel);
+	});
+	const panelAi = (await page.locator('#sim-controladores').innerText()).replace(/\s+/g, ' ');
+	const salidaAo = (await page.locator('#sim-funcionando .analogica', { hasText: '-A1:AO1' }).innerText())
+		.replace(/\s+/g, ' ');
+	comprobar('el control humano de BT1 muestra simultáneamente 12 mA y AI1=50 °C',
+		/AI1:\s*12\.00 mA\s*→\s*50\.0 °C/.test(panelAi), panelAi);
+	comprobar('la ley visible entrega AO1=6 V / 60 %', /6\.00 V\s*·\s*60 %/.test(salidaAo), salidaAo);
+	await page.waitForFunction(() => /comando 60 %/.test(
+		document.querySelector('#sim-funcionando .posicion-carga')?.textContent ?? ''));
+	const textoValvula = (await page.locator('#sim-funcionando .posicion-carga').innerText()).replace(/\s+/g, ' ');
+	comprobar('la válvula recibe 60 % y su posición se publica desde el runtime',
+		/comando 60 %/.test(textoValvula) && /posición \d+ %/.test(textoValvula), textoValvula);
+	const falloTx = page.locator('#sim-fallos select[data-fallo="tt1"]');
+	comprobar('el transmisor ofrece Circuito analógico abierto en la UI',
+		await falloTx.locator('option[value="circuito-analogico-abierto"]').count() === 1);
+	await elegirSelectVisible('#sim-fallos select[data-fallo="tt1"]', 'circuito-analogico-abierto');
+	await page.waitForFunction(() => {
+		const panel = document.querySelector('#sim-controladores')?.textContent ?? '';
+		const valvula = document.querySelector('#sim-funcionando .posicion-carga')?.textContent ?? '';
+		return /AI1:.*sin valor.*CIRCUITO ABIERTO/i.test(panel) && /comando 0 %/i.test(valvula);
+	});
+	const panelAbierto = (await page.locator('#sim-controladores').innerText()).replace(/\s+/g, ' ');
+	const valvulaSegura = (await page.locator('#sim-funcionando .posicion-carga').innerText()).replace(/\s+/g, ' ');
+	comprobar('abrir el lazo deja AI1 sin valor y calidad CIRCUITO ABIERTO',
+		/AI1:.*sin valor.*CIRCUITO ABIERTO/i.test(panelAbierto), panelAbierto);
+	comprobar('la pérdida de señal ordena el cierre seguro, sin conservar 60 %',
+		/comando 0 %/i.test(valvulaSegura), valvulaSegura);
+	await energizar(false);
+
+	console.log('\n=== 8. Fixture V3: referencia 4–20 mA cableada hacia VFD ===');
+	await abrirEjemplo('Fixture V3: referencia 4–20 mA hacia VFD',
+		'Fixture V3 — referencia 4–20 mA hacia VFD');
+	await energizar(true);
+	await velocidad(20);
+	await ponerSondaVisible('ref1', 50);
+	await page.locator('#sim-mandos button[data-mando="s-run"]').click();
+	await page.waitForFunction(() => {
+		const texto = document.querySelector('#sim-funcionando .variador[data-id="vfd"]')?.textContent ?? '';
+		return /25\.0 Hz/.test(texto) && /12\.00 mA/.test(texto);
+	}, undefined, { timeout: 12_000 });
+	const vfdAnalogico = (await page.locator('#sim-funcionando .variador[data-id="vfd"]').innerText())
+		.replace(/\s+/g, ' ');
+	comprobar('12 mA cableados producen 25 Hz y una referencia NORMAL visible',
+		/25\.0 Hz/.test(vfdAnalogico) && /12\.00 mA/.test(vfdAnalogico) && /NORMAL/.test(vfdAnalogico),
+		vfdAnalogico);
+	await elegirSelectVisible('#sim-fallos select[data-fallo="ref1"]', 'circuito-analogico-abierto');
+	await page.locator('#sim-funcionando .variador.falla[data-id="vfd"]').waitFor();
+	const vfdSinReferencia = (await page.locator('#sim-funcionando .variador[data-id="vfd"]').innerText())
+		.replace(/\s+/g, ' ');
+	comprobar('la pérdida visible de referencia lleva el VFD a FAULT',
+		/FAULT/.test(vfdSinReferencia) && /CIRCUITO ABIERTO/.test(vfdSinReferencia), vfdSinReferencia);
+	await energizar(false);
+
+	console.log('\n=== 9. Integridad de la sesión ===');
 	comprobar('no hubo errores JavaScript', erroresJS.length === 0, erroresJS.slice(0, 3).join(' | '));
 } catch (error) {
 	fallos++;
