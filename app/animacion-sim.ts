@@ -213,6 +213,12 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 	const proteccionesPorId = new Map(
 		(e.energizado ? e.resultado?.protecciones ?? [] : []).map((p) => [p.dispositivoId, p]),
 	);
+	const sensoresAnalogicosPorId = new Map(
+		(e.energizado ? e.resultado?.sensoresAnalogicos ?? [] : []).map((s) => [s.dispositivoId, s]),
+	);
+	const actuadoresPorId = new Map(
+		(e.energizado ? e.resultado?.actuadores ?? [] : []).map((a) => [a.dispositivoId, a]),
+	);
 
 	/*
 	 * --- LOS CABLES RESPIRAN, Y BRILLAN SEGÚN LO QUE LLEVAN ---
@@ -269,6 +275,8 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 		const variador = variadoresPorId.get(id);
 		const motor = motoresPorId.get(id);
 		const proteccion = proteccionesPorId.get(id);
+		const sensorAnalogico = sensoresAnalogicosPorId.get(id);
+		const actuador = actuadoresPorId.get(id);
 
 		/* --- Contactor y relé: la armadura entra cuando la bobina tira --- */
 		for (const m of p.armadura) {
@@ -296,7 +304,9 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 
 		/* --- Pilotos, lámparas y testigos: se encienden con su propio color --- */
 		// Una sonda o boya se enciende cuando está ACCIONADA, aunque no consuma nada.
-		const sensorActivo = e.energizado && perfil?.clase === 'sensor' && !!st.activo;
+		const sensorEnFallo = sensorAnalogico !== undefined && sensorAnalogico.senal.calidad !== 'normal';
+		const sensorActivo = e.energizado && perfil?.clase === 'sensor'
+			&& (!!st.activo || !!sensorAnalogico && !sensorEnFallo);
 		const encendida = (perfil?.clase === 'carga' && perfil.efecto === 'luz' && enMarcha)
 			|| sensorActivo;
 		for (const m of p.lente) {
@@ -313,8 +323,8 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 			 * siempre, así que ningún aparato de placa cambia.
 			 */
 			const emite = (m.userData.colorEmision as number | undefined) ?? propio;
-			mat.emissive.setHex(encendida ? emite : 0x000000);
-			mat.emissiveIntensity = encendida ? 1.15 : 0;
+			mat.emissive.setHex(sensorEnFallo ? 0xd32f2f : encendida ? emite : 0x000000);
+			mat.emissiveIntensity = sensorEnFallo ? 0.9 : encendida ? 1.15 : 0;
 			/*
 			 * APAGADO NO ES «EL MISMO COLOR SIN BRILLO».
 			 *
@@ -424,7 +434,8 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 					|| (perfilEjecutable.clase === 'mando' && st.posicion !== undefined
 						&& st.posicion !== perfilEjecutable.reposo));
 			const fallo = variador?.estado === 'falla' || motor?.estado === 'falla'
-				|| proteccion?.estado === 'disparado' || proteccion?.estado === 'fundido';
+				|| proteccion?.estado === 'disparado' || proteccion?.estado === 'fundido'
+				|| sensorEnFallo || actuador?.estado === 'falla';
 			const activoGenerico = !!perfilEjecutable && e.energizado
 				&& (enMarcha || posicionActiva || entradaActiva
 				|| variador?.estado === 'listo' || variador?.estado === 'marcha' || fallo);

@@ -105,7 +105,7 @@ export function controlDeSimulacion(d: Dispositivo): ControlSimulacion | undefin
 			clase: 'mando', modo: perfil.modo, posiciones: perfil.posiciones, reposo: perfil.reposo,
 		};
 	}
-	if (perfil?.clase === 'sensor') return { clase: 'sensor', analogico: !!d.rangoSonda };
+	if (perfil?.clase === 'sensor') return { clase: 'sensor', analogico: !!perfil.transmisor || !!d.rangoSonda };
 	if (perfil?.clase !== 'proteccion') return undefined;
 	if (d.tipo === 'seccionador') return { clase: 'seccionador' };
 	const ids = new Set(d.bornes.map((b) => b.id));
@@ -133,7 +133,10 @@ export function textoEstadoVariador(v: EstadoVariador): string {
 	const estado = v.estado === 'sin-alimentacion' ? 'SIN ALIMENTACIÓN'
 		: v.estado === 'listo' ? 'READY' : v.estado === 'marcha' ? 'RUN'
 			: v.estado === 'decel' ? 'DECEL' : 'FAULT';
-	return `${estado} · ${v.frecuenciaHz.toFixed(1)} Hz · ref. ${v.referenciaPorcentaje.toFixed(0)} %`;
+	const electrica = v.referenciaElectrica?.valorElectrico === undefined ? ''
+		: ` · ${v.referenciaElectrica.valorElectrico.toFixed(2)} ${v.referenciaElectrica.unidadElectrica}`;
+	return `${estado} · ${v.frecuenciaHz.toFixed(1)} Hz · ref. ${v.referenciaPorcentaje.toFixed(0)} %${electrica}`
+		+ (v.calidadReferencia === 'normal' ? '' : ` · ${v.calidadReferencia.toUpperCase().replaceAll('-', ' ')}`);
 }
 
 /**
@@ -156,6 +159,7 @@ export function requiereAvanceTemporal(
 		|| !!resultado?.protecciones.some((p) => p.estado === 'calentando')
 		|| !!resultado?.disparos.length
 		|| !!resultado?.fallos.some((f) => f.tipo === 'sobrecarga' || f.tipo === 'perdida-fase')
+		|| !!resultado?.actuadores.some((a) => a.estado === 'abriendo' || a.estado === 'cerrando')
 		|| !!resultado?.variadores.some((variador) =>
 			Math.abs(variador.frecuenciaHz - variador.frecuenciaObjetivoHz) > 0.01);
 }
@@ -619,19 +623,31 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		 * mando de temperatura. Si nadie declara rango, se toman todos como sondas: es lo que hacía
 		 * antes, y así los proyectos viejos siguen teniendo su mando.
 		 */
-		const conRango = posiblesSondas.filter((d) => d.rangoSonda);
+		const conRango = posiblesSondas.filter((d) => {
+			const perfil = resolverComportamiento(d);
+			return d.rangoSonda || perfil?.clase === 'sensor' && !!perfil.transmisor;
+		});
 		const sondas = conRango.length ? conRango : posiblesSondas;
-		if (sondas.length && r.controladores.length) {
+		if (sondas.length) {
 			$('sim-sondas').innerHTML = '<h3 class="titulo-sim">Sondas</h3>' + sondas.map((d) => {
-				const [min, max] = d.rangoSonda ?? [-10, 60];
+				const perfil = resolverComportamiento(d);
+				const transmisor = perfil?.clase === 'sensor' ? perfil.transmisor : undefined;
+				const [min, max] = transmisor
+					? [transmisor.variable.minimo, transmisor.variable.maximo] : d.rangoSonda ?? [-10, 60];
 				const paso = (max - min) > 200 ? 5 : (max - min) > 20 ? 0.5 : 0.1;
 				const v = estadoSim[d.id]?.valor ?? Math.round((min + max) / 2);
-				const unidad = d.unidadSonda ? ` ${d.unidadSonda}` : '';
+				const unidadTexto = transmisor?.variable.unidad ?? d.unidadSonda ?? '';
+				const unidad = unidadTexto ? ` ${unidadTexto}` : '';
+				const resultadoSensor = r.sensoresAnalogicos.find((s) => s.dispositivoId === d.id);
+				const salida = resultadoSensor?.senal.valorElectrico === undefined ? 'sin señal'
+					: `${resultadoSensor.senal.valorElectrico.toFixed(2)} ${resultadoSensor.senal.unidadElectrica}`;
+				const calidad = resultadoSensor?.senal.calidad ?? 'legacy';
 				return `<label class="fila-sonda" title="${escaparHtml(d.descripcion ?? '')}">`
 					+ `<span class="des-sim">${escaparHtml(d.designacion ?? d.id)}</span>`
 					+ `<input type="range" min="${min}" max="${max}" step="${paso}" value="${v}" `
 					+ `data-sonda="${escaparHtml(d.id)}" data-unidad="${escaparHtml(unidad)}">`
-					+ `<span class="valor-sonda">${v}${escaparHtml(unidad)}</span></label>`;
+					+ `<span class="valor-sonda">${v}${escaparHtml(unidad)}</span>`
+					+ `<small class="detalle-senal">${escaparHtml(salida)} · ${escaparHtml(calidad.toUpperCase().replaceAll('-', ' '))}</small></label>`;
 			}).join('');
 			for (const el of $('sim-sondas').querySelectorAll<HTMLInputElement>('[data-sonda]')) {
 				el.oninput = () => {
@@ -650,7 +666,17 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 				+ r.controladores.map((c) => {
 					const pin = (t: string, clase = '') => `<span class="pin ${clase}">${escaparHtml(t)}</span>`;
 					const esperando = new Set(c.esperas.map((e) => e.salida));
-					const sondasTxt = Object.entries(c.sondas).map(([b, v]) => pin(`${b}=${v}`, 'on')).join('');
+					const aiV3 = new Set(c.entradasAnalogicas.map((ai) => ai.borne));
+					const sondasTxt = Object.entries(c.sondas).filter(([b]) => !aiV3.has(b))
+						.map(([b, v]) => pin(`${b}=${v}`, 'on')).join('')
+						+ c.entradasAnalogicas.map((ai) => {
+							const bruto = ai.senal.valorElectrico === undefined ? '—'
+								: `${ai.senal.valorElectrico.toFixed(2)} ${ai.senal.unidadElectrica}`;
+							const valor = ai.valorIngenieria === undefined ? 'sin valor'
+								: `${ai.valorIngenieria.toFixed(1)} ${ai.unidad}`;
+							return pin(`${ai.borne}: ${bruto} → ${valor} · ${ai.senal.calidad.toUpperCase().replaceAll('-', ' ')}`,
+								ai.senal.calidad === 'normal' ? 'on' : 'fallo');
+						}).join('');
 					const entradas = c.entradas.filter((e) => /^(DI|UI|AI)\d/.test(e)).map((e) => pin(e, 'on')).join('');
 					const salidas = c.salidas.map((sx) => pin(sx, esperando.has(sx) ? 'esperando' : 'on')).join('');
 					const cuentas = c.esperas.map((e) =>
@@ -765,12 +791,12 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			const d = proyecto().dispositivos.find((x) => x.id === id);
 			const recorrido = salida.rango[1] - salida.rango[0];
 			const porcentaje = recorrido > 0
-				? Math.round((salida.voltios - salida.rango[0]) / recorrido * 100) : 0;
+				? Math.round((salida.valor - salida.rango[0]) / recorrido * 100) : 0;
 			const fila = document.createElement('div');
 			fila.className = 'fila-sim analogica';
 			fila.innerHTML = `<span class="punto-sim"></span>`
 				+ `<span class="des-sim">${escaparHtml(`${d?.designacion ?? id}:${borne}`)}</span>`
-				+ `<span class="que-sim">${salida.voltios.toFixed(1)} V · ${porcentaje} %`
+				+ `<span class="que-sim">${salida.valor.toFixed(2)} ${salida.unidad} · ${porcentaje} %`
 				+ `${salida.supuesto ? ' · rango supuesto' : ''}</span>`;
 			fila.onclick = () => seleccionar(id);
 			cont.appendChild(fila);
@@ -832,17 +858,21 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		// La posición viene del resultado eléctrico, no de “está activo”. Una válvula alimentada con
 		// referencia 0 V está cerrada al 0 %, aunque como carga tenga tensión en sus bornes.
 		const cargasConPosicion = new Set<string>();
-		for (const [id, posicion] of r.posicionesCargas) {
+		for (const actuador of r.actuadores) {
+			const id = actuador.dispositivoId;
+			const posicion = actuador.posicionActual;
 			const d = proyecto().dispositivos.find((x) => x.id === id);
 			const perfil = d ? resolverComportamiento(d) : undefined;
 			if (perfil?.clase !== 'carga') continue;
 			cargasConPosicion.add(id);
 			const fila = document.createElement('div');
-			fila.className = 'fila-sim posicion-carga';
+			fila.className = `fila-sim posicion-carga ${actuador.estado}`;
 			fila.innerHTML = '<span class="punto-sim"></span>'
 				+ `<span class="des-sim">${escaparHtml(d?.designacion ?? id)}</span>`
 				+ `<span class="que-sim">${perfil.efecto === 'movimiento' ? 'válvula/actuador' : 'carga modulante'}`
-				+ ` · posición ${posicion.toFixed(0)} %</span>`;
+				+ ` · ${actuador.estado.toUpperCase()} · comando ${actuador.posicionObjetivo.toFixed(0)} %`
+				+ ` · posición ${posicion.toFixed(0)} %`
+				+ `${actuador.calidadMando === 'normal' ? '' : ` · ${actuador.calidadMando.toUpperCase().replaceAll('-', ' ')}`}</span>`;
 			fila.onclick = () => seleccionar(id);
 			cont.appendChild(fila);
 		}

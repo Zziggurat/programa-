@@ -619,6 +619,8 @@
 	.fila-sonda input[type=range] { width: 100%; accent-color: #4dabf7; }
 	.fila-sonda .valor-sonda { font-family: ui-monospace, monospace; font-weight: 700;
 		color: #7cc0ff; min-width: 52px; text-align: right; }
+	.fila-sonda .detalle-senal { grid-column: 2 / 4; color: var(--texto-suave);
+		font-family: ui-monospace, monospace; font-size: 10.5px; }
 	.ctrl-sim { background: var(--panel-2); border-radius: 8px; padding: 7px 9px; margin-bottom: 5px;
 		font-size: 12px; }
 	.ctrl-sim .des-sim { font-weight: 600; }
@@ -626,6 +628,7 @@
 	.ctrl-sim .pin { font-family: ui-monospace, monospace; font-size: 11px; border-radius: 5px;
 		padding: 1px 6px; background: #1b2027; color: var(--texto-suave); }
 	.ctrl-sim .pin.on { background: #14401f; color: #74d68a; }
+	.ctrl-sim .pin.fallo { background: #451d20; color: #ff9b9b; }
 	.ctrl-sim .pin.esperando { background: #3a3115; color: #ffd97a; }
 	/* El programa en marcha: una luz por renglón dice si su condición se cumple ahora. */
 	.renglon-sim { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; }

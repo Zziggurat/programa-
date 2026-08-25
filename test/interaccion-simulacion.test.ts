@@ -449,3 +449,19 @@ test('la UI expone fallos y referencia VFD por controles visibles de runtime', (
 		'la referencia visible no escribe el estado runtime que consume el motor');
 	assert.match(fuente, /data-reset-vfd=/, 'FAULT no tiene una acción RESET visible');
 });
+
+test('la UI V3 muestra variable, señal, calidad, AI y actuador desde ResultadoSimulacion', () => {
+	const fuente = readFileSync('app/ui-simulacion.ts', 'utf8');
+	assert.match(fuente, /r\.sensoresAnalogicos\.find/,
+		'la ficha de la sonda no consulta la señal producida por el motor');
+	assert.match(fuente, /resultadoSensor\.senal\.valorElectrico/);
+	assert.match(fuente, /c\.entradasAnalogicas\.map/,
+		'la UI del PLC no publica señal bruta, valor escalado y calidad');
+	assert.match(fuente, /for \(const actuador of r\.actuadores\)/,
+		'la válvula conserva una posición visual paralela al resultado');
+	assert.match(fuente, /actuador\.posicionObjetivo/);
+	assert.match(fuente, /actuador\.posicionActual/);
+	const animacion = readFileSync('app/animacion-sim.ts', 'utf8');
+	assert.match(animacion, /resultado\?\.sensoresAnalogicos/);
+	assert.match(animacion, /resultado\?\.actuadores/);
+});
