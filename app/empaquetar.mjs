@@ -10,6 +10,10 @@ import { dirname, join, resolve } from 'node:path';
 const ARCHIVO_ACTUAL = fileURLToPath(import.meta.url);
 const RAIZ = join(dirname(ARCHIVO_ACTUAL), '..');
 
+// Vite conserva parte de los saltos de línea del checkout de origen. Canonizarlos aquí hace que
+// Windows y Linux produzcan exactamente el mismo entregable y, por tanto, el mismo Build ID.
+const textoCanonico = (texto) => texto.replace(/\r\n?/g, '\n');
+
 const hashCsp = (texto) => `'sha256-${createHash('sha256').update(texto, 'utf8').digest('base64')}'`;
 const hashContenido = (...partes) => {
 	const h = createHash('sha256');
@@ -23,10 +27,10 @@ export function empaquetar({
 	desktop = join(RAIZ, 'desktop', 'app.html'),
 	silencioso = false,
 } = {}) {
-	const html = readFileSync(join(distApp, 'index.html'), 'utf8');
+	const html = textoCanonico(readFileSync(join(distApp, 'index.html'), 'utf8'));
 	const jsFile = readdirSync(join(distApp, 'assets')).filter((f) => f.endsWith('.js')).sort()[0];
 	if (!jsFile) throw new Error('No se encontró el bundle JS. Ejecuta primero: npm run editor:build');
-	const js = readFileSync(join(distApp, 'assets', jsFile), 'utf8');
+	const js = textoCanonico(readFileSync(join(distApp, 'assets', jsFile), 'utf8'));
 	const estilo = html.match(/<style>[\s\S]*?<\/style>/)?.[0] ?? '';
 	const cuerpo = html.match(/<body>([\s\S]*?)<\/body>/)?.[1]
 		.replace(/<script[^>]*><\/script>/g, '')

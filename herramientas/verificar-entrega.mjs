@@ -1,5 +1,5 @@
 /** Comprueba la frescura del HTML entregado sin modificar ningún archivo del worktree. */
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,24 @@ try {
 	const { buildId } = empaquetar({
 		distApp: distTemporal, destino: esperadoWeb, desktop: esperadoDesktop, silencioso: true,
 	});
+
+	// Regresión de reproducibilidad entre checkouts LF (CI/Linux) y CRLF (Windows).
+	const distCrLf = join(temporal, 'app-dist-crlf');
+	cpSync(distTemporal, distCrLf, { recursive: true });
+	const textosCompilados = [join(distCrLf, 'index.html'),
+		...readdirSync(join(distCrLf, 'assets')).filter((x) => x.endsWith('.js')).map((x) => join(distCrLf, 'assets', x))];
+	for (const archivo of textosCompilados) {
+		const texto = readFileSync(archivo, 'utf8').replace(/\r\n?|\n/g, '\r\n');
+		writeFileSync(archivo, texto);
+	}
+	const esperadoCrLf = join(temporal, 'TableroStudio-crlf.html');
+	const escritorioCrLf = join(temporal, 'desktop-app-crlf.html');
+	empaquetar({ distApp: distCrLf, destino: esperadoCrLf, desktop: escritorioCrLf, silencioso: true });
+	if (!readFileSync(esperadoWeb).equals(readFileSync(esperadoCrLf))) {
+		throw new Error('El empaquetado cambia entre entradas LF y CRLF');
+	}
+	console.log('OK    empaquetado idéntico para entradas LF y CRLF');
+
 	const objetivos = [
 		[join(RAIZ, 'dist-final', 'TableroStudio.html'), esperadoWeb],
 		[join(RAIZ, 'desktop', 'app.html'), esperadoDesktop],
