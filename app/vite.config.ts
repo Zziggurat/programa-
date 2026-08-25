@@ -19,10 +19,21 @@ const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..');
  */
 const version = JSON.parse(readFileSync(join(RAIZ, 'package.json'), 'utf8')).version as string;
 
+const saltosCanonicos = {
+	name: 'tablerostudio-saltos-canonicos',
+	enforce: 'pre' as const,
+	transform(codigo: string, id: string) {
+		if (id.includes('\0') || !/\.(?:[cm]?[jt]sx?|json|css)(?:\?|$)/i.test(id)) return null;
+		const canonico = codigo.replace(/\r\n?/g, '\n');
+		return canonico === codigo ? null : { code: canonico, map: null };
+	},
+};
+
 // Un solo bundle JS (sin code-splitting) para que la app funcione como un único archivo
 // autocontenido — necesario tanto para el Artifact como para el instalador offline.
 export default defineConfig({
 	base: './',
+	plugins: [saltosCanonicos],
 	/*
 	 * La sonda de pruebas (`window.qa`) solo entra en el bundle cuando se construye para QA. En el
 	 * build que se entrega, `__QA__` es `false`, el minificador borra el bloque entero y la
