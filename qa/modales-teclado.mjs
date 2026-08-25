@@ -23,7 +23,7 @@
  *   node qa/modales-teclado.mjs
  */
 import { chromium } from 'playwright-core';
-import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
 
 const { servidor } = await servidorDeQA();
 const b = await abrirNavegador(chromium);
@@ -32,9 +32,11 @@ let fallos = 0;
 const must = (n, c, x = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${x ? ' → ' + x : ''}`); };
 
 await p.goto(`http://127.0.0.1:${servidor.address().port}/?qa=1&inicio=0`);
-await p.waitForTimeout(1500);
-await p.evaluate(() => document.getElementById('btn-cerrar-ayuda')?.click());
-await p.waitForTimeout(200);
+await esperarEditorListo(p);
+if (await p.isVisible('#modal-ayuda')) {
+	await p.locator('#btn-cerrar-ayuda').click();
+	await p.waitForFunction(() => document.getElementById('modal-ayuda')?.hidden === true);
+}
 
 /** Quién tiene el foco ahora mismo, dicho de forma que se pueda leer en el informe. */
 const foco = () => p.evaluate(() => {

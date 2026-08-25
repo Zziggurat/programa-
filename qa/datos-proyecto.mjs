@@ -12,12 +12,12 @@
  */
 import { chromium } from 'playwright-core';
 import { dirname } from 'node:path';import { fileURLToPath } from 'node:url';
-import { abrirNavegador, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
 const AQUI=dirname(fileURLToPath(import.meta.url)); const { servidor: s } = await servidorDeQA();
 const b=await abrirNavegador(chromium);
 const p=await b.newPage({viewport:{width:1400,height:900}});
 let fallos=0; const must=(n,c,x='')=>{if(!c)fallos++;console.log(`${c?'OK  ':'FAIL'}  ${n}${x?' → '+x:''}`);};
-await p.goto(`http://127.0.0.1:${s.address().port}/?qa=1&inicio=0`); await p.waitForTimeout(1500);
+await p.goto(`http://127.0.0.1:${s.address().port}/?qa=1&inicio=0`); await esperarEditorListo(p);
 await p.evaluate(()=>document.getElementById('btn-cerrar-ayuda')?.click());
 
 const guardarCon = async (campos) => {

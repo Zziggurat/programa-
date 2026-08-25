@@ -53,6 +53,24 @@ export async function abrirNavegador(chromium) {
 }
 
 /**
+ * Espera a que el documento persistente haya sustituido el proyecto provisional del arranque.
+ *
+ * El editor pinta la página antes de que IndexedDB termine de abrir. Durante ese intervalo deja
+ * el `<body>` inerte a propósito y `window.qa.proyecto()` todavía puede señalar al proyecto
+ * provisional, que no tiene por qué haber pasado por la normalización completa. Un reloj fijo
+ * funcionaba en una máquina rápida, pero en el runner Linux permitía que una suite pulsara
+ * controles antes de que sus manejadores y el documento definitivo estuvieran listos.
+ */
+export async function esperarEditorListo(page, { timeout = 60_000 } = {}) {
+	await page.waitForFunction(() => {
+		if (document.body.classList.contains('persistencia-pendiente') || document.body.inert) return false;
+		if (typeof window.qa?.proyecto !== 'function') return false;
+		const proyecto = window.qa.proyecto();
+		return !!proyecto && Array.isArray(proyecto.dispositivos) && Array.isArray(proyecto.conductores);
+	}, null, { timeout });
+}
+
+/**
  * PASA DE «ESTOY MIRANDO UN EJEMPLO» A «ESTOY TRABAJANDO EN MI COPIA».
  *
  * Los tableros de la biblioteca son de solo lectura, así que una suite que abre uno y luego lo
