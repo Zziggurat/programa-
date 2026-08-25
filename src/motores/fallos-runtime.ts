@@ -15,6 +15,11 @@ export type TipoFalloRuntime =
 	| 'cortocircuito'
 	| 'fuga-tierra'
 	| 'motor-bloqueado'
+	| 'fallo-sensor'
+	| 'circuito-analogico-abierto'
+	| 'senal-fuera-rango'
+	| 'perdida-referencia'
+	| 'actuador-atascado'
 	| 'fallo-externo'
 	| 'proteccion-disparada'
 	| 'termico-disparado'
@@ -37,6 +42,11 @@ export const ETIQUETA_FALLO_RUNTIME: Readonly<Record<TipoFalloRuntime, string>> 
 	cortocircuito: 'Cortocircuito funcional',
 	'fuga-tierra': 'Fuga a tierra simulada',
 	'motor-bloqueado': 'Motor bloqueado',
+	'fallo-sensor': 'Sensor averiado',
+	'circuito-analogico-abierto': 'Circuito analógico abierto',
+	'senal-fuera-rango': 'Señal fuera de rango',
+	'perdida-referencia': 'Pérdida de referencia',
+	'actuador-atascado': 'Actuador atascado',
 	'fallo-externo': 'Fallo externo',
 	'proteccion-disparada': 'Protección disparada',
 	'termico-disparado': 'Relé térmico disparado',
@@ -51,9 +61,21 @@ export function fallosCompatibles(d: Dispositivo): TipoFalloRuntime[] {
 	const perfil = resolverComportamiento(d);
 	if (!perfil || perfil.clase === 'sin-comportamiento') return [];
 	if (perfil.clase === 'variador') {
-		return perfil.alimentacion.fasesMinimas === 3
+		const base: TipoFalloRuntime[] = perfil.alimentacion.fasesMinimas === 3
 			? ['fallo-externo', 'perdida-fase', 'subtension', 'sobrecarga']
 			: ['fallo-externo', 'subtension', 'sobrecarga'];
+		if (perfil.referencia.unidad !== 'porcentaje') base.push('circuito-analogico-abierto', 'perdida-referencia');
+		return base;
+	}
+	if (perfil.clase === 'sensor') {
+		return perfil.transmisor
+			? ['fallo-sensor', 'circuito-analogico-abierto', 'senal-fuera-rango'] : [];
+	}
+	if (perfil.clase === 'controlador' && perfil.entradasAnalogicas?.length) {
+		return ['circuito-analogico-abierto', 'senal-fuera-rango'];
+	}
+	if (perfil.clase === 'carga' && perfil.efecto === 'movimiento' && perfil.mandoAnalogico) {
+		return ['circuito-analogico-abierto', 'perdida-referencia', 'actuador-atascado'];
 	}
 	if (perfil.clase === 'carga' && perfil.efecto === 'giro') {
 		return perfil.alimentacion.fasesMinimas === 3

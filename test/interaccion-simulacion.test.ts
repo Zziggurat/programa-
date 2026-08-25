@@ -145,6 +145,7 @@ test('el reloj sigue recalculando motores, rampas VFD y controladores perfilados
 		run: true, habilitado: true, referenciaPorcentaje: 100,
 		frecuenciaHz: 10, frecuenciaObjetivoHz: 50, frecuenciaNominalHz: 50,
 		falloEnclavado: false, resetPermitido: false, runBloqueadoHastaSoltar: false,
+		calidadReferencia: 'normal',
 	};
 	assert.equal(requiereAvanceTemporal(proyecto([]), resultado({ variadores: [baseVfd] }), {}), true,
 		'la rampa del VFD quedó congelada entre ticks');
@@ -247,6 +248,9 @@ function resultado(parcial: Partial<ResultadoSimulacion> = {}): ResultadoSimulac
 		protecciones: [],
 		fallos: [],
 		posicionesCargas: new Map(),
+		sensoresAnalogicos: [],
+		entradasAnalogicas: [],
+		actuadores: [],
 		...parcial,
 		motores: parcial.motores ?? [],
 	};
@@ -414,6 +418,7 @@ test('display de variador distingue sin alimentación/READY/RUN/FAULT y la anima
 		falloEnclavado: estadoVfd === 'falla',
 		resetPermitido: false,
 		runBloqueadoHastaSoltar: false,
+		calidadReferencia: 'normal',
 	});
 	assert.match(textoEstadoVariador(estado('sin-alimentacion', 0)), /^SIN ALIMENTACIÓN/);
 	assert.match(textoEstadoVariador(estado('listo', 0)), /^READY/);

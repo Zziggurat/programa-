@@ -57,8 +57,13 @@
  */
 import { Conductor, Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tipos.js';
 import {
-	ComportamientoSimulacion, ReferenciaAnalogicaSimulacion, resolverComportamiento,
+	ComportamientoSimulacion, EntradaAnalogicaSimulacion, ReferenciaAnalogicaSimulacion,
+	TransmisorAnalogicoSimulacion, resolverComportamiento,
 } from '../modelo/comportamiento.js';
+import {
+	CalidadSenalAnalogica, RangoSenalAnalogica, SenalAnalogica, escalarSenalAIngenieria,
+	senalDesdeVariableFisica, senalInvalida, valorElectricoDesdeNormalizado,
+} from '../modelo/senal-analogica.js';
 import { FalloRuntimeActivo, OrigenMagnitudSimulacion, TipoFalloRuntime, tieneFallo } from './fallos-runtime.js';
 import { claveBorne } from '../modelo/proyecto.js';
 import { tensionSecundariaDe } from './tensiones.js';
@@ -126,6 +131,7 @@ export interface MemoriaTiempos {
 	/** Frecuencia efectiva y último instante confirmado de cada variador. */
 	variadores?: Record<string, {
 		frecuenciaHz: number; actualizadoEn: number;
+		referenciaPorcentaje?: number;
 		falloEnclavado?: boolean; runBloqueadoHastaSoltar?: boolean;
 		motivoFalla?: EstadoVariador['motivoFalla'];
 	}>;
@@ -133,11 +139,13 @@ export interface MemoriaTiempos {
 	motores?: Record<string, { velocidadRelativa: number; actualizadoEn: number }>;
 	/** Integrador térmico simplificado de protecciones; 0 frío, 1 umbral de disparo. */
 	protecciones?: Record<string, { cargaTermica: number; actualizadoEn: number }>;
+	/** Posición mecánica de actuadores; runtime temporal, nunca parte del Proyecto. */
+	actuadores?: Record<string, { posicion: number; actualizadoEn: number }>;
 }
 
 export function memoriaVacia(): MemoriaTiempos {
 	return {
-		desdeConectado: {}, desdeSoltado: {}, cumplidos: [], variadores: {}, motores: {}, protecciones: {},
+		desdeConectado: {}, desdeSoltado: {}, cumplidos: [], variadores: {}, motores: {}, protecciones: {}, actuadores: {},
 	};
 }
 
@@ -149,10 +157,13 @@ export interface EstadoVariador {
 	falloEnclavado: boolean;
 	resetPermitido: boolean;
 	runBloqueadoHastaSoltar: boolean;
-	motivoFalla?: 'fallo-externo' | 'perdida-fase' | 'subtension' | 'sobrecarga' | 'fallo-declarado';
+	motivoFalla?: 'fallo-externo' | 'perdida-fase' | 'subtension' | 'sobrecarga' | 'fallo-declarado'
+		| 'perdida-referencia';
 	run: boolean;
 	habilitado: boolean;
 	referenciaPorcentaje: number;
+	calidadReferencia: CalidadSenalAnalogica;
+	referenciaElectrica?: SenalAnalogica;
 	frecuenciaNominalHz: number;
 	frecuenciaObjetivoHz: number;
 	frecuenciaHz: number;
@@ -213,6 +224,35 @@ export interface EstadoProteccion {
 	cargaTermica: number;
 	causa?: 'sobrecarga' | 'cortocircuito' | 'perdida-fase' | 'fuga-tierra' | 'manual';
 	origen?: OrigenMagnitudSimulacion;
+}
+
+export interface EstadoSensorAnalogico {
+	dispositivoId: string;
+	designacion: string;
+	modoConexion: '2-hilos' | '3-hilos';
+	variable: { magnitud: string; unidad: string; valor: number };
+	senal: SenalAnalogica;
+}
+
+export interface EstadoEntradaAnalogica {
+	dispositivoId: string;
+	designacion: string;
+	borne: string;
+	senal: SenalAnalogica;
+	valorIngenieria?: number;
+	magnitud: string;
+	unidad: string;
+}
+
+export interface EstadoActuador {
+	dispositivoId: string;
+	designacion: string;
+	tipo: 'on-off' | 'modulante';
+	estado: 'cerrada' | 'abriendo' | 'abierta' | 'cerrando' | 'detenida' | 'falla';
+	posicionObjetivo: number;
+	posicionActual: number;
+	calidadMando: CalidadSenalAnalogica;
+	feedback?: SenalAnalogica;
 }
 
 /** Lo que hay que saber de un temporizador para enseñarlo: cuánto lleva y cuánto le falta. */
@@ -345,7 +385,10 @@ export interface ResultadoSimulacion {
 	 * —un 50 %—, y eso no se puede enseñar como si fuera el estado de un hilo. Esto es lo que de
 	 * verdad hay en el borne, que es lo que se mide con un multímetro en la obra.
 	 */
-	salidasAnalogicas: Map<string, { voltios: number; referencia?: string; rango: [number, number]; supuesto: boolean }>;
+	salidasAnalogicas: Map<string, {
+		valor: number; unidad: 'V' | 'mA'; voltios?: number;
+		referencia?: string; rango: [number, number]; supuesto: boolean; senal: SenalAnalogica;
+	}>;
 	/** Temporizadores contando ahora mismo, para poder enseñar la cuenta atrás. */
 	temporizadores: CuentaAtras[];
 	/** Consumos que están recibiendo una tensión distinta de la suya. */
@@ -364,6 +407,12 @@ export interface ResultadoSimulacion {
 	fallos: (FalloRuntimeActivo & { dispositivoId: string; designacion: string })[];
 	/** Posición 0..100 de cargas modulantes, por id de aparato. */
 	posicionesCargas: Map<string, number>;
+	/** Cadena física→eléctrica de transmisores con perfil V3. */
+	sensoresAnalogicos: EstadoSensorAnalogico[];
+	/** Lecturas AI brutas, escaladas y con calidad. */
+	entradasAnalogicas: EstadoEntradaAnalogica[];
+	/** Estado mecánico de válvulas/actuadores V3. */
+	actuadores: EstadoActuador[];
 }
 
 /** Lo que hace un controlador con su programa: qué lee, qué enciende y qué está esperando. */
@@ -376,6 +425,8 @@ export interface EstadoControlador {
 	entradas: string[];
 	/** Valor de cada sonda cableada, por borne. */
 	sondas: Record<string, number>;
+	/** AI con señal bruta, escalado y calidad; las inválidas no entran en `sondas`. */
+	entradasAnalogicas: EstadoEntradaAnalogica[];
 	/** Salidas que el programa tiene encendidas. */
 	salidas: string[];
 	/** Salidas esperando su retardo o sostenidas por su tiempo mínimo. */
@@ -707,19 +758,27 @@ export const RANGO_AO_POR_DEFECTO: [number, number] = [0, 10];
  */
 export function salidaAnalogicaEn(
 	d: Dispositivo, borne: string, porcentaje: number,
-): { voltios: number; referencia: string | undefined; rango: [number, number]; supuesto: boolean } {
+): { valor: number; unidad: 'V' | 'mA'; voltios?: number; referencia: string | undefined;
+	rango: [number, number]; supuesto: boolean; senal: SenalAnalogica } {
 	const declarado = d.rangoSalidaAnalogica;
 	const perfil = resolverComportamiento(d);
 	const salida = perfil?.clase === 'controlador'
 		? perfil.salidasAnalogicas.find((s) => s.borne === borne) : undefined;
 	const rango = salida?.rango ?? declarado ?? RANGO_AO_POR_DEFECTO;
+	const unidad = salida?.unidad ?? 'V';
 	const pct = Math.max(0, Math.min(100, porcentaje));
+	const valor = Math.round((rango[0] + (rango[1] - rango[0]) * (pct / 100)) * 100) / 100;
 	const idsBornes = new Set(d.bornes.map((b) => b.id));
 	return {
-		voltios: Math.round((rango[0] + (rango[1] - rango[0]) * (pct / 100)) * 100) / 100,
+		valor, unidad, ...(unidad === 'V' ? { voltios: valor } : {}),
 		referencia: salida?.referencia ?? comunDeSalida(d, borne, idsBornes),
 		rango,
 		supuesto: !salida && !declarado,
+		senal: {
+			tipo: unidad === 'V' ? 'tension' : 'corriente', unidadElectrica: unidad,
+			valorElectrico: valor, valorNormalizado: pct / 100,
+			calidad: 'normal', origen: !salida && !declarado ? 'estimado' : 'calculado',
+		},
 	};
 }
 
@@ -976,7 +1035,7 @@ function valorAnalogicoCableadoA(
 	proyecto: Proyecto,
 	vivos: Map<string, BorneVivo>,
 	analogicas: ReadonlyMap<string, number>,
-	unidades: 'V' | 'porcentaje',
+	unidades: 'V' | 'mA' | 'porcentaje',
 ): number | undefined {
 	const inicio = `${dispositivoId}::${borneId}`;
 	const vistos = new Set<string>([inicio]);
@@ -994,7 +1053,9 @@ function valorAnalogicoCableadoA(
 				const comunConectado = salida.referencia !== undefined && hayContinuidadPasiva(
 					`${dispositivoId}::${comunId}`, `${dueño}::${salida.referencia}`, proyecto, porId,
 				);
-				if (comunConectado) return unidades === 'porcentaje' ? pct : salida.voltios;
+				if (comunConectado && (unidades === 'porcentaje' || unidades === salida.unidad)) {
+					return unidades === 'porcentaje' ? pct : salida.valor;
+				}
 			}
 			if (!origen) continue;
 			const pasos = bornesDePaso(origen, borne);
@@ -1053,6 +1114,65 @@ function hayContinuidadPasiva(
 	return false;
 }
 
+interface LecturaReferenciaAnalogica {
+	porcentaje: number;
+	calidad: CalidadSenalAnalogica;
+	senal?: SenalAnalogica;
+}
+
+function leerReferenciaAnalogica(
+	d: Dispositivo,
+	referencia: ReferenciaAnalogicaSimulacion,
+	proyecto: Proyecto,
+	estado: EstadoTablero,
+	vivos: Map<string, BorneVivo>,
+	analogicas: ReadonlyMap<string, number>,
+	memoria?: MemoriaTiempos,
+): LecturaReferenciaAnalogica {
+	if (tieneFallo(estado[d.id], 'circuito-analogico-abierto') || tieneFallo(estado[d.id], 'perdida-referencia')) {
+		const rango = rangoDeReferencia(referencia);
+		return { porcentaje: 0, calidad: 'circuito-abierto',
+			...(rango ? { senal: senalInvalida(rango, 'circuito-abierto', 'inyectado') } : {}) };
+	}
+	const directo = estado[d.id]?.valor;
+	if (referencia.unidad === 'porcentaje') {
+		const valor = Number.isFinite(directo) ? directo! : 0;
+		const [min, max] = referencia.rango;
+		if (max <= min) return { porcentaje: 0, calidad: 'senal-invalida' };
+		return { porcentaje: Math.max(0, Math.min(100, ((valor - min) / (max - min)) * 100)), calidad: 'normal' };
+	}
+	const rango = rangoDeReferencia(referencia)!;
+	let senal: SenalAnalogica | undefined;
+	if (Number.isFinite(directo)) {
+		const normalizado = (directo! - rango.minimo) / (rango.maximo - rango.minimo);
+		senal = {
+			tipo: rango.tipo, unidadElectrica: rango.unidad, valorElectrico: directo,
+			valorNormalizado: normalizado,
+			calidad: normalizado < 0 || normalizado > 1 ? 'fuera-de-rango' : 'normal', origen: 'inyectado',
+		};
+	} else {
+		const porId = new Map(proyecto.dispositivos.map((x) => [x.id, x]));
+		const fuente = fuentesAnalogicasDisponibles(proyecto, estado, vivos, memoria, analogicas).find((f) =>
+			hayContinuidadPasiva(`${d.id}::${referencia.borne}`, `${f.dispositivo.id}::${f.borne}`, proyecto, porId));
+		if (fuente && hayContinuidadPasiva(`${d.id}::${referencia.comun}`,
+			`${fuente.dispositivo.id}::${fuente.comun}`, proyecto, porId)) senal = fuente.senal;
+	}
+	if (!senal) return { porcentaje: 0, calidad: 'circuito-abierto', senal: senalInvalida(rango, 'circuito-abierto') };
+	if (senal.tipo !== rango.tipo || senal.unidadElectrica !== rango.unidad) {
+		return { porcentaje: 0, calidad: 'senal-invalida', senal: senalInvalida(rango, 'senal-invalida') };
+	}
+	if (senal.calidad !== 'normal' || senal.valorElectrico === undefined) {
+		return { porcentaje: 0, calidad: senal.calidad, senal };
+	}
+	const valor = senal.valorElectrico;
+	const [min, max] = referencia.rango;
+	if (max <= min) return { porcentaje: 0, calidad: 'senal-invalida', senal };
+	return {
+		porcentaje: Math.max(0, Math.min(100, ((valor - min) / (max - min)) * 100)),
+		calidad: senal.calidad, senal,
+	};
+}
+
 function porcentajeReferencia(
 	d: Dispositivo,
 	referencia: ReferenciaAnalogicaSimulacion,
@@ -1061,16 +1181,7 @@ function porcentajeReferencia(
 	vivos: Map<string, BorneVivo>,
 	analogicas: ReadonlyMap<string, number>,
 ): number {
-	const directo = estado[d.id]?.valor;
-	const valor = Number.isFinite(directo)
-		? directo!
-		: valorAnalogicoCableadoA(
-			d.id, referencia.borne, referencia.comun, proyecto, vivos, analogicas, referencia.unidad,
-		);
-	if (valor === undefined) return 0;
-	const [min, max] = referencia.rango;
-	if (max <= min) return 0;
-	return Math.max(0, Math.min(100, ((valor - min) / (max - min)) * 100));
+	return leerReferenciaAnalogica(d, referencia, proyecto, estado, vivos, analogicas).porcentaje;
 }
 
 function estadoVariador(
@@ -1093,12 +1204,20 @@ function estadoVariador(
 		.map((v) => v.fuente)).size;
 	const perdidaFaseFisica = perfil.alimentacion.fasesMinimas === 3
 		&& fasesPresentes > 0 && fasesPresentes < 3;
+	const anterior = reloj?.memoria.variadores?.[d.id];
+	const lecturaReferencia = leerReferenciaAnalogica(
+		d, perfil.referencia, proyecto, estado, vivos, analogicas, reloj?.memoria,
+	);
+	const politicaPerdida = perfil.referencia.perdidaSenal ?? 'detener';
+	const referenciaValida = lecturaReferencia.calidad === 'normal';
+	const referenciaPorcentaje = referenciaValida ? lecturaReferencia.porcentaje
+		: politicaPerdida === 'mantener' ? anterior?.referenciaPorcentaje ?? 0 : 0;
 	const motivoActual = st?.fallo === true || st?.disparado === true ? 'fallo-declarado' as const
 		: tieneFallo(st, 'fallo-externo') ? 'fallo-externo' as const
 			: tieneFallo(st, 'perdida-fase') || perdidaFaseFisica ? 'perdida-fase' as const
 				: tieneFallo(st, 'subtension') ? 'subtension' as const
-					: tieneFallo(st, 'sobrecarga') ? 'sobrecarga' as const : undefined;
-	const anterior = reloj?.memoria.variadores?.[d.id];
+					: tieneFallo(st, 'sobrecarga') ? 'sobrecarga' as const
+						: !referenciaValida && politicaPerdida === 'fallo' ? 'perdida-referencia' as const : undefined;
 	let falloEnclavado = anterior?.falloEnclavado === true || motivoActual !== undefined;
 	let runBloqueadoHastaSoltar = anterior?.runBloqueadoHastaSoltar === true;
 	let motivoFalla = motivoActual ?? anterior?.motivoFalla;
@@ -1110,7 +1229,6 @@ function estadoVariador(
 	}
 	if (!run) runBloqueadoHastaSoltar = false;
 	const runEfectivo = run && !runBloqueadoHastaSoltar;
-	const referenciaPorcentaje = porcentajeReferencia(d, perfil.referencia, proyecto, estado, vivos, analogicas);
 	const pedido = perfil.frecuencia.minimaHz
 		+ (perfil.frecuencia.maximaHz - perfil.frecuencia.minimaHz) * referenciaPorcentaje / 100;
 	const frecuenciaObjetivoHz = alimentado && habilitado && runEfectivo && !falloEnclavado ? pedido : 0;
@@ -1133,6 +1251,8 @@ function estadoVariador(
 				: (runEfectivo && habilitado) || entregaSalida ? 'marcha' : 'listo',
 		alimentado, falloEnclavado, resetPermitido, runBloqueadoHastaSoltar, motivoFalla,
 		run, habilitado, referenciaPorcentaje: Math.round(referenciaPorcentaje * 100) / 100,
+		calidadReferencia: lecturaReferencia.calidad,
+		...(lecturaReferencia.senal ? { referenciaElectrica: lecturaReferencia.senal } : {}),
 		frecuenciaNominalHz: perfil.frecuencia.maximaHz,
 		frecuenciaObjetivoHz: Math.round(frecuenciaObjetivoHz * 100) / 100,
 		frecuenciaHz: Math.round(frecuenciaHz * 100) / 100,
@@ -1289,9 +1409,208 @@ function corrienteFallaMotor(nominal: number, motivo: EstadoMotor['motivoFalla']
 	return 0;
 }
 
+function estadoActuador(
+	d: Dispositivo,
+	perfil: Extract<ComportamientoSimulacion, { clase: 'carga' }>,
+	proyecto: Proyecto,
+	estado: EstadoTablero,
+	vivos: Map<string, BorneVivo>,
+	analogicas: ReadonlyMap<string, number>,
+	reloj?: { ahora: number; memoria: MemoriaTiempos },
+): EstadoActuador {
+	const dinamica = perfil.dinamicaActuador ?? {
+		tipo: perfil.mandoAnalogico ? 'modulante' as const : 'on-off' as const,
+		tiempoAperturaS: 0, tiempoCierreS: 0, failSafe: 'cerrar' as const,
+	};
+	const alimentado = tieneCircuitoCompleto(d, vivos);
+	const lectura = perfil.mandoAnalogico && alimentado
+		? leerReferenciaAnalogica(d, perfil.mandoAnalogico, proyecto, estado, vivos, analogicas, reloj?.memoria)
+		: { porcentaje: alimentado ? 100 : 0,
+			calidad: alimentado ? 'normal' as const : 'sin-alimentacion' as const };
+	const anterior = reloj?.memoria.actuadores?.[d.id];
+	const posicionAnterior = anterior?.posicion ?? 0;
+	let posicionObjetivo = dinamica.tipo === 'on-off' ? (alimentado ? 100 : 0) : lectura.porcentaje;
+	if (lectura.calidad !== 'normal') {
+		posicionObjetivo = dinamica.failSafe === 'mantener' ? posicionAnterior
+			: dinamica.failSafe === 'abrir' ? 100
+				: dinamica.failSafe === 'posicion-segura' ? dinamica.posicionSegura ?? 0 : 0;
+	}
+	if (perfil.mandoAnalogico?.invertido) posicionObjetivo = 100 - posicionObjetivo;
+	posicionObjetivo = Math.max(0, Math.min(100, posicionObjetivo));
+	let posicionActual = posicionObjetivo;
+	const atascado = tieneFallo(estado[d.id], 'actuador-atascado');
+	if (reloj) {
+		if (atascado) posicionActual = posicionAnterior;
+		else if (!anterior) posicionActual = 0;
+		else {
+			const dt = Math.max(0, reloj.ahora - anterior.actualizadoEn) / 1000;
+			const tiempo = posicionObjetivo >= posicionAnterior ? dinamica.tiempoAperturaS : dinamica.tiempoCierreS;
+			const maxCambio = tiempo <= 0 ? 100 : 100 * dt / tiempo;
+			const diferencia = posicionObjetivo - posicionAnterior;
+			posicionActual = posicionAnterior + Math.sign(diferencia) * Math.min(Math.abs(diferencia), maxCambio);
+		}
+		reloj.memoria.actuadores ??= {};
+		reloj.memoria.actuadores[d.id] = { posicion: posicionActual, actualizadoEn: reloj.ahora };
+	}
+	const delta = posicionObjetivo - posicionActual;
+	const estadoActuador: EstadoActuador['estado'] = atascado ? 'falla'
+		: delta > 0.01 ? 'abriendo' : delta < -0.01 ? 'cerrando'
+			: posicionActual <= 0.01 ? 'cerrada' : posicionActual >= 99.99 ? 'abierta' : 'detenida';
+	let feedback: SenalAnalogica | undefined;
+	if (dinamica.feedback) {
+		const rango = rangoDeReferencia(dinamica.feedback)!;
+		const valor = valorElectricoDesdeNormalizado(posicionActual / 100, rango);
+		feedback = valor.valor === undefined ? senalInvalida(rango, 'senal-invalida') : {
+			tipo: rango.tipo, unidadElectrica: rango.unidad, valorElectrico: valor.valor,
+			valorNormalizado: posicionActual / 100, calidad: 'normal', origen: 'calculado',
+			valorFisico: posicionActual, magnitud: 'posicion', unidad: '%',
+		};
+	}
+	return {
+		dispositivoId: d.id, designacion: d.designacion ?? d.id, tipo: dinamica.tipo,
+		estado: estadoActuador, posicionObjetivo: Math.round(posicionObjetivo * 100) / 100,
+		posicionActual: Math.round(posicionActual * 100) / 100, calidadMando: lectura.calidad,
+		...(feedback ? { feedback } : {}),
+	};
+}
+
 function proteccionRearmable(d: Dispositivo): boolean {
 	const perfil = resolverComportamiento(d);
 	return perfil?.clase === 'proteccion' ? perfil.rearmable : d.tipo !== 'fusible';
+}
+
+function rangoDeReferencia(referencia: Pick<ReferenciaAnalogicaSimulacion, 'unidad' | 'rango'>): RangoSenalAnalogica | undefined {
+	if (referencia.unidad === 'porcentaje') return undefined;
+	return {
+		tipo: referencia.unidad === 'V' ? 'tension' : 'corriente',
+		unidad: referencia.unidad,
+		minimo: referencia.rango[0], maximo: referencia.rango[1],
+	};
+}
+
+function senalDeTransmisor(
+	d: Dispositivo,
+	transmisor: TransmisorAnalogicoSimulacion,
+	estado: EstadoTablero,
+	vivos: Map<string, BorneVivo>,
+): SenalAnalogica {
+	const rango = rangoDeReferencia(transmisor.salida)!;
+	const st = estado[d.id];
+	if (tieneFallo(st, 'fallo-sensor')) return senalInvalida(rango, 'fallo-sensor', 'inyectado');
+	if (tieneFallo(st, 'circuito-analogico-abierto')) return senalInvalida(rango, 'circuito-abierto', 'inyectado');
+	const alimentado = transmisor.modoConexion === '3-hilos'
+		? sensorAlimentado(d, vivos)
+		: vivos.get(`${d.id}::${transmisor.salida.comun}`)?.papel === 'fase';
+	if (!alimentado) return senalInvalida(rango, 'sin-alimentacion', 'calculado');
+	const { variable } = transmisor;
+	const medio = variable.minimo + (variable.maximo - variable.minimo) / 2;
+	const valor = tieneFallo(st, 'senal-fuera-rango')
+		? variable.maximo + Math.abs(variable.maximo - variable.minimo) * 0.1
+		: Number.isFinite(st?.valor) ? st!.valor! : medio;
+	return senalDesdeVariableFisica(valor, variable, rango,
+		tieneFallo(st, 'senal-fuera-rango') ? 'inyectado' : 'calculado');
+}
+
+interface FuenteAnalogicaCableada {
+	dispositivo: Dispositivo;
+	borne: string;
+	comun: string;
+	senal: SenalAnalogica;
+	modoSalida: 'activa' | 'pasiva';
+	modoConexion?: '2-hilos' | '3-hilos';
+}
+
+function fuentesAnalogicasDisponibles(
+	proyecto: Proyecto,
+	estado: EstadoTablero,
+	vivos: Map<string, BorneVivo>,
+	memoria?: MemoriaTiempos,
+	analogicas: ReadonlyMap<string, number> = new Map(),
+): FuenteAnalogicaCableada[] {
+	const fuentes: FuenteAnalogicaCableada[] = [];
+	for (const d of proyecto.dispositivos) {
+		const perfil = resolverComportamiento(d);
+		if (perfil?.clase === 'sensor' && perfil.transmisor) {
+			fuentes.push({
+				dispositivo: d, borne: perfil.transmisor.salida.borne, comun: perfil.transmisor.salida.comun,
+				senal: senalDeTransmisor(d, perfil.transmisor, estado, vivos),
+				modoSalida: perfil.transmisor.modoSalida, modoConexion: perfil.transmisor.modoConexion,
+			});
+		}
+		if (perfil?.clase === 'carga' && perfil.dinamicaActuador?.feedback) {
+			const feedback = perfil.dinamicaActuador.feedback;
+			const rango = rangoDeReferencia(feedback)!;
+			const posicion = memoria?.actuadores?.[d.id]?.posicion ?? 0;
+			const valor = valorElectricoDesdeNormalizado(posicion / 100, rango);
+			fuentes.push({
+				dispositivo: d, borne: feedback.borne, comun: feedback.comun, modoSalida: 'activa',
+				senal: valor.valor === undefined ? senalInvalida(rango, 'senal-invalida') : {
+					tipo: rango.tipo, unidadElectrica: rango.unidad, valorElectrico: valor.valor,
+					valorNormalizado: posicion / 100, calidad: 'normal', origen: 'calculado',
+					valorFisico: posicion, magnitud: 'posicion', unidad: '%',
+				},
+			});
+		}
+		if (perfil?.clase === 'controlador' && controladorAlimentado(d, vivos)) {
+			for (const salida of perfil.salidasAnalogicas) {
+				const porcentaje = analogicas.get(`${d.id}::${salida.borne}`);
+				if (porcentaje === undefined) continue;
+				const fisica = salidaAnalogicaEn(d, salida.borne, porcentaje);
+				fuentes.push({
+					dispositivo: d, borne: salida.borne, comun: salida.referencia,
+					senal: fisica.senal, modoSalida: 'activa',
+				});
+			}
+		}
+	}
+	return fuentes;
+}
+
+function leerEntradaAnalogica(
+	controlador: Dispositivo,
+	entrada: EntradaAnalogicaSimulacion,
+	proyecto: Proyecto,
+	estado: EstadoTablero,
+	vivos: Map<string, BorneVivo>,
+	memoria?: MemoriaTiempos,
+): EstadoEntradaAnalogica {
+	const rango = rangoDeReferencia(entrada)!;
+	const base = {
+		dispositivoId: controlador.id, designacion: controlador.designacion ?? controlador.id,
+		borne: entrada.borne, magnitud: entrada.variable.magnitud, unidad: entrada.variable.unidad,
+	};
+	if (!controladorAlimentado(controlador, vivos)) {
+		return { ...base, senal: senalInvalida(rango, 'sin-alimentacion', 'calculado') };
+	}
+	if (tieneFallo(estado[controlador.id], 'circuito-analogico-abierto')) {
+		return { ...base, senal: senalInvalida(rango, 'circuito-abierto', 'inyectado') };
+	}
+	const porId = new Map(proyecto.dispositivos.map((d) => [d.id, d]));
+	const fuente = fuentesAnalogicasDisponibles(proyecto, estado, vivos, memoria).find((f) =>
+		hayContinuidadPasiva(`${controlador.id}::${entrada.borne}`, `${f.dispositivo.id}::${f.borne}`, proyecto, porId));
+	if (!fuente) return { ...base, senal: senalInvalida(rango, 'circuito-abierto', 'calculado') };
+	if (fuente.senal.tipo !== rango.tipo || fuente.senal.unidadElectrica !== rango.unidad) {
+		return { ...base, senal: senalInvalida(rango, 'senal-invalida', 'calculado') };
+	}
+	if (fuente.modoSalida === 'activa' && entrada.modoEntrada === 'activa') {
+		return { ...base, senal: senalInvalida(rango, 'senal-invalida', 'calculado') };
+	}
+	if (fuente.modoSalida === 'pasiva' && entrada.modoEntrada === 'pasiva' && fuente.modoConexion !== '2-hilos') {
+		return { ...base, senal: senalInvalida(rango, 'senal-invalida', 'calculado') };
+	}
+	const retornoCerrado = fuente.modoConexion === '2-hilos'
+		? vivos.get(`${controlador.id}::${entrada.comun}`)?.papel === 'retorno'
+			&& vivos.get(`${fuente.dispositivo.id}::${fuente.comun}`)?.papel === 'fase'
+		: hayContinuidadPasiva(`${controlador.id}::${entrada.comun}`,
+			`${fuente.dispositivo.id}::${fuente.comun}`, proyecto, porId);
+	if (!retornoCerrado || fuente.senal.calidad === 'circuito-abierto') {
+		return { ...base, senal: senalInvalida(rango, 'circuito-abierto', fuente.senal.origen) };
+	}
+	const escalado = escalarSenalAIngenieria(fuente.senal, rango, entrada.variable, { clamp: true });
+	return {
+		...base, senal: { ...fuente.senal, calidad: escalado.calidad },
+		...(escalado.valor === undefined ? {} : { valorIngenieria: escalado.valor }),
+	};
 }
 
 /**
@@ -1308,22 +1627,32 @@ function leerControlador(
 	vivos: Map<string, BorneVivo>,
 	estado: EstadoTablero,
 	salidasPrevias: Set<string>,
-): LecturaControlador {
+	memoria?: MemoriaTiempos,
+): LecturaControlador & { entradasAnalogicas: EstadoEntradaAnalogica[] } {
 	const activos = new Set<string>();
 	const valores: Record<string, number> = {};
 	const perfil = resolverComportamiento(d);
+	const entradasAnalogicas = perfil?.clase === 'controlador'
+		? (perfil.entradasAnalogicas ?? []).map((entrada) =>
+			leerEntradaAnalogica(d, entrada, proyecto, estado, vivos, memoria)) : [];
 	const reservados = perfil?.clase === 'controlador' ? new Set([
 		...perfil.alimentacion.entradas, ...perfil.alimentacion.retornos,
 		...perfil.salidasDigitales.flatMap((s) => [s.borne, s.comun]),
 		...perfil.salidasAnalogicas.flatMap((s) => [s.borne, s.referencia]),
+		...(perfil.entradasAnalogicas ?? []).flatMap((s) => [s.borne, s.comun]),
 	]) : new Set<string>();
 	for (const b of d.bornes) {
+		const v3 = entradasAnalogicas.find((entrada) => entrada.borne === b.id);
+		if (v3) {
+			if (v3.senal.calidad === 'normal' && v3.valorIngenieria !== undefined) valores[b.id] = v3.valorIngenieria;
+			continue;
+		}
 		if (!reservados.has(b.id) && vivos.get(`${d.id}::${b.id}`)?.papel === 'fase') activos.add(b.id);
 		if (reservados.has(b.id) || esBorneDeAlimentacion(b)) continue;
 		const v = sondaCableadaA(d.id, b.id, proyecto, estado);
 		if (v !== undefined) valores[b.id] = v;
 	}
-	return { activos, valores, salidasPrevias };
+	return { activos, valores, salidasPrevias, entradasAnalogicas };
 }
 
 const COMUNES = new Set(['+24', '0V', '+V', '-V', '+', '-', 'A1', 'A2', '24V', 'GND']);
@@ -1515,7 +1844,7 @@ export function simular(
 				continue;
 			}
 			const lectura = leerControlador(d, proyecto, nuevosVivos, estado,
-				salidasDePrograma.get(id) ?? new Set());
+				salidasDePrograma.get(id) ?? new Set(), reloj?.memoria);
 			salidasDePrograma.set(id, salidasActivas(reglas, lectura,
 				reloj && memoriaTanteo ? { ahora: reloj.ahora, memoria: memoriaTanteo } : undefined));
 			// Y lo que valen sus salidas analógicas: la apertura de una válvula, la velocidad de un
@@ -1570,7 +1899,7 @@ export function simular(
 					continue;
 				}
 				const lectura = leerControlador(d, proyecto, vivos, estado,
-					salidasDePrograma.get(id) ?? new Set());
+					salidasDePrograma.get(id) ?? new Set(), reloj?.memoria);
 				const firmes = salidasActivas(reglas, lectura, { ahora: reloj.ahora, memoria: memoriaLogica });
 				if (!igualesConjuntos(salidasDePrograma.get(id) ?? new Set(), firmes)) estable = false;
 				salidasDePrograma.set(id, firmes);
@@ -1598,6 +1927,7 @@ export function simular(
 		for (const v of variadores) {
 			reloj.memoria.variadores[v.dispositivoId] = {
 				frecuenciaHz: v.frecuenciaHz, actualizadoEn: reloj.ahora,
+				referenciaPorcentaje: v.referenciaPorcentaje,
 				falloEnclavado: v.falloEnclavado,
 				runBloqueadoHastaSoltar: v.runBloqueadoHastaSoltar,
 				motivoFalla: v.motivoFalla,
@@ -1668,14 +1998,26 @@ export function simular(
 			});
 		}
 	}
-	const posicionesCargas = new Map<string, number>();
-	for (const d of aparatos) {
+	const actuadores = aparatos.flatMap((d) => {
 		const perfil = resolverComportamiento(d);
-		if (perfil?.clase !== 'carga' || !perfil.mandoAnalogico) continue;
-		const pct = tieneCircuitoCompleto(d, vivos)
-			? porcentajeReferencia(d, perfil.mandoAnalogico, proyecto, estado, vivos, analogicas) : 0;
-		posicionesCargas.set(d.id, perfil.mandoAnalogico.invertido ? 100 - pct : pct);
-	}
+		return perfil?.clase === 'carga' && perfil.efecto === 'movimiento'
+			? [estadoActuador(d, perfil, proyecto, estado, vivos, analogicas, reloj)] : [];
+	});
+	const posicionesCargas = new Map(actuadores.map((a) => [a.dispositivoId, a.posicionActual]));
+	const sensoresAnalogicos = aparatos.flatMap((d) => {
+		const perfil = resolverComportamiento(d);
+		if (perfil?.clase !== 'sensor' || !perfil.transmisor) return [];
+		const valor = Number.isFinite(estado[d.id]?.valor) ? estado[d.id]!.valor!
+			: perfil.transmisor.variable.minimo
+				+ (perfil.transmisor.variable.maximo - perfil.transmisor.variable.minimo) / 2;
+		return [{
+			dispositivoId: d.id, designacion: d.designacion ?? d.id,
+			modoConexion: perfil.transmisor.modoConexion,
+			variable: { magnitud: perfil.transmisor.variable.magnitud,
+				unidad: perfil.transmisor.variable.unidad, valor },
+			senal: senalDeTransmisor(d, perfil.transmisor, estado, vivos),
+		} satisfies EstadoSensorAnalogico];
+	});
 
 	/* ---- Lo que consume el tablero: intensidades por rama, faltas y disparos ---- */
 	const { porConductor, porAparato } = repartirCorrientes(consumos, prop);
@@ -1840,7 +2182,8 @@ export function simular(
 	for (const [id, reglas] of programas) {
 		const d = aparatos.find((x) => x.id === id)!;
 		if (!controladorAlimentado(d, vivos)) continue;
-		const lectura = leerControlador(d, proyecto, vivos, estado, salidasDePrograma.get(id) ?? new Set());
+		const lectura = leerControlador(d, proyecto, vivos, estado,
+			salidasDePrograma.get(id) ?? new Set(), reloj?.memoria);
 		const mios = erroresPrograma.filter((e) => e.startsWith(`${d.designacion ?? d.id},`));
 		controladores.push({
 			dispositivoId: id,
@@ -1848,6 +2191,7 @@ export function simular(
 			reglas: reglas.length,
 			entradas: [...lectura.activos].sort(),
 			sondas: lectura.valores,
+			entradasAnalogicas: lectura.entradasAnalogicas,
 			salidas: [...(salidasDePrograma.get(id) ?? [])].sort(),
 			esperas: esperasDe(reglas, lectura, reloj ? { ahora: reloj.ahora, memoria: memoriaLogica } : undefined),
 			errores: mios,
@@ -1875,9 +2219,7 @@ export function simular(
 	 * el lazo de una válvula está bien. Antes no existía: la AO salía «viva a 24 V» porque se la
 	 * trataba como un contacto (TS3-P1-02).
 	 */
-	const salidasAnalogicas = new Map<string, {
-		voltios: number; referencia?: string; rango: [number, number]; supuesto: boolean;
-	}>();
+	const salidasAnalogicas: ResultadoSimulacion['salidasAnalogicas'] = new Map();
 	for (const [clave, pct] of analogicas) {
 		const [id, borne] = clave.split('::');
 		const d = aparatos.find((x) => x.id === id);
@@ -1887,6 +2229,7 @@ export function simular(
 
 	const protecciones = estadosProtecciones(aparatos, estado, reloj?.memoria);
 	const fallos = fallosActivos(aparatos, estado, motores, protecciones, variadores);
+	const entradasAnalogicas = controladores.flatMap((controlador) => controlador.entradasAnalogicas);
 	return {
 		vivos, conductoresVivos, activos, funcionando, avisos, analogicas, salidasAnalogicas,
 		pasadas, oscila: !estable,
@@ -1900,6 +2243,7 @@ export function simular(
 		tensionesEquivocadas,
 		arranques,
 		controladores, variadores, motores, protecciones, fallos, posicionesCargas,
+		sensoresAnalogicos, entradasAnalogicas, actuadores,
 		temporizadores: cuentasAtras(aparatos, activos, reloj),
 	};
 }

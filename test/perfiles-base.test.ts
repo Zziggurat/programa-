@@ -26,7 +26,7 @@ const t = (id: string, rol: TerminalPerfilComponente['rol'], grupo?: string): Te
 test('el catálogo base cubre exactamente los 22 tipos y declara fidelidad honesta', () => {
 	assert.deepEqual(LISTA_PERFILES_BASE.map((p) => p.id).sort(), TIPOS.sort());
 	for (const p of LISTA_PERFILES_BASE) {
-		assert.match(p.fidelidad.nivel, /^(completa-v2|completa-v1|parcial|sin-comportamiento)$/);
+		assert.match(p.fidelidad.nivel, /^(completa-v3|completa-v2|completa-v1|parcial|sin-comportamiento)$/);
 		assert.ok(p.fidelidad.participacion.length > 5);
 		assert.ok(p.fidelidad.limitacion.length > 5);
 	}
@@ -146,4 +146,45 @@ test('los roles incompletos fallan de forma explícita y nunca se completan por 
 	assert.ok(resultado.errores.some((e) => /entrada de bobina/.test(e)));
 	assert.ok(resultado.errores.some((e) => /retorno de bobina/.test(e)));
 	assert.ok(resultado.errores.some((e) => /exactamente un extremo/.test(e)));
+});
+
+test('perfiles personalizados V3 conservan AI, transmisor, actuador y feedback por roles', () => {
+	const sensor = construirComportamientoPerfil('sensor', [
+		t('p', 'alimentacion-entrada'), t('n', 'alimentacion-retorno'),
+		t('iout', 'salida-analogica'), t('icom', 'comun-analogico'),
+	], {
+		unidadReferencia: 'mA', modoTransmisor: '3-hilos', modoSalidaAnalogica: 'activa',
+		magnitud: 'temperatura', rangoSondaMin: 0, rangoSondaMax: 100, unidadSonda: '°C',
+	});
+	assert.deepEqual(sensor.errores, []);
+	assert.equal(sensor.comportamiento?.clase === 'sensor'
+		&& sensor.comportamiento.transmisor?.salida.rango[0], 4);
+
+	const plc = construirComportamientoPerfil('plc', [
+		t('p', 'alimentacion-entrada'), t('n', 'alimentacion-retorno'),
+		t('ai', 'entrada-analogica', 'ai1'), t('aic', 'referencia-entrada-analogica', 'ai1'),
+		t('ao', 'salida-analogica', 'ao1'), t('aoc', 'comun-analogico', 'ao1'),
+	], {
+		unidadReferencia: 'mA', referenciaMin: 4, referenciaMax: 20,
+		modoEntradaAnalogica: 'pasiva', magnitud: 'temperatura',
+		rangoSondaMin: 0, rangoSondaMax: 100, unidadSonda: '°C',
+	});
+	assert.deepEqual(plc.errores, []);
+	assert.equal(plc.comportamiento?.clase === 'controlador'
+		&& plc.comportamiento.entradasAnalogicas?.[0].modoEntrada, 'pasiva');
+	const roles = rolesDesdeComportamiento([
+		'p', 'n', 'ai', 'aic', 'ao', 'aoc',
+	].map((id) => ({ id, u: 0.5, v: 0.5 })), plc.comportamiento!);
+	assert.equal(roles.find((x) => x.id === 'ai')?.rol, 'entrada-analogica');
+	assert.equal(roles.find((x) => x.id === 'aic')?.rol, 'referencia-entrada-analogica');
+
+	const valvula = construirComportamientoPerfil('valvula', [
+		t('p', 'carga-fase'), t('n', 'carga-retorno'),
+		t('y', 'referencia-analogica'), t('m', 'comun-analogico'),
+		t('fb', 'salida-feedback'), t('fbc', 'comun-feedback'),
+	], { unidadReferencia: 'V', referenciaMin: 0, referenciaMax: 10,
+		tiempoAperturaS: 12, tiempoCierreS: 8, failSafe: 'posicion-segura', posicionSegura: 15 });
+	assert.deepEqual(valvula.errores, []);
+	assert.equal(valvula.comportamiento?.clase === 'carga'
+		&& valvula.comportamiento.dinamicaActuador?.posicionSegura, 15);
 });

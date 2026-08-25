@@ -10,6 +10,7 @@
  * analógica de proceso completa.
  */
 import type { Borne, Dispositivo, TipoDispositivo } from './tipos.js';
+import type { VariableFisicaAnalogica } from './senal-analogica.js';
 
 export interface ParBornesSimulacion {
 	entrada: string;
@@ -26,8 +27,25 @@ export interface ContactoSimulacion extends ParBornesSimulacion {
 export interface ReferenciaAnalogicaSimulacion {
 	borne: string;
 	comun: string;
-	unidad: 'V' | 'porcentaje';
+	unidad: 'V' | 'mA' | 'porcentaje';
 	rango: [number, number];
+	/** Respuesta segura si la señal cableada deja de ser válida. */
+	perdidaSenal?: 'detener' | 'mantener' | 'fallo';
+}
+
+export interface EntradaAnalogicaSimulacion extends ReferenciaAnalogicaSimulacion {
+	unidad: 'V' | 'mA';
+	variable: VariableFisicaAnalogica;
+	/** Una AI activa alimenta el lazo; una pasiva espera una fuente externa. */
+	modoEntrada: 'pasiva' | 'activa';
+}
+
+export interface TransmisorAnalogicoSimulacion {
+	modoConexion: '2-hilos' | '3-hilos';
+	salida: ReferenciaAnalogicaSimulacion & { unidad: 'V' | 'mA' };
+	variable: VariableFisicaAnalogica;
+	/** Fuente eléctrica propia o salida que necesita excitación externa. */
+	modoSalida: 'activa' | 'pasiva';
 }
 
 export type ComportamientoSimulacion =
@@ -43,11 +61,12 @@ export type ComportamientoSimulacion =
 		clase: 'controlador';
 		alimentacion: { entradas: string[]; retornos: string[] };
 		salidasDigitales: { borne: string; comun: string }[];
+		entradasAnalogicas?: EntradaAnalogicaSimulacion[];
 		salidasAnalogicas: {
 			borne: string;
 			referencia: string;
 			rango: [number, number];
-			unidad: 'V';
+			unidad: 'V' | 'mA';
 		}[];
 	}
 	| {
@@ -79,6 +98,7 @@ export type ComportamientoSimulacion =
 		contactos: ContactoSimulacion[];
 		alimentacion?: { entrada: string; retorno: string };
 		salidaDigital?: { borne: string; tomaDe: string };
+		transmisor?: TransmisorAnalogicoSimulacion;
 	}
 	| {
 		version: 1;
@@ -97,6 +117,14 @@ export type ComportamientoSimulacion =
 		alimentacion: { fases: string[]; retornos: string[]; fasesMinimas: 1 | 3 };
 		efecto: 'giro' | 'luz' | 'movimiento' | 'calor' | 'reactivo' | 'generico';
 		mandoAnalogico?: ReferenciaAnalogicaSimulacion & { invertido?: boolean };
+		dinamicaActuador?: {
+			tipo: 'on-off' | 'modulante';
+			tiempoAperturaS: number;
+			tiempoCierreS: number;
+			failSafe: 'mantener' | 'cerrar' | 'abrir' | 'posicion-segura';
+			posicionSegura?: number;
+			feedback?: ReferenciaAnalogicaSimulacion & { unidad: 'V' | 'mA' };
+		};
 		/** Parámetros mecánicos opcionales; la ausencia se publica como estimación, nunca como placa. */
 		dinamicaMotor?: {
 			polos?: number;
@@ -116,7 +144,7 @@ export type ComportamientoSimulacion =
 		motivo: string;
 	};
 
-export type NivelFidelidadSimulacion = 'completa-v2' | 'completa-v1' | 'parcial' | 'sin-comportamiento';
+export type NivelFidelidadSimulacion = 'completa-v3' | 'completa-v2' | 'completa-v1' | 'parcial' | 'sin-comportamiento';
 
 export interface FilaFidelidadSimulacion {
 	nivel: NivelFidelidadSimulacion;
@@ -129,9 +157,9 @@ export interface FilaFidelidadSimulacion {
  * añadir una familia al modelo obliga a declarar qué sabe hacer el motor con ella.
  */
 export const MATRIZ_FIDELIDAD_SIMULACION = {
-	version: 3,
+	version: 4,
 	tipos: {
-		plc: { nivel: 'parcial', participacion: 'Programa, entradas y salidas digitales/0-10 V.', limitacion: 'DSL limitada; no IEC 61131-3.' },
+		plc: { nivel: 'parcial', participacion: 'Programa, AI/AO 0-10 V y 4-20 mA con escalado y calidad.', limitacion: 'DSL limitada; no IEC 61131-3, PID ni módulos analógicos específicos.' },
 		fuente: { nivel: 'parcial', participacion: 'Crea un secundario si el primario está alimentado.', limitacion: 'Sin límite de potencia, eficiencia ni fallo.' },
 		transformador: { nivel: 'parcial', participacion: 'Crea un secundario aislado condicionado por el primario.', limitacion: 'Sin impedancia, pérdidas ni saturación.' },
 		contactor: { nivel: 'completa-v1', participacion: 'Bobina, polos y auxiliares NA/NC.', limitacion: 'Sin tiempos mecánicos ni desgaste.' },
@@ -141,7 +169,7 @@ export const MATRIZ_FIDELIDAD_SIMULACION = {
 		diferencial: { nivel: 'completa-v2', participacion: 'CERRADO/ABIERTO/DISPARADO por fuga a tierra inyectada.', limitacion: 'No calcula corriente residual: la fuga se identifica expresamente como inyectada.' },
 		fusible: { nivel: 'completa-v2', participacion: 'OK/FUNDIDO, no rearmable y reemplazo explícito.', limitacion: 'Curva de fusión estimada; sin energía pasante I²t certificada.' },
 		seccionador: { nivel: 'parcial', participacion: 'Apertura y cierre de polos.', limitacion: 'Sin enclavamientos ni poder de corte.' },
-		variador: { nivel: 'completa-v2', participacion: 'SIN ALIMENTACIÓN/READY/RUN/DECEL/FAULT, rampa, reset seguro y U/V/W.', limitacion: 'Salida trifásica conceptual; sin PWM, par ni frenado regenerativo.' },
+		variador: { nivel: 'completa-v3', participacion: 'V2 más referencia cableada 0-10 V/4-20 mA, calidad y pérdida configurable.', limitacion: 'Salida trifásica conceptual; sin PWM, par ni frenado regenerativo.' },
 		motor: {
 			nivel: 'completa-v2',
 			participacion: 'DETENIDO/ARRANCANDO/MARCHA/DESACELERANDO/FALLO, fases, Hz, velocidad y RPM opcionales.',
@@ -150,15 +178,15 @@ export const MATRIZ_FIDELIDAD_SIMULACION = {
 		pulsador: { nivel: 'parcial', participacion: 'Conmuta contactos NA/NC con modo momentáneo explícito.', limitacion: 'La duración física depende del cliente que entrega el estado.' },
 		selector: { nivel: 'parcial', participacion: 'Selector mantenido de dos o tres posiciones y contactos por posición.', limitacion: 'Sin llave, retorno por resorte ni secuencias de leva.' },
 		piloto: { nivel: 'completa-v1', participacion: 'Carga binaria e indicación luminosa.', limitacion: 'No modela vida útil o destrucción por sobretensión.' },
-		sensor: { nivel: 'parcial', participacion: 'Contacto seco, PNP simple o valor funcional.', limitacion: 'Sin modelo eléctrico 0-10 V/4-20 mA completo.' },
-		valvula: { nivel: 'parcial', participacion: 'Carga binaria o posición modulante 0-100 % por perfil.', limitacion: 'Sin presión, caudal ni tiempo mecánico de carrera.' },
+		sensor: { nivel: 'completa-v3', participacion: 'PNP alimentado y transmisor 0-10 V/4-20 mA de 2/3 hilos con calidad.', limitacion: 'Topología funcional sin impedancias ni protocolo HART.' },
+		valvula: { nivel: 'completa-v3', participacion: 'ON/OFF o modulante, carrera temporal, fail-safe y feedback opcional.', limitacion: 'Sin presión, caudal, fuerzas ni dinámica hidráulica.' },
 		resistencia: { nivel: 'parcial', participacion: 'Carga de corriente declarada.', limitacion: 'Sin cálculo R/P ni temperatura.' },
 		condensador: { nivel: 'parcial', participacion: 'Carga genérica.', limitacion: 'Sin carga, descarga, reactancia ni transitorio.' },
 		bornero: { nivel: 'parcial', participacion: 'Conectividad pasiva, puentes y continuidad de señales analógicas.', limitacion: 'Sin resistencia de contacto ni accesorios de desconexión o prueba.' },
 		cable: { nivel: 'sin-comportamiento', participacion: 'El tipo de dispositivo no participa.', limitacion: 'Los conductores del proyecto son otra entidad y sí participan.' },
 		otro: { nivel: 'parcial', participacion: 'Ejecuta cualquier perfil explícito válido; una acometida legacy puede actuar como fuente.', limitacion: 'Sin perfil explícito queda inerte salvo una acometida legacy reconocible.' },
 	},
-} as const satisfies { version: 3; tipos: Record<TipoDispositivo, FilaFidelidadSimulacion> };
+} as const satisfies { version: 4; tipos: Record<TipoDispositivo, FilaFidelidadSimulacion> };
 
 const esObjeto = (v: unknown): v is Record<string, unknown> =>
 	typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -210,8 +238,21 @@ const rango = (v: unknown): [number, number] | undefined =>
 const referenciaAnalogica = (v: unknown): ReferenciaAnalogicaSimulacion | undefined => {
 	if (!esObjeto(v)) return undefined;
 	const borne = texto(v.borne); const comun = texto(v.comun); const r = rango(v.rango);
-	const unidad = v.unidad === 'V' || v.unidad === 'porcentaje' ? v.unidad : undefined;
-	return borne && comun && r && unidad ? { borne, comun, rango: r, unidad } : undefined;
+	const unidad = v.unidad === 'V' || v.unidad === 'mA' || v.unidad === 'porcentaje' ? v.unidad : undefined;
+	const perdidaSenal = v.perdidaSenal === undefined ? undefined
+		: v.perdidaSenal === 'detener' || v.perdidaSenal === 'mantener' || v.perdidaSenal === 'fallo'
+			? v.perdidaSenal : null;
+	return borne && comun && r && unidad && perdidaSenal !== null
+		? { borne, comun, rango: r, unidad, ...(perdidaSenal ? { perdidaSenal } : {}) } : undefined;
+};
+
+const variableFisica = (v: unknown): VariableFisicaAnalogica | undefined => {
+	if (!esObjeto(v)) return undefined;
+	const magnitud = texto(v.magnitud); const unidad = texto(v.unidad);
+	const minimo = typeof v.minimo === 'number' && Number.isFinite(v.minimo) ? v.minimo : undefined;
+	const maximo = typeof v.maximo === 'number' && Number.isFinite(v.maximo) ? v.maximo : undefined;
+	return magnitud && unidad && minimo !== undefined && maximo !== undefined && minimo !== maximo
+		? { magnitud, unidad, minimo, maximo } : undefined;
 };
 
 /** Reconstruye un perfil externo desde una lista blanca. Nunca devuelve referencias al JSON bruto. */
@@ -236,12 +277,26 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 			const analogas = bruto.salidasAnalogicas.map((x) => {
 				if (!esObjeto(x)) return undefined;
 				const borne = texto(x.borne); const referencia = texto(x.referencia); const r = rango(x.rango);
-				return borne && referencia && r && x.unidad === 'V'
-					? { borne, referencia, rango: r, unidad: 'V' as const } : undefined;
+				const unidad = x.unidad === 'V' || x.unidad === 'mA' ? x.unidad : undefined;
+				return borne && referencia && r && unidad
+					? { borne, referencia, rango: r, unidad } : undefined;
 			});
+			const entradas = bruto.entradasAnalogicas === undefined ? []
+				: Array.isArray(bruto.entradasAnalogicas) ? bruto.entradasAnalogicas.map((x) => {
+					const referencia = referenciaAnalogica(x);
+					const variable = esObjeto(x) ? variableFisica(x.variable) : undefined;
+					const modoEntrada = esObjeto(x) && (x.modoEntrada === 'pasiva' || x.modoEntrada === 'activa')
+						? x.modoEntrada : undefined;
+					return referencia && referencia.unidad !== 'porcentaje' && variable && modoEntrada
+						? { ...referencia, unidad: referencia.unidad, variable, modoEntrada } as EntradaAnalogicaSimulacion
+						: undefined;
+				}) : [undefined];
 			return digitales.every((x): x is { borne: string; comun: string } => !!x)
-				&& analogas.every((x): x is { borne: string; referencia: string; rango: [number, number]; unidad: 'V' } => !!x)
-				? { version: 1, clase: bruto.clase, alimentacion: alim, salidasDigitales: digitales, salidasAnalogicas: analogas }
+				&& analogas.every((x): x is { borne: string; referencia: string; rango: [number, number]; unidad: 'V' | 'mA' } => !!x)
+				&& entradas.every((x): x is EntradaAnalogicaSimulacion => !!x)
+				? { version: 1, clase: bruto.clase, alimentacion: alim, salidasDigitales: digitales,
+					salidasAnalogicas: analogas,
+					...(bruto.entradasAnalogicas === undefined ? {} : { entradasAnalogicas: entradas }) }
 				: undefined;
 		}
 		case 'fuente': {
@@ -294,7 +349,20 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 				if (!borne || !tomaDe) return undefined;
 				salidaDigital = { borne, tomaDe };
 			}
-			return { version: 1, clase: bruto.clase, contactos: cs, alimentacion: alim, salidaDigital };
+			let transmisor: TransmisorAnalogicoSimulacion | undefined;
+			if (bruto.transmisor !== undefined) {
+				if (!esObjeto(bruto.transmisor)) return undefined;
+				const salida = referenciaAnalogica(bruto.transmisor.salida);
+				const variable = variableFisica(bruto.transmisor.variable);
+				const modoConexion = bruto.transmisor.modoConexion === '2-hilos' || bruto.transmisor.modoConexion === '3-hilos'
+					? bruto.transmisor.modoConexion : undefined;
+				const modoSalida = bruto.transmisor.modoSalida === 'activa' || bruto.transmisor.modoSalida === 'pasiva'
+					? bruto.transmisor.modoSalida : undefined;
+				if (!salida || salida.unidad === 'porcentaje' || !variable || !modoConexion || !modoSalida) return undefined;
+				transmisor = { modoConexion, salida: { ...salida, unidad: salida.unidad }, variable, modoSalida };
+			}
+			return { version: 1, clase: bruto.clase, contactos: cs, alimentacion: alim, salidaDigital,
+				...(transmisor ? { transmisor } : {}) };
 		}
 		case 'variador': {
 			if (!esObjeto(bruto.alimentacion) || !esObjeto(bruto.mando) || !esObjeto(bruto.salida)
@@ -358,11 +426,35 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 				if (typeof tiempoParadaS === 'number') dinamicaMotor.tiempoParadaS = tiempoParadaS;
 				if (typeof deslizamiento === 'number') dinamicaMotor.deslizamiento = deslizamiento;
 			}
+			let dinamicaActuador: Extract<ComportamientoSimulacion, { clase: 'carga' }>['dinamicaActuador'];
+			if (bruto.dinamicaActuador !== undefined) {
+				if (!esObjeto(bruto.dinamicaActuador)) return undefined;
+				const da = bruto.dinamicaActuador;
+				const tipo = da.tipo === 'on-off' || da.tipo === 'modulante' ? da.tipo : undefined;
+				const tiempoAperturaS = typeof da.tiempoAperturaS === 'number' && Number.isFinite(da.tiempoAperturaS)
+					&& da.tiempoAperturaS >= 0 ? da.tiempoAperturaS : undefined;
+				const tiempoCierreS = typeof da.tiempoCierreS === 'number' && Number.isFinite(da.tiempoCierreS)
+					&& da.tiempoCierreS >= 0 ? da.tiempoCierreS : undefined;
+				const failSafe = da.failSafe === 'mantener' || da.failSafe === 'cerrar' || da.failSafe === 'abrir'
+					|| da.failSafe === 'posicion-segura' ? da.failSafe : undefined;
+				const posicionSegura = da.posicionSegura === undefined ? undefined
+					: typeof da.posicionSegura === 'number' && Number.isFinite(da.posicionSegura)
+						&& da.posicionSegura >= 0 && da.posicionSegura <= 100 ? da.posicionSegura : null;
+				const feedback = da.feedback === undefined ? undefined : referenciaAnalogica(da.feedback);
+				if (!tipo || tiempoAperturaS === undefined || tiempoCierreS === undefined || !failSafe
+					|| posicionSegura === null || da.feedback !== undefined && (!feedback || feedback.unidad === 'porcentaje')
+					|| failSafe === 'posicion-segura' && posicionSegura === undefined) return undefined;
+				dinamicaActuador = { tipo, tiempoAperturaS, tiempoCierreS, failSafe,
+					...(posicionSegura === undefined ? {} : { posicionSegura }),
+					...(feedback && feedback.unidad !== 'porcentaje'
+						? { feedback: { ...feedback, unidad: feedback.unidad } } : {}) };
+			}
 			return fases && retornos && fasesMinimas && typeof bruto.efecto === 'string' && efectos.includes(bruto.efecto)
 				? { version: 1, clase: bruto.clase, alimentacion: { fases, retornos, fasesMinimas },
 					efecto: bruto.efecto as Extract<ComportamientoSimulacion, { clase: 'carga' }>['efecto'],
 					mandoAnalogico: mando ? { ...mando, invertido } : undefined,
-					...(dinamicaMotor === undefined ? {} : { dinamicaMotor }) }
+					...(dinamicaMotor === undefined ? {} : { dinamicaMotor }),
+					...(dinamicaActuador === undefined ? {} : { dinamicaActuador }) }
 				: undefined;
 		}
 		case 'pasivo': {
@@ -474,6 +566,7 @@ export function validarComportamiento(
 			c.alimentacion.retornos.forEach((x, i) => borne(x, `alimentacion.retornos[${i}]`));
 			c.salidasDigitales.forEach((x, i) => { borne(x.borne, `salidasDigitales[${i}].borne`); borne(x.comun, `salidasDigitales[${i}].comun`); });
 			c.salidasAnalogicas.forEach((x, i) => { borne(x.borne, `salidasAnalogicas[${i}].borne`); borne(x.referencia, `salidasAnalogicas[${i}].referencia`); });
+			c.entradasAnalogicas?.forEach((x, i) => revisarReferencia(x, `entradasAnalogicas[${i}]`));
 			if (!c.alimentacion.entradas.length || !c.alimentacion.retornos.length) errores.push('el controlador no declara un par de alimentación');
 			break;
 		case 'fuente':
@@ -498,6 +591,15 @@ export function validarComportamiento(
 			c.contactos.forEach((p, i) => revisarPar(p, `contactos[${i}]`));
 			if (c.alimentacion) { borne(c.alimentacion.entrada, 'alimentacion.entrada'); borne(c.alimentacion.retorno, 'alimentacion.retorno'); }
 			if (c.salidaDigital) { borne(c.salidaDigital.borne, 'salidaDigital.borne'); borne(c.salidaDigital.tomaDe, 'salidaDigital.tomaDe'); }
+			if (c.transmisor) {
+				revisarReferencia(c.transmisor.salida, 'transmisor.salida');
+				if (c.transmisor.modoConexion === '3-hilos' && !c.alimentacion) {
+					errores.push('un transmisor de 3 hilos necesita alimentación explícita');
+				}
+				if (c.transmisor.salida.unidad === 'V' && c.transmisor.modoSalida === 'pasiva') {
+					errores.push('una salida de tensión pasiva no tiene una fuente declarada');
+				}
+			}
 			break;
 		case 'variador':
 			c.alimentacion.fases.forEach((x, i) => borne(x, `alimentacion.fases[${i}]`));
@@ -524,6 +626,13 @@ export function validarComportamiento(
 			if (c.mandoAnalogico) revisarReferencia(c.mandoAnalogico, 'mandoAnalogico');
 			if (c.dinamicaMotor?.polos !== undefined && (!Number.isInteger(c.dinamicaMotor.polos)
 				|| c.dinamicaMotor.polos < 2)) errores.push('dinamicaMotor.polos debe ser un entero de al menos 2');
+			if (c.dinamicaActuador) {
+				if (c.efecto !== 'movimiento') errores.push('dinamicaActuador solo es válida para una carga de movimiento');
+				if (c.dinamicaActuador.tiempoAperturaS < 0 || c.dinamicaActuador.tiempoCierreS < 0) {
+					errores.push('los tiempos del actuador no pueden ser negativos');
+				}
+				if (c.dinamicaActuador.feedback) revisarReferencia(c.dinamicaActuador.feedback, 'dinamicaActuador.feedback');
+			}
 			break;
 		case 'pasivo': c.conexiones.forEach((p, i) => revisarPar(p, `conexiones[${i}]`)); break;
 		case 'sin-comportamiento': break;

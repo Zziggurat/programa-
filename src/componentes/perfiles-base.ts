@@ -19,7 +19,9 @@ export type RolTerminalPerfil =
 	| 'alimentacion-entrada' | 'alimentacion-retorno'
 	| 'salida-fase' | 'salida-retorno'
 	| 'salida-digital' | 'comun-digital'
+	| 'entrada-analogica' | 'referencia-entrada-analogica'
 	| 'salida-analogica' | 'referencia-analogica' | 'comun-analogico'
+	| 'salida-feedback' | 'comun-feedback'
 	| 'mando-run' | 'mando-enable'
 	| 'salida-u' | 'salida-v' | 'salida-w'
 	| 'carga-fase' | 'carga-retorno'
@@ -52,7 +54,15 @@ export interface ParametrosConstruccionPerfil {
 	tiempoArranqueS?: number;
 	tiempoParadaS?: number;
 	deslizamiento?: number;
-	unidadReferencia?: 'V' | 'porcentaje';
+	unidadReferencia?: 'V' | 'mA' | 'porcentaje';
+	modoEntradaAnalogica?: 'pasiva' | 'activa';
+	modoTransmisor?: '2-hilos' | '3-hilos';
+	modoSalidaAnalogica?: 'activa' | 'pasiva';
+	magnitud?: string;
+	failSafe?: 'mantener' | 'cerrar' | 'abrir' | 'posicion-segura';
+	posicionSegura?: number;
+	tiempoAperturaS?: number;
+	tiempoCierreS?: number;
 	referenciaMin?: number;
 	referenciaMax?: number;
 	frecuenciaMinHz?: number;
@@ -129,8 +139,13 @@ const perfil = (
 export const PERFILES_BASE = {
 	plc: perfil('plc', 'Controlador / PLC', 'Alimentación, salidas digitales y analógicas.', [
 		'alimentacion-entrada', 'alimentacion-retorno', 'salida-digital', 'comun-digital',
-		'salida-analogica', 'comun-analogico', 'sin-asignar',
+		'entrada-analogica', 'referencia-entrada-analogica', 'salida-analogica', 'comun-analogico', 'sin-asignar',
 	], [P.tension, { clave: 'programa', etiqueta: 'Programa lógico', tipo: 'texto' },
+		{ clave: 'unidadReferencia', etiqueta: 'Modo AI/AO', tipo: 'seleccion', valorInicial: 'V', opciones: [
+			{ valor: 'V', etiqueta: '0–10 V' }, { valor: 'mA', etiqueta: '4–20 mA' },
+		] }, { clave: 'modoEntradaAnalogica', etiqueta: 'Entrada de corriente', tipo: 'seleccion', valorInicial: 'pasiva', opciones: [
+			{ valor: 'pasiva', etiqueta: 'Pasiva' }, { valor: 'activa', etiqueta: 'Activa / alimenta lazo' },
+		] }, { clave: 'magnitud', etiqueta: 'Magnitud AI', tipo: 'texto', valorInicial: 'variable' },
 		{ clave: 'referenciaMin', etiqueta: 'AO mínima (V)', tipo: 'numero', valorInicial: 0 },
 		{ clave: 'referenciaMax', etiqueta: 'AO máxima (V)', tipo: 'numero', valorInicial: 10 }]),
 	fuente: perfil('fuente', 'Fuente', 'Primario condicionado y salidas de tensión declarada.', [
@@ -159,7 +174,7 @@ export const PERFILES_BASE = {
 		'comun-analogico', 'salida-u', 'salida-v', 'salida-w', 'proteccion', 'sin-asignar',
 	], [P.tension, P.fases,
 		{ clave: 'unidadReferencia', etiqueta: 'Unidad de referencia', tipo: 'seleccion', valorInicial: 'V', opciones: [
-			{ valor: 'V', etiqueta: 'Voltios' }, { valor: 'porcentaje', etiqueta: 'Porcentaje' },
+			{ valor: 'V', etiqueta: 'Voltios' }, { valor: 'mA', etiqueta: 'Miliamperios' }, { valor: 'porcentaje', etiqueta: 'Porcentaje' },
 		] }, { clave: 'referenciaMin', etiqueta: 'Referencia mínima', tipo: 'numero', valorInicial: 0 },
 		{ clave: 'referenciaMax', etiqueta: 'Referencia máxima', tipo: 'numero', valorInicial: 10 },
 		{ clave: 'frecuenciaMinHz', etiqueta: 'Frecuencia mínima (Hz)', tipo: 'numero', valorInicial: 0, min: 0 },
@@ -183,18 +198,34 @@ export const PERFILES_BASE = {
 		] }, { clave: 'reposo', etiqueta: 'Posición inicial', tipo: 'numero', valorInicial: 0, min: 0, max: 2 },
 	]),
 	piloto: perfil('piloto', 'Piloto', 'Carga luminosa binaria.', ['carga-fase', 'carga-retorno', 'proteccion', 'sin-asignar'], [P.tension, P.corriente, P.potencia]),
-	sensor: perfil('sensor', 'Sensor', 'Contacto seco o sensor alimentado con salida digital.', [
-		'alimentacion-entrada', 'alimentacion-retorno', 'senal-digital', ...R.contactos, 'proteccion', 'sin-asignar',
+	sensor: perfil('sensor', 'Sensor', 'Contacto, PNP o transmisor 0–10 V/4–20 mA.', [
+		'alimentacion-entrada', 'alimentacion-retorno', 'senal-digital', 'salida-analogica', 'comun-analogico',
+		...R.contactos, 'proteccion', 'sin-asignar',
 	], [P.tension, { clave: 'rangoSondaMin', etiqueta: 'Medida mínima', tipo: 'numero' },
 		{ clave: 'rangoSondaMax', etiqueta: 'Medida máxima', tipo: 'numero' },
-		{ clave: 'unidadSonda', etiqueta: 'Unidad de medida', tipo: 'texto' }]),
+		{ clave: 'unidadSonda', etiqueta: 'Unidad de medida', tipo: 'texto' },
+		{ clave: 'magnitud', etiqueta: 'Magnitud', tipo: 'texto', valorInicial: 'variable' },
+		{ clave: 'unidadReferencia', etiqueta: 'Señal analógica', tipo: 'seleccion', valorInicial: 'mA', opciones: [
+			{ valor: 'V', etiqueta: '0–10 V' }, { valor: 'mA', etiqueta: '4–20 mA' },
+		] }, { clave: 'modoTransmisor', etiqueta: 'Conexión transmisor', tipo: 'seleccion', valorInicial: '3-hilos', opciones: [
+			{ valor: '2-hilos', etiqueta: '2 hilos / loop-powered' }, { valor: '3-hilos', etiqueta: '3 hilos' },
+		] }, { clave: 'modoSalidaAnalogica', etiqueta: 'Salida', tipo: 'seleccion', valorInicial: 'activa', opciones: [
+			{ valor: 'activa', etiqueta: 'Activa' }, { valor: 'pasiva', etiqueta: 'Pasiva' },
+		] }]),
 	valvula: perfil('valvula', 'Válvula / actuador', 'Carga binaria o actuador modulante 0–100 %.', [
-		'carga-fase', 'carga-retorno', 'referencia-analogica', 'comun-analogico', 'proteccion', 'sin-asignar',
+		'carga-fase', 'carga-retorno', 'referencia-analogica', 'comun-analogico',
+		'salida-feedback', 'comun-feedback', 'proteccion', 'sin-asignar',
 	], [P.tension, P.corriente, P.potencia,
 		{ clave: 'unidadReferencia', etiqueta: 'Unidad de mando', tipo: 'seleccion', valorInicial: 'V', opciones: [
-			{ valor: 'V', etiqueta: 'Voltios' }, { valor: 'porcentaje', etiqueta: 'Porcentaje' },
+			{ valor: 'V', etiqueta: 'Voltios' }, { valor: 'mA', etiqueta: 'Miliamperios' }, { valor: 'porcentaje', etiqueta: 'Porcentaje' },
 		] }, { clave: 'referenciaMin', etiqueta: 'Mando mínimo', tipo: 'numero', valorInicial: 0 },
-		{ clave: 'referenciaMax', etiqueta: 'Mando máximo', tipo: 'numero', valorInicial: 10 }]),
+		{ clave: 'referenciaMax', etiqueta: 'Mando máximo', tipo: 'numero', valorInicial: 10 },
+		{ clave: 'tiempoAperturaS', etiqueta: 'Tiempo de apertura (s)', tipo: 'numero', valorInicial: 10, min: 0 },
+		{ clave: 'tiempoCierreS', etiqueta: 'Tiempo de cierre (s)', tipo: 'numero', valorInicial: 10, min: 0 },
+		{ clave: 'failSafe', etiqueta: 'Pérdida de señal', tipo: 'seleccion', valorInicial: 'cerrar', opciones: [
+			{ valor: 'cerrar', etiqueta: 'Cerrar' }, { valor: 'abrir', etiqueta: 'Abrir' },
+			{ valor: 'mantener', etiqueta: 'Mantener' }, { valor: 'posicion-segura', etiqueta: 'Posición segura' },
+		] }, { clave: 'posicionSegura', etiqueta: 'Posición segura (%)', tipo: 'numero', valorInicial: 0, min: 0, max: 100 }]),
 	resistencia: perfil('resistencia', 'Resistencia', 'Carga térmica conceptual.', ['carga-fase', 'carga-retorno', 'proteccion', 'sin-asignar'], [P.tension, P.corriente, P.potencia]),
 	condensador: perfil('condensador', 'Condensador', 'Carga reactiva sin transitorio ni reactancia.', ['carga-fase', 'carga-retorno', 'proteccion', 'sin-asignar'], [P.tension, P.corriente]),
 	bornero: perfil('bornero', 'Bornero / paso', 'Conectividad pasiva mediante pares explícitos.', ['pasivo-a', 'pasivo-b', 'proteccion', 'sin-asignar']),
@@ -323,10 +354,20 @@ export function construirComportamientoPerfil(
 		const retornos = porRol('alimentacion-retorno').map((t) => t.id);
 		const salidasDigitales = pares('salida-digital', 'comun-digital', 'salida digital')
 			.map((p) => ({ borne: p.entrada, comun: p.salida }));
-		const minimo = numero(parametros.referenciaMin, 0); const maximo = numero(parametros.referenciaMax, 10);
+		const unidad = parametros.unidadReferencia === 'mA' ? 'mA' as const : 'V' as const;
+		const minimo = numero(parametros.referenciaMin, unidad === 'mA' ? 4 : 0);
+		const maximo = numero(parametros.referenciaMax, unidad === 'mA' ? 20 : 10);
 		const salidasAnalogicas = pares('salida-analogica', 'comun-analogico', 'salida analógica')
-			.map((p) => ({ borne: p.entrada, referencia: p.salida, rango: [minimo, maximo] as [number, number], unidad: 'V' as const }));
-		comportamiento = { version: 1, clase: 'controlador', alimentacion: { entradas, retornos }, salidasDigitales, salidasAnalogicas };
+			.map((p) => ({ borne: p.entrada, referencia: p.salida, rango: [minimo, maximo] as [number, number], unidad }));
+		const variable = {
+			magnitud: parametros.magnitud?.trim() || 'variable', unidad: parametros.unidadSonda?.trim() || '%',
+			minimo: numero(parametros.rangoSondaMin, 0), maximo: numero(parametros.rangoSondaMax, 100),
+		};
+		const entradasAnalogicas = pares('entrada-analogica', 'referencia-entrada-analogica', 'entrada analógica')
+			.map((p) => ({ borne: p.entrada, comun: p.salida, rango: [minimo, maximo] as [number, number], unidad,
+				variable, modoEntrada: parametros.modoEntradaAnalogica ?? 'pasiva' }));
+		comportamiento = { version: 1, clase: 'controlador', alimentacion: { entradas, retornos },
+			salidasDigitales, salidasAnalogicas, ...(entradasAnalogicas.length ? { entradasAnalogicas } : {}) };
 		if (parametros.programa?.trim()) propiedades.programa = parametros.programa.trim();
 		propiedades.rangoSalidaAnalogica = [minimo, maximo];
 	} else if (tipo === 'sensor') {
@@ -336,10 +377,25 @@ export function construirComportamientoPerfil(
 		const senal = uno('senal-digital', 'la salida digital del sensor', true);
 		if (senal && !entrada) errores.push('una salida activa del sensor necesita alimentación');
 		const cs = contactos();
-		if (!senal && !cs.length) errores.push('declara una salida digital o un contacto seco');
+		const salidaAnalogica = uno('salida-analogica', 'la salida analógica', true);
+		const comunAnalogico = uno('comun-analogico', 'el común analógico', true);
+		if (!!salidaAnalogica !== !!comunAnalogico) errores.push('la salida analógica necesita señal y común/lazo');
+		if (!senal && !cs.length && !salidaAnalogica) errores.push('declara una salida digital, analógica o un contacto seco');
+		const unidad = parametros.unidadReferencia === 'V' ? 'V' as const : 'mA' as const;
+		const minimoFisico = numero(parametros.rangoSondaMin, 0);
+		const maximoFisico = numero(parametros.rangoSondaMax, 100);
+		const transmisor = salidaAnalogica && comunAnalogico ? {
+			modoConexion: parametros.modoTransmisor ?? '3-hilos' as const,
+			salida: { borne: salidaAnalogica, comun: comunAnalogico, unidad,
+				rango: [unidad === 'V' ? 0 : 4, unidad === 'V' ? 10 : 20] as [number, number] },
+			variable: { magnitud: parametros.magnitud?.trim() || 'variable', unidad: parametros.unidadSonda?.trim() || '%',
+				minimo: minimoFisico, maximo: maximoFisico },
+			modoSalida: parametros.modoSalidaAnalogica ?? (parametros.modoTransmisor === '2-hilos' ? 'pasiva' : 'activa') as 'activa' | 'pasiva',
+		} : undefined;
 		comportamiento = { version: 1, clase: 'sensor', contactos: cs,
 			...(entrada && retorno ? { alimentacion: { entrada, retorno } } : {}),
 			...(senal && entrada ? { salidaDigital: { borne: senal, tomaDe: entrada } } : {}),
+			...(transmisor ? { transmisor } : {}),
 		};
 		if (Number.isFinite(parametros.rangoSondaMin) && Number.isFinite(parametros.rangoSondaMax)) {
 			const r: [number, number] = [parametros.rangoSondaMin!, parametros.rangoSondaMax!];
@@ -375,6 +431,9 @@ export function construirComportamientoPerfil(
 			const borne = uno('referencia-analogica', 'la referencia analógica'); const comun = uno('comun-analogico', 'el común analógico');
 			if (borne && comun) mandoAnalogico = { borne, comun, unidad: parametros.unidadReferencia ?? 'V', rango: [numero(parametros.referenciaMin, 0), numero(parametros.referenciaMax, 10)] };
 		}
+		const feedbackBorne = uno('salida-feedback', 'la salida de feedback', true);
+		const feedbackComun = uno('comun-feedback', 'el común de feedback', true);
+		if (!!feedbackBorne !== !!feedbackComun) errores.push('el feedback necesita señal y común');
 		const dinamicaMotor = tipo === 'motor' ? {
 			...(Number.isInteger(parametros.polosMotor) && parametros.polosMotor! >= 2
 				? { polos: parametros.polosMotor } : {}),
@@ -385,8 +444,22 @@ export function construirComportamientoPerfil(
 			...(Number.isFinite(parametros.deslizamiento) && parametros.deslizamiento! >= 0
 				&& parametros.deslizamiento! < 0.2 ? { deslizamiento: parametros.deslizamiento } : {}),
 		} : undefined;
+		const dinamicaActuador = tipo === 'valvula' ? {
+			tipo: mandoAnalogico ? 'modulante' as const : 'on-off' as const,
+			tiempoAperturaS: Math.max(0, numero(parametros.tiempoAperturaS, 10)),
+			tiempoCierreS: Math.max(0, numero(parametros.tiempoCierreS, 10)),
+			failSafe: parametros.failSafe ?? 'cerrar' as const,
+			...(parametros.failSafe === 'posicion-segura'
+				? { posicionSegura: Math.max(0, Math.min(100, numero(parametros.posicionSegura, 0))) } : {}),
+			...(feedbackBorne && feedbackComun && parametros.unidadReferencia !== 'porcentaje' ? {
+				feedback: { borne: feedbackBorne, comun: feedbackComun,
+					unidad: parametros.unidadReferencia === 'mA' ? 'mA' as const : 'V' as const,
+					rango: parametros.unidadReferencia === 'mA' ? [4, 20] as [number, number] : [0, 10] as [number, number] },
+			} : {}),
+		} : undefined;
 		comportamiento = { version: 1, clase: 'carga', alimentacion: { fases, retornos, fasesMinimas }, efecto,
-			...(mandoAnalogico ? { mandoAnalogico } : {}), ...(dinamicaMotor ? { dinamicaMotor } : {}) };
+			...(mandoAnalogico ? { mandoAnalogico } : {}), ...(dinamicaMotor ? { dinamicaMotor } : {}),
+			...(dinamicaActuador ? { dinamicaActuador } : {}) };
 	} else if (tipo === 'bornero') {
 		const conexiones = pares('pasivo-a', 'pasivo-b', 'paso');
 		if (!conexiones.length) errores.push('el bornero necesita al menos un par de paso');
@@ -441,10 +514,13 @@ export function rolesDesdeComportamiento(
 			comportamiento.alimentacion.entradas.forEach((x) => asignar(x, 'alimentacion-entrada'));
 			comportamiento.alimentacion.retornos.forEach((x) => asignar(x, 'alimentacion-retorno'));
 			comportamiento.salidasDigitales.forEach((x, i) => { const g = `do-${i + 1}`; asignar(x.borne, 'salida-digital', g); asignar(x.comun, 'comun-digital', g); });
+			comportamiento.entradasAnalogicas?.forEach((x, i) => { const g = `ai-${i + 1}`; asignar(x.borne, 'entrada-analogica', g); asignar(x.comun, 'referencia-entrada-analogica', g); });
 			comportamiento.salidasAnalogicas.forEach((x, i) => { const g = `ao-${i + 1}`; asignar(x.borne, 'salida-analogica', g); asignar(x.referencia, 'comun-analogico', g); }); break;
 		case 'sensor':
 			if (comportamiento.alimentacion) { asignar(comportamiento.alimentacion.entrada, 'alimentacion-entrada'); asignar(comportamiento.alimentacion.retorno, 'alimentacion-retorno'); }
-			if (comportamiento.salidaDigital) asignar(comportamiento.salidaDigital.borne, 'senal-digital'); asignarContactos(comportamiento.contactos); break;
+			if (comportamiento.salidaDigital) asignar(comportamiento.salidaDigital.borne, 'senal-digital');
+			if (comportamiento.transmisor) { asignar(comportamiento.transmisor.salida.borne, 'salida-analogica'); asignar(comportamiento.transmisor.salida.comun, 'comun-analogico'); }
+			asignarContactos(comportamiento.contactos); break;
 		case 'variador':
 			comportamiento.alimentacion.fases.forEach((x) => asignar(x, 'alimentacion-entrada')); comportamiento.alimentacion.retornos.forEach((x) => asignar(x, 'alimentacion-retorno'));
 			asignar(comportamiento.mando.run, 'mando-run'); if (comportamiento.mando.habilitacion) asignar(comportamiento.mando.habilitacion, 'mando-enable');
@@ -452,7 +528,8 @@ export function rolesDesdeComportamiento(
 			asignar(comportamiento.salida.u, 'salida-u'); asignar(comportamiento.salida.v, 'salida-v'); asignar(comportamiento.salida.w, 'salida-w'); break;
 		case 'carga':
 			comportamiento.alimentacion.fases.forEach((x) => asignar(x, 'carga-fase')); comportamiento.alimentacion.retornos.forEach((x) => asignar(x, 'carga-retorno'));
-			if (comportamiento.mandoAnalogico) { asignar(comportamiento.mandoAnalogico.borne, 'referencia-analogica'); asignar(comportamiento.mandoAnalogico.comun, 'comun-analogico'); } break;
+			if (comportamiento.mandoAnalogico) { asignar(comportamiento.mandoAnalogico.borne, 'referencia-analogica'); asignar(comportamiento.mandoAnalogico.comun, 'comun-analogico'); }
+			if (comportamiento.dinamicaActuador?.feedback) { asignar(comportamiento.dinamicaActuador.feedback.borne, 'salida-feedback'); asignar(comportamiento.dinamicaActuador.feedback.comun, 'comun-feedback'); } break;
 		case 'pasivo': asignarPares(comportamiento.conexiones, 'pasivo-a', 'pasivo-b', 'paso'); break;
 		case 'sin-comportamiento': break;
 	}
