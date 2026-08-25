@@ -8,6 +8,7 @@ import { crearProyecto } from '../src/modelo/proyecto.js';
 import { fixturePuertaSemantica } from './fixture-puerta.js';
 import { fixtureFallosIndustriales, fixtureVariadorV2 } from './fixtures-simulacion-v2.js';
 import { fixtureInstrumentacionV3, fixtureReferenciaVfdV3 } from './fixtures-simulacion-v3.js';
+import { fixtureAutomatizacionSecuencialV4, fixturePIDV4 } from './fixtures-automatizacion-v4.js';
 import { tableroEjemplo } from './tablero-ejemplo.js';
 
 export interface EjemploTablero {
@@ -1156,6 +1157,37 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'Sigue físicamente OUT→AI1 y AO1→Y: la función depende del cableado, no del id del ejemplo.',
 		],
 		crear: fixtureInstrumentacionV3,
+	},
+	{
+		id: 'fixture-automatizacion-v4',
+		titulo: 'Fixture V4: PLC y proceso secuencial',
+		resumen: 'START, llenado, agitación temporizada, vaciado, interlocks, alarma y diagnóstico por scan.',
+		queHace: 'Ejecuta una secuencia de tanque con imágenes DI/DO, prioridad explícita de STOP y salidas físicas cableadas.',
+		comoFunciona: [
+			'START lleva REPOSO a LLENANDO; el nivel alto cambia a AGITANDO.',
+			'T_AGITA gobierna el paso a VACIANDO y el nivel bajo devuelve a REPOSO.',
+			'STOP tiene prioridad, inhibe salidas y enclava una alarma reconocible/rearmable.',
+		],
+		aprender: [
+			'Pausa el PLC, ejecuta un scan y compara imagen de entradas, estado de secuencia y DO publicadas.',
+			'Fuerza una DI desde el monitor y comprueba que queda marcada como fuerza de sesión.',
+		],
+		crear: fixtureAutomatizacionSecuencialV4,
+	},
+	{
+		id: 'fixture-pid-v4',
+		titulo: 'Fixture V4: PID de nivel',
+		resumen: 'Transmisor 4–20 mA, AI con calidad, PID V1 y válvula modulante por AO 0–10 V.',
+		queHace: 'Demuestra el bloque PID acotado y trazable sin inventar dinámica física del tanque.',
+		comoFunciona: [
+			'BL1 entrega nivel 0…100 % como 4–20 mA y A1 escala la AI.',
+			'El PID compara PV con SP=60 %, limita CV a 0…100 % y publica AO1.',
+			'Una PV inválida lleva la salida a su valor seguro; no se simula la planta hidráulica.',
+		],
+		aprender: [
+			'Mueve el nivel y observa PV, calidad, saturación y AO sin una segunda verdad visual.',
+		],
+		crear: fixturePIDV4,
 	},
 	{
 		id: 'fixture-referencia-vfd-v3',
