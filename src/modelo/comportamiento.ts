@@ -144,7 +144,7 @@ export type ComportamientoSimulacion =
 		motivo: string;
 	};
 
-export type NivelFidelidadSimulacion = 'completa-v3' | 'completa-v2' | 'completa-v1' | 'parcial' | 'sin-comportamiento';
+export type NivelFidelidadSimulacion = 'completa-v4' | 'completa-v3' | 'completa-v2' | 'completa-v1' | 'parcial' | 'sin-comportamiento';
 
 export interface FilaFidelidadSimulacion {
 	nivel: NivelFidelidadSimulacion;
@@ -159,7 +159,11 @@ export interface FilaFidelidadSimulacion {
 export const MATRIZ_FIDELIDAD_SIMULACION = {
 	version: 4,
 	tipos: {
-		plc: { nivel: 'parcial', participacion: 'Programa, AI/AO 0-10 V y 4-20 mA con escalado y calidad.', limitacion: 'DSL limitada; no IEC 61131-3, PID ni módulos analógicos específicos.' },
+		plc: {
+			nivel: 'completa-v4',
+			participacion: 'Scan determinista, imágenes DI/DO/AI/AO, IR tipada, timers/counters, secuencias, alarmas, interlocks, fuerzas y PID V1.',
+			limitacion: 'DSL propia, no IEC 61131-3; PID sin modelo físico de planta ni módulos/protocolos industriales específicos.',
+		},
 		fuente: { nivel: 'parcial', participacion: 'Crea un secundario si el primario está alimentado.', limitacion: 'Sin límite de potencia, eficiencia ni fallo.' },
 		transformador: { nivel: 'parcial', participacion: 'Crea un secundario aislado condicionado por el primario.', limitacion: 'Sin impedancia, pérdidas ni saturación.' },
 		contactor: { nivel: 'completa-v1', participacion: 'Bobina, polos y auxiliares NA/NC.', limitacion: 'Sin tiempos mecánicos ni desgaste.' },

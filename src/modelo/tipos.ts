@@ -16,6 +16,7 @@ export type LetraClase =
 /** Tipos de aparato conocidos, con su letra IEC por defecto (se puede forzar con `clase`). */
 import { AjustesDossier } from './dossier.js';
 import type { ComportamientoSimulacion } from './comportamiento.js';
+import type { ConfiguracionProgramaPLC } from './programa-plc.js';
 
 export type TipoDispositivo =
 	| 'plc' | 'fuente' | 'transformador' | 'contactor' | 'rele'
@@ -279,6 +280,8 @@ export interface Dispositivo {
 	 * la maniobra—. El lenguaje está en `src/motores/logica.ts`.
 	 */
 	programa?: string;
+	/** Programa PLC V4 tipado. Si existe, manda sobre `programa`; el runtime nunca se persiste aquí. */
+	programaPLC?: ConfiguracionProgramaPLC;
 	/** Rasgos visibles del frente del equipo (los dibuja el modelo 3D tal cual). */
 	rasgosFrente?: { display?: boolean; leds?: number; puertosIP?: number; puertosRS485?: number };
 	/**

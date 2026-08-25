@@ -15,6 +15,7 @@ import {
 } from './tipos.js';
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 import { leerComportamientoSimulacion, validarComportamiento } from './comportamiento.js';
+import type { ConfiguracionProgramaPLC, EtiquetaPLC } from './programa-plc.js';
 
 /** Versión de formato que escribe este programa. */
 export const VERSION_FORMATO = 1;
@@ -798,6 +799,52 @@ function leerProcedenciaPersonalizada(bruto: unknown): Dispositivo['componentePe
 	return definicionId && revision !== undefined ? { definicionId, revision } : undefined;
 }
 
+/** Lista blanca del programa PLC persistente. La memoria de ejecución no tiene vía de entrada. */
+function leerProgramaPLC(bruto: unknown): ConfiguracionProgramaPLC | undefined {
+	if (!esObjeto(bruto) || bruto.version !== 1
+		|| (bruto.lenguaje !== 'tablerostudio-plc-v4' && bruto.lenguaje !== 'legacy')
+		|| typeof bruto.FUENTE !== 'string' || bruto.FUENTE.length > 100_000) return undefined;
+	const periodoScanMs = typeof bruto.periodoScanMs === 'number' && Number.isFinite(bruto.periodoScanMs)
+		&& bruto.periodoScanMs >= 10 && bruto.periodoScanMs <= 5_000 ? bruto.periodoScanMs : undefined;
+	const modoInicial = bruto.modoInicial === 'RUN' || bruto.modoInicial === 'STOP' ? bruto.modoInicial : undefined;
+	let etiquetas: EtiquetaPLC[] | undefined;
+	if (Array.isArray(bruto.etiquetas)) {
+		if (bruto.etiquetas.length > 1_000) return undefined;
+		etiquetas = [];
+		for (const item of bruto.etiquetas) {
+			if (!esObjeto(item) || typeof item.nombre !== 'string' || !/^[A-Za-z_][A-Za-z0-9_.]*$/.test(item.nombre)
+				|| (item.tipo !== 'BOOL' && item.tipo !== 'REAL')) return undefined;
+			let io: EtiquetaPLC['io'];
+			if (item.io !== undefined) {
+				if (!esObjeto(item.io) || !['DI', 'DO', 'AI', 'AO'].includes(String(item.io.clase))
+					|| typeof item.io.borne !== 'string') return undefined;
+				io = { clase: item.io.clase as NonNullable<EtiquetaPLC['io']>['clase'], borne: item.io.borne };
+			}
+			const inicial = item.inicial === undefined ? undefined : item.tipo === 'BOOL'
+				? (typeof item.inicial === 'boolean' ? item.inicial : undefined)
+				: (typeof item.inicial === 'number' && Number.isFinite(item.inicial) ? item.inicial : undefined);
+			if (item.inicial !== undefined && inicial === undefined) return undefined;
+			etiquetas.push({ nombre: item.nombre, tipo: item.tipo, io, inicial,
+				retain: typeof item.retain === 'boolean' ? item.retain : undefined,
+				descripcion: typeof item.descripcion === 'string' ? item.descripcion : undefined });
+		}
+	}
+	let limites: ConfiguracionProgramaPLC['limites'];
+	if (esObjeto(bruto.limites)) {
+		const operacionesPorScan = typeof bruto.limites.operacionesPorScan === 'number'
+			&& Number.isInteger(bruto.limites.operacionesPorScan)
+			&& bruto.limites.operacionesPorScan >= 50 && bruto.limites.operacionesPorScan <= 100_000
+			? bruto.limites.operacionesPorScan : undefined;
+		const catchUpMaximo = typeof bruto.limites.catchUpMaximo === 'number'
+			&& Number.isInteger(bruto.limites.catchUpMaximo)
+			&& bruto.limites.catchUpMaximo >= 1 && bruto.limites.catchUpMaximo <= 100
+			? bruto.limites.catchUpMaximo : undefined;
+		limites = operacionesPorScan !== undefined || catchUpMaximo !== undefined
+			? { operacionesPorScan, catchUpMaximo } : undefined;
+	}
+	return { version: 1, lenguaje: bruto.lenguaje, FUENTE: bruto.FUENTE, periodoScanMs, modoInicial, etiquetas, limites };
+}
+
 function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 	if (!esLista(bruto)) {
 		if (bruto !== undefined) arreglos.push('la lista de aparatos estaba corrupta');
@@ -825,6 +872,7 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 		const erroresComportamiento = comportamientoLeido
 			? validarComportamiento({ bornes, comportamiento: comportamientoLeido }) : [];
 		const comportamiento = erroresComportamiento.length ? undefined : comportamientoLeido;
+		const programaPLC = leerProgramaPLC(d.programaPLC);
 		/** Texto que TIENE que ser texto. Un objeto aquí revienta la BOM al ordenar. */
 		const cadena = (campo: string): string | undefined => {
 			const v = (d as Record<string, unknown>)[campo];
@@ -927,6 +975,8 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			claseDiferencial: oQuitado(d.claseDiferencial, unoDe(d.claseDiferencial, ['AC', 'A', 'F', 'B'] as const),
 				ruta('claseDiferencial'), 'la clase de diferencial no era AC, A, F ni B'),
 			programa: cadena('programa'),
+			programaPLC: oQuitado(d.programaPLC, programaPLC, ruta('programaPLC'),
+				'el programa PLC no tenía una versión, lenguaje, fuente o etiquetas válidas'),
 			unidadSonda: cadena('unidadSonda'),
 			colorCuerpo: cadena('colorCuerpo'),
 			hojaId: cadena('hojaId'),

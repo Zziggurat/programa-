@@ -64,6 +64,7 @@ import {
 	CalidadSenalAnalogica, RangoSenalAnalogica, SenalAnalogica, escalarSenalAIngenieria,
 	senalDesdeVariableFisica, senalInvalida, valorElectricoDesdeNormalizado,
 } from '../modelo/senal-analogica.js';
+import type { ConfiguracionProgramaPLC, ImagenEntradasPLC, OrdenesRuntimePLC, RuntimePLC } from '../modelo/programa-plc.js';
 import { FalloRuntimeActivo, OrigenMagnitudSimulacion, TipoFalloRuntime, tieneFallo } from './fallos-runtime.js';
 import { claveBorne } from '../modelo/proyecto.js';
 import { tensionSecundariaDe } from './tensiones.js';
@@ -71,6 +72,8 @@ import {
 	EsperaLogica, LecturaControlador, MemoriaLogica, ReglaLogica, esperasDe, evaluar, leerPrograma,
 	clonarMemoriaLogica, memoriaLogicaVacia, salidasActivas, valoresAnalogicos,
 } from './logica.js';
+import { compilarProgramaPLC, type IOProgramaPLC, type ProgramaPLCCompilado } from './plc-compilador.js';
+import { actualizarRuntimePLC, configLegacyPLC, crearRuntimePLC, esperasLegacyPLC } from './plc-runtime.js';
 
 /** Estado que el usuario controla de cada aparato. */
 export interface EstadoAparato {
@@ -104,6 +107,8 @@ export interface EstadoAparato {
 	 * Una salida analógica no está encendida ni apagada: está en 3,4 V. Va por su lado.
 	 */
 	analogicas?: Record<string, number>;
+	/** Órdenes, fuerzas y depuración efímeras del PLC. Nunca forman parte de Proyecto. */
+	plc?: OrdenesRuntimePLC;
 	/**
 	 * Lo que marca una sonda analógica: grados, bar, %… Es el número con el que el programa del
 	 * controlador compara («UI1 > 24»), y lo mueve quien simula girando el mando de la sonda.
@@ -141,11 +146,13 @@ export interface MemoriaTiempos {
 	protecciones?: Record<string, { cargaTermica: number; actualizadoEn: number }>;
 	/** Posición mecánica de actuadores; runtime temporal, nunca parte del Proyecto. */
 	actuadores?: Record<string, { posicion: number; actualizadoEn: number }>;
+	/** Memoria por PLC: scan, imagen de proceso, bloques, RETAIN de sesión, alarmas y fuerzas. */
+	controladores?: Record<string, RuntimePLC>;
 }
 
 export function memoriaVacia(): MemoriaTiempos {
 	return {
-		desdeConectado: {}, desdeSoltado: {}, cumplidos: [], variadores: {}, motores: {}, protecciones: {}, actuadores: {},
+		desdeConectado: {}, desdeSoltado: {}, cumplidos: [], variadores: {}, motores: {}, protecciones: {}, actuadores: {}, controladores: {},
 	};
 }
 
@@ -435,6 +442,23 @@ export interface EstadoControlador {
 	errores: string[];
 	/** Renglón a renglón: qué pide cada uno y si se está cumpliendo AHORA. */
 	renglones: RenglonEnMarcha[];
+	/** Estado del runtime V4; el visual no mantiene una segunda verdad. */
+	estado: RuntimePLC['estado'];
+	pausado: boolean;
+	scan: number;
+	periodoScanMs: number;
+	primerScan: boolean;
+	duracionUltimoScanMs: number;
+	variables: Record<string, boolean | number>;
+	salidasAnalogicas: Record<string, number>;
+	temporizadores: RuntimePLC['temporizadores'];
+	contadores: RuntimePLC['contadores'];
+	secuencias: RuntimePLC['secuencias'];
+	alarmas: RuntimePLC['alarmas'];
+	interlocks: RuntimePLC['interlocks'];
+	forzadas: string[];
+	eventos: RuntimePLC['eventos'];
+	io: IOProgramaPLC;
 }
 
 /**
@@ -1667,6 +1691,76 @@ function esBorneDeAlimentacion(b: { id: string; tipo?: string }): boolean {
 	return b.tipo === 'L' || b.tipo === 'N' || b.tipo === 'PE' || COMUNES.has(b.id);
 }
 
+interface ProgramaEnSimulacion {
+	config: ConfiguracionProgramaPLC;
+	compilado: ProgramaPLCCompilado;
+	io: IOProgramaPLC;
+}
+
+const cacheProgramasPLC = new WeakMap<Dispositivo, { clave: string; programa: ProgramaEnSimulacion }>();
+
+export function ioDeControlador(d: Dispositivo): IOProgramaPLC {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase !== 'controlador') return { DI: [], DO: [], AI: [], AO: [] };
+	const reservados = new Set([
+		...perfil.alimentacion.entradas, ...perfil.alimentacion.retornos,
+		...perfil.salidasDigitales.flatMap((s) => [s.borne, s.comun]),
+		...perfil.salidasAnalogicas.flatMap((s) => [s.borne, s.referencia]),
+		...(perfil.entradasAnalogicas ?? []).flatMap((s) => [s.borne, s.comun]),
+	]);
+	return {
+		DI: d.bornes.filter((b) => !reservados.has(b.id) && !esBorneDeAlimentacion(b)).map((b) => b.id),
+		DO: perfil.salidasDigitales.map((s) => s.borne),
+		AI: (perfil.entradasAnalogicas ?? []).map((s) => s.borne),
+		AO: perfil.salidasAnalogicas.map((s) => s.borne),
+	};
+}
+
+function programaDeControlador(d: Dispositivo): ProgramaEnSimulacion | undefined {
+	const perfil = resolverComportamiento(d);
+	if (perfil?.clase !== 'controlador') return undefined;
+	const config = d.programaPLC ?? (d.programa?.trim() ? configLegacyPLC(d.programa) : undefined);
+	if (!config) return undefined;
+	const io = ioDeControlador(d);
+	const clave = JSON.stringify([config, io]);
+	const cache = cacheProgramasPLC.get(d);
+	if (cache?.clave === clave) return cache.programa;
+	const programa = { config, io, compilado: compilarProgramaPLC(config, io) };
+	cacheProgramasPLC.set(d, { clave, programa });
+	return programa;
+}
+
+function imagenEntradasPLC(
+	d: Dispositivo,
+	programa: ProgramaEnSimulacion,
+	lectura: ReturnType<typeof leerControlador>,
+): ImagenEntradasPLC {
+	const digitales: Record<string, boolean> = {};
+	for (const borne of programa.io.DI) digitales[borne] = lectura.activos.has(borne);
+	const analogicas: ImagenEntradasPLC['analogicas'] = {};
+	for (const [borne, valor] of Object.entries(lectura.valores)) {
+		analogicas[borne] = { valor, calidad: 'normal', origen: 'calculado' };
+	}
+	for (const entrada of lectura.entradasAnalogicas) {
+		analogicas[entrada.borne] = {
+			valor: entrada.valorIngenieria,
+			calidad: entrada.senal.calidad,
+			origen: entrada.senal.origen,
+		};
+	}
+	/* Alias persistentes: la imagen conserva el borne y el nombre lógico. */
+	for (const tag of Object.values(programa.compilado.etiquetas)) {
+		if (tag.io?.clase === 'DI' && tag.nombre !== tag.io.borne.toUpperCase()) {
+			digitales[tag.nombre] = digitales[tag.io.borne] ?? false;
+		}
+		if (tag.io?.clase === 'AI' && tag.nombre !== tag.io.borne.toUpperCase() && analogicas[tag.io.borne]) {
+			analogicas[tag.nombre] = analogicas[tag.io.borne];
+		}
+	}
+	void d;
+	return { digitales, analogicas };
+}
+
 /**
  * Qué sonda hay al final del hilo de esta entrada, ATRAVESANDO ENTIDADES PASIVAS.
  *
@@ -1744,25 +1838,24 @@ export function simular(
 	});
 	const fuentes = fuentesDe(proyecto);
 
-	/*
-	 * EL PROGRAMA DE LOS CONTROLADORES.
-	 *
-	 * Se lee una vez y se EJECUTA dentro del punto fijo, no antes: una salida del controlador
-	 * mueve un contactor, el contactor cierra un contacto, y ese contacto puede ser justo la
-	 * entrada que el programa está mirando. Resolverlo fuera del bucle dejaría el controlador
-	 * viendo el tablero de la pasada anterior.
-	 */
-	const programas = new Map<string, ReglaLogica[]>();
+	/* Un PLC publica una imagen de salidas; el punto fijo eléctrico nunca ejecuta scans. */
+	const programas = new Map<string, ProgramaEnSimulacion>();
+	const runtimesPLC = new Map<string, RuntimePLC>();
 	const erroresPrograma: string[] = [];
 	for (const d of aparatos) {
-		if (resolverComportamiento(d)?.clase !== 'controlador' || !d.programa?.trim()) continue;
-		const leido = leerPrograma(d.programa);
-		programas.set(d.id, leido.reglas);
-		for (const e of leido.errores) {
-			erroresPrograma.push(`${d.designacion ?? d.id}, renglón ${e.linea}: ${e.que} («${e.texto}»)`);
+		const programa = programaDeControlador(d);
+		if (!programa) continue;
+		programas.set(d.id, programa);
+		const runtime = reloj?.memoria.controladores?.[d.id] ?? crearRuntimePLC(programa.compilado);
+		if (!reloj) for (const clave of activosPrevios ?? []) {
+			if (clave.startsWith(`${d.id}::`)) runtime.salidas.digitales[clave.slice(d.id.length + 2)] = true;
 		}
+		runtimesPLC.set(d.id, runtime);
+		for (const e of programa.compilado.errores) erroresPrograma.push(
+			`${d.designacion ?? d.id}, renglón ${e.linea}: ${e.mensaje} («${e.texto}»)`);
+		for (const e of programa.compilado.legacy?.errores ?? []) erroresPrograma.push(
+			`${d.designacion ?? d.id}, renglón ${e.linea}: ${e.que} («${e.texto}»)`);
 	}
-	const memoriaLogica = reloj?.logica ?? memoriaLogicaVacia();
 	/*
 	 * Las salidas del programa son ESTADO del circuito, igual que una bobina metida, y viajan por
 	 * el mismo sitio: `activos`, con la clave «plc::DO1». Sin esto un programa que se realimenta
@@ -1770,14 +1863,10 @@ export function simular(
 	 * caía al soltar la marcha, porque cada llamada empezaba sin saber qué había encendido antes.
 	 */
 	const salidasDePrograma = new Map<string, Set<string>>();
-	for (const id of programas.keys()) {
-		const previas = new Set<string>();
-		for (const clave of activosPrevios ?? []) {
-			if (clave.startsWith(`${id}::`)) previas.add(clave.slice(id.length + 2));
-		}
-		salidasDePrograma.set(id, previas);
+	for (const [id, runtime] of runtimesPLC) {
+		salidasDePrograma.set(id, new Set(Object.entries(runtime.salidas.digitales)
+			.filter(([, activa]) => activa).map(([borne]) => borne)));
 	}
-	const esperasPrograma: (EsperaLogica & { dispositivoId: string; designacion: string })[] = [];
 
 	let vivos = new Map<string, BorneVivo>();
 	let activos = new Set<string>(activosPrevios ?? []);
@@ -1800,9 +1889,19 @@ export function simular(
 			if (Number.isFinite(v)) analogicas.set(`${id}::${borne}`, v);
 		}
 	}
+	for (const [id, runtime] of runtimesPLC) {
+		const programa = programas.get(id)!;
+		const d = aparatos.find((x) => x.id === id)!;
+		for (const [borne, valor] of Object.entries(runtime.salidas.analogicas)) {
+			if (estado[id]?.analogicas?.[borne] !== undefined) continue;
+			analogicas.set(`${id}::${borne}`, programa.config.lenguaje === 'legacy'
+				? porcentajeDeSalidaFisica(d, borne, valor) : valor);
+		}
+	}
 	let prop: Propagacion = { vivos, alcances: [], conductorEntre: new Map() };
 	let fuentesVariadores: Fuente[] = [];
 	let variadoresEnFalla = new Set<string>();
+	let scanPLCResuelto = false;
 
 	/*
 	 * LOS RETARDOS DEL PROGRAMA SE CUENTAN CON EL CIRCUITO YA RESUELTO, NO A MEDIO RESOLVER.
@@ -1834,29 +1933,6 @@ export function simular(
 		prop = propagar(proyecto, aparatos, [...fuentes, ...fuentesVariadores], estado, activos, vivos,
 			conmutados, salidasDePrograma, variadoresEnFalla);
 		const nuevosVivos = prop.vivos;
-		// Copia limpia por pasada: parte de la historia REAL y se descarta al terminar la pasada.
-		const memoriaTanteo = reloj ? clonarMemoriaLogica(memoriaLogica) : undefined;
-		// Los controladores leen su tablero y deciden sus salidas ANTES de la siguiente pasada.
-		for (const [id, reglas] of programas) {
-			const d = aparatos.find((x) => x.id === id)!;
-			if (!controladorAlimentado(d, nuevosVivos)) {
-				salidasDePrograma.set(id, new Set());
-				continue;
-			}
-			const lectura = leerControlador(d, proyecto, nuevosVivos, estado,
-				salidasDePrograma.get(id) ?? new Set(), reloj?.memoria);
-			salidasDePrograma.set(id, salidasActivas(reglas, lectura,
-				reloj && memoriaTanteo ? { ahora: reloj.ahora, memoria: memoriaTanteo } : undefined));
-			// Y lo que valen sus salidas analógicas: la apertura de una válvula, la velocidad de un
-			// variador. No encienden nada, así que no entran en la propagación.
-			for (const [borne, v] of Object.entries(valoresAnalogicos(reglas, lectura))) {
-				// Lo forzado a mano manda sobre lo que calcula el programa: quien fuerza está
-				// probando, y el programa volvería a poner su valor en cada pasada.
-				if (estado[id]?.analogicas?.[borne] === undefined) {
-					analogicas.set(`${id}::${borne}`, porcentajeDeSalidaFisica(d, borne, v));
-				}
-			}
-		}
 		const estadosVariadores = aparatos.flatMap((d) => {
 			const perfil = resolverComportamiento(d);
 			return perfil?.clase === 'variador'
@@ -1887,28 +1963,40 @@ export function simular(
 		activos = nuevosActivos;
 
 		/*
-		 * El tablero se ha quedado quieto: AHORA sí se apunta el tiempo, y con la lectura buena.
-		 * Si al apuntarlo cambia una salida es que acaba de vencer un retardo o un tiempo mínimo,
-		 * y hace falta otra vuelta para que el circuito se entere.
+		 * Solo con la red estable se congelan las entradas. Los runtimes se calculan todos contra esas
+		 * capturas y se comprometen después juntos; el orden del array de aparatos no puede filtrarse.
 		 */
-		if (estable && reloj) {
-			for (const [id, reglas] of programas) {
+		if (estable && !scanPLCResuelto && programas.size) {
+			scanPLCResuelto = true;
+			const capturas = [...programas].sort(([a], [b]) => a.localeCompare(b)).map(([id, programa]) => {
 				const d = aparatos.find((x) => x.id === id)!;
-				if (!controladorAlimentado(d, vivos)) {
-					salidasDePrograma.set(id, new Set());
-					continue;
-				}
 				const lectura = leerControlador(d, proyecto, vivos, estado,
 					salidasDePrograma.get(id) ?? new Set(), reloj?.memoria);
-				const firmes = salidasActivas(reglas, lectura, { ahora: reloj.ahora, memoria: memoriaLogica });
-				if (!igualesConjuntos(salidasDePrograma.get(id) ?? new Set(), firmes)) estable = false;
-				salidasDePrograma.set(id, firmes);
-			}
-			if (!estable) {
-				// Las salidas nuevas tienen que entrar en `activos` o la vuelta siguiente no las vería.
-				for (const [id, salidas] of salidasDePrograma) {
-					for (const s2 of salidas) activos.add(`${id}::${s2}`);
+				return { id, d, programa, alimentado: controladorAlimentado(d, vivos), imagen: imagenEntradasPLC(d, programa, lectura) };
+			});
+			const actualizados = capturas.map((captura) => ({
+				...captura,
+				resultado: actualizarRuntimePLC(captura.programa.compilado, runtimesPLC.get(captura.id),
+					captura.imagen, reloj?.ahora ?? 0, captura.alimentado, estado[captura.id]?.plc),
+			}));
+			let cambiaron = false;
+			for (const { id, d, programa, resultado } of actualizados) {
+				runtimesPLC.set(id, resultado.runtime);
+				if (reloj) { reloj.memoria.controladores ??= {}; reloj.memoria.controladores[id] = resultado.runtime; }
+				const nuevas = new Set(Object.entries(resultado.runtime.salidas.digitales)
+					.filter(([, activa]) => activa).map(([borne]) => borne));
+				if (!igualesConjuntos(salidasDePrograma.get(id) ?? new Set(), nuevas)) cambiaron = true;
+				salidasDePrograma.set(id, nuevas);
+				for (const [borne, valor] of Object.entries(resultado.runtime.salidas.analogicas)) {
+					if (estado[id]?.analogicas?.[borne] !== undefined) continue;
+					const pct = programa.config.lenguaje === 'legacy' ? porcentajeDeSalidaFisica(d, borne, valor) : valor;
+					if (analogicas.get(`${id}::${borne}`) !== pct) cambiaron = true;
+					analogicas.set(`${id}::${borne}`, pct);
 				}
+			}
+			if (cambiaron) {
+				estable = false;
+				for (const [id, salidas] of salidasDePrograma) for (const salida of salidas) activos.add(`${id}::${salida}`);
 			}
 		}
 	}
@@ -2179,28 +2267,52 @@ export function simular(
 
 	/* ---- Lo que están haciendo los controladores programados ---- */
 	const controladores: EstadoControlador[] = [];
-	for (const [id, reglas] of programas) {
+	for (const [id, programa] of programas) {
 		const d = aparatos.find((x) => x.id === id)!;
-		if (!controladorAlimentado(d, vivos)) continue;
 		const lectura = leerControlador(d, proyecto, vivos, estado,
 			salidasDePrograma.get(id) ?? new Set(), reloj?.memoria);
 		const mios = erroresPrograma.filter((e) => e.startsWith(`${d.designacion ?? d.id},`));
+		const runtime = runtimesPLC.get(id)!;
+		const reglasLegacy = programa.compilado.legacy?.reglas ?? [];
+		const lineas = programa.config.FUENTE.split(/\r?\n/);
+		const asignaciones = programa.compilado.asignaciones.map((a) => ({
+			salida: a.destino,
+			fuente: lineas[a.linea - 1]?.trim() ?? a.destino,
+			pide: programa.compilado.etiquetas[a.destino]?.tipo === 'BOOL'
+				? runtime.salidas.digitales[programa.compilado.etiquetas[a.destino]?.io?.borne ?? a.destino] ?? false : true,
+			encendida: runtime.salidas.digitales[programa.compilado.etiquetas[a.destino]?.io?.borne ?? a.destino] ?? false,
+		}));
 		controladores.push({
 			dispositivoId: id,
 			designacion: d.designacion ?? id,
-			reglas: reglas.length,
-			entradas: [...lectura.activos].sort(),
-			sondas: lectura.valores,
+			reglas: reglasLegacy.length || programa.compilado.asignaciones.length + programa.compilado.setReset.length
+				+ programa.compilado.temporizadores.length + programa.compilado.contadores.length
+				+ programa.compilado.transiciones.length + programa.compilado.pids.length,
+			entradas: Object.entries(runtime.entradas.digitales).filter(([, activa]) => activa).map(([borne]) => borne).sort(),
+			sondas: Object.fromEntries(Object.entries(runtime.entradas.analogicas)
+				.flatMap(([borne, valor]) => valor.valor === undefined ? [] : [[borne, valor.valor]])),
 			entradasAnalogicas: lectura.entradasAnalogicas,
-			salidas: [...(salidasDePrograma.get(id) ?? [])].sort(),
-			esperas: esperasDe(reglas, lectura, reloj ? { ahora: reloj.ahora, memoria: memoriaLogica } : undefined),
-			errores: mios,
-			renglones: reglas.map((r) => ({
+			salidas: Object.entries(runtime.salidas.digitales).filter(([, activa]) => activa).map(([borne]) => borne).sort(),
+			esperas: esperasLegacyPLC(programa.compilado, runtime, reloj?.ahora ?? 0),
+			errores: [...mios, ...runtime.errores],
+			renglones: reglasLegacy.map((r) => ({
 				salida: r.salida,
 				fuente: r.fuente,
-				pide: evaluar(r.cuando, lectura),
+				pide: evaluar(r.cuando, {
+					activos: new Set(Object.entries(runtime.entradas.digitales).filter(([, v]) => v).map(([k]) => k)),
+					valores: Object.fromEntries(Object.entries(runtime.entradas.analogicas)
+						.flatMap(([k, v]) => v.valor === undefined ? [] : [[k, v.valor]])),
+					salidasPrevias: new Set(Object.entries(runtime.salidas.digitales).filter(([, v]) => v).map(([k]) => k)),
+				}),
 				encendida: salidasDePrograma.get(id)?.has(r.salida) ?? false,
-			})),
+			})).concat(asignaciones),
+			estado: runtime.estado, pausado: runtime.pausado, scan: runtime.scan,
+			periodoScanMs: programa.compilado.periodoScanMs,
+			primerScan: runtime.primerScanPendiente, duracionUltimoScanMs: runtime.duracionUltimoScanMs,
+			variables: runtime.variables, salidasAnalogicas: runtime.salidas.analogicas,
+			temporizadores: runtime.temporizadores, contadores: runtime.contadores,
+			secuencias: runtime.secuencias, alarmas: runtime.alarmas, interlocks: runtime.interlocks,
+			forzadas: runtime.forzadas, eventos: runtime.eventos, io: programa.io,
 		});
 	}
 	for (const e of erroresPrograma) avisos.push(`📝 ${e}`);
