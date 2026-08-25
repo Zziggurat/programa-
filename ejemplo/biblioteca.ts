@@ -7,6 +7,7 @@ import { Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import { fixturePuertaSemantica } from './fixture-puerta.js';
 import { fixtureFallosIndustriales, fixtureVariadorV2 } from './fixtures-simulacion-v2.js';
+import { fixtureInstrumentacionV3, fixtureReferenciaVfdV3 } from './fixtures-simulacion-v3.js';
 import { tableroEjemplo } from './tablero-ejemplo.js';
 
 export interface EjemploTablero {
@@ -1136,5 +1137,42 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'Observa que AL1-AL2 pertenece al circuito: el piloto no lee un estado visual paralelo.',
 		],
 		crear: fixtureVariadorV2,
+	},
+	{
+		id: 'fixture-instrumentacion-v3',
+		titulo: 'Fixture V3: temperatura, PLC y válvula',
+		resumen: 'Lazo 4–20 mA, escalado AI, ley de control, AO 0–10 V y feedback real de posición.',
+		queHace: 'Un transmisor mide 0…100 °C; el PLC convierte la corriente a ingeniería y gobierna '
+			+ 'una válvula modulante. La posición vuelve al PLC por un segundo lazo 4–20 mA.',
+		comoFunciona: [
+			'BT1 entrega 4…20 mA solamente cuando tiene 24 V y continuidad hasta AI1/AIC1.',
+			'El PLC escala AI1 a °C y aplica la ley 20…70 °C; a 50 °C ordena 60 % y AO1 entrega 6 V.',
+			'YV1 se desplaza con el reloj de simulación y devuelve 4…20 mA proporcionales a su posición.',
+			'Si se abre el lazo, la calidad deja de ser normal y la válvula ejecuta su cierre seguro.',
+		],
+		aprender: [
+			'Cambia la temperatura desde Energizar y compara °C, mA, voltios y posición en el mismo panel.',
+			'Inyecta Circuito analógico abierto en BT1 y observa la calidad y el fail-safe, sin valores mágicos.',
+			'Sigue físicamente OUT→AI1 y AO1→Y: la función depende del cableado, no del id del ejemplo.',
+		],
+		crear: fixtureInstrumentacionV3,
+	},
+	{
+		id: 'fixture-referencia-vfd-v3',
+		titulo: 'Fixture V3: referencia 4–20 mA hacia VFD',
+		resumen: 'Referencia analógica cableada que convierte 4/12/20 mA en 0/25/50 Hz.',
+		queHace: 'Con RUN activo, una señal 4–20 mA gobierna la frecuencia de U1 y, por el perfil del '
+			+ 'motor, su velocidad y RPM estimadas.',
+		comoFunciona: [
+			'BR1 necesita 24 V y entrega su corriente entre OUT y 0V.',
+			'U1 recibe esa señal por AI/COM y la convierte linealmente a 0…50 Hz.',
+			'Una pérdida de referencia entra en FAULT por política explícita del perfil.',
+			'Tras retirar la causa, RESET deja U1 en READY y RUN debe ordenarse de nuevo.',
+		],
+		aprender: [
+			'Prueba 0, 50 y 100 % y compara 4, 12 y 20 mA con la frecuencia y velocidad del motor.',
+			'Abre el lazo y observa que la pérdida no conserva una referencia saludable ficticia.',
+		],
+		crear: fixtureReferenciaVfdV3,
 	},
 ];
