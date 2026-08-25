@@ -1,0 +1,44 @@
+name: QA especializado
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Regresión especializada a ejecutar
+        required: true
+        type: choice
+        options:
+          - simulacion
+          - fusion
+          - componentes
+          - multiproyecto
+          - fixture-puerta
+
+concurrency:
+  group: qa-especializado-${{ github.ref }}-${{ inputs.suite }}
+  cancel-in-progress: true
+
+jobs:
+  ejecutar:
+    name: QA ${{ inputs.suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run editor:build -- --mode qa
+      - run: npx playwright-core install --with-deps chromium
+      - name: Ejecutar regresión elegida
+        shell: bash
+        run: |
+          case "${{ inputs.suite }}" in
+            simulacion) node qa/todas.mjs simulacion-industrial ;;
+            fusion) node qa/cables-fusion.mjs ;;
+            componentes) node qa/todas.mjs componentes-personalizados ;;
+            multiproyecto) node qa/todas.mjs multiproyecto ;;
+            fixture-puerta) node qa/fixture-puerta.mjs ;;
+          esac

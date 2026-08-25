@@ -20,12 +20,15 @@ jobs:
   # ---------------------------------------------------------------------------------------
   comprobar:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - run: npm ci
+      # Detecta antes de generar: el artefacto versionado debe corresponder ya a este commit.
+      - run: npm run entrega:check
       # Typecheck de la app y del núcleo, y las pruebas de núcleo. Es lo que corre en segundos y
       # caza lo que de verdad no puede salir: un motor eléctrico que da otro número.
       - run: npm run check
@@ -68,6 +71,7 @@ jobs:
           - os: ubuntu-latest
             comando: dist:linux
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
