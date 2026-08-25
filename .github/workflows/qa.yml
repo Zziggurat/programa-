@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24.19.0
           cache: npm
       - run: npm ci
       - run: npm test
@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24.19.0
           cache: npm
       - run: npm ci
       - run: npm run editor:build -- --mode qa
@@ -44,21 +44,18 @@ jobs:
 
   entrega:
     name: Entregable offline
-    # El bundle minificado de Vite/Rollup no es byte-idéntico entre sus binarios Windows/Linux.
-    # Fijamos la plataforma del artefacto desktop y mantenemos la comparación estricta, sin
-    # convertir un resultado diferente en un falso verde.
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24.19.0
           cache: npm
       - run: npm ci
       # Reconstruye en temporal y compara; no modifica el checkout ni tapa un HTML obsoleto.
       - run: npm run entrega:check
-      - run: npx playwright-core install chromium
+      - run: npx playwright-core install --with-deps chromium
       - run: npm run qa:empaquetado
       - uses: actions/upload-artifact@v4
         with:
