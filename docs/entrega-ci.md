@@ -27,6 +27,13 @@ del formato autocontenido. `npm run entrega:check` compila en una carpeta tempor
 empaquetador y compara ambos destinos sin tocar el worktree. Un byte distinto o un archivo ausente
 termina con exit code distinto de cero y pide regenerarlo.
 
+La comparación byte a byte del entregable se ejecuta en `windows-latest`, plataforma canónica del
+artefacto offline/desktop. Vite/Rollup usa binarios nativos cuyo bundle minificado no resulta
+idéntico entre Windows y Linux aun con la misma fuente; cambiar de plataforma sin fijarla producía
+un falso `stale`. El empaquetador además normaliza LF/CRLF y `entrega:check` contiene una regresión
+explícita que exige el mismo resultado con ambos estilos de salto. Unit/Build y el gate de navegador
+siguen corriendo en Ubuntu, de forma independiente.
+
 El empaquetador calcula un Build ID SHA-256 corto sobre bundle, CSS y marcado canónicos. Aparece en
 Ayuda/Acerca de, en la meta `tablerostudio-build`, en `window.__TABLEROSTUDIO_BUILD_ID__` y en la
 consola. No depende del reloj ni del SHA de Git: incluir el commit dentro de un artefacto que se
@@ -40,7 +47,7 @@ El workflow obligatorio `Pruebas` separa tres señales:
 - **Unit / TypeScript / Build** (20 min): typecheck, tests rápidos y build QA.
 - **QA Gate navegador** (60 min): Chromium fijado por lockfile y gate histórico estable. El límite
   deja margen sobre los tiempos locales medidos, pero sigue detectando un proceso bloqueado.
-- **Entregable offline** (30 min): frescura de ambos HTML, apertura real con `file://`, IndexedDB,
+- **Entregable offline** (30 min, Windows canónico): frescura de ambos HTML, apertura real con `file://`, IndexedDB,
   Mis Tableros, Energizar, V2/V3 y ausencia de dependencias HTTP. Publica el HTML de ese commit
   como artifact durante 14 días.
 
