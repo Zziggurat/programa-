@@ -172,7 +172,9 @@ must('el balance térmico se calcula', /\d+([.,]\d+)?\s*°C/.test(termico), term
 // aplicación en modo Trabajo, donde el catálogo está oculto a propósito (ahí solo se cablea).
 await page.click('#hta-anadir'); await page.waitForTimeout(400);
 must('en modo Editor vuelve el catálogo', await page.isVisible('#catalogo'));
-await page.locator('#catalogo .item-catalogo').first().click(); await page.waitForTimeout(600);
+// Añadir un aparato no navega. En Chromium/Windows el autocierre del panel puede dejar una
+// navegación espuria pendiente; esperar por ella agota 30 s aunque el clic ya se haya ejecutado.
+await page.locator('#catalogo .item-catalogo').first().click({ noWaitAfter: true }); await page.waitForTimeout(600);
 must('se puede añadir un aparato del catálogo',
 	(await page.evaluate(() => document.querySelectorAll('#lista-dispositivos li').length)) > aparatos);
 
