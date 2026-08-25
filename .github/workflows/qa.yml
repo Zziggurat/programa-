@@ -44,7 +44,8 @@ jobs:
 
   entrega:
     name: Entregable offline
-    runs-on: ubuntu-latest
+    # Plataforma y runtime canónicos del HTML offline/desktop versionado.
+    runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +56,7 @@ jobs:
       - run: npm ci
       # Reconstruye en temporal y compara; no modifica el checkout ni tapa un HTML obsoleto.
       - run: npm run entrega:check
-      - run: npx playwright-core install --with-deps chromium
+      - run: npx playwright-core install chromium
       - run: npm run qa:empaquetado
       - uses: actions/upload-artifact@v4
         with:

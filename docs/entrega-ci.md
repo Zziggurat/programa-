@@ -27,11 +27,12 @@ del formato autocontenido. `npm run entrega:check` compila en una carpeta tempor
 empaquetador y compara ambos destinos sin tocar el worktree. Un byte distinto o un archivo ausente
 termina con exit code distinto de cero y pide regenerarlo.
 
-Todos los jobs fijan Node `24.19.0`, la versión con la que se genera el HTML versionado: cambiar la
-revisión mayor de Node modifica el bundle minificado aun con la misma fuente y producía un falso
-`stale`. El empaquetador además normaliza LF/CRLF y `entrega:check` contiene una regresión
+Todos los jobs fijan Node `24.19.0`. La comparación byte a byte del HTML usa además
+`windows-latest`, el mismo par plataforma/runtime con el que se genera el artefacto versionado:
+Vite/Rollup puede modificar el bundle minificado al cambiar ese par aun con la misma fuente, lo que
+producía un falso `stale`. El empaquetador normaliza LF/CRLF y `entrega:check` contiene una regresión
 explícita que exige el mismo resultado con ambos estilos de salto. Unit/Build y el gate de navegador
-corren como jobs independientes.
+siguen corriendo como jobs independientes en Ubuntu.
 
 El empaquetador calcula un Build ID SHA-256 corto sobre bundle, CSS y marcado canónicos. Aparece en
 Ayuda/Acerca de, en la meta `tablerostudio-build`, en `window.__TABLEROSTUDIO_BUILD_ID__` y en la
@@ -46,7 +47,7 @@ El workflow obligatorio `Pruebas` separa tres señales:
 - **Unit / TypeScript / Build** (20 min): typecheck, tests rápidos y build QA.
 - **QA Gate navegador** (60 min): Chromium fijado por lockfile y gate histórico estable. El límite
   deja margen sobre los tiempos locales medidos, pero sigue detectando un proceso bloqueado.
-- **Entregable offline** (30 min): frescura de ambos HTML, apertura real con `file://`, IndexedDB,
+- **Entregable offline** (30 min, Windows/Node canónicos): frescura de ambos HTML, apertura real con `file://`, IndexedDB,
   Mis Tableros, Energizar, V2/V3 y ausencia de dependencias HTTP. Publica el HTML de ese commit
   como artifact durante 14 días.
 
