@@ -51,7 +51,7 @@ test('la matriz de fidelidad v4 cubre exactamente los 22 TipoDispositivo', () =>
 	assert.deepEqual(Object.keys(MATRIZ_FIDELIDAD_SIMULACION.tipos).sort(), [...TIPOS].sort());
 	for (const tipo of TIPOS) {
 		assert.match(MATRIZ_FIDELIDAD_SIMULACION.tipos[tipo].nivel,
-			/^(completa-v3|completa-v2|completa-v1|parcial|sin-comportamiento)$/);
+			/^(completa-v4|completa-v3|completa-v2|completa-v1|parcial|sin-comportamiento)$/);
 	}
 });
 
@@ -279,7 +279,10 @@ test('un PLC desconectado no ejecuta el programa aunque su entrada tenga tensió
 	p.conductores = [cable('c1', ['red', 'L'], ['a1', 'DI1'])];
 	const r = simular(p);
 	assert.equal(r.activos.has('a1::DO1'), false);
-	assert.equal(r.controladores.length, 0, 'un PLC sin alimentación aparece como ejecutándose');
+	assert.equal(r.controladores.length, 1, 'el PLC sin alimentación debe seguir siendo diagnosticable');
+	assert.equal(r.controladores[0].estado, 'SIN_ALIMENTACION');
+	assert.equal(r.controladores[0].scan, 0, 'un PLC sin alimentación no debe ejecutar scans');
+	assert.deepEqual(r.controladores[0].salidas, [], 'un PLC sin alimentación no debe publicar una DO activa');
 });
 
 test('AO end-to-end: 5 V de la DSL son 50 % internos y 5 V físicos, no 0,5 V', () => {
