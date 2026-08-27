@@ -758,6 +758,35 @@
 		border-radius: 7px; color: var(--texto); font-size: 12px; font-family: inherit;
 		padding: 2px 5px; }
 	#sim-reloj-caja b { margin-left: auto; color: #ffd54f; font-variant-numeric: tabular-nums; }
+	.ctrl-sim { background: var(--panel-2); border: 1px solid var(--borde); border-radius: 9px;
+		padding: 8px; margin-bottom: 7px; font-size: 12px; }
+	.plc-runtime, .plc-controles { display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
+		margin-top: 6px; color: var(--texto-suave); }
+	.plc-estado { border: 1px solid #5b6470; border-radius: 999px; padding: 2px 7px; font-size: 10px; }
+	.plc-estado.run { color: #b8e6c4; border-color: #2f7b46; }
+	.plc-estado.fault { color: #ffb4b4; border-color: #a43d3d; }
+	.plc-pausa { color: #ffd54f; }
+	.plc-controles button, .plc-alarma button, .plc-fuerza { background: var(--panel);
+		border: 1px solid var(--borde); color: var(--texto); border-radius: 6px; padding: 3px 7px;
+		font: inherit; cursor: pointer; }
+	.plc-controles button:disabled { opacity: .4; cursor: default; }
+	.plc-fuerzas, .plc-eventos, .plc-watch { margin-top: 7px; color: var(--texto-suave); }
+	.plc-fuerzas > div { display: grid; gap: 4px; margin-top: 5px; }
+	.plc-watch > div { display: grid; grid-template-columns: minmax(90px, 1fr) auto auto; gap: 7px;
+		align-items: center; padding: 2px 0; border-bottom: 1px solid color-mix(in srgb, var(--borde) 55%, transparent); }
+	.plc-watch > div span { color: var(--texto-suave); font-size: 10px; }
+	.plc-watch > div b { color: var(--texto); font-variant-numeric: tabular-nums; }
+	.plc-watch > div.forzada { color: #ffd54f; }
+	.plc-fuerza { text-align: left; }
+	.plc-fuerza.activa { border-color: #d9a400; color: #ffd54f; }
+	.plc-fuerza-analogica { display: grid; grid-template-columns: 1fr 72px; align-items: center; gap: 6px; }
+	.plc-fuerza-analogica input { min-width: 0; background: var(--panel); border: 1px solid var(--borde);
+		color: var(--texto); border-radius: 6px; padding: 3px 5px; }
+	.plc-alarma { display: flex; align-items: center; gap: 5px; margin-top: 5px; padding: 5px;
+		border-radius: 6px; background: #38201d; color: #ffb4a8; }
+	.plc-interlock { color: #ffb4a8; }
+	.plc-eventos ol { margin: 5px 0 0; padding-left: 22px; }
+	.plc-eventos time { color: #7cc0ff; font-variant-numeric: tabular-nums; }
 
 	/* El selector de color de la ficha del aparato, con su botón de volver al de fábrica. */
 	.fila-color { display: flex; align-items: center; gap: 6px; }

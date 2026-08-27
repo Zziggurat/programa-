@@ -13,6 +13,7 @@ import * as THREE from 'three';
 
 import { resolverComportamiento } from '../src/modelo/comportamiento.js';
 import { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
+import type { ClaseIOPLC, FuerzasPLC, OrdenesRuntimePLC } from '../src/modelo/programa-plc.js';
 import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { MemoriaLogica, memoriaLogicaVacia } from '../src/motores/logica.js';
 import {
@@ -117,8 +118,8 @@ export function controlDeSimulacion(d: Dispositivo): ControlSimulacion | undefin
 	};
 }
 
-/** Duración humana mínima de un Enter/Espacio; siempre se suelta de forma automática. */
-export const DURACION_PULSO_SINTETICO_MS = 80;
+/** Dura más que el scan predeterminado y el tick de UI, para que un gesto sintético no se pierda. */
+export const DURACION_PULSO_SINTETICO_MS = 250;
 
 export type OperacionControl = 'accionar' | 'presionar' | 'soltar';
 
@@ -152,7 +153,7 @@ export function requiereAvanceTemporal(
 ): boolean {
 	return proyecto.dispositivos.some((d) => d.temporizacion?.segundos
 		|| (resolverComportamiento(d)?.clase === 'controlador'
-			&& /\b(retardo|m[ií]nimo)\b/i.test(d.programa ?? '')))
+			&& (!!d.programaPLC || /\b(retardo|m[ií]nimo)\b/i.test(d.programa ?? ''))))
 		|| Object.keys(sobrecargas).length > 0
 		|| !!resultado?.motores.some((motor) => motor.estado === 'arrancando')
 		|| !!resultado?.motores.some((motor) => motor.estado === 'desacelerando')
@@ -314,7 +315,8 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	 * Por eso el final del gesto vive temporalmente en `window`, no en el nodo efímero. Cada gesto
 	 * retira sus dos listeners al terminar; reinstalar el panel no acumula observadores globales.
 	 */
-	const gestosPorPuntero = new Map<number, { id: string; limpiar: () => void }>();
+	const gestosPorPuntero = new Map<number, { id: string; iniciadoEn: number; limpiar: () => void }>();
+	const liberacionesPendientes = new Set<number>();
 	const clickConsumido = new Set<string>();
 	const finalizarPuntero = (ev: PointerEvent) => {
 		const gesto = gestosPorPuntero.get(ev.pointerId);
@@ -322,7 +324,12 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		gesto.limpiar();
 		const id = gesto.id;
 		clickConsumido.add(id);
-		soltarEnSimulacion(id);
+		const restante = Math.max(0, DURACION_PULSO_SINTETICO_MS - (performance.now() - gesto.iniciadoEn));
+		const temporizador = window.setTimeout(() => {
+			liberacionesPendientes.delete(temporizador);
+			if (energizado) soltarEnSimulacion(id);
+		}, restante);
+		liberacionesPendientes.add(temporizador);
 		// El `click` se despacha después de `pointerup`; una microtarea puede ejecutarse antes. El
 		// siguiente macrotask es el primer punto seguro para volver a admitir clicks sintéticos.
 		window.setTimeout(() => clickConsumido.delete(id), 0);
@@ -337,12 +344,14 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			window.removeEventListener('pointercancel', alFinalizar, true);
 			gestosPorPuntero.delete(pointerId);
 		};
-		gestosPorPuntero.set(pointerId, { id, limpiar });
+		gestosPorPuntero.set(pointerId, { id, iniciadoEn: performance.now(), limpiar });
 		window.addEventListener('pointerup', alFinalizar, true);
 		window.addEventListener('pointercancel', alFinalizar, true);
 	};
 	const limpiarGestos = () => {
 		for (const gesto of [...gestosPorPuntero.values()]) gesto.limpiar();
+		for (const temporizador of liberacionesPendientes) window.clearTimeout(temporizador);
+		liberacionesPendientes.clear();
 		clickConsumido.clear();
 	};
 
@@ -351,8 +360,29 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		if (!relojSim) relojSim = { ahora: 0, memoria: memoriaVacia(), logica: memoriaLogicaVacia() };
 		ultimaSim = simular(proyecto(), estadoSim, activosPrevios, relojSim);
 		activosPrevios = ultimaSim.activos;
+		/* Pulsos consumidos por este scan; modo, pausa y fuerzas sí permanecen en la sesión. */
+		for (const [id, st] of Object.entries(estadoSim)) if (st.plc) {
+			const { paso: _paso, reiniciar: _reiniciar, ackAlarmas: _ack, resetAlarmas: _reset, ...persistentes } = st.plc;
+			estadoSim[id] = { ...st, plc: persistentes };
+		}
 		aplicarDisparos();
 		pintarSimulacion();
+	}
+
+	function ordenarPLC(id: string, cambios: Partial<OrdenesRuntimePLC>): void {
+		const previo = estadoSim[id] ?? {};
+		estadoSim[id] = { ...previo, plc: { ...(previo.plc ?? {}), ...cambios } };
+		recalcularSimulacion();
+	}
+
+	function cambiarFuerzaPLC(id: string, clase: ClaseIOPLC, borne: string, valor: boolean | number | undefined): void {
+		const previo = estadoSim[id] ?? {};
+		const fuerzas: FuerzasPLC = structuredClone(previo.plc?.fuerzas ?? {});
+		const grupo = { ...(fuerzas[clase] ?? {}) } as Record<string, boolean | number>;
+		if (valor === undefined) delete grupo[borne]; else grupo[borne] = valor;
+		if (Object.keys(grupo).length) (fuerzas as Record<string, unknown>)[clase] = grupo;
+		else delete (fuerzas as Record<string, unknown>)[clase];
+		ordenarPLC(id, { fuerzas });
 	}
 
 	/**
@@ -461,6 +491,9 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		const cont = $('sim-funcionando');
 		const avisos = $('sim-avisos');
 		const r = ultimaSim;
+		const panelesPLCAbiertos = new Set([...$('sim-controladores')
+			.querySelectorAll<HTMLDetailsElement>('details[open][data-plc-panel]')]
+			.map((detalle) => `${detalle.closest<HTMLElement>('[data-id]')?.dataset.id ?? ''}:${detalle.dataset.plcPanel}`));
 		cont.innerHTML = '';
 		avisos.innerHTML = '';
 		$('sim-consumo').innerHTML = '';
@@ -627,7 +660,8 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			const perfil = resolverComportamiento(d);
 			return d.rangoSonda || perfil?.clase === 'sensor' && !!perfil.transmisor;
 		});
-		const sondas = conRango.length ? conRango : posiblesSondas;
+		const hayControladorV4 = proyecto().dispositivos.some((d) => d.programaPLC?.lenguaje === 'tablerostudio-plc-v4');
+		const sondas = conRango.length ? conRango : hayControladorV4 ? [] : posiblesSondas;
 		if (sondas.length) {
 			$('sim-sondas').innerHTML = '<h3 class="titulo-sim">Sondas</h3>' + sondas.map((d) => {
 				const perfil = resolverComportamiento(d);
@@ -698,15 +732,105 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 						return `<div class="renglon-sim ${estado}" title="${escaparHtml(porque)}">`
 							+ `<span class="luz"></span><code>${escaparHtml(rg.fuente)}</code></div>`;
 					}).join('');
+					const runtime = `<div class="plc-runtime"><b class="plc-estado ${c.estado.toLowerCase()}">${c.estado}</b>`
+						+ `<span>scan ${c.scan} · ${c.periodoScanMs} ms · ${c.duracionUltimoScanMs.toFixed(2)} ms</span>`
+						+ (c.pausado ? '<b class="plc-pausa">PAUSA</b>' : '') + '</div>';
+					const controles = `<div class="plc-controles">`
+						+ `<button data-plc-action="modo">${c.estado === 'RUN' ? '■ STOP' : '▶ RUN'}</button>`
+						+ `<button data-plc-action="pausa">${c.pausado ? 'Continuar' : 'Pausar'}</button>`
+						+ `<button data-plc-action="paso" ${c.pausado ? '' : 'disabled'}>1 scan</button>`
+						+ '<button data-plc-action="reiniciar">Reset PLC</button></div>';
+					const fuerzaDigital = (clase: 'DI' | 'DO', borne: string, activa: boolean) => {
+						const valor = (estadoSim[c.dispositivoId]?.plc?.fuerzas?.[clase] as Record<string, boolean> | undefined)?.[borne];
+						const marca = valor === undefined ? 'LIBRE' : valor ? 'FORZADA 1' : 'FORZADA 0';
+						return `<button class="plc-fuerza ${valor === undefined ? '' : 'activa'}" data-plc-force-digital="${clase}" data-borne="${escaparHtml(borne)}">`
+							+ `${clase} ${escaparHtml(borne)}: ${activa ? '1' : '0'} · ${marca}</button>`;
+					};
+					const fuerzaAnalogica = (clase: 'AI' | 'AO', borne: string, valorActual: number | undefined) => {
+						const valor = (estadoSim[c.dispositivoId]?.plc?.fuerzas?.[clase] as Record<string, number> | undefined)?.[borne];
+						return `<label class="plc-fuerza-analogica">${clase} ${escaparHtml(borne)}: ${valorActual?.toFixed(2) ?? '—'}`
+							+ `<input type="number" step="0.1" placeholder="libre" value="${valor ?? ''}" data-plc-force-analog="${clase}" data-borne="${escaparHtml(borne)}"></label>`;
+					};
+					const fuerzas = `<details class="plc-fuerzas" data-plc-panel="fuerzas"><summary>Forzar E/S${c.forzadas.length ? ` (${c.forzadas.length})` : ''}</summary><div>`
+						+ (c.forzadas.length ? '<button class="plc-quitar-fuerzas" data-plc-clear-forces>Quitar todas las fuerzas</button>' : '')
+						+ c.io.DI.map((b) => fuerzaDigital('DI', b, c.entradas.includes(b))).join('')
+						+ c.io.DO.map((b) => fuerzaDigital('DO', b, c.salidas.includes(b))).join('')
+						+ c.io.AI.map((b) => fuerzaAnalogica('AI', b, c.sondas[b])).join('')
+						+ c.io.AO.map((b) => fuerzaAnalogica('AO', b, c.salidasAnalogicas[b])).join('') + '</div></details>';
+					const bloques = [
+						...Object.entries(c.temporizadores).map(([id, t]) => `${id}: ${t.tipo} IN=${+t.IN} Q=${+t.Q} ET=${(t.ET / 1000).toFixed(1)} s · PT=${(t.PT / 1000).toFixed(1)} s`),
+						...Object.entries(c.contadores).map(([id, ct]) => `${id}: ${ct.tipo} CV=${ct.CV} PV=${ct.PV} Q=${+ct.Q}`),
+						...Object.entries(c.detalleSecuencias).map(([id, sec]) => `${id}: ${sec.actual}`
+							+ `${sec.anterior ? ` · anterior ${sec.anterior}` : ''} · ${(sec.tiempoEnEstadoMs / 1000).toFixed(1)} s`
+							+ `${sec.transicion ? ` · ${sec.transicion}` : ''}`),
+					].map((x) => `<div class="pista plc-bloque">${escaparHtml(x)}</div>`).join('');
+					const memoria = Object.entries(c.variables).filter(([nombre]) => nombre !== 'FIRST_SCAN')
+						.map(([nombre, valor]) => `<div><code>${escaparHtml(nombre)}</code><b>${escaparHtml(String(valor))}</b></div>`).join('');
+					const tags = c.tags.map((tag) => {
+						const valor = typeof tag.valor === 'number' && Number.isNaN(tag.valor) ? '—' : String(tag.valor);
+						const fisico = tag.borne && tag.borne !== tag.nombre ? ` → ${tag.clase}:${tag.borne}` : ` · ${tag.clase}`;
+						const calidad = tag.calidad ? ` · ${tag.calidad.toUpperCase().replaceAll('-', ' ')}` : '';
+						return `<div class="${tag.forzada ? 'forzada' : ''}"><code>${escaparHtml(tag.nombre)}</code>`
+							+ `<span>${escaparHtml(fisico)}${escaparHtml(calidad)}</span><b>${escaparHtml(valor)}</b></div>`;
+					}).join('');
+					const pids = Object.entries(c.pids).map(([id, p]) => `<div class="pista plc-bloque">PID ${escaparHtml(id)}: `
+						+ `${p.manual ? 'MANUAL' : 'AUTO'} · OUT=${p.salida.toFixed(2)} · I=${p.integral.toFixed(2)}`
+						+ ` · PV ${escaparHtml(p.calidadPV.toUpperCase().replaceAll('-', ' '))}${p.saturado ? ' · SATURADO' : ''}</div>`).join('');
+					const interlocks = c.interlocks.filter((x) => x.activo)
+						.map((x) => `<div class="pista plc-interlock">⛔ ${escaparHtml(x.salida)}: ${escaparHtml(x.mensaje)}</div>`).join('');
+					const diagnosticos = c.diagnosticos.map((x) =>
+						`<div class="pista plc-interlock">⚠ ${escaparHtml(x.codigo)}: ${escaparHtml(x.mensaje)}</div>`).join('');
+					const alarmas = Object.values(c.alarmas).filter((a) => a.activa).map((a) =>
+						`<div class="plc-alarma ${a.severidad.toLowerCase()}"><b>${a.severidad}</b> ${escaparHtml(a.mensaje)}`
+						+ `${a.origen ? `<small> · ${escaparHtml(a.origen)}</small>` : ''}`
+						+ `<button data-plc-ack="${escaparHtml(a.id)}">${a.reconocida ? 'ACK ✓' : 'ACK'}</button>`
+						+ (a.enclavada ? `<button data-plc-reset-alarm="${escaparHtml(a.id)}">Reset</button>` : '') + '</div>').join('');
+					const eventos = c.eventos.slice(-5).reverse().map((e) =>
+						`<li><time>${(e.instanteMs / 1000).toFixed(1)} s</time> ${escaparHtml(e.mensaje)}</li>`).join('');
 					return `<div class="ctrl-sim" data-id="${escaparHtml(c.dispositivoId)}">`
 						+ `<span class="des-sim">${escaparHtml(c.designacion)}</span> `
-						+ `<span style="color:var(--texto-suave)">${c.reglas} renglón(es)</span>`
+						+ `<span style="color:var(--texto-suave)">${c.reglas} instrucción(es)</span>${runtime}${controles}`
 						+ `<div class="es">${entradas || pin('sin entradas activas')}${sondasTxt}`
 						+ `<span style="color:var(--texto-suave)">→</span>${salidas || pin('sin salidas')}</div>`
-						+ renglones + cuentas + '</div>';
+						+ renglones + cuentas + bloques + pids + interlocks + diagnosticos + alarmas
+						+ (tags ? `<details class="plc-watch" data-plc-panel="tags"><summary>Tags (${c.tags.length})</summary>${tags}</details>` : '')
+						+ (memoria ? `<details class="plc-watch" data-plc-panel="memoria"><summary>Memoria</summary>${memoria}</details>` : '')
+						+ fuerzas
+						+ (eventos ? `<details class="plc-eventos" data-plc-panel="eventos"><summary>Eventos</summary><ol>${eventos}</ol></details>` : '') + '</div>';
 				}).join('');
+			for (const detalle of $('sim-controladores').querySelectorAll<HTMLDetailsElement>('details[data-plc-panel]')) {
+				const id = detalle.closest<HTMLElement>('[data-id]')?.dataset.id ?? '';
+				detalle.open = panelesPLCAbiertos.has(`${id}:${detalle.dataset.plcPanel}`);
+			}
 			for (const el of $('sim-controladores').querySelectorAll<HTMLElement>('[data-id]')) {
-				el.onclick = () => seleccionar(el.dataset.id!);
+				const id = el.dataset.id!;
+				el.onclick = (ev) => { if (!(ev.target as HTMLElement).closest('button,input,details,summary')) seleccionar(id); };
+				for (const boton of el.querySelectorAll<HTMLButtonElement>('[data-plc-action]')) boton.onclick = (ev) => {
+					ev.stopPropagation(); const c = r.controladores.find((x) => x.dispositivoId === id)!;
+					if (boton.dataset.plcAction === 'modo') ordenarPLC(id,
+						c.estado === 'RUN' ? { modo: 'STOP', fuerzas: {} } : { modo: 'RUN' });
+					if (boton.dataset.plcAction === 'pausa') ordenarPLC(id, { pausado: !c.pausado });
+					if (boton.dataset.plcAction === 'paso') ordenarPLC(id, { pausado: true, paso: true });
+					if (boton.dataset.plcAction === 'reiniciar') ordenarPLC(id, { reiniciar: true, fuerzas: {} });
+				};
+				for (const boton of el.querySelectorAll<HTMLButtonElement>('[data-plc-clear-forces]')) boton.onclick = (ev) => {
+					ev.stopPropagation(); ordenarPLC(id, { fuerzas: {} });
+				};
+				for (const boton of el.querySelectorAll<HTMLButtonElement>('[data-plc-force-digital]')) boton.onclick = (ev) => {
+					ev.stopPropagation(); const clase = boton.dataset.plcForceDigital as 'DI' | 'DO'; const borne = boton.dataset.borne!;
+					const actual = (estadoSim[id]?.plc?.fuerzas?.[clase] as Record<string, boolean> | undefined)?.[borne];
+					cambiarFuerzaPLC(id, clase, borne, actual === undefined ? true : actual ? false : undefined);
+				};
+				for (const input of el.querySelectorAll<HTMLInputElement>('[data-plc-force-analog]')) input.onchange = (ev) => {
+					ev.stopPropagation(); const clase = input.dataset.plcForceAnalog as 'AI' | 'AO';
+					cambiarFuerzaPLC(id, clase, input.dataset.borne!, input.value.trim() === '' ? undefined : Number(input.value));
+				};
+				for (const boton of el.querySelectorAll<HTMLButtonElement>('[data-plc-ack]')) boton.onclick = (ev) => {
+					ev.stopPropagation(); ordenarPLC(id, { ackAlarmas: [boton.dataset.plcAck!] });
+				};
+				for (const boton of el.querySelectorAll<HTMLButtonElement>('[data-plc-reset-alarm]')) boton.onclick = (ev) => {
+					ev.stopPropagation(); ordenarPLC(id, { resetAlarmas: [boton.dataset.plcResetAlarm!] });
+				};
 			}
 		}
 
@@ -797,6 +921,8 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			fila.innerHTML = `<span class="punto-sim"></span>`
 				+ `<span class="des-sim">${escaparHtml(`${d?.designacion ?? id}:${borne}`)}</span>`
 				+ `<span class="que-sim">${salida.valor.toFixed(2)} ${salida.unidad} · ${porcentaje} %`
+				+ ` · ${escaparHtml(salida.senal.calidad.toUpperCase().replaceAll('-', ' '))}`
+				+ ` · ${escaparHtml(salida.senal.origen.toUpperCase().replaceAll('-', ' '))}`
 				+ `${salida.supuesto ? ' · rango supuesto' : ''}</span>`;
 			fila.onclick = () => seleccionar(id);
 			cont.appendChild(fila);

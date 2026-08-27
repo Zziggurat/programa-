@@ -120,8 +120,20 @@ test('la UI reinicia el runtime y convierte teclado/click sintético en un pulso
 	assert.match(fuente, /DURACION_PULSO_SINTETICO_MS\s*=\s*(?:[5-9]\d|\d{3,})/,
 		'el pulso sintético vuelve a soltarse antes de que el circuito pueda observarlo');
 	assert.match(fuente,
+		/performance\.now\(\)\s*-\s*gesto\.iniciadoEn[\s\S]{0,220}soltarEnSimulacion\(id\)/,
+		'un clic primario humano corto puede presionar y soltar íntegramente entre dos scans');
+	assert.match(fuente,
+		/for \(const temporizador of liberacionesPendientes\)[\s\S]{0,100}clearTimeout\(temporizador\)/,
+		'salir de Energizar deja una liberación diferida capaz de resucitar estado runtime');
+	assert.match(fuente,
 		/seccion-simulacion[\s\S]{0,180}hidden\s*=\s*!activo[\s\S]{0,180}ctx\.refrescarPanel\?\.\(\)/,
 		'Energizar cambia `hidden` pero deja el cajón con el `display: none` anterior');
+	assert.match(fuente,
+		/panelesPLCAbiertos[\s\S]{0,260}details\[open\]\[data-plc-panel\][\s\S]{0,20000}panelesPLCAbiertos\.has/,
+		'el repintado periódico vuelve a cerrar Tags/Fuerzas mientras el usuario intenta operarlos');
+	assert.match(fuente,
+		/hayControladorV4[\s\S]{0,180}conRango\.length\s*\?\s*conRango\s*:\s*hayControladorV4\s*\?\s*\[\]/,
+		'un sensor binario del fixture V4 reaparece como slider analógico LEGACY sin señal');
 	const main = readFileSync('app/main.ts', 'utf8');
 	assert.match(main, /instalarSimulacion\(\{[\s\S]{0,240}refrescarPanel:\s*pintarRail/,
 		'el editor no conecta el cambio de Energizar con el repintado real del rail');

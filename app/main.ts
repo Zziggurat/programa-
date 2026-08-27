@@ -23,6 +23,9 @@ import {
 	AjustesDossier, BloqueDossier, FUENTES, SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion,
 } from '../src/modelo/dossier.js';
 import { leerPrograma } from '../src/motores/logica.js';
+import { compilarProgramaPLC } from '../src/motores/plc-compilador.js';
+import { ioDeControlador } from '../src/motores/simulacion.js';
+import { resolverComportamiento } from '../src/modelo/comportamiento.js';
 import { ArchivoInvalido, cargarProyecto, imagenAdmisible } from '../src/modelo/cargar.js';
 import { abrirVentana, cerrarVentana, cerrarVentanaDeArriba } from './ventanas.js';
 import { aplicarPlantilla, numerarDispositivos } from '../src/motores/numeracion.js';
@@ -3274,7 +3277,7 @@ function pintarFichaDeLoElegido(): void {
 		${d.tipo === 'sensor' ? `<p class="pista">Con RANGO es una <b>sonda</b>: entrega un número y la
 		simulación le pone un mando para moverlo, que es con lo que se prueba un «UI1 &lt; 21» del
 		controlador. Sin rango es un <b>contacto de campo</b> y se acciona con su interruptor.</p>` : ''}
-		${d.tipo === 'plc' ? programaDeControlador(d) : ''}
+		${resolverComportamiento(d)?.clase === 'controlador' ? programaDeControlador(d) : ''}
 		${d.temporizacion ? `<p class="pista">Con el tablero energizado se ve la cuenta atrás.
 		${d.temporizacion.tipo === 'trabajo'
 			? 'A la conexión: al meter la bobina espera y luego conmuta (el de una estrella-triángulo).'
@@ -3521,10 +3524,22 @@ function pintarFichaDeLoElegido(): void {
 		const cajaPrograma = panel.querySelector('#dev-programa') as HTMLTextAreaElement | null;
 		if (cajaPrograma) {
 			cajaPrograma.onblur = () => {
-				if (cajaPrograma.value === (d.programa ?? '')) return;
-				aplicar(() => { d.programa = cajaPrograma.value.trim() || undefined; });
+				const previo = d.programaPLC?.FUENTE ?? d.programa ?? '';
+				if (cajaPrograma.value === previo) return;
+				aplicar(() => {
+					if (d.programaPLC) d.programaPLC.FUENTE = cajaPrograma.value;
+					else d.programa = cajaPrograma.value.trim() || undefined;
+				});
 			};
 		}
+		(panel.querySelector('#dev-plc-scan') as HTMLInputElement | null)?.addEventListener('change', (e) => {
+			const ms = Math.max(10, Math.min(5000, Number((e.target as HTMLInputElement).value) || 100));
+			aplicar(() => { if (d.programaPLC) d.programaPLC.periodoScanMs = ms; });
+		});
+		(panel.querySelector('#dev-plc-modo') as HTMLSelectElement | null)?.addEventListener('change', (e) => {
+			const modo = (e.target as HTMLSelectElement).value === 'RUN' ? 'RUN' : 'STOP';
+			aplicar(() => { if (d.programaPLC) d.programaPLC.modoInicial = modo; });
+		});
 		(panel.querySelector('#dev-programa-ejemplo') as HTMLButtonElement | null)?.addEventListener('click', () => {
 			aplicar(() => {
 				d.programa = [
@@ -7032,6 +7047,26 @@ async function importarArchivoProyecto(archivo: File): Promise<void> {
  * maniobra no arranca.
  */
 function programaDeControlador(d: Dispositivo): string {
+	if (d.programaPLC) {
+		const compilado = compilarProgramaPLC(d.programaPLC, ioDeControlador(d));
+		const errores = compilado.errores.map((e) =>
+			`<li>renglón ${e.linea}: ${escaparHtml(e.mensaje)} <code>${escaparHtml(e.texto)}</code></li>`).join('');
+		return `<div class="bloque-programa">
+			<h4>Programa PLC V4</h4>
+			<p class="pista">Programa tipado y compilado a IR segura. El scan usa una imagen de entradas
+			congelada y publica DO/AO de forma atómica; el runtime no se guarda en el proyecto.</p>
+			<div class="rejilla-ficha"><label>Periodo de scan (ms)<input id="dev-plc-scan" type="number" min="10" max="5000"
+				value="${d.programaPLC.periodoScanMs ?? 100}"></label><label>Al energizar<select id="dev-plc-modo">
+				<option value="STOP" ${d.programaPLC.modoInicial !== 'RUN' ? 'selected' : ''}>STOP</option>
+				<option value="RUN" ${d.programaPLC.modoInicial === 'RUN' ? 'selected' : ''}>RUN</option></select></label></div>
+			<textarea id="dev-programa" rows="12" spellcheck="false"
+				placeholder="VAR BOOL MARCHA&#10;SET MARCHA WHEN START&#10;RESET MARCHA WHEN STOP&#10;DO1 := MARCHA">${escaparHtml(d.programaPLC.FUENTE)}</textarea>
+			${errores ? `<ul class="errores-programa">${errores}</ul>`
+				: `<p class="pista ok-programa">✓ IR válida · ${compilado.asignaciones.length + compilado.setReset.length
+					+ compilado.temporizadores.length + compilado.contadores.length + compilado.transiciones.length
+					+ compilado.pids.length} instrucción(es).</p>`}
+		</div>`;
+	}
 	const leido = leerPrograma(d.programa ?? '');
 	const errores = leido.errores.map((e) =>
 		`<li>renglón ${e.linea}: ${escaparHtml(e.que)} <code>${escaparHtml(e.texto)}</code></li>`).join('');
@@ -10084,6 +10119,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				bornesVivos: r?.vivos.size ?? 0,
 				activos: [...(r?.activos ?? [])],
 				funcionando: r?.funcionando ?? [],
+				controladores: r?.controladores ?? [],
+				actuadores: r?.actuadores ?? [],
 				avisos: r?.avisos ?? [],
 				oscila: r?.oscila ?? false,
 				// Hay tensión y todavía nadie ha accionado nada: es normal, no es avería.
