@@ -100,6 +100,13 @@ must('el lienzo tiene tamaño real', await page.evaluate(() => {
 }));
 
 const cerrar = async (id) => { if (await page.isVisible(`#${id}`)) await page.click(`#${id}`); };
+const energizarVisible = async (queremos) => {
+	const boton = page.locator('#btn-energizar');
+	const activo = await boton.evaluate((el) => el.classList.contains('activo'));
+	if (activo !== queremos) await boton.click();
+	await page.waitForFunction((esperado) =>
+		document.getElementById('btn-energizar')?.classList.contains('activo') === esperado, queremos);
+};
 await cerrar('btn-cerrar-ayuda'); await page.waitForTimeout(200);
 
 await page.click('#btn-aprender');
@@ -224,7 +231,7 @@ if (await page.isVisible('#modal-dialogo')) { await page.click('#dialogo-ok'); }
 await page.waitForFunction(() => document.getElementById('nombre-proyecto')?.value
 	=== 'Fixture V3 — temperatura, PLC y válvula modulante');
 await cerrar('btn-cerrar-explicacion');
-await page.click('#btn-energizar');
+await energizarVisible(true);
 await page.locator('#sim-sondas input[data-sonda="tt1"]').waitFor();
 const panelV3 = (await page.locator('#sim-controladores').innerText()).replace(/\s+/g, ' ');
 const aoV3 = (await page.locator('#sim-funcionando .analogica', { hasText: '-A1:AO1' }).innerText()).replace(/\s+/g, ' ');
@@ -239,7 +246,7 @@ must('la UI offline ofrece el fallo de lazo V3',
 /* ---------- 6. El runtime PLC V4 también viaja dentro del HTML ---------- */
 console.log('\n--- 6. Automatización PLC V4 dentro del HTML entregado ---');
 // La escena V3 sigue energizada: se detiene por el mismo botón visible antes de cambiar de ejemplo.
-await page.click('#btn-energizar');
+await energizarVisible(false);
 await page.click('#btn-aprender');
 await page.click('#btn-ejemplos');
 await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
@@ -249,7 +256,7 @@ if (await page.isVisible('#modal-dialogo')) { await page.click('#dialogo-ok'); }
 await page.waitForFunction(() => document.getElementById('nombre-proyecto')?.value
 	=== 'Fixture V4 — proceso secuencial de tanque');
 await cerrar('btn-cerrar-explicacion');
-await page.click('#btn-energizar');
+await energizarVisible(true);
 await page.waitForFunction(() => {
 	const texto = document.querySelector('#sim-controladores')?.textContent ?? '';
 	const scan = /scan\s+(\d+)/i.exec(texto);
