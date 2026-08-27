@@ -256,12 +256,26 @@ if (await page.isVisible('#modal-dialogo')) { await page.click('#dialogo-ok'); }
 await page.waitForFunction(() => document.getElementById('nombre-proyecto')?.value
 	=== 'Fixture V4 — proceso secuencial de tanque');
 await cerrar('btn-cerrar-explicacion');
+if (!await page.evaluate(() => document.body.classList.contains('modo-trabajo'))) {
+	await page.click('#modo-trabajo');
+	await page.waitForFunction(() => document.body.classList.contains('modo-trabajo'));
+}
 await energizarVisible(true);
-await page.waitForFunction(() => {
-	const texto = document.querySelector('#sim-controladores')?.textContent ?? '';
-	const scan = /scan\s+(\d+)/i.exec(texto);
-	return /\bRUN\b/.test(texto) && Number(scan?.[1] ?? 0) >= 1;
-});
+try {
+	await page.waitForFunction(() => {
+		const panel = document.querySelector('#sim-controladores');
+		const texto = panel instanceof HTMLElement ? panel.innerText : '';
+		const scan = /scan\s+(\d+)/i.exec(texto);
+		return /\bRUN\b/.test(texto) && Number(scan?.[1] ?? 0) >= 1;
+	});
+} catch {
+	const detalle = await page.evaluate(() => ({
+		modo: document.body.className,
+		energizar: document.getElementById('btn-energizar')?.className ?? 'ausente',
+		panel: document.getElementById('sim-controladores')?.textContent?.replace(/\s+/g, ' ').slice(0, 800) ?? 'ausente',
+	}));
+	throw new Error(`el PLC V4 offline no alcanzó RUN/scan: ${JSON.stringify(detalle)}`);
+}
 const panelV4 = (await page.locator('#sim-controladores').innerText()).replace(/\s+/g, ' ');
 must('el HTML offline ejecuta PLC V4 en RUN con scan observable',
 	/\bRUN\b/.test(panelV4) && /scan\s+[1-9]\d*/i.test(panelV4), panelV4.slice(0, 180));
