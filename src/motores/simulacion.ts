@@ -45,15 +45,15 @@
  * Y los relés pueden ser TEMPORIZADOS, a la conexión o a la desconexión, que es lo que hace falta
  * para una estrella-triángulo o para el arranque escalonado de una UMA.
  *
- * LOS CONTROLADORES EJECUTAN SU PROGRAMA. Un PLC del tablero ya no es un adorno: se le escribe la
- * maniobra en renglones —«DO1 = DI1 Y NO DI2 retardo 5»— y sus salidas se encienden solas dentro
- * del mismo punto fijo que todo lo demás. Tiene que ser dentro, y no antes: una salida del
- * controlador mueve un contactor, y el contacto de ese contactor puede ser justo la entrada que el
- * programa está mirando. El lenguaje está en `logica.ts`.
+ * LOS CONTROLADORES EJECUTAN SCANS, no pasadas del punto fijo. La red converge usando la última
+ * imagen de salidas publicada; después todos los PLC capturan a la vez sus entradas, ejecutan una
+ * vez y publican sus salidas atómicamente. Así un enclavamiento eléctrico puede converger sin que
+ * TON, contadores o flancos avancen varias veces en el mismo scan. `plc-runtime.ts` ejecuta la IR
+ * tipada V4 y adapta los programas históricos de `logica.ts`.
  *
  * Lo que esto sigue sin ser: no resuelve la red con impedancias, y el programa del controlador es
- * lógica con tiempos, no IEC 61131-3 —no hay bloques de función ni PID—. Las corrientes son las de
- * empleo declaradas, no el resultado de un cálculo de cortocircuito.
+ * un DSL propio, no IEC 61131-3. El PID es funcional y determinista, pero no incluye un modelo
+ * físico del proceso. Las corrientes son las de empleo declaradas, no un cálculo de cortocircuito.
  */
 import { Conductor, Dispositivo, Proyecto, TipoDispositivo } from '../modelo/tipos.js';
 import {
@@ -454,11 +454,27 @@ export interface EstadoControlador {
 	temporizadores: RuntimePLC['temporizadores'];
 	contadores: RuntimePLC['contadores'];
 	secuencias: RuntimePLC['secuencias'];
+	detalleSecuencias: RuntimePLC['detalleSecuencias'];
 	alarmas: RuntimePLC['alarmas'];
 	interlocks: RuntimePLC['interlocks'];
+	diagnosticos: RuntimePLC['diagnosticos'];
+	/** Watch table tipada: alias lógico, canal físico, valor, calidad y fuerza proceden del runtime. */
+	tags: EstadoTagPLC[];
+	pids: RuntimePLC['pids'];
 	forzadas: string[];
 	eventos: RuntimePLC['eventos'];
 	io: IOProgramaPLC;
+}
+
+export interface EstadoTagPLC {
+	nombre: string;
+	tipo: 'BOOL' | 'REAL';
+	clase: 'DI' | 'DO' | 'AI' | 'AO' | 'MEM';
+	borne?: string;
+	valor: boolean | number;
+	calidad?: CalidadSenalAnalogica;
+	origen?: string;
+	forzada: boolean;
 }
 
 /**
@@ -2282,6 +2298,36 @@ export function simular(
 				? runtime.salidas.digitales[programa.compilado.etiquetas[a.destino]?.io?.borne ?? a.destino] ?? false : true,
 			encendida: runtime.salidas.digitales[programa.compilado.etiquetas[a.destino]?.io?.borne ?? a.destino] ?? false,
 		}));
+		const tags: EstadoTagPLC[] = Object.values(programa.compilado.etiquetas)
+			.sort((a, b) => a.nombre.localeCompare(b.nombre))
+			.map((tag) => {
+				const clase = tag.io?.clase ?? 'MEM';
+				const borne = tag.io?.borne;
+				let valor: boolean | number = runtime.variables[tag.nombre] ?? (tag.tipo === 'BOOL' ? false : 0);
+				let calidad: CalidadSenalAnalogica | undefined;
+				let origen: string | undefined;
+				if (clase === 'DI') valor = runtime.entradas.digitales[borne!] ?? false;
+				if (clase === 'DO') valor = runtime.salidas.digitales[borne!] ?? false;
+				if (clase === 'AI') {
+					const ai = runtime.entradas.analogicas[borne!];
+					valor = ai?.valor ?? Number.NaN; calidad = ai?.calidad; origen = ai?.origen;
+				}
+				if (clase === 'AO') valor = runtime.salidas.analogicas[borne!] ?? 0;
+				if (clase === 'MEM' && tag.nombre.includes('.')) {
+					const punto = tag.nombre.lastIndexOf('.'); const bloque = tag.nombre.slice(0, punto); const miembro = tag.nombre.slice(punto + 1);
+					const timer = runtime.temporizadores[bloque]; const contador = runtime.contadores[bloque];
+					if (timer && miembro === 'Q') valor = timer.Q;
+					if (timer && miembro === 'ET') valor = timer.ET / 1000;
+					if (contador && miembro === 'Q') valor = contador.Q;
+					if (contador && miembro === 'CV') valor = contador.CV;
+					if (runtime.secuencias[bloque] !== undefined) valor = runtime.secuencias[bloque] === miembro;
+					if (bloque === 'ALARM' && runtime.alarmas[miembro]) valor = runtime.alarmas[miembro].activa;
+				}
+				return {
+					nombre: tag.nombre, tipo: tag.tipo, clase, borne, valor, calidad, origen,
+					forzada: clase !== 'MEM' && runtime.forzadas.includes(`${clase}:${borne}`),
+				};
+			});
 		controladores.push({
 			dispositivoId: id,
 			designacion: d.designacion ?? id,
@@ -2311,7 +2357,9 @@ export function simular(
 			primerScan: runtime.primerScanPendiente, duracionUltimoScanMs: runtime.duracionUltimoScanMs,
 			variables: runtime.variables, salidasAnalogicas: runtime.salidas.analogicas,
 			temporizadores: runtime.temporizadores, contadores: runtime.contadores,
-			secuencias: runtime.secuencias, alarmas: runtime.alarmas, interlocks: runtime.interlocks,
+			secuencias: runtime.secuencias, detalleSecuencias: runtime.detalleSecuencias,
+			alarmas: runtime.alarmas, interlocks: runtime.interlocks, diagnosticos: runtime.diagnosticos,
+			tags, pids: runtime.pids,
 			forzadas: runtime.forzadas, eventos: runtime.eventos, io: programa.io,
 		});
 	}
@@ -2336,7 +2384,11 @@ export function simular(
 		const [id, borne] = clave.split('::');
 		const d = aparatos.find((x) => x.id === id);
 		if (!d || !controladorAlimentado(d, vivos) || !esSalidaAnalogicaDe(d, borne)) continue;
-		salidasAnalogicas.set(clave, salidaAnalogicaEn(d, borne, pct));
+		const salida = salidaAnalogicaEn(d, borne, pct);
+		if (controladores.find((c) => c.dispositivoId === id)?.forzadas.includes(`AO:${borne}`)) {
+			salida.senal.origen = 'inyectado';
+		}
+		salidasAnalogicas.set(clave, salida);
 	}
 
 	const protecciones = estadosProtecciones(aparatos, estado, reloj?.memoria);

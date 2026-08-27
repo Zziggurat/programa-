@@ -24,19 +24,29 @@ function sesion(proyecto: Proyecto) {
 const plc = (r: ResultadoSimulacion) => r.controladores.find((c) => c.dispositivoId === 'plc')!;
 const funciona = (r: ResultadoSimulacion, id: string) => r.funcionando.some((x) => x.dispositivoId === id);
 
-test('fixture secuencial: START → llenar → agitar → vaciar → reposo por cableado', () => {
+test('fixture secuencial: START → llenar → mezclar → vaciar → completo, con TON y lote por cableado', () => {
 	const s = sesion(fixtureAutomatizacionSecuencialV4());
 	let r = s.paso(0);
-	assert.equal(plc(r).secuencias.PROCESO, 'REPOSO'); assert.equal(funciona(r, 'agitador'), false);
+	assert.equal(plc(r).secuencias.PROCESO, 'IDLE'); assert.equal(funciona(r, 'agitador'), false);
 	r = s.paso(100, { start: { activo: true } });
 	assert.equal(plc(r).secuencias.PROCESO, 'LLENANDO'); assert.equal(funciona(r, 'valvula-llenado'), true);
+	assert.equal(funciona(r, 'piloto-marcha'), true);
 	r = s.paso(200);
 	r = s.paso(300, { 'nivel-alto': { activo: true } });
-	assert.equal(plc(r).secuencias.PROCESO, 'AGITANDO'); assert.equal(funciona(r, 'agitador'), true);
-	r = s.paso(2400, { 'nivel-alto': { activo: true } });
+	assert.equal(plc(r).secuencias.PROCESO, 'MEZCLANDO'); assert.equal(funciona(r, 'agitador'), true);
+	r = s.paso(400, { 'nivel-alto': { activo: true } });
+	assert.equal(plc(r).temporizadores.T_MEZCLA.IN, true);
+	assert.equal(plc(r).temporizadores.T_MEZCLA.PT, 5000);
+	r = s.paso(5400, { 'nivel-alto': { activo: true } });
 	assert.equal(plc(r).secuencias.PROCESO, 'VACIANDO'); assert.equal(funciona(r, 'valvula-vaciado'), true);
-	r = s.paso(2500, { 'nivel-bajo': { activo: true } });
-	assert.equal(plc(r).secuencias.PROCESO, 'REPOSO'); assert.equal(funciona(r, 'valvula-vaciado'), false);
+	r = s.paso(5500, { 'nivel-alto': { activo: false }, 'nivel-bajo': { activo: true } });
+	assert.equal(plc(r).secuencias.PROCESO, 'COMPLETO'); assert.equal(funciona(r, 'valvula-vaciado'), false);
+	assert.equal(funciona(r, 'piloto-completo'), true);
+	r = s.paso(5600, { 'nivel-bajo': { activo: true } });
+	assert.equal(plc(r).contadores.LOTES.CV, 1);
+	assert.equal(plc(r).contadores.LOTES.PV, 3);
+	assert.equal(plc(r).detalleSecuencias.PROCESO.anterior, 'VACIANDO');
+	assert.match(plc(r).detalleSecuencias.PROCESO.transicion!, /VACIANDO.*COMPLETO/);
 });
 
 test('STOP prioritario lleva a fallo, alarma y salida física; ACK/reset no arrancan el ciclo', () => {
@@ -48,8 +58,10 @@ test('STOP prioritario lleva a fallo, alarma y salida física; ACK/reset no arra
 	assert.equal(funciona(r, 'piloto-fallo'), true);
 	r = s.paso(400, { plc: { plc: { ackAlarmas: ['PARADA_PROCESO'] } } });
 	assert.equal(plc(r).alarmas.PARADA_PROCESO.reconocida, true);
-	r = s.paso(500, { reset: { activo: true }, plc: { plc: { resetAlarmas: ['PARADA_PROCESO'] } } });
-	assert.equal(plc(r).secuencias.PROCESO, 'REPOSO');
+	r = s.paso(500, { reset: { activo: true } });
+	assert.equal(plc(r).secuencias.PROCESO, 'IDLE');
+	assert.equal(plc(r).alarmas.PARADA_PROCESO.activa, true, 'la alarma enclavada espera reset tras desaparecer la causa');
+	r = s.paso(600, { plc: { plc: { resetAlarmas: ['PARADA_PROCESO'] } } });
 	assert.equal(plc(r).alarmas.PARADA_PROCESO.activa, false);
 	assert.equal(funciona(r, 'agitador'), false, 'rearmar no crea una orden START');
 });
@@ -60,7 +72,17 @@ test('interlock de nivel inhibe llenado y publica diagnóstico, no un fallo ocul
 	const r = s.paso(100, { start: { activo: true }, 'nivel-alto': { activo: true } });
 	assert.equal(funciona(r, 'valvula-llenado'), false);
 	assert.equal(plc(r).interlocks.find((i) => i.salida === 'DO_FILL')?.activo, true);
-	assert.match(plc(r).interlocks.find((i) => i.salida === 'DO_FILL')!.mensaje, /Nivel alto/);
+	assert.match(plc(r).interlocks.find((i) => i.salida === 'DO_FILL')!.mensaje, /nivel alto/i);
+});
+
+test('sensores de nivel contradictorios generan fallo seguro y alarma de origen explícito', () => {
+	const s = sesion(fixtureAutomatizacionSecuencialV4());
+	s.paso(0);
+	const r = s.paso(100, { 'nivel-alto': { activo: true }, 'nivel-bajo': { activo: true } });
+	assert.equal(plc(r).secuencias.PROCESO, 'FALLO');
+	assert.equal(plc(r).alarmas.FALLO_SENSOR.activa, true);
+	assert.deepEqual(plc(r).salidas.sort(), ['DO_ALARM']);
+	assert.equal(funciona(r, 'piloto-fallo'), true);
 });
 
 test('programa, tags y scan sobreviven guardar/cargar; runtime y fuerzas no se persisten', () => {
@@ -71,6 +93,7 @@ test('programa, tags y scan sobreviven guardar/cargar; runtime y fuerzas no se p
 	const a = original.dispositivos.find((d) => d.id === 'plc')!.programaPLC!;
 	const b = cargado.dispositivos.find((d) => d.id === 'plc')!.programaPLC!;
 	assert.deepEqual(JSON.parse(JSON.stringify(b)), JSON.parse(JSON.stringify(a)));
+	assert.equal(b.etiquetas?.find((e) => e.nombre === 'CV')?.seguro, 0);
 	const r = sesion(cargado).paso(0, { lt: { valor: 0 } });
 	assert.equal(plc(r).estado, 'RUN'); assert.equal(plc(r).salidasAnalogicas.AO1, 100);
 });
@@ -151,6 +174,47 @@ test('RUN/STOP, pausa, scan único y fuerzas se operan como runtime de Energizar
 	assert.equal(plc(r).scan, scan); assert.ok(plc(r).forzadas.includes('DI:START'));
 	r = s.paso(200, { plc: { plc: { modo: 'RUN', pausado: true, paso: true, fuerzas: { DI: { START: true } } } } });
 	assert.equal(plc(r).scan, scan + 1); assert.equal(plc(r).secuencias.PROCESO, 'LLENANDO');
+});
+
+test('power cycle físico detiene scans, publica seguro y recupera con FIRST_SCAN sin salida vieja', () => {
+	const p = fixtureAutomatizacionSecuencialV4(); const s = sesion(p);
+	let r = s.paso(0); const inicial = plc(r).scan;
+	r = s.paso(100, { start: { activo: true } });
+	assert.equal(plc(r).secuencias.PROCESO, 'LLENANDO'); assert.ok(plc(r).scan > inicial);
+	const alimentacion = p.conductores.find((c) => c.id === 'w-plc-p')!;
+	p.conductores = p.conductores.filter((c) => c !== alimentacion);
+	r = s.paso(200); const sin24 = plc(r).scan;
+	assert.equal(plc(r).estado, 'SIN_ALIMENTACION'); assert.deepEqual(plc(r).salidas, []);
+	r = s.paso(1_200); assert.equal(plc(r).scan, sin24); assert.deepEqual(plc(r).temporizadores, {});
+	p.conductores.push(alimentacion);
+	r = s.paso(1_300);
+	assert.equal(plc(r).estado, 'RUN'); assert.equal(plc(r).variables.FIRST_SCAN, true);
+	assert.equal(plc(r).secuencias.PROCESO, 'IDLE'); assert.deepEqual(plc(r).salidas, []);
+	r = s.paso(1_400); assert.equal(plc(r).variables.FIRST_SCAN, false);
+});
+
+test('watch table integrada publica aliases, canales físicos, calidad y estado forzado', () => {
+	const p = fixturePIDV4(); const s = sesion(p);
+	const r = s.paso(0, { lt: { valor: 50 }, plc: { plc: { fuerzas: { AO: { AO1: 25 } } } } });
+	const c = plc(r); const pv = c.tags.find((t) => t.nombre === 'PV')!; const cv = c.tags.find((t) => t.nombre === 'CV')!;
+	assert.deepEqual({ clase: pv.clase, borne: pv.borne, valor: pv.valor, calidad: pv.calidad },
+		{ clase: 'AI', borne: 'AI1', valor: 50, calidad: 'normal' });
+	assert.deepEqual({ clase: cv.clase, borne: cv.borne, valor: cv.valor, forzada: cv.forzada },
+		{ clase: 'AO', borne: 'AO1', valor: 25, forzada: true });
+	assert.equal(c.pids.NIVEL.salida >= 0, true);
+	assert.equal(r.salidasAnalogicas.get('plc::AO1')?.senal.origen, 'inyectado');
+});
+
+test('watch table proyecta valores runtime de timers, counters, secuencias y alarmas', () => {
+	const s = sesion(fixtureAutomatizacionSecuencialV4()); let r = s.paso(0);
+	const valor = (nombre: string) => plc(r).tags.find((t) => t.nombre === nombre)?.valor;
+	assert.equal(valor('PROCESO.IDLE'), true); assert.equal(valor('PROCESO.LLENANDO'), false);
+	r = s.paso(100, { start: { activo: true } });
+	assert.equal(valor('PROCESO.IDLE'), false); assert.equal(valor('PROCESO.LLENANDO'), true);
+	r = s.paso(200, { 'nivel-alto': { activo: true } }); r = s.paso(300, { 'nivel-alto': { activo: true } });
+	assert.equal(valor('T_MEZCLA.Q'), false); assert.equal(valor('T_MEZCLA.ET'), 0.1);
+	r = s.paso(400, { stop: { activo: true } });
+	assert.equal(valor('ALARM.PARADA_PROCESO'), true);
 });
 
 test('programa inválido integrado deja PLC en FAULT y sus salidas seguras', () => {

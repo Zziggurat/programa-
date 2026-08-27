@@ -24,7 +24,7 @@ export interface TemporizadorPLC { tipo: 'TON' | 'TOF' | 'TP'; linea: number; no
 export interface ContadorPLC { tipo: 'CTU' | 'CTD'; linea: number; nombre: string; entrada: ExprPLC; control: ExprPLC; pv: number }
 export interface SecuenciaPLC { nombre: string; inicial: string; estados: string[] }
 export interface TransicionPLC { linea: number; secuencia: string; desde: string; hacia: string; condicion: ExprPLC; prioridad: number }
-export interface AlarmaPLC { linea: number; id: string; condicion: ExprPLC; severidad: SeveridadAlarmaPLC; enclavada: boolean; mensaje: string }
+export interface AlarmaPLC { linea: number; id: string; condicion: ExprPLC; origen: string; severidad: SeveridadAlarmaPLC; enclavada: boolean; mensaje: string }
 export interface InterlockPLC { linea: number; salida: string; permiso: ExprPLC; mensaje: string }
 export interface PIDPLC {
 	linea: number; nombre: string; pv: ExprPLC; sp: ExprPLC; salida: string;
@@ -89,25 +89,73 @@ export function compilarProgramaPLC(config: ConfiguracionProgramaPLC, io: IOProg
 	const base = basePrograma(config);
 	const etiquetas: Record<string, EtiquetaPLC> = {};
 	const programa: ProgramaPLCCompilado = { ...base, etiquetas };
-	const agregar = (e: EtiquetaPLC, linea = 0): void => {
+	const agregar = (e: EtiquetaPLC, linea = 0, duplicadoEsError = false): void => {
 		const nombre = normalizar(e.nombre);
 		if (!RE_NOMBRE.test(nombre)) {
 			programa.errores.push({ linea, texto: e.nombre, mensaje: 'nombre de etiqueta inválido' });
 			return;
 		}
+		if (e.io) {
+			const tipoEsperado: TipoDatoPLC = e.io.clase === 'DI' || e.io.clase === 'DO' ? 'BOOL' : 'REAL';
+			if (e.tipo !== tipoEsperado) {
+				programa.errores.push({ linea, texto: e.nombre, mensaje: `${e.io.clase} requiere ${tipoEsperado}, no ${e.tipo}` });
+				return;
+			}
+			if (!io[e.io.clase].includes(e.io.borne)) {
+				programa.errores.push({ linea, texto: e.nombre, mensaje: `${e.io.clase} referencia el borne inexistente ${e.io.borne}` });
+				return;
+			}
+		}
+		if (e.seguro !== undefined) {
+			if (e.io?.clase !== 'DO' && e.io?.clase !== 'AO') {
+				programa.errores.push({ linea, texto: e.nombre, mensaje: `el valor seguro de ${nombre} solo puede declararse en DO/AO` });
+				return;
+			}
+			if (e.tipo === 'BOOL' ? typeof e.seguro !== 'boolean' : typeof e.seguro !== 'number' || !Number.isFinite(e.seguro)) {
+				programa.errores.push({ linea, texto: e.nombre, mensaje: `valor seguro incompatible para ${nombre}` });
+				return;
+			}
+		}
 		const previa = etiquetas[nombre];
-		if (previa && (previa.tipo !== e.tipo || previa.io?.clase !== e.io?.clase || previa.io?.borne !== e.io?.borne)) {
-			programa.errores.push({ linea, texto: e.nombre, mensaje: `la etiqueta ${nombre} está declarada dos veces con tipos incompatibles` });
+		if (previa) {
+			const incompatible = previa.tipo !== e.tipo || previa.io?.clase !== e.io?.clase || previa.io?.borne !== e.io?.borne;
+			if (duplicadoEsError || incompatible) programa.errores.push({
+				linea, texto: e.nombre, mensaje: `la etiqueta ${nombre} está declarada dos veces${incompatible ? ' con tipos incompatibles' : ''}`,
+			});
+			else etiquetas[nombre] = { ...previa, ...e, nombre };
 			return;
 		}
 		etiquetas[nombre] = { ...e, nombre };
 	};
-	for (const borne of io.DI) agregar(etiqueta(borne, 'BOOL', { clase: 'DI', borne }));
-	for (const borne of io.DO) agregar(etiqueta(borne, 'BOOL', { clase: 'DO', borne }));
-	for (const borne of io.AI) agregar(etiqueta(borne, 'REAL', { clase: 'AI', borne }));
-	for (const borne of io.AO) agregar(etiqueta(borne, 'REAL', { clase: 'AO', borne }));
+	/* Un rótulo físico puede contener `/`, `+`, espacios, etc. Se conserva en el dispositivo y en
+	 * el mapa de bornes, pero solo se convierte en tag si también es un identificador del DSL. */
+	const agregarBorne = (borne: string, tipo: TipoDatoPLC, clase: keyof IOProgramaPLC): void => {
+		if (RE_NOMBRE.test(normalizar(borne))) agregar(etiqueta(borne, tipo, { clase, borne }));
+	};
+	for (const borne of io.DI) agregarBorne(borne, 'BOOL', 'DI');
+	for (const borne of io.DO) agregarBorne(borne, 'BOOL', 'DO');
+	for (const borne of io.AI) agregarBorne(borne, 'REAL', 'AI');
+	for (const borne of io.AO) agregarBorne(borne, 'REAL', 'AO');
 	agregar(etiqueta('FIRST_SCAN', 'BOOL'));
-	for (const e of config.etiquetas ?? []) agregar(e);
+	const nombresConfig = new Set<string>();
+	const segurosPorCanal = new Map<string, boolean | number>();
+	for (const e of config.etiquetas ?? []) {
+		const nombre = normalizar(e.nombre);
+		if (nombresConfig.has(nombre)) {
+			programa.errores.push({ linea: 0, texto: e.nombre, mensaje: `la etiqueta ${nombre} está declarada dos veces` });
+			continue;
+		}
+		nombresConfig.add(nombre);
+		if (e.seguro !== undefined && e.io) {
+			const canal = `${e.io.clase}:${e.io.borne}`; const previo = segurosPorCanal.get(canal);
+			if (previo !== undefined && previo !== e.seguro) {
+				programa.errores.push({ linea: 0, texto: e.nombre, mensaje: `${canal} tiene valores seguros contradictorios` });
+				continue;
+			}
+			segurosPorCanal.set(canal, e.seguro);
+		}
+		agregar(e);
+	}
 
 	if (config.FUENTE.length > MAX_FUENTE) {
 		programa.errores.push({ linea: 0, texto: '', mensaje: `el programa supera ${MAX_FUENTE} caracteres` });
@@ -133,27 +181,27 @@ export function compilarProgramaPLC(config: ConfiguracionProgramaPLC, io: IOProg
 			const tipo = normalizar(m[1]) as TipoDatoPLC;
 			const inicial = m[4] === undefined ? undefined : literalInicial(m[4], tipo);
 			if (m[4] !== undefined && inicial === undefined) error(i, crudo, `valor inicial ${tipo} inválido`);
-			agregar({ nombre: m[2], tipo, retain: !!m[3], inicial }, i + 1);
+			agregar({ nombre: m[2], tipo, retain: !!m[3], inicial }, i + 1, true);
 			return;
 		}
 		m = /^(TON|TOF|TP)\s+([A-Za-z_][A-Za-z0-9_]*)\b/i.exec(texto);
 		if (m) {
-			agregar(etiqueta(`${m[2]}.Q`, 'BOOL'), i + 1);
-			agregar(etiqueta(`${m[2]}.ET`, 'REAL'), i + 1);
+			agregar(etiqueta(`${m[2]}.Q`, 'BOOL'), i + 1, true);
+			agregar(etiqueta(`${m[2]}.ET`, 'REAL'), i + 1, true);
 			return;
 		}
 		m = /^(CTU|CTD)\s+([A-Za-z_][A-Za-z0-9_]*)\b/i.exec(texto);
 		if (m) {
-			agregar(etiqueta(`${m[2]}.Q`, 'BOOL'), i + 1);
-			agregar(etiqueta(`${m[2]}.CV`, 'REAL'), i + 1);
+			agregar(etiqueta(`${m[2]}.Q`, 'BOOL'), i + 1, true);
+			agregar(etiqueta(`${m[2]}.CV`, 'REAL'), i + 1, true);
 			return;
 		}
 		m = /^SEQUENCE\s+([A-Za-z_][A-Za-z0-9_]*)\s+INITIAL\s+([A-Za-z_][A-Za-z0-9_]*)$/i.exec(texto);
-		if (m) agregar(etiqueta(`${m[1]}.${m[2]}`, 'BOOL'), i + 1);
+		if (m) agregar(etiqueta(`${m[1]}.${m[2]}`, 'BOOL'), i + 1, true);
 		m = /^TRANS\s+([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\b/i.exec(texto);
 		if (m) { agregar(etiqueta(`${m[1]}.${m[2]}`, 'BOOL'), i + 1); agregar(etiqueta(`${m[1]}.${m[3]}`, 'BOOL'), i + 1); }
 		m = /^ALARM\s+([A-Za-z_][A-Za-z0-9_]*)\b/i.exec(texto);
-		if (m) agregar(etiqueta(`ALARM.${m[1]}`, 'BOOL'), i + 1);
+		if (m) agregar(etiqueta(`ALARM.${m[1]}`, 'BOOL'), i + 1, true);
 	});
 	if (Object.keys(etiquetas).length > MAX_ETIQUETAS) error(-1, '', `el programa supera ${MAX_ETIQUETAS} etiquetas`);
 
@@ -167,16 +215,20 @@ export function compilarProgramaPLC(config: ConfiguracionProgramaPLC, io: IOProg
 			let m: RegExpExecArray | null;
 			m = /^(TON|TOF|TP)\s+([A-Za-z_][A-Za-z0-9_]*)\s+IN\s+(.+)\s+PT\s+([\d.,]+)\s*(MS|S)?$/i.exec(texto);
 			if (m) {
+				const nombre = normalizar(m[2]);
+				if (programa.temporizadores.some((t) => t.nombre === nombre)) throw new Error(`el temporizador ${nombre} está duplicado`);
 				const pt = numero(m[4]) * (normalizar(m[5] ?? 'S') === 'MS' ? 1 : 1000);
 				if (!(pt >= 0 && Number.isFinite(pt))) throw new Error('PT debe ser un tiempo no negativo');
-				programa.temporizadores.push({ tipo: normalizar(m[1]) as TemporizadorPLC['tipo'], linea, nombre: normalizar(m[2]), entrada: expr(m[3], 'BOOL', linea), ptMs: pt });
+				programa.temporizadores.push({ tipo: normalizar(m[1]) as TemporizadorPLC['tipo'], linea, nombre, entrada: expr(m[3], 'BOOL', linea), ptMs: pt });
 				return;
 			}
 			m = /^(CTU|CTD)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(CU|CD)\s+(.+)\s+(RESET|LOAD)\s+(.+)\s+PV\s+(-?[\d.,]+)$/i.exec(texto);
 			if (m) {
+				const nombre = normalizar(m[2]);
+				if (programa.contadores.some((c) => c.nombre === nombre)) throw new Error(`el contador ${nombre} está duplicado`);
 				const pv = numero(m[7]);
 				if (!Number.isFinite(pv)) throw new Error('PV debe ser numérico');
-				programa.contadores.push({ tipo: normalizar(m[1]) as ContadorPLC['tipo'], linea, nombre: normalizar(m[2]), entrada: expr(m[4], 'BOOL', linea), control: expr(m[6], 'BOOL', linea), pv });
+				programa.contadores.push({ tipo: normalizar(m[1]) as ContadorPLC['tipo'], linea, nombre, entrada: expr(m[4], 'BOOL', linea), control: expr(m[6], 'BOOL', linea), pv });
 				return;
 			}
 			m = /^SEQUENCE\s+([A-Za-z_][A-Za-z0-9_]*)\s+INITIAL\s+([A-Za-z_][A-Za-z0-9_]*)$/i.exec(texto);
@@ -194,7 +246,9 @@ export function compilarProgramaPLC(config: ConfiguracionProgramaPLC, io: IOProg
 			}
 			m = /^ALARM\s+([A-Za-z_][A-Za-z0-9_]*)\s+WHEN\s+(.+?)\s+SEVERITY\s+(INFO|WARNING|ALARM|TRIP)(?:\s+(LATCHED))?(?:\s+MESSAGE\s+"([^"]*)")?$/i.exec(texto);
 			if (m) {
-				programa.alarmas.push({ linea, id: normalizar(m[1]), condicion: expr(m[2], 'BOOL', linea), severidad: normalizar(m[3]) as SeveridadAlarmaPLC, enclavada: !!m[4], mensaje: m[5] ?? normalizar(m[1]) });
+				const id = normalizar(m[1]);
+				if (programa.alarmas.some((a) => a.id === id)) throw new Error(`la alarma ${id} está duplicada`);
+				programa.alarmas.push({ linea, id, condicion: expr(m[2], 'BOOL', linea), origen: m[2].trim(), severidad: normalizar(m[3]) as SeveridadAlarmaPLC, enclavada: !!m[4], mensaje: m[5] ?? id });
 				return;
 			}
 			m = /^INTERLOCK\s+([A-Za-z_][A-Za-z0-9_.]*)\s+REQUIRE\s+(.+?)(?:\s+MESSAGE\s+"([^"]*)")?$/i.exec(texto);
@@ -205,10 +259,12 @@ export function compilarProgramaPLC(config: ConfiguracionProgramaPLC, io: IOProg
 			}
 			m = /^PID\s+([A-Za-z_][A-Za-z0-9_]*)\s+PV\s+(\S+)\s+SP\s+(\S+)\s+OUT\s+(\S+)\s+KP\s+(-?[\d.,]+)\s+TI\s+([\d.,]+)\s+TD\s+([\d.,]+)\s+MIN\s+(-?[\d.,]+)\s+MAX\s+(-?[\d.,]+)(?:\s+AUTO\s+(\S+)\s+MANUAL\s+(\S+))?(?:\s+BAD\s+(HOLD|SAFE|FAULT))?$/i.exec(texto);
 			if (m) {
+				const nombre = normalizar(m[1]);
+				if (programa.pids.some((p) => p.nombre === nombre)) throw new Error(`el PID ${nombre} está duplicado`);
 				const salida = normalizar(m[4]); exigirDestino(salida, ['AO'], linea); registrarEscritura(salida, linea);
 				const valores = [m[5], m[6], m[7], m[8], m[9]].map(numero);
 				if (valores.some((v) => !Number.isFinite(v)) || valores[1] < 0 || valores[2] < 0 || valores[3] >= valores[4]) throw new Error('parámetros PID inválidos');
-				programa.pids.push({ linea, nombre: normalizar(m[1]), pv: expr(m[2], 'REAL', linea), sp: expr(m[3], 'REAL', linea), salida, kp: valores[0], tiS: valores[1], tdS: valores[2], minimo: valores[3], maximo: valores[4], auto: m[10] ? expr(m[10], 'BOOL', linea) : undefined, manual: m[11] ? expr(m[11], 'REAL', linea) : undefined, malaPV: normalizar(m[12] ?? 'SAFE') as PIDPLC['malaPV'] });
+				programa.pids.push({ linea, nombre, pv: expr(m[2], 'REAL', linea), sp: expr(m[3], 'REAL', linea), salida, kp: valores[0], tiS: valores[1], tdS: valores[2], minimo: valores[3], maximo: valores[4], auto: m[10] ? expr(m[10], 'BOOL', linea) : undefined, manual: m[11] ? expr(m[11], 'REAL', linea) : undefined, malaPV: normalizar(m[12] ?? 'SAFE') as PIDPLC['malaPV'] });
 				return;
 			}
 			m = /^(SET|RESET)\s+([A-Za-z_][A-Za-z0-9_.]*)\s+WHEN\s+(.+)$/i.exec(texto);
@@ -240,6 +296,15 @@ export function compilarProgramaPLC(config: ConfiguracionProgramaPLC, io: IOProg
 		const s = programa.secuencias.find((x) => x.nombre === t.secuencia);
 		if (!s) error(t.linea - 1, lineas[t.linea - 1], `secuencia desconocida ${t.secuencia}`);
 		else for (const estado of [t.desde, t.hacia]) if (!s.estados.includes(estado)) s.estados.push(estado);
+	}
+	const prioridadTransicion = new Map<string, number>();
+	for (const t of programa.transiciones) {
+		const clave = `${t.secuencia}::${t.desde}::${t.prioridad}`;
+		const previa = prioridadTransicion.get(clave);
+		if (previa !== undefined) {
+			error(t.linea - 1, lineas[t.linea - 1],
+				`transición ambigua desde ${t.secuencia}.${t.desde}: prioridad ${t.prioridad} ya usada en renglón ${previa}`);
+		} else prioridadTransicion.set(clave, t.linea);
 	}
 	for (const [destino, tipos] of setPorDestino) {
 		if (escrituras.has(destino)) error(escrituras.get(destino)! - 1, lineas[escrituras.get(destino)! - 1], `${destino} mezcla asignación y SET/RESET`);

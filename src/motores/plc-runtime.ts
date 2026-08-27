@@ -28,8 +28,8 @@ export function crearRuntimePLC(programa: ProgramaPLCCompilado): RuntimePLC {
 		entradas: { digitales: {}, analogicas: {} },
 		salidas: salidasSeguras(programa),
 		variables,
-		temporizadores: {}, contadores: {}, secuencias: {}, alarmas: {}, pids: {}, flancos: {},
-		interlocks: [], fuerzas: {}, forzadas: [], errores: [], eventos: [],
+		temporizadores: {}, contadores: {}, secuencias: {}, detalleSecuencias: {}, alarmas: {}, pids: {}, flancos: {},
+		interlocks: [], diagnosticos: [], fuerzas: {}, forzadas: [], errores: [], eventos: [],
 		legacy: memoriaLogicaVacia(),
 	};
 }
@@ -56,13 +56,15 @@ export function actualizarRuntimePLC(
 	if (ordenes.reiniciar) runtime = crearRuntimePLC(programa);
 	if (ordenes.modo) runtime.modoSolicitado = ordenes.modo;
 	if (ordenes.pausado !== undefined) runtime.pausado = ordenes.pausado;
-	if (ordenes.fuerzas) runtime.fuerzas = clonarFuerzas(ordenes.fuerzas);
+	if (ordenes.modo === 'STOP') runtime.fuerzas = {};
+	else if (!ordenes.reiniciar && ordenes.fuerzas) runtime.fuerzas = clonarFuerzas(ordenes.fuerzas);
 	runtime.forzadas = nombresFuerzas(runtime.fuerzas);
 	procesarAlarmas(runtime, ordenes, ahoraMs);
 
 	if (!alimentado) {
 		if (runtime.estado !== 'SIN_ALIMENTACION') evento(runtime, ahoraMs, 'ESTADO', 'PLC sin alimentación; salidas seguras');
 		runtime.estado = 'SIN_ALIMENTACION';
+		runtime.diagnosticos = [{ codigo: 'POWER_LOSS', mensaje: 'Alimentación del PLC ausente', instanteMs: ahoraMs }];
 		runtime.salidas = salidasSeguras(programa);
 		runtime.entradas = imagenConFuerzas(entradas, runtime.fuerzas);
 		runtime.primerScanPendiente = true;
@@ -76,6 +78,7 @@ export function actualizarRuntimePLC(
 	if (programa.errores.length) {
 		runtime.estado = 'FAULT';
 		runtime.errores = programa.errores.map((e) => `L${e.linea}: ${e.mensaje}`);
+		runtime.diagnosticos = runtime.errores.map((mensaje) => ({ codigo: 'CONFIG_ERROR' as const, mensaje, instanteMs: ahoraMs }));
 		runtime.salidas = salidasSeguras(programa);
 		eventoUnico(runtime, ahoraMs, 'FAULT', `Programa inválido: ${runtime.errores[0]}`);
 		return resultado(runtime, salidasAntes, 0);
@@ -84,6 +87,7 @@ export function actualizarRuntimePLC(
 	if (runtime.modoSolicitado === 'STOP') {
 		if (runtime.estado !== 'STOP') evento(runtime, ahoraMs, 'ESTADO', 'PLC en STOP; salidas seguras');
 		runtime.estado = 'STOP';
+		runtime.diagnosticos = [];
 		runtime.salidas = salidasSeguras(programa);
 		runtime.entradas = imagenConFuerzas(entradas, runtime.fuerzas);
 		runtime.primerScanPendiente = true;
@@ -119,6 +123,10 @@ export function actualizarRuntimePLC(
 		} catch (e) {
 			runtime.estado = 'FAULT';
 			runtime.errores = [(e as Error).message];
+			runtime.diagnosticos = [{
+				codigo: /watchdog/i.test((e as Error).message) ? 'WATCHDOG' : 'PROGRAM_ERROR',
+				mensaje: (e as Error).message, instanteMs: instante,
+			}];
 			runtime.salidas = salidasSeguras(programa);
 			evento(runtime, instante, 'FAULT', (e as Error).message);
 			break;
@@ -144,6 +152,7 @@ function ejecutarScan(
 	runtime.entradas = entradas;
 	runtime.errores = [];
 	runtime.interlocks = [];
+	runtime.diagnosticos = [];
 	runtime.forzadas = nombresFuerzas(runtime.fuerzas);
 	const valores: Record<string, boolean | number> = { ...runtime.variables, FIRST_SCAN: runtime.primerScanPendiente };
 	for (const tag of Object.values(programa.etiquetas)) {
@@ -189,7 +198,12 @@ function ejecutarScan(
 		return;
 	}
 
-	for (const s of programa.secuencias) runtime.secuencias[s.nombre] ??= s.inicial;
+	for (const s of programa.secuencias) {
+		runtime.secuencias[s.nombre] ??= s.inicial;
+		runtime.detalleSecuencias[s.nombre] ??= {
+			actual: runtime.secuencias[s.nombre], desdeMs: ahoraMs, tiempoEnEstadoMs: 0,
+		};
+	}
 	for (const s of programa.secuencias) for (const estado of s.estados) {
 		valores[`${s.nombre}.${estado}`] = runtime.secuencias[s.nombre] === estado;
 	}
@@ -220,9 +234,22 @@ function ejecutarScan(
 		valores[`${c.nombre}.Q`] = Q; valores[`${c.nombre}.CV`] = CV;
 	}
 	for (const s of programa.secuencias) {
-		const candidatas = programa.transiciones.filter((t) => t.secuencia === s.nombre && t.desde === runtime.secuencias[s.nombre] && bool(evalExpr(t.condicion, ctx)))
+		const estadoAntes = runtime.secuencias[s.nombre];
+		const candidatas = programa.transiciones.filter((t) => t.secuencia === s.nombre && t.desde === estadoAntes && bool(evalExpr(t.condicion, ctx)))
 			.sort((a, b) => b.prioridad - a.prioridad || a.linea - b.linea);
-		if (candidatas.length) runtime.secuencias[s.nombre] = candidatas[0].hacia;
+		if (candidatas.length) {
+			const elegida = candidatas[0];
+			runtime.secuencias[s.nombre] = elegida.hacia;
+			runtime.detalleSecuencias[s.nombre] = {
+				actual: elegida.hacia, anterior: estadoAntes, desdeMs: ahoraMs, tiempoEnEstadoMs: 0,
+				transicion: `${estadoAntes} → ${elegida.hacia} (L${elegida.linea}, prioridad ${elegida.prioridad})`,
+			};
+			evento(runtime, ahoraMs, 'ESTADO', `${s.nombre}: ${estadoAntes} → ${elegida.hacia}`);
+		} else {
+			const detalle = runtime.detalleSecuencias[s.nombre];
+			detalle.actual = estadoAntes;
+			detalle.tiempoEnEstadoMs = Math.max(0, ahoraMs - detalle.desdeMs);
+		}
 		for (const estado of s.estados) valores[`${s.nombre}.${estado}`] = runtime.secuencias[s.nombre] === estado;
 	}
 
@@ -258,6 +285,9 @@ function ejecutarScan(
 		let salida = anterior.salida; let integral = anterior.integral; let errorAnterior = anterior.errorAnterior; let saturado = false;
 		if (!auto && p.manual) salida = real(evalExpr(p.manual, ctx));
 		else if (calidad !== 'normal' || !Number.isFinite(pv)) {
+			runtime.diagnosticos.push({
+				codigo: 'BAD_ANALOG_QUALITY', mensaje: `PID ${p.nombre}: PV inválida (${calidad})`, instanteMs: ahoraMs,
+			});
 			if (p.malaPV === 'SAFE') salida = p.minimo;
 			else if (p.malaPV === 'FAULT') throw new Error(`PID ${p.nombre}: PV inválida (${calidad})`);
 		} else {
@@ -278,8 +308,10 @@ function ejecutarScan(
 		const activa = a.enclavada ? condicion || (previa?.activa ?? false) : condicion;
 		const alarma: EstadoAlarmaPLC = {
 			id: a.id, severidad: a.severidad, mensaje: a.mensaje, activa, enclavada: a.enclavada,
+			condicionActiva: condicion,
 			reconocida: activa ? (previa?.reconocida ?? false) : false,
 			desdeMs: activa ? (previa?.desdeMs ?? ahoraMs) : undefined,
+			origen: a.origen,
 		};
 		if (activa && !previa?.activa) evento(runtime, ahoraMs, 'ALARMA', `${a.severidad}: ${a.mensaje}`);
 		runtime.alarmas[a.id] = alarma; valores[`ALARM.${a.id}`] = activa;
@@ -359,14 +391,18 @@ function reiniciarNoRetain(runtime: RuntimePLC, programa: ProgramaPLCCompilado):
 }
 
 function reiniciarBloques(runtime: RuntimePLC): void {
-	runtime.temporizadores = {}; runtime.contadores = {}; runtime.secuencias = {}; runtime.pids = {}; runtime.flancos = {};
+	runtime.temporizadores = {}; runtime.contadores = {}; runtime.secuencias = {}; runtime.detalleSecuencias = {}; runtime.pids = {}; runtime.flancos = {};
 }
 
 function salidasSeguras(programa: ProgramaPLCCompilado): ImagenSalidasPLC {
 	const digitales: Record<string, boolean> = {}; const analogicas: Record<string, number> = {};
 	for (const tag of Object.values(programa.etiquetas)) {
-		if (tag.io?.clase === 'DO') digitales[tag.io.borne] = false;
-		if (tag.io?.clase === 'AO') analogicas[tag.io.borne] = 0;
+		if (tag.io?.clase === 'DO') digitales[tag.io.borne] ??= false;
+		if (tag.io?.clase === 'AO') analogicas[tag.io.borne] ??= 0;
+	}
+	for (const tag of Object.values(programa.etiquetas)) {
+		if (tag.io?.clase === 'DO' && typeof tag.seguro === 'boolean') digitales[tag.io.borne] = tag.seguro;
+		if (tag.io?.clase === 'AO' && typeof tag.seguro === 'number') analogicas[tag.io.borne] = tag.seguro;
 	}
 	return { digitales, analogicas };
 }
@@ -393,7 +429,9 @@ function procesarAlarmas(runtime: RuntimePLC, ordenes: OrdenesRuntimePLC, ahora:
 	}
 	for (const id of ordenes.resetAlarmas ?? []) {
 		const alarma = runtime.alarmas[id.toUpperCase()];
-		if (alarma?.enclavada && alarma.reconocida) { alarma.activa = false; alarma.desdeMs = undefined; evento(runtime, ahora, 'RESET', `Alarma ${id} rearmada`); }
+		if (alarma?.enclavada && alarma.reconocida && !alarma.condicionActiva) {
+			alarma.activa = false; alarma.desdeMs = undefined; evento(runtime, ahora, 'RESET', `Alarma ${id} rearmada`);
+		}
 	}
 }
 

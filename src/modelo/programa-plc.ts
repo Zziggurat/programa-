@@ -12,6 +12,8 @@ export interface EtiquetaPLC {
 	tipo: TipoDatoPLC;
 	io?: { clase: ClaseIOPLC; borne: string };
 	inicial?: boolean | number;
+	/** Valor publicado en STOP/FAULT/sin alimentación. Solo aplica a DO/AO; por defecto false/0 %. */
+	seguro?: boolean | number;
 	/** RETAIN conserva el valor durante una pérdida de alimentación de la misma sesión. */
 	retain?: boolean;
 	descripcion?: string;
@@ -62,6 +64,15 @@ export interface FuerzasPLC {
 
 export type EstadoEjecucionPLC = 'SIN_ALIMENTACION' | 'STOP' | 'RUN' | 'FAULT';
 
+export type CodigoDiagnosticoPLC = 'CONFIG_ERROR' | 'IO_ERROR' | 'BAD_ANALOG_QUALITY'
+	| 'WATCHDOG' | 'PROGRAM_ERROR' | 'POWER_LOSS';
+
+export interface DiagnosticoPLC {
+	codigo: CodigoDiagnosticoPLC;
+	mensaje: string;
+	instanteMs: number;
+}
+
 export type SeveridadAlarmaPLC = 'INFO' | 'WARNING' | 'ALARM' | 'TRIP';
 
 export interface EventoPLC {
@@ -74,10 +85,13 @@ export interface EstadoAlarmaPLC {
 	id: string;
 	severidad: SeveridadAlarmaPLC;
 	mensaje: string;
+	condicionActiva: boolean;
 	activa: boolean;
 	enclavada: boolean;
 	reconocida: boolean;
 	desdeMs?: number;
+	/** Expresión/tag que originó la alarma, procedente del programa compilado. */
+	origen?: string;
 }
 
 export interface DiagnosticoInterlockPLC {
@@ -100,6 +114,16 @@ export interface EstadoContadorPLC {
 	PV: number;
 	Q: boolean;
 	entradaAnterior: boolean;
+}
+
+/** Diagnóstico temporal de una máquina de estados; nunca se persiste en el proyecto. */
+export interface EstadoSecuenciaPLC {
+	actual: string;
+	anterior?: string;
+	desdeMs: number;
+	tiempoEnEstadoMs: number;
+	/** Transición que produjo `actual`, incluida su procedencia en la fuente. */
+	transicion?: string;
 }
 
 export interface EstadoPIDPLC {
@@ -127,10 +151,12 @@ export interface RuntimePLC {
 	temporizadores: Record<string, EstadoTemporizadorPLC>;
 	contadores: Record<string, EstadoContadorPLC>;
 	secuencias: Record<string, string>;
+	detalleSecuencias: Record<string, EstadoSecuenciaPLC>;
 	alarmas: Record<string, EstadoAlarmaPLC>;
 	pids: Record<string, EstadoPIDPLC>;
 	flancos: Record<string, boolean>;
 	interlocks: DiagnosticoInterlockPLC[];
+	diagnosticos: DiagnosticoPLC[];
 	fuerzas: FuerzasPLC;
 	forzadas: string[];
 	errores: string[];

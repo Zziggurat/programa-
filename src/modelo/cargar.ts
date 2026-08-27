@@ -824,7 +824,11 @@ function leerProgramaPLC(bruto: unknown): ConfiguracionProgramaPLC | undefined {
 				? (typeof item.inicial === 'boolean' ? item.inicial : undefined)
 				: (typeof item.inicial === 'number' && Number.isFinite(item.inicial) ? item.inicial : undefined);
 			if (item.inicial !== undefined && inicial === undefined) return undefined;
-			etiquetas.push({ nombre: item.nombre, tipo: item.tipo, io, inicial,
+			const seguro = item.seguro === undefined ? undefined : item.tipo === 'BOOL'
+				? (typeof item.seguro === 'boolean' ? item.seguro : undefined)
+				: (typeof item.seguro === 'number' && Number.isFinite(item.seguro) ? item.seguro : undefined);
+			if (item.seguro !== undefined && seguro === undefined) return undefined;
+			etiquetas.push({ nombre: item.nombre, tipo: item.tipo, io, inicial, seguro,
 				retain: typeof item.retain === 'boolean' ? item.retain : undefined,
 				descripcion: typeof item.descripcion === 'string' ? item.descripcion : undefined });
 		}
