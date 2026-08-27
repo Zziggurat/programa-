@@ -565,10 +565,18 @@ try {
 		input.value = input.max;
 		input.dispatchEvent(new Event('input', { bubbles: true }));
 	});
-	await page.waitForFunction((id) => {
-		const fila = document.querySelector(`#sim-controladores .ctrl-sim[data-id="${id}"]`);
-		return fila?.textContent.includes('UI1=80');
-	}, controlador.id);
+	try {
+		await page.waitForFunction((id) => {
+			const fila = document.querySelector(`#sim-controladores .ctrl-sim[data-id="${id}"]`);
+			return fila?.textContent.includes('UI1=80');
+		}, controlador.id);
+	} catch {
+		const sim = await qa('simulacion');
+		const ctrl = sim.controladores.find((c) => c.dispositivoId === controlador.id);
+		const estadoSensor = (await qa('estadoSim')).find((e) => e.id === sensor.id);
+		const textoCtrl = await page.locator(`#sim-controladores .ctrl-sim[data-id="${controlador.id}"]`).innerText().catch(() => 'sin fila');
+		throw new Error(`UI1 no alcanzó 80 tras el gesto visible: estadoSensor=${JSON.stringify(estadoSensor)}; controlador=${JSON.stringify(ctrl)}; UI=${textoCtrl}`);
+	}
 	comprobar('el controlador recibe el extremo de escala por UI1',
 		(await page.locator(`#sim-controladores .ctrl-sim[data-id="${controlador.id}"]`).innerText()).includes('UI1=80'));
 	await page.waitForFunction(() => /READY/.test(document.querySelector('#sim-funcionando .variador')?.textContent ?? ''));

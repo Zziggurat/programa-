@@ -3,6 +3,11 @@
 Los archivos con prefijo `_` no entran automáticamente en el gate. Esta clasificación cubre las
 70 sondas versionadas y evita confundir una captura o un experimento con una regresión ejecutable.
 
+Las regresiones especializadas sin prefijo también quedan fuera del gate histórico hasta acumular
+estabilidad suficiente. `automatizacion-plc.mjs` es el vertical slice V4: opera START/STOP,
+sensores, pausa, scan único, fuerzas, ACK/reset y PID mediante la UI real; se ejecuta expresamente
+con `npm run qa:automatizacion`.
+
 ## Regresiones válidas
 
 Acumulan aserciones objetivas, devuelven un exit code real y son candidatas a un gate explícito.

@@ -235,6 +235,33 @@ must('el HTML offline ejecuta AO=6 V y válvula modulante',
 		&& /comando 60 %/.test(await page.locator('#sim-funcionando .posicion-carga').innerText()), aoV3);
 must('la UI offline ofrece el fallo de lazo V3',
 	await page.locator('#sim-fallos select[data-fallo="tt1"] option[value="circuito-analogico-abierto"]').count() === 1);
+
+/* ---------- 6. El runtime PLC V4 también viaja dentro del HTML ---------- */
+console.log('\n--- 6. Automatización PLC V4 dentro del HTML entregado ---');
+// La escena V3 sigue energizada: se detiene por el mismo botón visible antes de cambiar de ejemplo.
+await page.click('#btn-energizar');
+await page.click('#btn-aprender');
+await page.click('#btn-ejemplos');
+await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
+await page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V4: PLC y proceso secuencial' })
+	.getByRole('button', { name: /Abrir y estudiar/i }).click();
+if (await page.isVisible('#modal-dialogo')) { await page.click('#dialogo-ok'); }
+await page.waitForFunction(() => document.getElementById('nombre-proyecto')?.value
+	=== 'Fixture V4 — proceso secuencial de tanque');
+await cerrar('btn-cerrar-explicacion');
+await page.click('#btn-energizar');
+await page.waitForFunction(() => {
+	const texto = document.querySelector('#sim-controladores')?.textContent ?? '';
+	const scan = /scan\s+(\d+)/i.exec(texto);
+	return /\bRUN\b/.test(texto) && Number(scan?.[1] ?? 0) >= 1;
+});
+const panelV4 = (await page.locator('#sim-controladores').innerText()).replace(/\s+/g, ' ');
+must('el HTML offline ejecuta PLC V4 en RUN con scan observable',
+	/\bRUN\b/.test(panelV4) && /scan\s+[1-9]\d*/i.test(panelV4), panelV4.slice(0, 180));
+must('el monitor offline publica secuencia, TON y CTU V4',
+	/PROCESO:\s*IDLE/.test(panelV4) && /T_MEZCLA:\s*TON/.test(panelV4)
+		&& /LOTES:\s*CTU/.test(panelV4), panelV4.slice(0, 260));
+
 must('no hizo ninguna petición HTTP externa obligatoria', peticionesExternas.length === 0,
 	peticionesExternas.slice(0, 3).join(' | '));
 
