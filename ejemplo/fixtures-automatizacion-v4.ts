@@ -47,11 +47,12 @@ const carga24 = (id: string, tipo: 'motor' | 'valvula' | 'piloto', designacion: 
 export function fixtureAutomatizacionSecuencialV4(): Proyecto {
 	const p = crearProyecto('Fixture V4 — proceso secuencial de tanque', { frecuenciaHz: 50, temperaturaAmbienteC: 25 });
 	p.hojas = [{ id: 'h1', numero: 1, titulo: 'PLC V4 · secuencia de tanque' }];
-	const salidas = ['DO_FILL', 'DO_AGITATE', 'DO_DRAIN', 'DO_ALARM'];
+	const entradas = ['START', 'STOP', 'RESET', 'RESET_LOTES', 'NIVEL_ALTO', 'NIVEL_BAJO'];
+	const salidas = ['DO_FILL', 'DO_MIX', 'DO_DRAIN', 'DO_RUN', 'DO_COMPLETE', 'DO_ALARM'];
 	const plc: Dispositivo = {
 		id: 'plc', tipo: 'plc', designacion: '-A1', congelado: true,
 		descripcion: 'PLC V4 · secuencia, temporizador, interlocks y alarmas',
-		bornes: [...bornes(['+24', '0V']), ...bornes(['START', 'STOP', 'RESET', 'NIVEL_ALTO', 'NIVEL_BAJO'], 'senal'), ...bornes(salidas, 'senal')],
+		bornes: [...bornes(['+24', '0V']), ...bornes(entradas, 'senal'), ...bornes(salidas, 'senal')],
 		comportamiento: {
 			version: 1, clase: 'controlador', alimentacion: { entradas: ['+24'], retornos: ['0V'] },
 			salidasDigitales: salidas.map((borne) => ({ borne, comun: '+24' })), salidasAnalogicas: [],
@@ -59,22 +60,33 @@ export function fixtureAutomatizacionSecuencialV4(): Proyecto {
 		programaPLC: {
 			version: 1, lenguaje: 'tablerostudio-plc-v4', periodoScanMs: 100, modoInicial: 'RUN',
 			FUENTE: [
-				'SEQUENCE PROCESO INITIAL REPOSO',
-				'TRANS PROCESO REPOSO -> LLENANDO WHEN RISING(START) AND NOT STOP PRIORITY 10',
-				'TRANS PROCESO LLENANDO -> AGITANDO WHEN NIVEL_ALTO PRIORITY 10',
-				'TON T_AGITA IN PROCESO.AGITANDO PT 2s',
-				'TRANS PROCESO AGITANDO -> VACIANDO WHEN T_AGITA.Q PRIORITY 10',
-				'TRANS PROCESO VACIANDO -> REPOSO WHEN NIVEL_BAJO PRIORITY 10',
+				'SEQUENCE PROCESO INITIAL IDLE',
+				'TRANS PROCESO IDLE -> FALLO WHEN NIVEL_ALTO AND NIVEL_BAJO PRIORITY 200',
+				'TRANS PROCESO IDLE -> LLENANDO WHEN RISING(START) AND NOT STOP PRIORITY 10',
+				'TRANS PROCESO LLENANDO -> FALLO WHEN NIVEL_ALTO AND NIVEL_BAJO PRIORITY 200',
 				'TRANS PROCESO LLENANDO -> FALLO WHEN STOP PRIORITY 100',
-				'TRANS PROCESO AGITANDO -> FALLO WHEN STOP PRIORITY 100',
+				'TRANS PROCESO LLENANDO -> MEZCLANDO WHEN NIVEL_ALTO PRIORITY 10',
+				'TON T_MEZCLA IN PROCESO.MEZCLANDO PT 5s',
+				'TRANS PROCESO MEZCLANDO -> FALLO WHEN NIVEL_ALTO AND NIVEL_BAJO PRIORITY 200',
+				'TRANS PROCESO MEZCLANDO -> FALLO WHEN STOP PRIORITY 100',
+				'TRANS PROCESO MEZCLANDO -> VACIANDO WHEN T_MEZCLA.Q PRIORITY 10',
+				'TRANS PROCESO VACIANDO -> FALLO WHEN NIVEL_ALTO AND NIVEL_BAJO PRIORITY 200',
 				'TRANS PROCESO VACIANDO -> FALLO WHEN STOP PRIORITY 100',
-				'TRANS PROCESO FALLO -> REPOSO WHEN RESET PRIORITY 100',
+				'TRANS PROCESO VACIANDO -> COMPLETO WHEN NIVEL_BAJO PRIORITY 10',
+				'TRANS PROCESO COMPLETO -> FALLO WHEN NIVEL_ALTO AND NIVEL_BAJO PRIORITY 200',
+				'TRANS PROCESO COMPLETO -> IDLE WHEN RISING(RESET) PRIORITY 100',
+				'TRANS PROCESO FALLO -> IDLE WHEN RISING(RESET) AND NOT (NIVEL_ALTO AND NIVEL_BAJO) PRIORITY 100',
+				'CTU LOTES CU PROCESO.COMPLETO RESET RESET_LOTES PV 3',
 				'DO_FILL := PROCESO.LLENANDO',
-				'DO_AGITATE := PROCESO.AGITANDO',
+				'DO_MIX := PROCESO.MEZCLANDO',
 				'DO_DRAIN := PROCESO.VACIANDO',
+				'DO_RUN := PROCESO.LLENANDO OR PROCESO.MEZCLANDO OR PROCESO.VACIANDO',
+				'DO_COMPLETE := PROCESO.COMPLETO OR LOTES.Q',
 				'DO_ALARM := PROCESO.FALLO',
-				'INTERLOCK DO_FILL REQUIRE NOT NIVEL_ALTO MESSAGE "Nivel alto: llenado inhibido"',
-				'INTERLOCK DO_DRAIN REQUIRE NOT NIVEL_BAJO MESSAGE "Nivel bajo: vaciado inhibido"',
+				'INTERLOCK DO_FILL REQUIRE NOT NIVEL_ALTO MESSAGE "Llenado bloqueado: nivel alto"',
+				'INTERLOCK DO_DRAIN REQUIRE NOT NIVEL_BAJO MESSAGE "Descarga bloqueada: nivel bajo"',
+				'INTERLOCK DO_MIX REQUIRE NIVEL_ALTO MESSAGE "Agitador bloqueado: falta nivel alto"',
+				'ALARM FALLO_SENSOR WHEN NIVEL_ALTO AND NIVEL_BAJO SEVERITY TRIP LATCHED MESSAGE "Sensores de nivel contradictorios"',
 				'ALARM PARADA_PROCESO WHEN PROCESO.FALLO SEVERITY TRIP LATCHED MESSAGE "Proceso detenido por STOP"',
 			].join('\n'),
 		},
@@ -82,21 +94,26 @@ export function fixtureAutomatizacionSecuencialV4(): Proyecto {
 	p.dispositivos = [
 		fuente24(), plc,
 		mando('start', '-S1', 'START'), mando('stop', '-S0', 'STOP'), mando('reset', '-S2', 'RESET / rearme'),
+		mando('reset-lotes', '-S3', 'RESET contador de lotes'),
 		sensorNivel('nivel-alto', '-B1', 'Nivel alto'), sensorNivel('nivel-bajo', '-B2', 'Nivel bajo'),
 		carga24('valvula-llenado', 'valvula', '-Y1', 'Válvula de llenado'),
 		carga24('agitador', 'motor', '-M1', 'Agitador'),
 		carga24('valvula-vaciado', 'valvula', '-Y2', 'Válvula de vaciado'),
-		{ ...carga24('piloto-fallo', 'piloto', '-H1', 'Piloto rojo de fallo'), colorSenal: 'rojo' },
+		{ ...carga24('piloto-marcha', 'piloto', '-H1', 'Piloto verde de marcha'), colorSenal: 'verde' },
+		{ ...carga24('piloto-completo', 'piloto', '-H2', 'Piloto blanco de ciclo completo'), colorSenal: 'blanco' },
+		{ ...carga24('piloto-fallo', 'piloto', '-H3', 'Piloto rojo de fallo'), colorSenal: 'rojo' },
 	];
 	p.conductores = [
 		cable('w-plc-p', ['ps24', '+24'], ['plc', '+24'], 'rojo'), cable('w-plc-n', ['ps24', '0V'], ['plc', '0V'], 'azul'),
-		...(['start', 'stop', 'reset', 'nivel-alto', 'nivel-bajo'] as const).flatMap((id, i) => [
+		...(['start', 'stop', 'reset', 'reset-lotes', 'nivel-alto', 'nivel-bajo'] as const).flatMap((id, i) => [
 			cable(`w-${id}-p`, ['ps24', '+24'], [id, '1'], 'rojo'),
-			cable(`w-${id}-di`, [id, '2'], ['plc', ['START', 'STOP', 'RESET', 'NIVEL_ALTO', 'NIVEL_BAJO'][i]]),
+			cable(`w-${id}-di`, [id, '2'], ['plc', entradas[i]]),
 		]),
 		cable('w-fill', ['plc', 'DO_FILL'], ['valvula-llenado', '+']), cable('w-fill-n', ['valvula-llenado', '-'], ['ps24', '0V'], 'azul'),
-		cable('w-agit', ['plc', 'DO_AGITATE'], ['agitador', '+']), cable('w-agit-n', ['agitador', '-'], ['ps24', '0V'], 'azul'),
+		cable('w-agit', ['plc', 'DO_MIX'], ['agitador', '+']), cable('w-agit-n', ['agitador', '-'], ['ps24', '0V'], 'azul'),
 		cable('w-drain', ['plc', 'DO_DRAIN'], ['valvula-vaciado', '+']), cable('w-drain-n', ['valvula-vaciado', '-'], ['ps24', '0V'], 'azul'),
+		cable('w-run', ['plc', 'DO_RUN'], ['piloto-marcha', '+']), cable('w-run-n', ['piloto-marcha', '-'], ['ps24', '0V'], 'azul'),
+		cable('w-complete', ['plc', 'DO_COMPLETE'], ['piloto-completo', '+']), cable('w-complete-n', ['piloto-completo', '-'], ['ps24', '0V'], 'azul'),
 		cable('w-alarm', ['plc', 'DO_ALARM'], ['piloto-fallo', '+']), cable('w-alarm-n', ['piloto-fallo', '-'], ['ps24', '0V'], 'azul'),
 	];
 	p.gabinete = {
@@ -108,9 +125,12 @@ export function fixtureAutomatizacionSecuencialV4(): Proyecto {
 			{ dispositivoId: 'start', x: 355, y: 80, ancho: 42, alto: 80, rielId: 'r1' },
 			{ dispositivoId: 'stop', x: 410, y: 80, ancho: 42, alto: 80, rielId: 'r1' },
 			{ dispositivoId: 'reset', x: 465, y: 80, ancho: 42, alto: 80, rielId: 'r1' },
-			{ dispositivoId: 'nivel-alto', x: 525, y: 80, ancho: 48, alto: 80, rielId: 'r1' },
-			{ dispositivoId: 'nivel-bajo', x: 585, y: 80, ancho: 48, alto: 80, rielId: 'r1' },
-			{ dispositivoId: 'piloto-fallo', x: 650, y: 85, ancho: 42, alto: 72, rielId: 'r1' },
+			{ dispositivoId: 'reset-lotes', x: 520, y: 80, ancho: 42, alto: 80, rielId: 'r1' },
+			{ dispositivoId: 'nivel-alto', x: 570, y: 80, ancho: 42, alto: 80, rielId: 'r1' },
+			{ dispositivoId: 'nivel-bajo', x: 620, y: 80, ancho: 42, alto: 80, rielId: 'r1' },
+			{ dispositivoId: 'piloto-marcha', x: 665, y: 75, ancho: 28, alto: 60, rielId: 'r1' },
+			{ dispositivoId: 'piloto-completo', x: 697, y: 75, ancho: 28, alto: 60, rielId: 'r1' },
+			{ dispositivoId: 'piloto-fallo', x: 729, y: 75, ancho: 28, alto: 60, rielId: 'r1' },
 			{ dispositivoId: 'valvula-llenado', x: 125, y: 345, ancho: 60, alto: 80 },
 			{ dispositivoId: 'agitador', x: 345, y: 340, ancho: 76, alto: 90 },
 			{ dispositivoId: 'valvula-vaciado', x: 565, y: 345, ancho: 60, alto: 80 },
@@ -142,7 +162,7 @@ export function fixturePIDV4(): Proyecto {
 			programaPLC: { version: 1, lenguaje: 'tablerostudio-plc-v4', periodoScanMs: 100, modoInicial: 'RUN',
 				etiquetas: [
 					{ nombre: 'PV', tipo: 'REAL', io: { clase: 'AI', borne: 'AI1' } },
-					{ nombre: 'CV', tipo: 'REAL', io: { clase: 'AO', borne: 'AO1' } },
+					{ nombre: 'CV', tipo: 'REAL', io: { clase: 'AO', borne: 'AO1' }, seguro: 0 },
 				],
 				FUENTE: ['VAR REAL SP = 60', 'PID NIVEL PV PV SP SP OUT CV KP 2 TI 8 TD 0 MIN 0 MAX 100 BAD SAFE'].join('\n') },
 		},

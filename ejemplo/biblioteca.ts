@@ -1161,12 +1161,12 @@ export const EJEMPLOS: EjemploTablero[] = [
 	{
 		id: 'fixture-automatizacion-v4',
 		titulo: 'Fixture V4: PLC y proceso secuencial',
-		resumen: 'START, llenado, agitación temporizada, vaciado, interlocks, alarma y diagnóstico por scan.',
-		queHace: 'Ejecuta una secuencia de tanque con imágenes DI/DO, prioridad explícita de STOP y salidas físicas cableadas.',
+		resumen: 'START, llenado, mezcla temporizada, vaciado, contador de lotes, interlocks y alarmas por scan.',
+		queHace: 'Ejecuta una secuencia completa de tanque con imágenes DI/DO, prioridad explícita de STOP y salidas físicas cableadas.',
 		comoFunciona: [
-			'START lleva REPOSO a LLENANDO; el nivel alto cambia a AGITANDO.',
-			'T_AGITA gobierna el paso a VACIANDO y el nivel bajo devuelve a REPOSO.',
-			'STOP tiene prioridad, inhibe salidas y enclava una alarma reconocible/rearmable.',
+			'START por flanco lleva IDLE a LLENANDO; el nivel alto cambia a MEZCLANDO.',
+			'T_MEZCLA (TON 5 s) gobierna el paso a VACIANDO y el nivel bajo lleva a COMPLETO.',
+			'LOTES cuenta cada COMPLETO por flanco; STOP o sensores contradictorios llevan a FALLO seguro.',
 		],
 		aprender: [
 			'Pausa el PLC, ejecuta un scan y compara imagen de entradas, estado de secuencia y DO publicadas.',
