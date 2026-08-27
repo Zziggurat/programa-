@@ -90,7 +90,10 @@ for (const b of par) {
 
 const n0 = await nConductores();
 await page.mouse.click(par[0].x, par[0].y); await page.waitForTimeout(200);
-must('tocar un borne inicia el cableado', /otro borne/i.test(await toast()));
+const inicioCableado = await qa('estadoInteraccion');
+must('tocar un borne inicia el cableado',
+	inicioCableado.cableando === `${par[0].dispositivo}.${par[0].borne}` && inicioCableado.goma.montado,
+	`${inicioCableado.cableando ?? 'sin origen'} · goma=${inicioCableado.goma.montado} · ${await toast()}`);
 await page.mouse.click(par[1].x, par[1].y); await page.waitForTimeout(300);
 must('tocar el 2º borne crea el cable', (await nConductores()) === n0 + 1);
 must('el cable nuevo se dibuja (sigue sin fantasmas)', (await qa('cablesDibujados')) === n0 + 1);
