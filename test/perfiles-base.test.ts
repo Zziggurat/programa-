@@ -26,7 +26,7 @@ const t = (id: string, rol: TerminalPerfilComponente['rol'], grupo?: string): Te
 test('el catálogo base cubre exactamente los 22 tipos y declara fidelidad honesta', () => {
 	assert.deepEqual(LISTA_PERFILES_BASE.map((p) => p.id).sort(), TIPOS.sort());
 	for (const p of LISTA_PERFILES_BASE) {
-		assert.match(p.fidelidad.nivel, /^(completa-v4|completa-v3|completa-v2|completa-v1|parcial|sin-comportamiento)$/);
+		assert.match(p.fidelidad.nivel, /^(completa-v5|completa-v4|completa-v3|completa-v2|completa-v1|parcial|sin-comportamiento)$/);
 		assert.ok(p.fidelidad.participacion.length > 5);
 		assert.ok(p.fidelidad.limitacion.length > 5);
 	}

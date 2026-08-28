@@ -62,6 +62,11 @@ test('fixture V5 selectividad: la falla usa Z real y explica ambas protecciones'
 	assert.ok(r.fisica.protecciones.get('q2')!.fallas.includes('cc-z1'));
 	assert.equal(r.fisica.selectividad.length, 1);
 	assert.match(r.fisica.selectividad[0].explicacion, /ventana|bandas|proteccion/i);
+	const tierra = simular(fixtureSelectividadV5(), { z1: { fallasFisicas: [{
+		id: 'cc-pe-z1', tipo: 'L_PE', nodoA: 'z1::L', nodoB: 'z1::PE',
+	}] } });
+	assert.ok(tierra.fisica.fallas[0].iccA && magnitud(tierra.fisica.fallas[0].iccA!) > 100);
+	assert.ok(tierra.fisica.red.ramas.has('referencia-pe:red'));
 });
 
 test('fixture V3 reutilizado: el lazo 4-20 publica carga fisica y conserva 12 mA a 50 C', () => {
@@ -89,6 +94,7 @@ test('V5 persistencia: configuracion fisica sobrevive guardar/cargar y los resul
 	assert.doesNotMatch(texto, /iccA|potenciaFuentesW|tensionTerminalV/);
 	const cargado = cargarProyecto(texto).proyecto;
 	assert.equal(cargado.dispositivos.find((d) => d.id === 'red')!.fisica?.fuente?.rOhm, 0.5);
+	assert.equal(cargado.dispositivos.find((d) => d.id === 'red')!.fisica?.fuente?.referenciaPe, 'PE');
 	assert.equal(cargado.dispositivos.find((d) => d.id === 'red')!.fisica?.fuente?.sistema, 'AC_MONOFASICA');
 	assert.equal(cargado.conductores.find((c) => c.id === 'w-q1-q2')!.fisica?.material, 'COBRE');
 	assert.equal(cargado.conductores.find((c) => c.id === 'w-q1-q2')!.fisica?.longitudManualM, 10);

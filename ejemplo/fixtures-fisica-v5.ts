@@ -86,7 +86,6 @@ export function fixtureMotorTrifasicoV5(): Proyecto {
 			id: 'red', tipo: 'otro', clase: 'W', campo: true, congelado: true, designacion: '-W1',
 			descripcion: 'Fuente trifasica 400/230 V, 50 Hz', tensionNominal: 400,
 			bornes: [borne('L1', 'L', 5), borne('L2', 'L', 5), borne('L3', 'L', 5), borne('N', 'N', 5), borne('PE', 'PE', 5)],
-			puentesInternos: [['N', 'PE']],
 			fisica: { version: 1, fuente: { sistema: 'AC_TRIFASICA', tensionNominalV: 400, frecuenciaHz: 50,
 				referencia: 'N', fases: [{ borne: 'L1', fase: 'L1' }, { borne: 'L2', fase: 'L2' }, { borne: 'L3', fase: 'L3' }],
 				rOhm: 0.08, xOhm: 0.04 } },
@@ -130,9 +129,9 @@ export function fixtureMotorTrifasicoV5(): Proyecto {
 		cable('w-k-m1', ['km1', '2/T1'], ['m1', 'U'], 18, 4, 'marrón'),
 		cable('w-k-m2', ['km1', '4/T2'], ['m1', 'V'], 18, 4, 'negro'),
 		cable('w-k-m3', ['km1', '6/T3'], ['m1', 'W'], 18, 4, 'gris'),
-		cable('w-mando-l', ['q1', '2'], ['s-run', '13'], 4, 1, 'rojo'),
-		cable('w-mando-k', ['s-run', '14'], ['km1', 'A1'], 4, 1, 'rojo'),
-		cable('w-mando-n', ['km1', 'A2'], ['red', 'N'], 4, 1, 'azul'),
+		cable('w-mando-l', ['q1', '2'], ['s-run', '13'], 4, 2.5, 'rojo'),
+		cable('w-mando-k', ['s-run', '14'], ['km1', 'A1'], 4, 2.5, 'rojo'),
+		cable('w-mando-n', ['km1', 'A2'], ['red', 'N'], 4, 2.5, 'azul'),
 		cable('w-pe-motor', ['red', 'PE'], ['m1', 'PE'], 18, 4, 'verde/amarillo'),
 	];
 	p.gabinete = gabinete([
@@ -151,9 +150,9 @@ export function fixtureSelectividadV5(): Proyecto {
 		{
 			id: 'red', tipo: 'otro', clase: 'W', campo: true, congelado: true, designacion: '-W1',
 			descripcion: 'Fuente 230 V con union local N-PE declarada', tensionNominal: 230,
-			bornes: [borne('L', 'L', 6), borne('N', 'N', 6), borne('PE', 'PE', 6)], puentesInternos: [['N', 'PE']],
+			bornes: [borne('L', 'L', 6), borne('N', 'N', 6), borne('PE', 'PE', 6)],
 			fisica: { version: 1, fuente: { sistema: 'AC_MONOFASICA', tensionNominalV: 230, frecuenciaHz: 50,
-				referencia: 'N', fases: [{ borne: 'L', fase: 'L' }], rOhm: 0.5, xOhm: 0.1 } },
+				referencia: 'N', referenciaPe: 'PE', fases: [{ borne: 'L', fase: 'L' }], rOhm: 0.5, xOhm: 0.1 } },
 		},
 		proteccion('q1', [['1', '2']], 32, 'D'),
 		proteccion('q2', [['1', '2']], 10, 'B'),

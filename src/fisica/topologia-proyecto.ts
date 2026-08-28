@@ -224,6 +224,12 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			id: `puente:${d.id}:${i}`, de: clave(d.id, par[0]), a: clave(d.id, par[1]), zOhm: Z_CONTACTO_OHM,
 			tipo: 'CONTACTO', dispositivoId: d.id, origen: 'CONFIGURADO',
 		});
+		const referenciaPe = d.fisica?.fuente?.referenciaPe;
+		if (referenciaPe) ramas.push({
+			id: `referencia-pe:${d.id}`, de: clave(d.id, d.fisica!.fuente!.referencia),
+			a: clave(d.id, referenciaPe), zOhm: Z_CONTACTO_OHM,
+			tipo: 'CONTACTO', dispositivoId: d.id, origen: 'CONFIGURADO',
+		});
 	}
 	const fuentes: FuenteRedFisica[] = proyecto.dispositivos.flatMap(fuenteDesde);
 	for (const d of proyecto.dispositivos) fuentes.push(...fuenteTransformadorDesde(d, contexto.bornesEnergizados, diagnosticos));

@@ -72,6 +72,10 @@ resistencia anormal. La falla franca usa 1 mΩ para evitar singularidad numéric
 otra Zf. Icc se obtiene como `Vprefalla / (Zth + Zf)`. Sin impedancia de fuente, Icc queda
 `NO_MODELADO`: nunca se inventa una cifra exacta.
 
+Un camino PE solo existe si está declarado. `fuente.referenciaPe` representa una unión local de la
+referencia con el borne PE de esa fuente, separada de los puentes funcionales del tablero; no crea
+una tierra perfecta universal ni afirma modelar TN-S, TT o IT.
+
 Conductor abierto y terminal flojo modifican la misma red resuelta. Un cortocircuito entrega la
 corriente prospectiva a la protección; un disparo instantáneo abre la topología y la red posterior
 queda sin corriente. El runtime conserva el cálculo prospectivo del evento como `DESPEJADA` para

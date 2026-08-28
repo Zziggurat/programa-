@@ -26,6 +26,8 @@ export interface ConfiguracionFuenteFisica {
 	tensionNominalV: number;
 	frecuenciaHz?: number;
 	referencia: string;
+	/** Unión local explícita de la referencia con un borne PE; nunca se presume globalmente. */
+	referenciaPe?: string;
 	fases: { borne: string; fase: 'POSITIVO' | 'L' | 'L1' | 'L2' | 'L3'; anguloDeg?: number }[];
 	rOhm?: number;
 	xOhm?: number;
@@ -130,7 +132,7 @@ export function leerFisicaDispositivo(v: unknown): ConfiguracionFisicaDispositiv
 			return borne && fase ? [{ borne, fase, anguloDeg }] : [];
 		}) : [];
 		if (sistema && tensionNominalV !== undefined && referencia && fases.length) fuente = {
-			sistema, tensionNominalV, referencia, fases,
+			sistema, tensionNominalV, referencia, referenciaPe: texto(v.fuente.referenciaPe), fases,
 			frecuenciaHz: numero(v.fuente.frecuenciaHz, false), rOhm: numero(v.fuente.rOhm), xOhm: numero(v.fuente.xOhm),
 		};
 	}
