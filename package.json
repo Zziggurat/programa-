@@ -21,6 +21,7 @@
     "qa:componentes": "vite build app --mode qa && node qa/todas.mjs componentes-personalizados",
     "qa:simulacion": "vite build app --mode qa && node qa/todas.mjs simulacion-industrial",
 	"qa:automatizacion": "vite build app --mode qa && node qa/todas.mjs automatizacion-plc",
+	"qa:fisica": "vite build app --mode qa && node qa/todas.mjs fisica-electrica",
     "qa:agarre": "node qa/agarre.mjs",
     "qa:general": "node qa/general.mjs",
     "qa:tablero": "node qa/tablero-desde-cero.mjs",
