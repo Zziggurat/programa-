@@ -79,6 +79,7 @@ import type { FallaFisicaRuntime } from '../fisica/fallas.js';
 import { resistenciaCaminoAnalogico, resolverLazo420, resolverSenal010,
 	type ResultadoLazoAnalogicoFisico } from '../fisica/analogicas.js';
 import { calcularPlacaMotor } from '../fisica/motores.js';
+import type { DiagnosticoVfdFisico, EstadoVfdParaFisica } from '../fisica/variadores.js';
 
 /** Estado que el usuario controla de cada aparato. */
 export interface EstadoAparato {
@@ -196,6 +197,8 @@ export interface EstadoVariador {
 export interface EstadoMotor {
 	dispositivoId: string;
 	designacion: string;
+	/** VFD que alimenta las fases actuales, cuando todas proceden de una misma salida. */
+	alimentadoPorVariadorId?: string;
 	estado: 'detenido' | 'arrancando' | 'marcha' | 'desacelerando' | 'falla';
 	alimentado: boolean;
 	/** Fases distintas exigidas por el perfil funcional, no por la carcasa ni por `tipo`. */
@@ -1414,6 +1417,7 @@ function estadoMotor(
 		velocidadObjetivo,
 		rpmSincronas: rpmSincronas === undefined ? undefined : Math.round(rpmSincronas),
 		rpmOrigen: polosMotor ? 'estimado' as const : 'no-disponible' as const,
+		alimentadoPorVariadorId: variador?.dispositivoId,
 	};
 
 	if (reloj) reloj.memoria.motores ??= {};
@@ -2460,6 +2464,7 @@ export function simular(
 		conexionesCerradas: conexionesFisicas, bornesEnergizados: new Set(vivos.keys()),
 		fallas: Object.values(estado).flatMap((s) => s.fallasFisicas ?? []),
 		motores: new Map(motores.map((m) => [m.dispositivoId, m])),
+		variadores: new Map(variadores.map((v) => [v.dispositivoId, v satisfies EstadoVfdParaFisica])),
 		longitudesM: longitudesFisicas, seccionesMm2: seccionesFisicas,
 	};
 	let fisica = simularFisicaProyecto(proyecto, contextoFisico);
@@ -2476,6 +2481,38 @@ export function simular(
 	if (recalcularMotores) fisica = simularFisicaProyecto(proyecto, {
 		...contextoFisico, motores: new Map(motores.map((m) => [m.dispositivoId, m])),
 	});
+	const diagnosticosVfdActivos = new Map<string, DiagnosticoVfdFisico[]>();
+	let recalcularVfd = false;
+	for (const variador of variadores) {
+		const vf = fisica.variadores.get(variador.dispositivoId); if (!vf) continue;
+		const perdida = vf.diagnosticos.some((d) => d.codigo === 'VFD_PHASE_LOSS');
+		const subtension = vf.diagnosticos.some((d) => d.codigo === 'VFD_UNDERVOLTAGE');
+		const sobrecorriente = vf.diagnosticos.some((d) => d.codigo === 'VFD_OVERCURRENT' || d.codigo === 'VFD_OVERLOAD');
+		if (!perdida && !subtension && !sobrecorriente) continue;
+		diagnosticosVfdActivos.set(variador.dispositivoId, vf.diagnosticos);
+		variador.estado = 'falla'; variador.falloEnclavado = true; variador.frecuenciaHz = 0; variador.frecuenciaObjetivoHz = 0;
+		variador.motivoFalla = perdida ? 'perdida-fase' : subtension ? 'subtension' : 'sobrecarga';
+		if (reloj) {
+			reloj.memoria.variadores ??= {};
+			reloj.memoria.variadores[variador.dispositivoId] = {
+				...(reloj.memoria.variadores[variador.dispositivoId] ?? { actualizadoEn: reloj.ahora, frecuenciaHz: 0 }),
+				actualizadoEn: reloj.ahora, frecuenciaHz: 0, falloEnclavado: true, motivoFalla: variador.motivoFalla,
+			};
+		}
+		for (const motor of motores) if (motor.alimentadoPorVariadorId === variador.dispositivoId) {
+			motor.estado = motor.velocidadActual > 0 ? 'desacelerando' : 'detenido'; motor.velocidadObjetivo = 0;
+		}
+		recalcularVfd = true;
+	}
+	if (recalcularVfd) {
+		fisica = simularFisicaProyecto(proyecto, { ...contextoFisico,
+			motores: new Map(motores.map((m) => [m.dispositivoId, m])),
+			variadores: new Map(variadores.map((v) => [v.dispositivoId, v])),
+		});
+		for (const [id, diagnosticos] of diagnosticosVfdActivos) {
+			const vf = fisica.variadores.get(id); if (vf) { vf.diagnosticos = diagnosticos; vf.estado = 'falla'; }
+		}
+	}
 	fisica.lazosAnalogicos = entradasAnalogicas.flatMap((e) => e.fisica ? [e.fisica] : []);
 	return {
 		vivos, conductoresVivos, activos, funcionando, avisos, analogicas, salidasAnalogicas,

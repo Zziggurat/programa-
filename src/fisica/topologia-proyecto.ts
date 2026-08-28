@@ -17,6 +17,8 @@ import type {
 import type { ResultadoLazoAnalogicoFisico } from './analogicas.js';
 import { calcularPlacaMotor, factorCorrienteMotor,
 	type EstadoMotorParaFisica, type ResultadoMotorFisico } from './motores.js';
+import { tensionSalidaVfd, validarVfdFisico,
+	type EstadoVfdParaFisica, type ResultadoVfdFisico } from './variadores.js';
 
 const Z_CONTACTO_OHM = complejo(1e-6);
 
@@ -27,6 +29,7 @@ export interface ContextoTopologiaFisica {
 	fallas?: readonly FallaFisicaRuntime[];
 	bornesEnergizados?: ReadonlySet<string>;
 	motores?: ReadonlyMap<string, EstadoMotorParaFisica>;
+	variadores?: ReadonlyMap<string, EstadoVfdParaFisica>;
 }
 
 export interface ResultadoConductorProyectoFisica extends ResultadoConductorFisico {
@@ -66,6 +69,7 @@ export interface ResultadoFisicaElectrica {
 	selectividad: CoordinacionFisicaProyecto[];
 	lazosAnalogicos: ResultadoLazoAnalogicoFisico[];
 	motores: Map<string, ResultadoMotorFisico>;
+	variadores: Map<string, ResultadoVfdFisico>;
 	diagnosticos: DiagnosticoFisica[];
 }
 
@@ -88,8 +92,59 @@ export function resultadoFisicaVacio(): ResultadoFisicaElectrica {
 		red: { nodos: new Map(), ramas: new Map(), cargas: new Map(), fuentes: new Map(), transformadores: new Map(), diagnosticos: [],
 			potenciaCargasW: 0, potenciaPerdidasW: 0, potenciaFuentesW: 0,
 			metricas: { nodos: 0, ramas: 0, iteraciones: 0, convergio: true, tiempoMs: 0, residuoKclA: 0, errorBalanceW: 0 } },
-		conductores: new Map(), protecciones: new Map(), fallas: [], selectividad: [], lazosAnalogicos: [], motores: new Map(), diagnosticos: [],
+		conductores: new Map(), protecciones: new Map(), fallas: [], selectividad: [], lazosAnalogicos: [],
+		motores: new Map(), variadores: new Map(), diagnosticos: [],
 	};
+}
+
+function fuentesVfdDesde(dispositivo: Dispositivo, estado: EstadoVfdParaFisica | undefined): FuenteRedFisica[] {
+	const config = dispositivo.fisica?.vfd; const perfil = resolverComportamiento(dispositivo);
+	if (!config || perfil?.clase !== 'variador' || !estado || !['marcha', 'decel'].includes(estado.estado)
+		|| estado.frecuenciaHz <= 0) return [];
+	const tensionLinea = tensionSalidaVfd(config, estado.frecuenciaHz);
+	const tensionFase = tensionLinea / Math.sqrt(3);
+	const neutro = `${dispositivo.id}::__salida_n_v6`;
+	return ([perfil.salida.u, perfil.salida.v, perfil.salida.w] as const).map((borne, i) => ({
+		id: `vfd-salida:${dispositivo.id}:${i}`, de: clave(dispositivo.id, borne), a: neutro,
+		tensionV: polar(tensionFase, [0, -120, 120][i] * Math.PI / 180),
+		zInternaOhm: complejo(config.rSalidaOhm ?? 0.01), origenImpedancia: 'ESTIMADO' as const,
+		frecuenciaHz: estado.frecuenciaHz,
+	}));
+}
+
+function cargasEntradaVfdDesde(
+	dispositivo: Dispositivo,
+	estado: EstadoVfdParaFisica | undefined,
+	proyecto: Proyecto,
+	motores: ReadonlyMap<string, EstadoMotorParaFisica> | undefined,
+): CargaRedFisica[] {
+	const config = dispositivo.fisica?.vfd; const perfil = resolverComportamiento(dispositivo);
+	if (!config || perfil?.clase !== 'variador' || !estado || estado.estado === 'falla' || estado.frecuenciaHz <= 0) return [];
+	const vout = tensionSalidaVfd(config, estado.frecuenciaHz);
+	let pout = 0;
+	for (const motor of proyecto.dispositivos) {
+		const cm = motor.fisica?.motor; const em = motores?.get(motor.id);
+		if (!cm || em?.alimentadoPorVariadorId !== dispositivo.id) continue;
+		const placa = calcularPlacaMotor(cm); const factor = factorCorrienteMotor(cm, em);
+		if (em.estado === 'arrancando' || em.motivoFalla === 'motor-bloqueado' || em.motivoFalla === 'perdida-fase') {
+			pout += Math.sqrt(cm.fases === 3 ? 3 : 1) * vout * placa.corrienteNominalUsadaA * factor * cm.factorPotencia;
+		} else pout += placa.potenciaEntradaNominalW * factor * (vout / Math.max(1e-9, cm.tensionNominalV)) ** 2;
+	}
+	if (!(pout > 0)) return [];
+	const pin = pout / config.eficiencia;
+	if (config.fasesEntrada === 1) {
+		const fase = perfil.alimentacion.fases[0]; const retorno = perfil.alimentacion.retornos[0];
+		if (!fase || !retorno) return [];
+		return [{ id: `vfd-entrada:${dispositivo.id}:0`, de: clave(dispositivo.id, fase), a: clave(dispositivo.id, retorno),
+			modelo: 'CONSTANT_PQ', potenciaVA: complejo(pin), tensionNominalV: config.tensionEntradaNominalV,
+			dispositivoId: dispositivo.id, origen: 'ESTIMADO' }];
+	}
+	const fases = perfil.alimentacion.fases.slice(0, 3); if (fases.length < 3) return [];
+	const vFase = config.tensionEntradaNominalV / Math.sqrt(3);
+	const rFase = vFase * vFase / Math.max(1e-9, pin / 3);
+	return fases.map((fase, i) => ({ id: `vfd-entrada:${dispositivo.id}:${i}`,
+		de: clave(dispositivo.id, fase), a: `${dispositivo.id}::__entrada_n_v6`, modelo: 'CONSTANT_Z' as const,
+		zOhm: complejo(rFase), dispositivoId: dispositivo.id, origen: 'ESTIMADO' as const }));
 }
 
 function cargaDesde(dispositivo: Dispositivo, estadoMotor?: EstadoMotorParaFisica): CargaRedFisica[] {
@@ -114,7 +169,13 @@ function cargaDesde(dispositivo: Dispositivo, estadoMotor?: EstadoMotorParaFisic
 			 * permite estrella flotante y hace que la caída de red limite la corriente. No pretende
 			 * ser el circuito electromagnético dq de una máquina real. */
 			const vFase = motor.tensionNominalV / (motor.fases === 3 ? Math.sqrt(3) : 1);
-			const z = vFase / Math.max(1e-9, placa.corrienteNominalUsadaA * factor);
+			/* Con V/f lineal, la reactancia equivalente cae con la frecuencia junto con la tensión.
+			 * Mantener Z fija hacía que un rotor bloqueado a 10 Hz pareciera consumir 1/5 de la
+			 * corriente: justo lo contrario del diagnóstico que debe ver el variador. Este escalado
+			 * conserva la corriente de ingeniería; no pretende modelar saturación ni el circuito dq. */
+			const escalaFrecuencia = estadoMotor?.alimentadoPorVariadorId
+				? Math.max(0.01, (estadoMotor.frecuenciaElectricaHz ?? motor.frecuenciaHz) / motor.frecuenciaHz) : 1;
+			const z = vFase / Math.max(1e-9, placa.corrienteNominalUsadaA * factor) * escalaFrecuencia;
 			const angulo = Math.acos(motor.factorPotencia);
 			return { ...comunes, modelo: 'CONSTANT_Z', zOhm: complejo(z * Math.cos(angulo), z * Math.sin(angulo)) };
 		});
@@ -242,6 +303,10 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 	const diagnosticos: DiagnosticoFisica[] = [];
 	const nodos = proyecto.dispositivos.flatMap((d) => d.bornes.map((b) => ({ id: clave(d.id, b.id), referencia: false })));
 	for (const d of proyecto.dispositivos) if (d.fisica?.carga?.fases || d.fisica?.motor?.fases === 3) nodos.push({ id: `${d.id}::__estrella_v5`, referencia: false });
+	for (const d of proyecto.dispositivos) if (d.fisica?.vfd) {
+		nodos.push({ id: `${d.id}::__salida_n_v6`, referencia: true });
+		if (d.fisica.vfd.fasesEntrada === 3) nodos.push({ id: `${d.id}::__entrada_n_v6`, referencia: false });
+	}
 	for (const d of proyecto.dispositivos) if (d.fisica?.fuente) {
 		const id = clave(d.id, d.fisica.fuente.referencia);
 		const nodo = nodos.find((n) => n.id === id); if (nodo) nodo.referencia = true;
@@ -306,6 +371,7 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 	}
 	const fuentes: FuenteRedFisica[] = proyecto.dispositivos.flatMap(fuenteDesde);
 	for (const d of proyecto.dispositivos) fuentes.push(...fuenteTransformadorDesde(d, contexto.bornesEnergizados, diagnosticos));
+	for (const d of proyecto.dispositivos) fuentes.push(...fuentesVfdDesde(d, contexto.variadores?.get(d.id)));
 	const transformadores = proyecto.dispositivos.flatMap((d) => transformadorAcopladoDesde(d, diagnosticos));
 	for (const d of proyecto.dispositivos) {
 		const t = d.fisica?.transformador;
@@ -316,7 +382,10 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			dispositivoId: d.id, origen: 'CONFIGURADO' });
 	}
 	const redBase: RedFisica = { nodos, ramas, fuentes, transformadores,
-		cargas: proyecto.dispositivos.flatMap((d) => cargaDesde(d, contexto.motores?.get(d.id))) };
+		cargas: proyecto.dispositivos.flatMap((d) => [
+			...cargaDesde(d, contexto.motores?.get(d.id)),
+			...cargasEntradaVfdDesde(d, contexto.variadores?.get(d.id), proyecto, contexto.motores),
+		]) };
 	/*
 	 * Abrir un conductor o aumentar la resistencia de un terminal no es solo un diagnostico:
 	 * cambia la matriz que se resuelve. Los cortocircuitos siguen usando Thevenin como corriente
@@ -369,7 +438,13 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		const tensionFase = cargasMotor.length ? cargasMotor.reduce((a, c) => a + magnitud(c.tensionV), 0) / cargasMotor.length : 0;
 		const tensionV = config.fases === 3 ? tensionFase * Math.sqrt(3) : tensionFase;
 		const diagnosticosMotor = [...placa.diagnosticos];
-		const tensionNominalFase = config.tensionNominalV / (config.fases === 3 ? Math.sqrt(3) : 1);
+		/* Un motor tras VFD no debe compararse siempre contra su tensión de placa: a 10 Hz el perfil
+		 * V/f ordena aproximadamente 1/5 de tensión. Usar 400 V como umbral fabricaba una pérdida de
+		 * fase y una subtensión sanas. La presencia sigue midiéndose fase por fase en la solución. */
+		const escalaVf = estadoMotor?.alimentadoPorVariadorId && estadoMotor.frecuenciaElectricaHz !== undefined
+			? Math.max(0, Math.min(1, estadoMotor.frecuenciaElectricaHz / config.frecuenciaHz)) : 1;
+		const tensionEsperadaV = config.tensionNominalV * escalaVf;
+		const tensionNominalFase = tensionEsperadaV / (config.fases === 3 ? Math.sqrt(3) : 1);
 		const fasesFisicasPresentes = cargasMotor.filter((c) => magnitud(c.tensionV) >= tensionNominalFase * 0.2).length;
 		const fasesPresentes = Math.min(estadoMotor?.fasesPresentes ?? config.fases, fasesFisicasPresentes);
 		if (fasesPresentes < config.fases) diagnosticosMotor.push({
@@ -378,7 +453,7 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			mensaje: 'RPM nulas con corriente de rotor bloqueado estimada.', origen: 'ESTIMADO' });
 		if (estadoMotor?.motivoFalla === 'sobrecarga') diagnosticosMotor.push({ codigo: 'SOBRECARGA_MECANICA',
 			mensaje: 'Carga mecánica de ensayo superior a la nominal.', origen: 'INYECTADO' });
-		if (tensionV > 0 && tensionV < config.tensionNominalV * (config.umbralSubtension ?? 0.9)) diagnosticosMotor.push({
+		if (tensionV > 0 && tensionV < tensionEsperadaV * (config.umbralSubtension ?? 0.9)) diagnosticosMotor.push({
 			codigo: 'UNDERVOLTAGE', mensaje: `${tensionV.toFixed(1)} V por debajo del umbral configurado.`, origen: 'CALCULADO' });
 		const aparente = magnitud(s); const bloqueado = estadoMotor?.motivoFalla === 'motor-bloqueado';
 		const fallaFisica = diagnosticosMotor.some((x) => ['PERDIDA_FASE', 'UNDERVOLTAGE', 'ROTOR_BLOQUEADO'].includes(x.codigo));
@@ -392,6 +467,37 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			corrienteNominalUsadaA: placa.corrienteNominalUsadaA,
 			estado: fallaFisica ? 'falla' : estadoMotor?.estado ?? 'marcha', diagnosticos: diagnosticosMotor,
 			origen: estadoMotor?.estado === 'arrancando' || estadoMotor?.estado === 'falla' ? 'ESTIMADO' : 'CALCULADO' });
+	}
+	const variadores = new Map<string, ResultadoVfdFisico>();
+	for (const d of proyecto.dispositivos) {
+		const config = d.fisica?.vfd; const perfil = resolverComportamiento(d);
+		if (!config || perfil?.clase !== 'variador') continue;
+		const estadoVfd = contexto.variadores?.get(d.id) ?? { estado: 'listo' as const, frecuenciaHz: 0, frecuenciaObjetivoHz: 0 };
+		const entradas = [...resultadoRed.cargas].filter(([id]) => id.startsWith(`vfd-entrada:${d.id}:`)).map(([, c]) => c);
+		const salidas = [...resultadoRed.fuentes].filter(([id]) => id.startsWith(`vfd-salida:${d.id}:`)).map(([, f]) => f);
+		const inputBornes = perfil.alimentacion.fases.slice(0, config.fasesEntrada);
+		const vEntradaFases = inputBornes.map((b) => resultadoRed.nodos.get(clave(d.id, b))?.tensionV).filter((v): v is { re: number; im: number } => !!v);
+		const tensionEntradaV = config.fasesEntrada === 3 ? (vEntradaFases.reduce((s, v) => s + magnitud(v), 0)
+			/ Math.max(1, vEntradaFases.length)) * Math.sqrt(3)
+			: vEntradaFases[0] && perfil.alimentacion.retornos[0]
+				? magnitud({ re: vEntradaFases[0].re - (resultadoRed.nodos.get(clave(d.id, perfil.alimentacion.retornos[0]))?.tensionV?.re ?? 0),
+					im: vEntradaFases[0].im - (resultadoRed.nodos.get(clave(d.id, perfil.alimentacion.retornos[0]))?.tensionV?.im ?? 0) }) : 0;
+		const potenciaEntradaW = entradas.reduce((s, c) => s + Math.max(0, c.potenciaVA.re), 0);
+		const potenciaSalidaW = salidas.reduce((s, f) => s + Math.max(0, f.potenciaEntregadaVA.re), 0);
+		const corrienteEntradaA = Math.max(0, ...entradas.map((c) => magnitud(c.corrienteA)));
+		const corrienteSalidaA = Math.max(0, ...salidas.map((f) => magnitud(f.corrienteEntregadaA)));
+		const tensionSalidaV = tensionSalidaVfd(config, estadoVfd.frecuenciaHz);
+		const diagnosticosVfd = validarVfdFisico(config);
+		if (tensionEntradaV > 0 && tensionEntradaV < config.tensionEntradaNominalV * (config.umbralSubtension ?? 0.85)) diagnosticosVfd.push({
+			codigo: 'VFD_UNDERVOLTAGE', mensaje: `${tensionEntradaV.toFixed(1)} V en entrada.`, origen: 'CALCULADO' });
+		if (config.limiteCorrienteA && corrienteSalidaA > config.limiteCorrienteA) diagnosticosVfd.push({
+			codigo: 'VFD_OVERCURRENT', mensaje: `${corrienteSalidaA.toFixed(2)} A supera ${config.limiteCorrienteA} A.`, origen: 'CALCULADO' });
+		if (config.fasesEntrada === 3 && vEntradaFases.length < 3) diagnosticosVfd.push({ codigo: 'VFD_PHASE_LOSS',
+			mensaje: `${vEntradaFases.length}/3 fases de entrada con tensión resoluble.`, origen: 'CALCULADO' });
+		variadores.set(d.id, { dispositivoId: d.id, tensionEntradaV, corrienteEntradaA, potenciaEntradaW,
+			tensionSalidaV, corrienteSalidaA, potenciaSalidaW, perdidasW: Math.max(0, potenciaEntradaW - potenciaSalidaW),
+			eficiencia: potenciaEntradaW > 1e-9 ? Math.max(0, Math.min(1, potenciaSalidaW / potenciaEntradaW)) : undefined,
+			frecuenciaSalidaHz: estadoVfd.frecuenciaHz, estado: estadoVfd.estado, diagnosticos: diagnosticosVfd, origen: 'ESTIMADO' });
 	}
 	const fallas = fallasRuntime.map((f) => resolverFalla(redPrefalla, f));
 	const selectividad: CoordinacionFisicaProyecto[] = [];
@@ -418,6 +524,6 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 				...analizarSelectividad(eAbajo, eArriba) });
 		}
 	}
-	return { activo, red: resultadoRed, conductores, protecciones, fallas, selectividad, motores,
+	return { activo, red: resultadoRed, conductores, protecciones, fallas, selectividad, motores, variadores,
 		lazosAnalogicos: [], diagnosticos: [...diagnosticos, ...resultadoRed.diagnosticos, ...fallas.flatMap((f) => f.diagnosticos)] };
 }

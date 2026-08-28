@@ -61,7 +61,9 @@ export interface EstadoMotorParaFisica {
 	rpmEstimada?: number;
 	fasesPresentes: number;
 	fasesRequeridas: 1 | 3;
+	frecuenciaElectricaHz?: number;
 	motivoFalla?: string;
+	alimentadoPorVariadorId?: string;
 }
 
 export interface ResultadoMotorFisico {

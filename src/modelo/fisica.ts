@@ -104,6 +104,21 @@ export interface ConfiguracionMotorFisico {
 	umbralSubtension?: number;
 }
 
+export interface ConfiguracionVfdFisico {
+	tensionEntradaNominalV: number;
+	fasesEntrada: 1 | 3;
+	potenciaNominalW: number;
+	eficiencia: number;
+	frecuenciaBaseHz: number;
+	frecuenciaMaxHz: number;
+	tensionSalidaMaxV: number;
+	corrienteNominalA?: number;
+	limiteCorrienteA?: number;
+	umbralSubtension?: number;
+	rSalidaOhm?: number;
+	perfil: 'V_F_LINEAL';
+}
+
 export interface ConfiguracionAnalogicaFisica {
 	burdenOhm?: number;
 	resistenciaSalidaOhm?: number;
@@ -119,6 +134,7 @@ export interface ConfiguracionFisicaDispositivo {
 	proteccion?: ConfiguracionProteccionFisica;
 	diferencial?: ConfiguracionDiferencialFisico;
 	motor?: ConfiguracionMotorFisico;
+	vfd?: ConfiguracionVfdFisico;
 	analogica?: ConfiguracionAnalogicaFisica;
 }
 
@@ -250,9 +266,26 @@ export function leerFisicaDispositivo(v: unknown): ConfiguracionFisicaDispositiv
 			umbralSubtension: numero(v.motor.umbralSubtension, false),
 		};
 	}
+	let vfd: ConfiguracionVfdFisico | undefined;
+	if (objeto(v.vfd)) {
+		const tensionEntradaNominalV = numero(v.vfd.tensionEntradaNominalV, false);
+		const fasesEntrada = v.vfd.fasesEntrada === 1 || v.vfd.fasesEntrada === 3 ? v.vfd.fasesEntrada : undefined;
+		const potenciaNominalW = numero(v.vfd.potenciaNominalW, false);
+		const eficiencia = numero(v.vfd.eficiencia, false);
+		const frecuenciaBaseHz = numero(v.vfd.frecuenciaBaseHz, false);
+		const frecuenciaMaxHz = numero(v.vfd.frecuenciaMaxHz, false);
+		const tensionSalidaMaxV = numero(v.vfd.tensionSalidaMaxV, false);
+		if (tensionEntradaNominalV && fasesEntrada && potenciaNominalW && eficiencia && eficiencia <= 1
+			&& frecuenciaBaseHz && frecuenciaMaxHz && tensionSalidaMaxV && v.vfd.perfil === 'V_F_LINEAL') vfd = {
+			tensionEntradaNominalV, fasesEntrada, potenciaNominalW, eficiencia, frecuenciaBaseHz,
+			frecuenciaMaxHz, tensionSalidaMaxV, perfil: 'V_F_LINEAL',
+			corrienteNominalA: numero(v.vfd.corrienteNominalA, false), limiteCorrienteA: numero(v.vfd.limiteCorrienteA, false),
+			umbralSubtension: numero(v.vfd.umbralSubtension, false), rSalidaOhm: numero(v.vfd.rSalidaOhm),
+		};
+	}
 	const analogica = sencillo<ConfiguracionAnalogicaFisica>(v.analogica, {
 		burdenOhm: {}, resistenciaSalidaOhm: {}, tensionMinimaTransmisorV: {}, tensionComplianceV: {},
 	});
-	const salida = { version: 1 as const, fuente, carga, transformador, proteccion, diferencial, motor, analogica };
-	return fuente || carga || transformador || proteccion || diferencial || motor || analogica ? salida : undefined;
+	const salida = { version: 1 as const, fuente, carga, transformador, proteccion, diferencial, motor, vfd, analogica };
+	return fuente || carga || transformador || proteccion || diferencial || motor || vfd || analogica ? salida : undefined;
 }
