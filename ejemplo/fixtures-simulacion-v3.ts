@@ -27,6 +27,8 @@ const fuente24 = (): Dispositivo => ({
 			{ borne: '0V', papel: 'retorno', tensionV: 24 },
 		],
 	},
+	fisica: { version: 1, fuente: { sistema: 'DC', tensionNominalV: 24, referencia: '0V',
+		fases: [{ borne: '+24', fase: 'POSITIVO' }], rOhm: 0.2 } },
 });
 
 /** 4–20 mA de temperatura → AI → ley 20…70 °C → AO 0–10 V → válvula modulante. */
@@ -49,6 +51,7 @@ export function fixtureInstrumentacionV3(): Proyecto {
 					variable: { magnitud: 'temperatura', unidad: '°C', minimo: 0, maximo: 100 },
 				},
 			},
+			fisica: { version: 1, analogica: { tensionComplianceV: 24, tensionMinimaTransmisorV: 10 } },
 		},
 		{
 			id: 'plc1', tipo: 'plc', designacion: '-A1', congelado: true,
@@ -73,6 +76,7 @@ export function fixtureInstrumentacionV3(): Proyecto {
 				],
 				salidasAnalogicas: [{ borne: 'AO1', referencia: 'AOC', unidad: 'V', rango: [0, 10] }],
 			},
+			fisica: { version: 1, analogica: { burdenOhm: 250 } },
 		},
 		{
 			id: 'yv1', tipo: 'valvula', designacion: '-YV1', congelado: true, campo: true,
@@ -96,8 +100,10 @@ export function fixtureInstrumentacionV3(): Proyecto {
 		cable('w-tt-n', ['ps24', '0V'], ['tt1', '0V'], 'azul'),
 		cable('w-plc-p', ['ps24', '+24'], ['plc1', '+24'], 'rojo'),
 		cable('w-plc-n', ['ps24', '0V'], ['plc1', '0V'], 'azul'),
-		cable('w-ai1', ['tt1', 'OUT'], ['plc1', 'AI1']),
-		cable('w-aic1', ['tt1', '0V'], ['plc1', 'AIC1'], 'azul'),
+		{ ...cable('w-ai1', ['tt1', 'OUT'], ['plc1', 'AI1']),
+			fisica: { material: 'COBRE', longitudManualM: 20, temperaturaC: 20 } },
+		{ ...cable('w-aic1', ['tt1', '0V'], ['plc1', 'AIC1'], 'azul'),
+			fisica: { material: 'COBRE', longitudManualM: 20, temperaturaC: 20 } },
 		cable('w-yv-p', ['ps24', '+24'], ['yv1', '+24'], 'rojo'),
 		cable('w-yv-n', ['ps24', '0V'], ['yv1', '0V'], 'azul'),
 		cable('w-ao1', ['plc1', 'AO1'], ['yv1', 'Y']),

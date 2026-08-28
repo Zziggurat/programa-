@@ -9,6 +9,7 @@ import { fixturePuertaSemantica } from './fixture-puerta.js';
 import { fixtureFallosIndustriales, fixtureVariadorV2 } from './fixtures-simulacion-v2.js';
 import { fixtureInstrumentacionV3, fixtureReferenciaVfdV3 } from './fixtures-simulacion-v3.js';
 import { fixtureAutomatizacionSecuencialV4, fixturePIDV4 } from './fixtures-automatizacion-v4.js';
+import { fixtureCaidaTensionV5, fixtureMotorTrifasicoV5, fixtureSelectividadV5 } from './fixtures-fisica-v5.js';
 import { tableroEjemplo } from './tablero-ejemplo.js';
 
 export interface EjemploTablero {
@@ -1188,6 +1189,37 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'Mueve el nivel y observa PV, calidad, saturación y AO sin una segunda verdad visual.',
 		],
 		crear: fixturePIDV4,
+	},
+	{
+		id: 'fixture-caida-v5',
+		titulo: 'Fixture V5: caída de tensión',
+		resumen: 'Fuente, cable de cobre y carga calculable para observar R, corriente, caída y pérdidas.',
+		queHace: 'Resuelve una carga resistiva de 23 ohm sobre tres tramos de cobre declarados. Longitud, sección y temperatura pertenecen al diseño; V, I y pérdidas pertenecen al runtime.',
+		comoFunciona: [
+			'La fuente declara 230 V y su impedancia interna; por eso la tensión y la Icc tienen procedencia explícita.',
+			'Q1 aporta continuidad y una curva genérica, sin afirmar certificación de fabricante.',
+			'Al aumentar longitud suben R, caída y pérdidas; al aumentar sección ocurre lo contrario.',
+		],
+		aprender: ['Energiza y abre Magnitudes físicas V5.', 'Compara potencia de fuente, carga, pérdidas y error de balance.'],
+		crear: fixtureCaidaTensionV5,
+	},
+	{
+		id: 'fixture-motor-trifasico-v5',
+		titulo: 'Fixture V5: motor trifásico',
+		resumen: 'Red 400 V, protección, contactor y motor PQ balanceado con fasores L1/L2/L3.',
+		queHace: 'El selector cierra el mando de KM1; el mismo contacto funcional incorpora los tres polos a la topología física.',
+		comoFunciona: ['Energiza y acciona S1.', 'KM1 conecta las tres fases desfasadas 120°.', 'El panel publica V, I, P, Q, S, PF, caída y pérdidas.'],
+		aprender: ['La tensión fase-neutro es 400/√3, no 400 V.', 'Abre S1 y comprueba que el motor queda en una isla sin tensión inventada.'],
+		crear: fixtureMotorTrifasicoV5,
+	},
+	{
+		id: 'fixture-selectividad-v5',
+		titulo: 'Fixture V5: cortocircuito y selectividad',
+		resumen: 'Q1 y Q2 en serie para ensayar Icc, ventanas de disparo y coordinación explicada.',
+		queHace: 'Calcula Thevenin desde el punto Z1 usando Z de fuente y cables, y compara las curvas genéricas de ambas protecciones.',
+		comoFunciona: ['Energiza.', 'Inyecta L-N o L-PE desde el panel.', 'Observa Vprefalla, Zth, Icc, ventanas y clasificación según el modelo V5.'],
+		aprender: ['La unión N-PE está declarada localmente: no representa un sistema de tierra completo.', 'La selectividad calculada no es una certificación.'],
+		crear: fixtureSelectividadV5,
 	},
 	{
 		id: 'fixture-referencia-vfd-v3',
