@@ -22,7 +22,7 @@ export const faseRad = (a: Complejo): number => Math.atan2(a.im, a.re);
 export const faseDeg = (a: Complejo): number => faseRad(a) * 180 / Math.PI;
 export function dividir(a: Complejo, b: Complejo): Complejo {
 	const d = magnitud2(b);
-	if (d <= TOLERANCIAS_FISICA.cero) throw new Error('DIVISION_COMPLEJA_POR_CERO');
+	if (d <= TOLERANCIAS_FISICA.cero ** 2) throw new Error('DIVISION_COMPLEJA_POR_CERO');
 	return { re: (a.re * b.re + a.im * b.im) / d, im: (a.im * b.re - a.re * b.im) / d };
 }
 export const escalar = (a: Complejo, factor: number): Complejo => ({ re: a.re * factor, im: a.im * factor });
@@ -32,4 +32,3 @@ export function polar(mag: number, anguloRad: number): Complejo {
 export function casiIgual(a: Complejo, b: Complejo, tolerancia = TOLERANCIAS_FISICA.comparacionTests): boolean {
 	return magnitud(restar(a, b)) <= tolerancia * Math.max(1, magnitud(a), magnitud(b));
 }
-

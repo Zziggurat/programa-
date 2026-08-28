@@ -7,6 +7,7 @@ import { animarSimulacion } from '../app/animacion-sim.js';
 import type { ComportamientoSimulacion } from '../src/modelo/comportamiento.js';
 import type { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import type { EstadoVariador, ResultadoSimulacion } from '../src/motores/simulacion.js';
+import { resultadoFisicaVacio } from '../src/fisica/topologia-proyecto.js';
 
 /*
  * `ui-simulacion` importa el módulo de diálogos, cuyo observador de modales se instala al cargar.
@@ -263,6 +264,7 @@ function resultado(parcial: Partial<ResultadoSimulacion> = {}): ResultadoSimulac
 		sensoresAnalogicos: [],
 		entradasAnalogicas: [],
 		actuadores: [],
+		fisica: resultadoFisicaVacio(),
 		...parcial,
 		motores: parcial.motores ?? [],
 	};

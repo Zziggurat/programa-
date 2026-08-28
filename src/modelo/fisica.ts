@@ -33,7 +33,10 @@ export interface ConfiguracionFuenteFisica {
 
 export interface ConfiguracionCargaFisica {
 	modelo: 'CONSTANT_Z' | 'CONSTANT_I' | 'CONSTANT_PQ';
-	terminales: [string, string];
+	/** Carga de dos hilos. */
+	terminales?: [string, string];
+	/** Carga trifasica balanceada; se crea un punto estrella interno flotante. */
+	fases?: [string, string, string];
 	rOhm?: number;
 	xOhm?: number;
 	corrienteA?: number;
@@ -137,8 +140,11 @@ export function leerFisicaDispositivo(v: unknown): ConfiguracionFisicaDispositiv
 			? v.carga.modelo as ConfiguracionCargaFisica['modelo'] : undefined;
 		const terminales = Array.isArray(v.carga.terminales) && v.carga.terminales.length === 2
 			? v.carga.terminales.map(texto) : [];
-		if (modelo && terminales[0] && terminales[1]) carga = {
-			modelo, terminales: [terminales[0], terminales[1]], rOhm: numero(v.carga.rOhm, false),
+		const fases = Array.isArray(v.carga.fases) && v.carga.fases.length === 3 ? v.carga.fases.map(texto) : [];
+		if (modelo && ((terminales[0] && terminales[1]) || (fases[0] && fases[1] && fases[2]))) carga = {
+			modelo, terminales: terminales[0] && terminales[1] ? [terminales[0], terminales[1]] : undefined,
+			fases: fases[0] && fases[1] && fases[2] ? [fases[0], fases[1], fases[2]] : undefined,
+			rOhm: numero(v.carga.rOhm, false),
 			xOhm: typeof v.carga.xOhm === 'number' && Number.isFinite(v.carga.xOhm) ? v.carga.xOhm : undefined,
 			corrienteA: numero(v.carga.corrienteA), factorPotencia: numero(v.carga.factorPotencia),
 			pW: typeof v.carga.pW === 'number' && Number.isFinite(v.carga.pW) ? v.carga.pW : undefined,

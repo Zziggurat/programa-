@@ -74,6 +74,8 @@ import {
 } from './logica.js';
 import { compilarProgramaPLC, type IOProgramaPLC, type ProgramaPLCCompilado } from './plc-compilador.js';
 import { actualizarRuntimePLC, configLegacyPLC, crearRuntimePLC, esperasLegacyPLC } from './plc-runtime.js';
+import { simularFisicaProyecto, type ResultadoFisicaElectrica } from '../fisica/topologia-proyecto.js';
+import type { FallaFisicaRuntime } from '../fisica/fallas.js';
 
 /** Estado que el usuario controla de cada aparato. */
 export interface EstadoAparato {
@@ -89,6 +91,8 @@ export interface EstadoAparato {
 	fallo?: boolean;
 	/** Condiciones de ensayo de esta sesión. Nunca se serializan dentro de Proyecto. */
 	fallos?: TipoFalloRuntime[];
+	/** Fallas electricas cuantitativas V5. Son runtime y nunca se serializan en Proyecto. */
+	fallasFisicas?: FallaFisicaRuntime[];
 	/** Pulso runtime de reset para equipos con fallo enclavado. */
 	resetFallo?: boolean;
 	/** Acciones de un solo ciclo; la UI las consume al actualizar el runtime. */
@@ -420,6 +424,8 @@ export interface ResultadoSimulacion {
 	entradasAnalogicas: EstadoEntradaAnalogica[];
 	/** Estado mecánico de válvulas/actuadores V3. */
 	actuadores: EstadoActuador[];
+	/** Capa cuantitativa V5 derivada de la misma topologia funcional. */
+	fisica: ResultadoFisicaElectrica;
 }
 
 /** Lo que hace un controlador con su programa: qué lee, qué enciende y qué está esperando. */
@@ -2394,6 +2400,18 @@ export function simular(
 	const protecciones = estadosProtecciones(aparatos, estado, reloj?.memoria);
 	const fallos = fallosActivos(aparatos, estado, motores, protecciones, variadores);
 	const entradasAnalogicas = controladores.flatMap((controlador) => controlador.entradasAnalogicas);
+	const conexionesFisicas = new Map<string, [string, string][]>();
+	for (const d of aparatos) {
+		const manda = d.rol?.tipo === 'esclavo' ? d.rol.maestroId : d.id;
+		const base = d.rol?.tipo === 'esclavo' ? { ...(estado[d.rol.maestroId] ?? {}), ...(estado[d.id] ?? {}) } : estado[d.id] ?? {};
+		const salidas = salidasDePrograma.get(d.id);
+		const conSalidas = salidas?.size ? { ...base, salidas: [...new Set([...(base.salidas ?? []), ...salidas])] } : base;
+		conexionesFisicas.set(d.id, contactosCerrados(d, conSalidas, conmutados.has(manda)));
+	}
+	const fisica = simularFisicaProyecto(proyecto, {
+		conexionesCerradas: conexionesFisicas, bornesEnergizados: new Set(vivos.keys()),
+		fallas: Object.values(estado).flatMap((s) => s.fallasFisicas ?? []),
+	});
 	return {
 		vivos, conductoresVivos, activos, funcionando, avisos, analogicas, salidasAnalogicas,
 		pasadas, oscila: !estable,
@@ -2408,6 +2426,7 @@ export function simular(
 		arranques,
 		controladores, variadores, motores, protecciones, fallos, posicionesCargas,
 		sensoresAnalogicos, entradasAnalogicas, actuadores,
+		fisica,
 		temporizadores: cuentasAtras(aparatos, activos, reloj),
 	};
 }
@@ -2529,13 +2548,18 @@ export function actualizarProteccionesRuntime(
 		}
 		const estadoActual = siguiente[d.id] ?? st;
 		const porCircuito = resultado.disparos.find((x) => x.dispositivoId === d.id);
+		const porFisica = resultado.fisica.protecciones.get(d.id);
 		const fuga = perfil.funcion === 'diferencial' && tieneFallo(estadoActual, 'fuga-tierra');
 		const cortoInyectado = tieneFallo(estadoActual, 'cortocircuito');
 		const sobrecargaInyectada = tieneFallo(estadoActual, 'sobrecarga')
 			|| tieneFallo(estadoActual, 'perdida-fase');
-		const instantaneo = fuga || cortoInyectado || porCircuito?.motivo === 'cortocircuito';
-		const segundos = porCircuito?.motivo === 'sobrecarga' ? porCircuito.segundos
-			: sobrecargaInyectada ? 8 : undefined;
+		const cortoFisico = (porFisica?.fallas.length ?? 0) > 0;
+		const instantaneo = fuga || cortoInyectado || porCircuito?.motivo === 'cortocircuito'
+			|| (cortoFisico && porFisica?.evaluacion.region === 'INSTANTANEA');
+		const ventanaFisica = porFisica?.evaluacion.tMaxS === undefined ? undefined
+			: ((porFisica.evaluacion.tMinS ?? porFisica.evaluacion.tMaxS) + porFisica.evaluacion.tMaxS) / 2;
+		const segundos = ventanaFisica ?? (porCircuito?.motivo === 'sobrecarga' ? porCircuito.segundos
+			: sobrecargaInyectada ? 8 : undefined);
 		let carga = mem.cargaTermica;
 		if (instantaneo) carga = 1;
 		else if (segundos !== undefined) carga = Math.min(1, carga + dt / Math.max(0.05, segundos));
@@ -2543,7 +2567,7 @@ export function actualizarProteccionesRuntime(
 		memoria.protecciones[d.id] = { cargaTermica: carga, actualizadoEn: ahora };
 		if (carga < 1 || estadoActual.disparado) continue;
 		const causa: EstadoProteccion['causa'] = fuga ? 'fuga-tierra'
-			: cortoInyectado || porCircuito?.motivo === 'cortocircuito' ? 'cortocircuito'
+			: cortoInyectado || cortoFisico || porCircuito?.motivo === 'cortocircuito' ? 'cortocircuito'
 				: tieneFallo(estadoActual, 'perdida-fase') ? 'perdida-fase' : 'sobrecarga';
 		escribir(d.id, { ...estadoActual, disparado: true });
 		eventos.push({
