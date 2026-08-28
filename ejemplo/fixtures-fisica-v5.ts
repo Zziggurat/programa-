@@ -90,7 +90,7 @@ export function fixtureMotorTrifasicoV5(): Proyecto {
 				referencia: 'N', fases: [{ borne: 'L1', fase: 'L1' }, { borne: 'L2', fase: 'L2' }, { borne: 'L3', fase: 'L3' }],
 				rOhm: 0.08, xOhm: 0.04 } },
 		},
-		proteccion('q1', [['1', '2'], ['3', '4'], ['5', '6']], 16, 'C'),
+		proteccion('q1', [['1', '2'], ['3', '4'], ['5', '6']], 10, 'C'),
 		{
 			id: 'km1', tipo: 'contactor', designacion: '-KM1', congelado: true, tensionNominal: 230,
 			descripcion: 'Contactor de linea del motor',
@@ -129,9 +129,9 @@ export function fixtureMotorTrifasicoV5(): Proyecto {
 		cable('w-k-m1', ['km1', '2/T1'], ['m1', 'U'], 18, 4, 'marrón'),
 		cable('w-k-m2', ['km1', '4/T2'], ['m1', 'V'], 18, 4, 'negro'),
 		cable('w-k-m3', ['km1', '6/T3'], ['m1', 'W'], 18, 4, 'gris'),
-		cable('w-mando-l', ['q1', '2'], ['s-run', '13'], 4, 2.5, 'rojo'),
-		cable('w-mando-k', ['s-run', '14'], ['km1', 'A1'], 4, 2.5, 'rojo'),
-		cable('w-mando-n', ['km1', 'A2'], ['red', 'N'], 4, 2.5, 'azul'),
+		cable('w-mando-l', ['q1', '2'], ['s-run', '13'], 4, 1, 'rojo'),
+		cable('w-mando-k', ['s-run', '14'], ['km1', 'A1'], 4, 1, 'rojo'),
+		cable('w-mando-n', ['km1', 'A2'], ['red', 'N'], 4, 1, 'azul'),
 		cable('w-pe-motor', ['red', 'PE'], ['m1', 'PE'], 18, 4, 'verde/amarillo'),
 	];
 	p.gabinete = gabinete([
