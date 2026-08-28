@@ -12,7 +12,7 @@ import {
 import { resolverRedFisica } from './solver.js';
 import type {
 	CargaRedFisica, DiagnosticoFisica, FuenteRedFisica, RedFisica, ResultadoRedFisica,
-	RamaRedFisica,
+	RamaRedFisica, TransformadorRedFisica,
 } from './tipos.js';
 import type { ResultadoLazoAnalogicoFisico } from './analogicas.js';
 
@@ -81,7 +81,7 @@ function curvaProteccion(dispositivo: Dispositivo): PerfilCurvaProteccion | unde
 export function resultadoFisicaVacio(): ResultadoFisicaElectrica {
 	return {
 		activo: false,
-		red: { nodos: new Map(), ramas: new Map(), cargas: new Map(), fuentes: new Map(), diagnosticos: [],
+		red: { nodos: new Map(), ramas: new Map(), cargas: new Map(), fuentes: new Map(), transformadores: new Map(), diagnosticos: [],
 			potenciaCargasW: 0, potenciaPerdidasW: 0, potenciaFuentesW: 0,
 			metricas: { nodos: 0, ramas: 0, iteraciones: 0, convergio: true, tiempoMs: 0, residuoKclA: 0, errorBalanceW: 0 } },
 		conductores: new Map(), protecciones: new Map(), fallas: [], selectividad: [], lazosAnalogicos: [], diagnosticos: [],
@@ -132,6 +132,7 @@ function fuenteTransformadorDesde(
 ): FuenteRedFisica[] {
 	const t = dispositivo.fisica?.transformador;
 	if (!t) return [];
+	if (t.primarioTerminales && t.secundarioTerminales) return [];
 	const perfil = resolverComportamiento(dispositivo);
 	if (perfil?.clase !== 'fuente') {
 		diagnosticos.push({ codigo: 'CONFIGURACION_INVALIDA',
@@ -158,6 +159,29 @@ function fuenteTransformadorDesde(
 	}
 	return [{ id: `transformador:${dispositivo.id}`, de, a, tensionV: complejo(t.secundarioV), zInternaOhm,
 		origenImpedancia: zInternaOhm ? 'CONFIGURADO' : 'NO_MODELADO', frecuenciaHz: t.frecuenciaHz }];
+}
+
+function transformadorAcopladoDesde(dispositivo: Dispositivo, diagnosticos: DiagnosticoFisica[]): TransformadorRedFisica[] {
+	const t = dispositivo.fisica?.transformador;
+	if (!t?.primarioTerminales || !t.secundarioTerminales) return [];
+	if (!(t.primarioV > 0) || !(t.secundarioV > 0)) {
+		diagnosticos.push({ codigo: 'CONFIGURACION_INVALIDA', mensaje: `${dispositivo.id}: relacion de transformacion invalida`, elementos: [dispositivo.id] });
+		return [];
+	}
+	const relacion = t.primarioV / t.secundarioV;
+	let zSeriePrimarioOhm = complejo(1e-9);
+	let origen: OrigenDatoFisico = 'NO_MODELADO';
+	if (t.potenciaVA && t.impedanciaPct !== undefined) {
+		const zBase = t.primarioV * t.primarioV / t.potenciaVA;
+		const modulo = zBase * t.impedanciaPct / 100;
+		const xr = Math.max(0, t.xSobreR ?? 3);
+		const r = modulo / Math.sqrt(1 + xr * xr);
+		zSeriePrimarioOhm = complejo(r, r * xr); origen = 'CALCULADO';
+	}
+	return [{ id: `transformador:${dispositivo.id}`,
+		primarioDe: clave(dispositivo.id, t.primarioTerminales[0]), primarioA: clave(dispositivo.id, t.primarioTerminales[1]),
+		secundarioDe: clave(dispositivo.id, t.secundarioTerminales[0]), secundarioA: clave(dispositivo.id, t.secundarioTerminales[1]),
+		relacion, zSeriePrimarioOhm, potenciaNominalVA: t.potenciaVA, origen }];
 }
 
 function rutaProtecciones(red: RedFisica, desde: string): string[] {
@@ -252,7 +276,16 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 	}
 	const fuentes: FuenteRedFisica[] = proyecto.dispositivos.flatMap(fuenteDesde);
 	for (const d of proyecto.dispositivos) fuentes.push(...fuenteTransformadorDesde(d, contexto.bornesEnergizados, diagnosticos));
-	const redBase: RedFisica = { nodos, ramas, fuentes, cargas: proyecto.dispositivos.flatMap(cargaDesde) };
+	const transformadores = proyecto.dispositivos.flatMap((d) => transformadorAcopladoDesde(d, diagnosticos));
+	for (const d of proyecto.dispositivos) {
+		const t = d.fisica?.transformador;
+		if (!t?.primarioTerminales || !(t.perdidasVacioW && t.perdidasVacioW > 0)) continue;
+		const rNucleo = t.primarioV * t.primarioV / t.perdidasVacioW;
+		ramas.push({ id: `transformador-vacio:${d.id}`, de: clave(d.id, t.primarioTerminales[0]),
+			a: clave(d.id, t.primarioTerminales[1]), zOhm: complejo(rNucleo), tipo: 'TRANSFORMADOR',
+			dispositivoId: d.id, origen: 'CONFIGURADO' });
+	}
+	const redBase: RedFisica = { nodos, ramas, fuentes, transformadores, cargas: proyecto.dispositivos.flatMap(cargaDesde) };
 	/*
 	 * Abrir un conductor o aumentar la resistencia de un terminal no es solo un diagnostico:
 	 * cambia la matriz que se resuelve. Los cortocircuitos siguen usando Thevenin como corriente

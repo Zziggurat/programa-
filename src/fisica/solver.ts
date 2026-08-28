@@ -1,11 +1,12 @@
 import {
-	CERO, Complejo, conjugado, dividir, escalar, magnitud, multiplicar, polar, restar, sumar,
+	CERO, Complejo, complejo, conjugado, dividir, escalar, magnitud, multiplicar, polar, restar, sumar,
 } from './complejos.js';
 import { ErrorNumericoFisica, resolverSistemaComplejo } from './algebra.js';
 import { TOLERANCIAS_FISICA } from './tolerancias.js';
 import type {
 	CargaRedFisica, DiagnosticoFisica, FuenteRedFisica, RedFisica, ResultadoCargaFisica,
 	ResultadoFuenteFisica, ResultadoNodoFisica, ResultadoRamaFisica, ResultadoRedFisica,
+	ResultadoTransformadorFisica,
 } from './tipos.js';
 
 export interface OpcionesSolverFisica {
@@ -38,6 +39,10 @@ function idsValidos(red: RedFisica, diagnosticos: DiagnosticoFisica[]): string[]
 			codigo: 'CONFIGURACION_INVALIDA', mensaje: `${e.id} referencia un nodo inexistente`, elementos: [e.id],
 		});
 	}
+	for (const t of red.transformadores ?? []) for (const id of [t.primarioDe, t.primarioA, t.secundarioDe, t.secundarioA]) {
+		if (!conocidos.has(id)) diagnosticos.push({ codigo: 'CONFIGURACION_INVALIDA',
+			mensaje: `${t.id} referencia un nodo inexistente`, elementos: [t.id] });
+	}
 	return ids;
 }
 
@@ -63,6 +68,7 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 		(vecinos.get(a) ?? vecinos.set(a, []).get(a)!).push(de);
 	};
 	for (const e of [...red.ramas, ...red.fuentes, ...red.cargas]) conectar(e.de, e.a);
+	for (const t of red.transformadores ?? []) { conectar(t.primarioDe, t.primarioA); conectar(t.secundarioDe, t.secundarioA); }
 	const conReferencia = new Set<string>(referencia);
 	const cola = [...referencia];
 	while (cola.length) {
@@ -94,20 +100,25 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 
 	const variables = ids.filter((id) => conReferencia.has(id) && !fijas.has(id));
 	const indice = new Map(variables.map((id, i) => [id, i]));
+	const transformadoresActivos = (red.transformadores ?? []).filter((t) =>
+		[t.primarioDe, t.primarioA, t.secundarioDe, t.secundarioA].every((id) => conReferencia.has(id)));
+	const indiceTransformador = new Map(transformadoresActivos.map((t, i) => [t.id, variables.length + i]));
+	const dimension = variables.length + transformadoresActivos.length;
 	const tension = new Map<string, Complejo>([...fijas].map(([id, v]) => [id, { ...v }]));
 	for (const id of variables) tension.set(id, CERO);
+	let corrientesTransformador = new Map<string, Complejo>();
 	const maxIteraciones = opciones.maxIteraciones ?? 50;
 	const tolerancia = opciones.toleranciaV ?? TOLERANCIAS_FISICA.convergenciaV;
 	const damping = opciones.damping ?? 0.7;
 	let iteraciones = 0;
-	let convergioNumerico = variables.length === 0;
+	let convergioNumerico = dimension === 0;
 	let residuoKclA = 0;
 	let ultimaG: Complejo[][] = [];
 	let ultimoB: Complejo[] = [];
 
-	for (iteraciones = 1; variables.length && iteraciones <= maxIteraciones; iteraciones++) {
-		const g = Array.from({ length: variables.length }, () => Array.from({ length: variables.length }, () => ({ ...CERO })));
-		const b = Array.from({ length: variables.length }, () => ({ ...CERO }));
+	for (iteraciones = 1; dimension && iteraciones <= maxIteraciones; iteraciones++) {
+		const g = Array.from({ length: dimension }, () => Array.from({ length: dimension }, () => ({ ...CERO })));
+		const b = Array.from({ length: dimension }, () => ({ ...CERO }));
 		const estamparAdmitancia = (de: string, a: string, y: Complejo) => {
 			for (const [propio, otro] of [[de, a], [a, de]] as const) {
 				const i = indice.get(propio); if (i === undefined) continue;
@@ -140,6 +151,24 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 				estamparCorriente(c.de, c.a, corrienteCarga(c, v));
 			}
 		}
+		for (const t of transformadoresActivos) {
+			const k = indiceTransformador.get(t.id)!;
+			const coefKcl = ([
+				[t.primarioDe, 1], [t.primarioA, -1],
+				[t.secundarioDe, -t.relacion], [t.secundarioA, t.relacion],
+			] as const);
+			for (const [nodo, coef] of coefKcl) {
+				const i = indice.get(nodo); if (i !== undefined) agregar(g[i][k], complejo(coef));
+			}
+			const agregarV = (nodo: string, coef: number) => {
+				const i = indice.get(nodo);
+				if (i !== undefined) agregar(g[k][i], complejo(coef));
+				else agregar(b[k], escalar(tension.get(nodo) ?? CERO, -coef));
+			};
+			agregarV(t.primarioDe, 1); agregarV(t.primarioA, -1);
+			agregarV(t.secundarioDe, -t.relacion); agregarV(t.secundarioA, t.relacion);
+			agregar(g[k][k], opuesto(t.zSeriePrimarioOhm));
+		}
 		ultimaG = g; ultimoB = b;
 		let solucion: Complejo[];
 		try { solucion = resolverSistemaComplejo(g, b); }
@@ -155,14 +184,19 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 			cambio = Math.max(cambio, magnitud(restar(nuevo, anterior)));
 			tension.set(variables[i], nuevo);
 		}
+		corrientesTransformador = new Map(transformadoresActivos.map((t) => [t.id, solucion[indiceTransformador.get(t.id)!]]));
 		if (cambio <= tolerancia) { convergioNumerico = true; break; }
 	}
-	if (!convergioNumerico && variables.length && !diagnosticos.some((d) => d.codigo === 'MATRIZ_SINGULAR')) diagnosticos.push({
+	if (!convergioNumerico && dimension && !diagnosticos.some((d) => d.codigo === 'MATRIZ_SINGULAR')) diagnosticos.push({
 		codigo: 'NO_CONVERGE', mensaje: `La red no convergio en ${maxIteraciones} iteraciones`,
 	});
-	if (ultimaG.length) for (let i = 0; i < variables.length; i++) {
+	if (ultimaG.length) for (let i = 0; i < dimension; i++) {
 		let suma = { ...CERO };
-		for (let j = 0; j < variables.length; j++) agregar(suma, multiplicar(ultimaG[i][j], tension.get(variables[j]) ?? CERO));
+		for (let j = 0; j < dimension; j++) {
+			const valor = j < variables.length ? tension.get(variables[j]) ?? CERO
+				: corrientesTransformador.get(transformadoresActivos[j - variables.length]?.id) ?? CERO;
+			agregar(suma, multiplicar(ultimaG[i][j], valor));
+		}
 		residuoKclA = Math.max(residuoKclA, magnitud(restar(suma, ultimoB[i])));
 	}
 
@@ -196,6 +230,27 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 			factorPotencia: aparente > TOLERANCIAS_FISICA.cero ? Math.max(-1, Math.min(1, s.re / aparente)) : undefined,
 			origen: referenciada ? c.origen ?? 'CALCULADO' : 'NO_MODELADO' });
 	}
+	const transformadores = new Map<string, ResultadoTransformadorFisica>();
+	let perdidasTransformadorW = 0;
+	for (const t of transformadoresActivos) {
+		const vp = restar(tension.get(t.primarioDe) ?? CERO, tension.get(t.primarioA) ?? CERO);
+		const vs = restar(tension.get(t.secundarioDe) ?? CERO, tension.get(t.secundarioA) ?? CERO);
+		const ip = corrientesTransformador.get(t.id) ?? CERO;
+		const is = escalar(ip, t.relacion);
+		const sin = multiplicar(vp, conjugado(ip));
+		const sout = multiplicar(vs, conjugado(is));
+		const perdidaCobreW = Math.max(0, magnitud(ip) ** 2 * Math.max(0, t.zSeriePrimarioOhm.re));
+		perdidasTransformadorW += perdidaCobreW;
+		const pout = Math.max(0, sout.re); const pin = Math.max(0, sin.re);
+		transformadores.set(t.id, { id: t.id, tensionPrimariaV: vp, tensionSecundariaV: vs,
+			corrientePrimariaA: ip, corrienteSecundariaA: is, potenciaEntradaVA: sin, potenciaSalidaVA: sout,
+			perdidaCobreW, eficiencia: pin > TOLERANCIAS_FISICA.cero ? Math.max(0, Math.min(1, pout / pin)) : undefined,
+			regulacionPct: magnitud(vp) > TOLERANCIAS_FISICA.cero ? Math.max(0,
+				(magnitud(vp) / t.relacion - magnitud(vs)) / (magnitud(vp) / t.relacion) * 100) : undefined,
+			cargaPct: t.potenciaNominalVA && t.potenciaNominalVA > 0 ? magnitud(sout) / t.potenciaNominalVA * 100 : undefined,
+			origen: t.origen });
+	}
+	potenciaPerdidasW += perdidasTransformadorW;
 
 	const corrientePasivaDesde = (id: string): Complejo => {
 		let total = { ...CERO };
@@ -208,6 +263,14 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 			const cr = cargas.get(c.id)!;
 			if (c.de === id) agregar(total, cr.corrienteA);
 			if (c.a === id) agregar(total, opuesto(cr.corrienteA));
+		}
+		for (const t of transformadoresActivos) {
+			const ip = corrientesTransformador.get(t.id) ?? CERO;
+			const isRama = escalar(ip, -t.relacion);
+			if (t.primarioDe === id) agregar(total, ip);
+			if (t.primarioA === id) agregar(total, opuesto(ip));
+			if (t.secundarioDe === id) agregar(total, isRama);
+			if (t.secundarioA === id) agregar(total, opuesto(isRama));
 		}
 		return total;
 	};
@@ -224,8 +287,8 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 	}
 	const errorBalanceW = potenciaFuentesW - potenciaCargasW - potenciaPerdidasW;
 	return {
-		nodos, ramas, cargas, fuentes, diagnosticos, potenciaCargasW, potenciaPerdidasW, potenciaFuentesW,
-		metricas: { nodos: ids.length, ramas: red.ramas.length, iteraciones: Math.max(0, Math.min(iteraciones, maxIteraciones)),
+		nodos, ramas, cargas, fuentes, transformadores, diagnosticos, potenciaCargasW, potenciaPerdidasW, potenciaFuentesW,
+		metricas: { nodos: ids.length, ramas: red.ramas.length + transformadoresActivos.length, iteraciones: Math.max(0, Math.min(iteraciones, maxIteraciones)),
 			convergio: convergioNumerico && flotantes.length === 0, tiempoMs: ahora() - inicio, residuoKclA, errorBalanceW },
 	};
 }

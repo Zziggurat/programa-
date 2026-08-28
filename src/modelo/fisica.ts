@@ -52,10 +52,14 @@ export interface ConfiguracionCargaFisica {
 export interface ConfiguracionTransformadorFisico {
 	primarioV: number;
 	secundarioV: number;
+	/** Terminales explícitos habilitan el modelo acoplado V6; sin ellos se conserva V5. */
+	primarioTerminales?: [string, string];
+	secundarioTerminales?: [string, string];
 	potenciaVA?: number;
 	impedanciaPct?: number;
 	xSobreR?: number;
 	frecuenciaHz?: number;
+	perdidasVacioW?: number;
 }
 
 export interface PuntoCurvaProteccionFisica {
@@ -175,10 +179,19 @@ export function leerFisicaDispositivo(v: unknown): ConfiguracionFisicaDispositiv
 		}
 		return Object.keys(salida).length ? salida as T : undefined;
 	};
-	const transformador = sencillo<ConfiguracionTransformadorFisico>(v.transformador, {
+	let transformador = sencillo<ConfiguracionTransformadorFisico>(v.transformador, {
 		primarioV: { positivo: true }, secundarioV: { positivo: true }, potenciaVA: { positivo: true },
-		impedanciaPct: {}, xSobreR: {}, frecuenciaHz: { positivo: true },
+		impedanciaPct: {}, xSobreR: {}, frecuenciaHz: { positivo: true }, perdidasVacioW: {},
 	});
+	if (transformador && objeto(v.transformador)) {
+		const par = (valor: unknown): [string, string] | undefined => {
+			if (!Array.isArray(valor) || valor.length !== 2) return undefined;
+			const a = texto(valor[0]); const b = texto(valor[1]);
+			return a && b && a !== b ? [a, b] : undefined;
+		};
+		transformador = { ...transformador, primarioTerminales: par(v.transformador.primarioTerminales),
+			secundarioTerminales: par(v.transformador.secundarioTerminales) };
+	}
 	let proteccion = sencillo<ConfiguracionProteccionFisica>(v.proteccion, {
 		inA: { positivo: true }, curva: { texto: true }, instantaneoDesdeIn: { positivo: true }, i2tA2s: { positivo: true },
 	});

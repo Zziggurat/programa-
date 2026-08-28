@@ -36,6 +36,20 @@ export interface FuenteRedFisica {
 	frecuenciaHz?: number;
 }
 
+export interface TransformadorRedFisica {
+	id: string;
+	primarioDe: string;
+	primarioA: string;
+	secundarioDe: string;
+	secundarioA: string;
+	/** Np/Ns = Vp/Vs. */
+	relacion: number;
+	/** Impedancia serie referida al primario. */
+	zSeriePrimarioOhm: Complejo;
+	potenciaNominalVA?: number;
+	origen: OrigenDatoFisico;
+}
+
 export type CargaRedFisica = {
 	id: string; de: string; a: string; modelo: 'CONSTANT_Z'; zOhm: Complejo; dispositivoId?: string; origen?: OrigenDatoFisico;
 } | {
@@ -49,6 +63,7 @@ export interface RedFisica {
 	ramas: RamaRedFisica[];
 	fuentes: FuenteRedFisica[];
 	cargas: CargaRedFisica[];
+	transformadores?: TransformadorRedFisica[];
 }
 
 export interface ResultadoNodoFisica {
@@ -83,6 +98,21 @@ export interface ResultadoFuenteFisica {
 	origenImpedancia: OrigenDatoFisico;
 }
 
+export interface ResultadoTransformadorFisica {
+	id: string;
+	tensionPrimariaV: Complejo;
+	tensionSecundariaV: Complejo;
+	corrientePrimariaA: Complejo;
+	corrienteSecundariaA: Complejo;
+	potenciaEntradaVA: Complejo;
+	potenciaSalidaVA: Complejo;
+	perdidaCobreW: number;
+	eficiencia?: number;
+	regulacionPct?: number;
+	cargaPct?: number;
+	origen: OrigenDatoFisico;
+}
+
 export interface MetricasSolverFisica {
 	nodos: number;
 	ramas: number;
@@ -98,10 +128,10 @@ export interface ResultadoRedFisica {
 	ramas: Map<string, ResultadoRamaFisica>;
 	cargas: Map<string, ResultadoCargaFisica>;
 	fuentes: Map<string, ResultadoFuenteFisica>;
+	transformadores: Map<string, ResultadoTransformadorFisica>;
 	diagnosticos: DiagnosticoFisica[];
 	potenciaCargasW: number;
 	potenciaPerdidasW: number;
 	potenciaFuentesW: number;
 	metricas: MetricasSolverFisica;
 }
-
