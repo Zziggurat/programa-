@@ -51,6 +51,7 @@ must('no quedan referencias a archivos externos',
 must('no lleva dentro la sonda de pruebas', !html.includes('puntoParaAgarrar'));
 const buildId = html.match(/<meta name="tablerostudio-build" content="([A-F0-9]{10})">/)?.[1];
 must('declara un Build ID de contenido', !!buildId, buildId ?? 'ausente');
+must('la entrega V5 tiene un Build ID nuevo respecto de V4', buildId !== '41EEF410B9', buildId ?? 'ausente');
 must('desktop/app.html corresponde byte a byte a la misma build', htmlDesktop === html,
 	htmlDesktop ? `Build ${buildId}` : 'desktop/app.html ausente');
 // El marcado de los diálogos vive en index.html: comprobamos que el empaquetador lo copió.
@@ -282,6 +283,33 @@ must('el HTML offline ejecuta PLC V4 en RUN con scan observable',
 must('el monitor offline publica secuencia, TON y CTU V4',
 	/PROCESO:\s*IDLE/.test(panelV4) && /T_MEZCLA:\s*TON/.test(panelV4)
 		&& /LOTES:\s*CTU/.test(panelV4), panelV4.slice(0, 260));
+
+/* ---------- 7. Magnitudes físicas V5 dentro del HTML entregado ---------- */
+console.log('\n--- 7. Física eléctrica V5 dentro del HTML entregado ---');
+await energizarVisible(false);
+await page.click('#btn-aprender');
+await page.click('#btn-ejemplos');
+await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
+await page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V5: caída de tensión' })
+	.getByRole('button', { name: /Abrir y estudiar/i }).click();
+if (await page.isVisible('#modal-dialogo')) { await page.click('#dialogo-ok'); }
+await page.waitForFunction(() => document.getElementById('nombre-proyecto')?.value
+	=== 'Fixture V5 — caída de tensión');
+await cerrar('btn-cerrar-explicacion');
+if (!await page.evaluate(() => document.body.classList.contains('modo-trabajo'))) {
+	await page.click('#modo-trabajo');
+	await page.waitForFunction(() => document.body.classList.contains('modo-trabajo'));
+}
+await energizarVisible(true);
+await page.waitForFunction(() => /PhysicsEngine V5/.test(document.getElementById('sim-fisica')?.innerText ?? ''));
+const panelV5 = (await page.locator('#sim-fisica').innerText()).replace(/\s+/g, ' ');
+must('el HTML offline resuelve y muestra tensión, corriente y caída V5',
+	/PhysicsEngine V5/.test(panelV5) && /I\s+[0-9,.]+\s*A/.test(panelV5)
+		&& /ΔV\s+[0-9,.]+\s*V/.test(panelV5) && /balance\s+[0-9,.]+\s*W/.test(panelV5),
+	panelV5.slice(0, 300));
+must('el smoke V5 conserva controles humanos de longitud y sección',
+	await page.locator('#sim-fisica [data-fisica-longitud="w-fase-carga"]').isVisible()
+		&& await page.locator('#sim-fisica [data-fisica-seccion="w-fase-carga"]').isVisible());
 
 must('no hizo ninguna petición HTTP externa obligatoria', peticionesExternas.length === 0,
 	peticionesExternas.slice(0, 3).join(' | '));
