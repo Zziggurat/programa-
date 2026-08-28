@@ -17,6 +17,7 @@ export type LetraClase =
 import { AjustesDossier } from './dossier.js';
 import type { ComportamientoSimulacion } from './comportamiento.js';
 import type { ConfiguracionProgramaPLC } from './programa-plc.js';
+import type { ConfiguracionFisicaConductor, ConfiguracionFisicaDispositivo } from './fisica.js';
 
 export type TipoDispositivo =
 	| 'plc' | 'fuente' | 'transformador' | 'contactor' | 'rele'
@@ -133,6 +134,8 @@ export interface Dispositivo {
 	tipo: TipoDispositivo;
 	/** Contrato eléctrico ejecutable. Si existe, manda sobre las heurísticas legacy por tipo/IEC. */
 	comportamiento?: ComportamientoSimulacion;
+	/** Parametros persistentes de la capa cuantitativa V5; los resultados nunca se guardan aqui. */
+	fisica?: ConfiguracionFisicaDispositivo;
 	/** Fuerza la letra IEC (si no, se usa CLASE_POR_TIPO[tipo]). */
 	clase?: LetraClase;
 	/** Número de secuencia asignado por el motor de numeración (K"1"). */
@@ -311,6 +314,8 @@ export interface Conductor {
 	a: RefBorne;
 	/** Sección en mm². */
 	seccion?: number;
+	/** Material, longitud o reactancia declarados para la capa fisica V5. */
+	fisica?: ConfiguracionFisicaConductor;
 	color?: string;
 	/** Número/etiqueta asignada por el motor de numeración (compartida por potencial). */
 	numero?: string;

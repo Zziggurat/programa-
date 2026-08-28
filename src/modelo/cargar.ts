@@ -15,6 +15,7 @@ import {
 } from './tipos.js';
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 import { leerComportamientoSimulacion, validarComportamiento } from './comportamiento.js';
+import { leerFisicaConductor, leerFisicaDispositivo } from './fisica.js';
 import type { ConfiguracionProgramaPLC, EtiquetaPLC } from './programa-plc.js';
 
 /** Versión de formato que escribe este programa. */
@@ -906,6 +907,8 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			bornes: bornes,
 			comportamiento: oQuitado(d.comportamiento, comportamiento, ruta('comportamiento'),
 				erroresComportamiento[0] ?? 'el perfil de simulación no tenía una forma o versión válida'),
+			fisica: oQuitado(d.fisica, leerFisicaDispositivo(d.fisica), ruta('fisica'),
+				'la configuracion fisica V5 no tenia una version o parametros validos'),
 			designacion: cadena('designacion'),
 			descripcion: cadena('descripcion'),
 			fabricante: cadena('fabricante'),
@@ -1065,6 +1068,8 @@ function leerConductores(
 			// Una sección que no es un número deja al DRC sin poder comparar nada: mejor «sin
 			// declarar», que el programa sabe avisarlo, que un 0 inventado o un NaN silencioso.
 			seccion: enRango(c.seccion, 0, 1000),
+			fisica: oQuitado(c.fisica, leerFisicaConductor(c.fisica),
+				`conductores[${c.id}].fisica`, 'la configuracion fisica V5 del cable no era valida'),
 			// El número de hilo es un TEXTO: en un esquema real es «1», pero también «L1» o «24a».
 			numero: oQuitado(c.numero, texto(c.numero),
 				`conductores[${c.id}].numero`, 'el número de hilo no era un texto'),

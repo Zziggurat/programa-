@@ -1,4 +1,5 @@
 export * from './modelo/tipos.js';
+export * from './modelo/fisica.js';
 export * from './modelo/proyecto.js';
 export * from './motores/potenciales.js';
 export * from './motores/numeracion.js';
@@ -9,3 +10,7 @@ export * from './motores/ruteo.js';
 export * from './motores/sincronizacion.js';
 export * from './motores/documentacion.js';
 export * from './motores/clases-cable.js';
+export * from './fisica/complejos.js';
+export * from './fisica/algebra.js';
+export * from './fisica/materiales.js';
+export * from './fisica/conductores.js';
