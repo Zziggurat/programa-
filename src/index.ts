@@ -16,3 +16,5 @@ export * from './fisica/materiales.js';
 export * from './fisica/conductores.js';
 export * from './fisica/tipos.js';
 export * from './fisica/solver.js';
+export * from './fisica/fallas.js';
+export * from './fisica/protecciones.js';
