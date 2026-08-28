@@ -34,7 +34,7 @@ export interface ResultadoFallaFisica {
 
 export const IMPEDANCIA_FALLA_FRANCA_OHM: Complejo = Object.freeze({ re: 0.001, im: 0 });
 
-export function aplicarFallosTopologia(red: RedFisica, fallas: readonly FallaFisicaRuntime[]): RedFisica {
+export function aplicarAlteracionesSerieTopologia(red: RedFisica, fallas: readonly FallaFisicaRuntime[]): RedFisica {
 	const abiertas = new Set(fallas.filter((f) => f.tipo === 'CONDUCTOR_ABIERTO').map((f) => f.ramaId));
 	const resistencias = new Map(fallas.filter((f) => f.tipo === 'RESISTENCIA_ANORMAL' && f.ramaId)
 		.map((f) => [f.ramaId!, Math.max(0, f.resistenciaAdicionalOhm ?? 0)]));
@@ -44,6 +44,18 @@ export function aplicarFallosTopologia(red: RedFisica, fallas: readonly FallaFis
 			...r, zOhm: { re: r.zOhm.re + (resistencias.get(r.id) ?? 0), im: r.zOhm.im },
 		})),
 	};
+}
+
+/** Aplica también los cortocircuitos como ramas reales para que sus corrientes atraviesen equipos. */
+export function aplicarFallosTopologia(red: RedFisica, fallas: readonly FallaFisicaRuntime[]): RedFisica {
+	const serie = aplicarAlteracionesSerieTopologia(red, fallas);
+	const cortos = fallas.flatMap((f) => {
+		if (!['L_N', 'L_L', 'L_PE', 'TRIFASICA'].includes(f.tipo) || !f.nodoA || !f.nodoB) return [];
+		return [{ id: `falla:${f.id}`, de: f.nodoA, a: f.nodoB,
+			zOhm: f.zFallaOhm ?? IMPEDANCIA_FALLA_FRANCA_OHM,
+			tipo: 'OTRO' as const, origen: 'INYECTADO' as const }];
+	});
+	return { ...serie, ramas: [...serie.ramas, ...cortos] };
 }
 
 /** Impedancia vista entre dos nodos, suprimiendo fuentes independientes. */
@@ -91,7 +103,7 @@ export function impedanciaThevenin(red: RedFisica, nodoA: string, nodoB: string)
 }
 
 export function resolverFalla(redOriginal: RedFisica, falla: FallaFisicaRuntime): ResultadoFallaFisica {
-	const red = aplicarFallosTopologia(redOriginal, [falla]);
+	const red = aplicarAlteracionesSerieTopologia(redOriginal, [falla]);
 	if (falla.tipo === 'CONDUCTOR_ABIERTO' || falla.tipo === 'RESISTENCIA_ANORMAL') return {
 		id: falla.id, tipo: falla.tipo, origen: 'INYECTADO', diagnosticos: [],
 	};

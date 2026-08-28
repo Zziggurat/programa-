@@ -72,6 +72,17 @@ export interface ConfiguracionProteccionFisica {
 	i2tA2s?: number;
 }
 
+/**
+ * Perfil RMS del toroide de un diferencial. No distingue tipos AC/A/F/B porque el solver
+ * fasorial no modela sus formas de onda ni componentes continuas.
+ */
+export interface ConfiguracionDiferencialFisico {
+	corrienteResidualNominalA: number;
+	retardoS?: number;
+	/** Pares orientados entrada -> salida que atraviesan el toroide. PE nunca debe incluirse. */
+	conductoresMedidos?: { entrada: string; salida: string }[];
+}
+
 export interface ConfiguracionAnalogicaFisica {
 	burdenOhm?: number;
 	resistenciaSalidaOhm?: number;
@@ -85,6 +96,7 @@ export interface ConfiguracionFisicaDispositivo {
 	carga?: ConfiguracionCargaFisica;
 	transformador?: ConfiguracionTransformadorFisico;
 	proteccion?: ConfiguracionProteccionFisica;
+	diferencial?: ConfiguracionDiferencialFisico;
 	analogica?: ConfiguracionAnalogicaFisica;
 }
 
@@ -176,9 +188,23 @@ export function leerFisicaDispositivo(v: unknown): ConfiguracionFisicaDispositiv
 			? [{ multiploIn: p.multiploIn as number, tMinS: p.tMinS as number, tMaxS: p.tMaxS as number }] : []);
 		if (puntos.length) proteccion = { ...(proteccion ?? {}), puntos };
 	}
+	let diferencial: ConfiguracionDiferencialFisico | undefined;
+	if (objeto(v.diferencial)) {
+		const corrienteResidualNominalA = numero(v.diferencial.corrienteResidualNominalA, false);
+		const conductoresMedidos = Array.isArray(v.diferencial.conductoresMedidos)
+			? v.diferencial.conductoresMedidos.flatMap((p) => {
+				if (!objeto(p)) return [];
+				const entrada = texto(p.entrada); const salida = texto(p.salida);
+				return entrada && salida && entrada !== salida ? [{ entrada, salida }] : [];
+			}) : [];
+		if (corrienteResidualNominalA !== undefined) diferencial = {
+			corrienteResidualNominalA, retardoS: numero(v.diferencial.retardoS),
+			conductoresMedidos: conductoresMedidos.length ? conductoresMedidos : undefined,
+		};
+	}
 	const analogica = sencillo<ConfiguracionAnalogicaFisica>(v.analogica, {
 		burdenOhm: {}, resistenciaSalidaOhm: {}, tensionMinimaTransmisorV: {}, tensionComplianceV: {},
 	});
-	const salida = { version: 1 as const, fuente, carga, transformador, proteccion, analogica };
-	return fuente || carga || transformador || proteccion || analogica ? salida : undefined;
+	const salida = { version: 1 as const, fuente, carga, transformador, proteccion, diferencial, analogica };
+	return fuente || carga || transformador || proteccion || diferencial || analogica ? salida : undefined;
 }

@@ -2595,15 +2595,18 @@ export function actualizarProteccionesRuntime(
 		const porCircuito = resultado.disparos.find((x) => x.dispositivoId === d.id);
 		const porFisica = resultado.fisica.protecciones.get(d.id);
 		const fuga = perfil.funcion === 'diferencial' && tieneFallo(estadoActual, 'fuga-tierra');
+		const fugaFisica = perfil.funcion === 'diferencial' && porFisica?.estadoResidual === 'ACTUACION';
 		const cortoInyectado = tieneFallo(estadoActual, 'cortocircuito');
 		const sobrecargaInyectada = tieneFallo(estadoActual, 'sobrecarga')
 			|| tieneFallo(estadoActual, 'perdida-fase');
 		const cortoFisico = (porFisica?.fallas.length ?? 0) > 0;
-		const instantaneo = fuga || cortoInyectado || porCircuito?.motivo === 'cortocircuito'
+		const instantaneo = fuga || (fugaFisica && (porFisica?.retardoResidualS ?? 0) <= 0)
+			|| cortoInyectado || porCircuito?.motivo === 'cortocircuito'
 			|| (cortoFisico && porFisica?.evaluacion.region === 'INSTANTANEA');
 		const ventanaFisica = porFisica?.evaluacion.tMaxS === undefined ? undefined
 			: ((porFisica.evaluacion.tMinS ?? porFisica.evaluacion.tMaxS) + porFisica.evaluacion.tMaxS) / 2;
-		const segundos = ventanaFisica ?? (porCircuito?.motivo === 'sobrecarga' ? porCircuito.segundos
+		const segundos = fugaFisica && (porFisica?.retardoResidualS ?? 0) > 0 ? porFisica!.retardoResidualS
+			: ventanaFisica ?? (porCircuito?.motivo === 'sobrecarga' ? porCircuito.segundos
 			: sobrecargaInyectada ? 8 : undefined);
 		let carga = mem.cargaTermica;
 		if (instantaneo) carga = 1;
@@ -2611,14 +2614,15 @@ export function actualizarProteccionesRuntime(
 		else carga = Math.max(0, carga - dt / 12);
 		memoria.protecciones[d.id] = { cargaTermica: carga, actualizadoEn: ahora };
 		if (carga < 1 || estadoActual.disparado) continue;
-		const causa: EstadoProteccion['causa'] = fuga ? 'fuga-tierra'
+		const causa: EstadoProteccion['causa'] = fuga || fugaFisica ? 'fuga-tierra'
 			: cortoInyectado || cortoFisico || porCircuito?.motivo === 'cortocircuito' ? 'cortocircuito'
 				: tieneFallo(estadoActual, 'perdida-fase') ? 'perdida-fase' : 'sobrecarga';
 		escribir(d.id, { ...estadoActual, disparado: true });
 		eventos.push({
 			dispositivoId: d.id, designacion: d.designacion ?? d.id,
 			estado: perfil.funcion === 'fusible' ? 'fundido' : 'disparado', causa,
-			origen: fuga || cortoInyectado || sobrecargaInyectada ? 'inyectado' : 'estimado',
+			origen: fuga || cortoInyectado || sobrecargaInyectada ? 'inyectado'
+				: fugaFisica ? 'calculado' : 'estimado',
 		});
 	}
 	return { estado: siguiente, cambio, eventos };

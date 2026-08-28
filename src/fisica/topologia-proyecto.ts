@@ -4,7 +4,7 @@ import type { OrigenDatoFisico } from '../modelo/fisica.js';
 import { calcularConductorFisico, resolverLongitudConductor, type ResultadoConductorFisico } from './conductores.js';
 import { complejo, magnitud, polar } from './complejos.js';
 import type { FallaFisicaRuntime, ResultadoFallaFisica } from './fallas.js';
-import { aplicarFallosTopologia, resolverFalla } from './fallas.js';
+import { aplicarAlteracionesSerieTopologia, aplicarFallosTopologia, resolverFalla } from './fallas.js';
 import {
 	CURVAS_PROTECCION_GENERICAS, analizarSelectividad, evaluarCurva, type EvaluacionCurvaProteccion,
 	type PerfilCurvaProteccion, type ResultadoSelectividad,
@@ -40,6 +40,11 @@ export interface ResultadoProteccionProyectoFisica {
 	inA?: number;
 	evaluacion: EvaluacionCurvaProteccion;
 	corrienteResidualA?: number;
+	corrienteResidualFasorA?: { re: number; im: number };
+	corrienteResidualNominalA?: number;
+	retardoResidualS?: number;
+	estadoResidual?: 'NORMAL' | 'ACTUACION' | 'NO_DISPONIBLE';
+	modeloResidual?: 'RESIDUAL_RMS_MODELED';
 	fallas: string[];
 }
 
@@ -194,6 +199,7 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		}
 	}
 	const datosConductores = new Map<string, ResultadoConductorFisico>();
+	const ramasMedidasDiferencial = new Map<string, { ramaId: string; signo: 1 | -1 }[]>();
 	const ramas: RamaRedFisica[] = proyecto.conductores.flatMap((c): RamaRedFisica[] => {
 		const de = proyecto.dispositivos.find((d) => d.id === c.de.dispositivoId)?.posicion;
 		const a = proyecto.dispositivos.find((d) => d.id === c.a.dispositivoId)?.posicion;
@@ -216,10 +222,23 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 	for (const d of proyecto.dispositivos) {
 		const perfil = resolverComportamiento(d);
 		const tipo = perfil?.clase === 'proteccion' ? 'PROTECCION' as const : 'CONTACTO' as const;
-		for (const [i, par] of (contexto.conexionesCerradas?.get(d.id) ?? []).entries()) ramas.push({
-			id: `interno:${d.id}:${i}`, de: clave(d.id, par[0]), a: clave(d.id, par[1]), zOhm: Z_CONTACTO_OHM,
-			tipo, dispositivoId: d.id, origen: 'ESTIMADO',
-		});
+		const conexiones = contexto.conexionesCerradas?.get(d.id) ?? [];
+		const medidos = perfil?.clase === 'proteccion' && perfil.funcion === 'diferencial'
+			? (d.fisica?.diferencial?.conductoresMedidos ?? perfil.polos)
+				.filter((p) => ![p.entrada, p.salida].some((id) => d.bornes.find((b) => b.id === id)?.tipo === 'PE'))
+			: [];
+		for (const [i, par] of conexiones.entries()) {
+			const ramaId = `interno:${d.id}:${i}`;
+			ramas.push({ id: ramaId, de: clave(d.id, par[0]), a: clave(d.id, par[1]), zOhm: Z_CONTACTO_OHM,
+				tipo, dispositivoId: d.id, origen: 'ESTIMADO' });
+			const medido = medidos.find((p) => (p.entrada === par[0] && p.salida === par[1])
+				|| (p.entrada === par[1] && p.salida === par[0]));
+			if (medido) {
+				const lista = ramasMedidasDiferencial.get(d.id) ?? [];
+				lista.push({ ramaId, signo: medido.entrada === par[0] ? 1 : -1 });
+				ramasMedidasDiferencial.set(d.id, lista);
+			}
+		}
 		for (const [i, par] of (d.puentesInternos ?? []).entries()) ramas.push({
 			id: `puente:${d.id}:${i}`, de: clave(d.id, par[0]), a: clave(d.id, par[1]), zOhm: Z_CONTACTO_OHM,
 			tipo: 'CONTACTO', dispositivoId: d.id, origen: 'CONFIGURADO',
@@ -240,7 +259,9 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 	 * prospectiva, pero las alteraciones serie se aplican primero y por tanto tambien modifican
 	 * el camino, la caida y la Icc que ven los demas fallos del mismo ensayo.
 	 */
-	const red = aplicarFallosTopologia(redBase, contexto.fallas ?? []);
+	const fallasRuntime = contexto.fallas ?? [];
+	const redPrefalla = aplicarAlteracionesSerieTopologia(redBase, fallasRuntime);
+	const red = aplicarFallosTopologia(redBase, fallasRuntime);
 	const resultadoRed = resolverRedFisica(red);
 	const tensionReferencia = Math.max(0, ...red.fuentes.map((f) => magnitud(f.tensionV)));
 	const conductores = new Map<string, ResultadoConductorProyectoFisica>();
@@ -256,11 +277,25 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		const corrientes = [...resultadoRed.ramas].filter(([id]) => id.startsWith(`interno:${d.id}:`)).map(([, r]) => r.corrienteA);
 		const corrienteA = Math.max(0, ...corrientes.map(magnitud));
 		const inA = d.fisica?.proteccion?.inA ?? d.corrienteNominal;
-		const residual = corrientes.length > 1 ? magnitud(corrientes.reduce((s, i) => ({ re: s.re + i.re, im: s.im + i.im }), complejo(0))) : undefined;
+		const medidas = ramasMedidasDiferencial.get(d.id) ?? [];
+		const fasorResidual = medidas.length >= 2 ? medidas.reduce((s, m) => {
+			const i = resultadoRed.ramas.get(m.ramaId)?.corrienteA;
+			return i ? { re: s.re + m.signo * i.re, im: s.im + m.signo * i.im } : s;
+		}, complejo(0)) : undefined;
+		const umbralResidual = d.fisica?.diferencial?.corrienteResidualNominalA
+			?? (d.sensibilidadMA !== undefined ? d.sensibilidadMA / 1000 : undefined);
+		const residual = fasorResidual ? magnitud(fasorResidual) : undefined;
 		protecciones.set(d.id, { dispositivoId: d.id, corrienteA, inA,
-			evaluacion: evaluarCurva(curvaProteccion(d), corrienteA, inA ?? 0), corrienteResidualA: residual, fallas: [] });
+			evaluacion: evaluarCurva(curvaProteccion(d), corrienteA, inA ?? 0),
+			corrienteResidualA: residual, corrienteResidualFasorA: fasorResidual,
+			corrienteResidualNominalA: umbralResidual,
+			retardoResidualS: d.fisica?.diferencial?.retardoS ?? 0,
+			estadoResidual: residual === undefined || umbralResidual === undefined ? 'NO_DISPONIBLE'
+				: residual >= umbralResidual ? 'ACTUACION' : 'NORMAL',
+			modeloResidual: medidas.length >= 2 ? 'RESIDUAL_RMS_MODELED' : undefined,
+			fallas: [] });
 	}
-	const fallas = (contexto.fallas ?? []).map((f) => resolverFalla(red, f));
+	const fallas = fallasRuntime.map((f) => resolverFalla(redPrefalla, f));
 	const selectividad: CoordinacionFisicaProyecto[] = [];
 	for (const falla of fallas) {
 		if (!falla.nodoA || !falla.iccA) continue;
