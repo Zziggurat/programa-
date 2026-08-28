@@ -80,6 +80,8 @@ import { resistenciaCaminoAnalogico, resolverLazo420, resolverSenal010,
 	type ResultadoLazoAnalogicoFisico } from '../fisica/analogicas.js';
 import { calcularPlacaMotor } from '../fisica/motores.js';
 import type { DiagnosticoVfdFisico, EstadoVfdParaFisica } from '../fisica/variadores.js';
+import { fallaContactoActiva, resolverFallasEquipo,
+	type DiagnosticoBaseFallaEquipo, type FallaEquipoRuntime } from '../fisica/fallas-equipos.js';
 
 /** Estado que el usuario controla de cada aparato. */
 export interface EstadoAparato {
@@ -97,6 +99,8 @@ export interface EstadoAparato {
 	fallos?: TipoFalloRuntime[];
 	/** Fallas electricas cuantitativas V5. Son runtime y nunca se serializan en Proyecto. */
 	fallasFisicas?: FallaFisicaRuntime[];
+	/** Fallas V6 tipadas por objetivo. Son runtime y nunca se serializan en Proyecto. */
+	fallasEquipos?: FallaEquipoRuntime[];
 	/** Valores de ensayo V5 para un conductor; no modifican ni se guardan en Proyecto. */
 	ajustesFisicos?: { longitudM?: number; seccionMm2?: number };
 	/** Carga de entrada analogica de ensayo; tampoco pertenece al diseño. */
@@ -438,6 +442,8 @@ export interface ResultadoSimulacion {
 	actuadores: EstadoActuador[];
 	/** Capa cuantitativa V5 derivada de la misma topologia funcional. */
 	fisica: ResultadoFisicaElectrica;
+	/** Trazabilidad V6, incluida una combinación incompatible o un efecto no modelado. */
+	diagnosticosFallasEquipo: DiagnosticoBaseFallaEquipo[];
 }
 
 /** Lo que hace un controlador con su programa: qué lee, qué enciende y qué está esperando. */
@@ -626,7 +632,7 @@ function tensionDeEmpleo(d: Dispositivo, vivos: Map<string, BorneVivo>): number 
  * contacto de alarma de un relé térmico. Leerlo de ahí permite simular todo el catálogo sin
  * declarar los contactos aparato por aparato, que es como lo lee un electricista en el esquema.
  */
-export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaMetida: boolean): [string, string][] {
+function contactosCerradosBase(d: Dispositivo, estado: EstadoAparato, bobinaMetida: boolean): [string, string][] {
 	const pares: [string, string][] = [];
 	const idsBornes = new Set(d.bornes.map((b) => b.id));
 	const comportamiento = resolverComportamiento(d);
@@ -764,6 +770,21 @@ export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaM
 		}
 	}
 	return pares;
+}
+
+/** Aplica fallas V6 al contrato de contactos sin depender de marca, carcasa, imagen o id. */
+export function contactosCerrados(d: Dispositivo, estado: EstadoAparato, bobinaMetida: boolean): [string, string][] {
+	const falloApertura = fallaContactoActiva(estado, ['FALLO_APERTURA']);
+	const base = contactosCerradosBase(d, falloApertura ? { ...estado, cerrado: true, disparado: false } : estado, bobinaMetida);
+	const resultado = base.filter((par) => !fallaContactoActiva(estado, ['CONTACTO_NO_CIERRA', 'FASE_NO_CIERRA'], par));
+	for (const falla of estado.fallasEquipos ?? []) {
+		if (falla.codigo !== 'CONTACTO_SOLDADO' || falla.objetivo.tipo !== 'CONTACTO'
+			|| falla.objetivo.dispositivoId !== d.id) continue;
+		if (!fallaContactoActiva(estado, ['CONTACTO_SOLDADO'], falla.objetivo.terminales)) continue;
+		const clave = [...falla.objetivo.terminales].sort().join(':');
+		if (!resultado.some((p) => [...p].sort().join(':') === clave)) resultado.push([...falla.objetivo.terminales]);
+	}
+	return resultado;
 }
 
 /**
@@ -1895,10 +1916,23 @@ function sondaCableadaA(
  */
 export function simular(
 	proyecto: Proyecto,
-	estado: EstadoTablero = {},
+	estadoOriginal: EstadoTablero = {},
 	activosPrevios?: ReadonlySet<string>,
 	reloj?: { ahora: number; memoria: MemoriaTiempos; logica?: MemoriaLogica },
 ): ResultadoSimulacion {
+	const efectosFallasEquipo = resolverFallasEquipo(Object.values(estadoOriginal).flatMap((s) => s.fallasEquipos ?? []));
+	const estado: EstadoTablero = Object.fromEntries(Object.entries(estadoOriginal).map(([id, valor]) => [id, { ...valor }]));
+	for (const [id, fallos] of efectosFallasEquipo.funcionales) {
+		const actual = estado[id] ?? {};
+		estado[id] = { ...actual, fallos: [...new Set([...(actual.fallos ?? []), ...fallos])].sort() };
+	}
+	for (const [id, parcheOriginal] of efectosFallasEquipo.parchesEstado) {
+		const actual = estado[id] ?? {}; const parche = { ...parcheOriginal };
+		const offset = typeof parche.__offsetFalla === 'number' ? parche.__offsetFalla : undefined;
+		delete parche.__offsetFalla;
+		estado[id] = { ...actual, ...parche,
+			...(offset !== undefined ? { valor: (actual.valor ?? 0) + offset } : {}) };
+	}
 	const aparatos = proyecto.dispositivos.filter((d) => {
 		const perfil = resolverComportamiento(d);
 		return !!perfil && perfil.clase !== 'sin-comportamiento';
@@ -2016,7 +2050,7 @@ export function simular(
 		fuentesVariadores = nuevasFuentesVariadores;
 		const nuevosActivos = new Set<string>();
 		for (const d of aparatos) {
-			if (bobinaAlimentada(d, nuevosVivos)) nuevosActivos.add(d.id);
+			if (bobinaAlimentada(d, nuevosVivos, estado[d.id])) nuevosActivos.add(d.id);
 		}
 		// Las salidas del programa entran en el estado del circuito para que la siguiente llamada
 		// las recuerde: son lo que sostiene un enclavamiento hecho en el controlador.
@@ -2039,7 +2073,8 @@ export function simular(
 				const d = aparatos.find((x) => x.id === id)!;
 				const lectura = leerControlador(d, proyecto, vivos, estado,
 					salidasDePrograma.get(id) ?? new Set(), reloj?.memoria);
-				return { id, d, programa, alimentado: controladorAlimentado(d, vivos), imagen: imagenEntradasPLC(d, programa, lectura) };
+				return { id, d, programa, alimentado: controladorAlimentado(d, vivos) && estado[id]?.fallo !== true,
+					imagen: imagenEntradasPLC(d, programa, lectura) };
 			});
 			const actualizados = capturas.map((captura) => ({
 				...captura,
@@ -2462,7 +2497,7 @@ export function simular(
 	}
 	const contextoFisico = {
 		conexionesCerradas: conexionesFisicas, bornesEnergizados: new Set(vivos.keys()),
-		fallas: Object.values(estado).flatMap((s) => s.fallasFisicas ?? []),
+		fallas: [...Object.values(estado).flatMap((s) => s.fallasFisicas ?? []), ...efectosFallasEquipo.fisicas],
 		motores: new Map(motores.map((m) => [m.dispositivoId, m])),
 		variadores: new Map(variadores.map((v) => [v.dispositivoId, v satisfies EstadoVfdParaFisica])),
 		longitudesM: longitudesFisicas, seccionesMm2: seccionesFisicas,
@@ -2529,6 +2564,7 @@ export function simular(
 		controladores, variadores, motores, protecciones, fallos, posicionesCargas,
 		sensoresAnalogicos, entradasAnalogicas, actuadores,
 		fisica,
+		diagnosticosFallasEquipo: efectosFallasEquipo.diagnosticos,
 		temporizadores: cuentasAtras(aparatos, activos, reloj),
 	};
 }
@@ -2836,7 +2872,8 @@ function propagar(
 }
 
 /** ¿Tiene la bobina de este aparato tensión en A1 y retorno en A2? */
-function bobinaAlimentada(d: Dispositivo, vivos: Map<string, BorneVivo>): boolean {
+function bobinaAlimentada(d: Dispositivo, vivos: Map<string, BorneVivo>, estado?: EstadoAparato): boolean {
+	if (fallaContactoActiva(estado, ['BOBINA_ABIERTA'])) return false;
 	const perfil = resolverComportamiento(d);
 	if (perfil?.clase !== 'contactos-electromagneticos') return false;
 	const a1 = vivos.get(`${d.id}::${perfil.bobina.entrada}`);

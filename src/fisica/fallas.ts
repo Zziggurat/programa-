@@ -6,7 +6,7 @@ import { TOLERANCIAS_FISICA } from './tolerancias.js';
 import type { DiagnosticoFisica, RedFisica } from './tipos.js';
 
 export type TipoFallaFisica = 'L_N' | 'L_L' | 'L_PE' | 'TRIFASICA' | 'CONDUCTOR_ABIERTO'
-	| 'NEUTRO_ABIERTO' | 'RESISTENCIA_ANORMAL';
+	| 'NEUTRO_ABIERTO' | 'RESISTENCIA_ANORMAL' | 'SECUNDARIO_TRANSFORMADOR_ABIERTO';
 
 export interface FallaFisicaRuntime {
 	id: string;
@@ -16,6 +16,7 @@ export interface FallaFisicaRuntime {
 	ramaId?: string;
 	zFallaOhm?: Complejo;
 	resistenciaAdicionalOhm?: number;
+	dispositivoId?: string;
 }
 
 export interface ResultadoFallaFisica {
@@ -44,6 +45,8 @@ export function aplicarAlteracionesSerieTopologia(red: RedFisica, fallas: readon
 		ramas: red.ramas.filter((r) => !abiertas.has(r.id)).map((r) => ({
 			...r, zOhm: { re: r.zOhm.re + (resistencias.get(r.id) ?? 0), im: r.zOhm.im },
 		})),
+		transformadores: (red.transformadores ?? []).filter((t) => !fallas.some((f) =>
+			f.tipo === 'SECUNDARIO_TRANSFORMADOR_ABIERTO' && f.dispositivoId && t.id === `transformador:${f.dispositivoId}`)),
 	};
 }
 
@@ -105,7 +108,8 @@ export function impedanciaThevenin(red: RedFisica, nodoA: string, nodoB: string)
 
 export function resolverFalla(redOriginal: RedFisica, falla: FallaFisicaRuntime): ResultadoFallaFisica {
 	const red = aplicarAlteracionesSerieTopologia(redOriginal, [falla]);
-	if (falla.tipo === 'CONDUCTOR_ABIERTO' || falla.tipo === 'NEUTRO_ABIERTO' || falla.tipo === 'RESISTENCIA_ANORMAL') return {
+	if (falla.tipo === 'CONDUCTOR_ABIERTO' || falla.tipo === 'NEUTRO_ABIERTO' || falla.tipo === 'RESISTENCIA_ANORMAL'
+		|| falla.tipo === 'SECUNDARIO_TRANSFORMADOR_ABIERTO') return {
 		id: falla.id, tipo: falla.tipo, origen: 'INYECTADO', diagnosticos: [],
 	};
 	if (!falla.nodoA || !falla.nodoB) return { id: falla.id, tipo: falla.tipo, origen: 'NO_MODELADO',
