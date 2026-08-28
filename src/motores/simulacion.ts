@@ -78,6 +78,7 @@ import { simularFisicaProyecto, type ResultadoFisicaElectrica } from '../fisica/
 import type { FallaFisicaRuntime } from '../fisica/fallas.js';
 import { resistenciaCaminoAnalogico, resolverLazo420, resolverSenal010,
 	type ResultadoLazoAnalogicoFisico } from '../fisica/analogicas.js';
+import { calcularPlacaMotor } from '../fisica/motores.js';
 
 /** Estado que el usuario controla de cada aparato. */
 export interface EstadoAparato {
@@ -1355,7 +1356,8 @@ function estadoMotor(
 		throw new Error(`estadoMotor recibió un aparato sin perfil de giro: ${d.id}`);
 	}
 	const alimentacionCompletaAhora = tieneCircuitoCompleto(d, vivos);
-	const nominal = corrienteDe(d);
+	const placaFisica = d.fisica?.motor ? calcularPlacaMotor(d.fisica.motor) : undefined;
+	const nominal = placaFisica?.corrienteNominalUsadaA ?? corrienteDe(d);
 	const fuentesPresentes = new Set(perfil.alimentacion.fases
 		.map((id) => vivos.get(`${d.id}::${id}`))
 		.filter((v): v is BorneVivo => v?.papel === 'fase')
@@ -1363,7 +1365,8 @@ function estadoMotor(
 	const tensionRecibidaV = tensionDeEmpleo(d, vivos);
 	const tensionNominalV = d.tensionNominal && d.tensionNominal > 0 ? d.tensionNominal : undefined;
 	const tensionCorrecta = tensionRecibidaV === undefined || tensionNominalV === undefined ? undefined
-		: Math.abs(tensionRecibidaV - tensionNominalV) / tensionNominalV <= TOLERANCIA_TENSION;
+		: tensionRecibidaV >= tensionNominalV * (d.fisica?.motor?.umbralSubtension ?? (1 - TOLERANCIA_TENSION))
+			&& tensionRecibidaV <= tensionNominalV * (1 + TOLERANCIA_TENSION);
 	const st = estado[d.id];
 	const perdidaFaseFisica = perfil.alimentacion.fasesMinimas === 3
 		&& fuentesPresentes.size > 0 && fuentesPresentes.size < 3;
@@ -1386,13 +1389,15 @@ function estadoMotor(
 	const velocidadObjetivo = motivoFalla ? 0
 		: Math.max(0, Math.min(1, frecuenciaElectricaHz / frecuenciaNominalHz));
 	const dinamica = perfil.dinamicaMotor;
-	const duracionArranqueS = dinamica?.tiempoArranqueS ?? SEGUNDOS_ARRANQUE;
+	const duracionArranqueS = d.fisica?.motor?.tiempoArranqueS ?? dinamica?.tiempoArranqueS ?? SEGUNDOS_ARRANQUE;
 	const duracionParadaS = dinamica?.tiempoParadaS ?? SEGUNDOS_PARADA;
-	const polosMotor = dinamica?.polos;
+	const polosMotor = d.fisica?.motor?.polos ?? dinamica?.polos;
 	const rpmSincronas = polosMotor ? 120 * frecuenciaElectricaHz / polosMotor : undefined;
-	const rpmMecanicas = (velocidad: number): number | undefined => polosMotor === undefined ? undefined
-		: Math.round(120 * frecuenciaNominalHz / polosMotor * velocidad
-			* (1 - (dinamica?.deslizamiento ?? 0)));
+	const rpmMecanicas = (velocidad: number): number | undefined => d.fisica?.motor?.rpmNominal
+		? Math.round(d.fisica.motor.rpmNominal * velocidad)
+		: polosMotor === undefined ? undefined
+			: Math.round(120 * frecuenciaNominalHz / polosMotor * velocidad
+				* (1 - (placaFisica?.deslizamiento ?? dinamica?.deslizamiento ?? 0)));
 	const base = {
 		dispositivoId: d.id,
 		designacion: d.designacion ?? d.id,
@@ -2451,10 +2456,25 @@ export function simular(
 		if (ajuste?.longitudM !== undefined) longitudesFisicas.set(c.id, { metros: ajuste.longitudM, origen: 'INYECTADO' });
 		if (ajuste?.seccionMm2 !== undefined) seccionesFisicas.set(c.id, ajuste.seccionMm2);
 	}
-	const fisica = simularFisicaProyecto(proyecto, {
+	const contextoFisico = {
 		conexionesCerradas: conexionesFisicas, bornesEnergizados: new Set(vivos.keys()),
 		fallas: Object.values(estado).flatMap((s) => s.fallasFisicas ?? []),
+		motores: new Map(motores.map((m) => [m.dispositivoId, m])),
 		longitudesM: longitudesFisicas, seccionesMm2: seccionesFisicas,
+	};
+	let fisica = simularFisicaProyecto(proyecto, contextoFisico);
+	let recalcularMotores = false;
+	for (const motor of motores) {
+		const mf = fisica.motores.get(motor.dispositivoId); if (!mf) continue;
+		const perdida = mf.diagnosticos.some((d) => d.codigo === 'PERDIDA_FASE');
+		if (!perdida) continue;
+		motor.estado = 'falla'; motor.velocidadObjetivo = 0;
+		motor.motivoFalla = 'perdida-fase';
+		motor.corrienteEstimadaA = motor.corrienteNominalA * 1.5;
+		recalcularMotores = true;
+	}
+	if (recalcularMotores) fisica = simularFisicaProyecto(proyecto, {
+		...contextoFisico, motores: new Map(motores.map((m) => [m.dispositivoId, m])),
 	});
 	fisica.lazosAnalogicos = entradasAnalogicas.flatMap((e) => e.fisica ? [e.fisica] : []);
 	return {

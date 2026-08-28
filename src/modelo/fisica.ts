@@ -87,6 +87,23 @@ export interface ConfiguracionDiferencialFisico {
 	conductoresMedidos?: { entrada: string; salida: string }[];
 }
 
+export interface ConfiguracionMotorFisico {
+	potenciaMecanicaNominalW: number;
+	tensionNominalV: number;
+	frecuenciaHz: number;
+	fases: 1 | 3;
+	eficiencia: number;
+	factorPotencia: number;
+	corrienteNominalA?: number;
+	rpmNominal?: number;
+	polos?: number;
+	corrienteArranqueMultiplo?: number;
+	tiempoArranqueS?: number;
+	factorServicio?: number;
+	/** Umbral relativo para diagnosticar subtensión; p. ej. 0,9. */
+	umbralSubtension?: number;
+}
+
 export interface ConfiguracionAnalogicaFisica {
 	burdenOhm?: number;
 	resistenciaSalidaOhm?: number;
@@ -101,6 +118,7 @@ export interface ConfiguracionFisicaDispositivo {
 	transformador?: ConfiguracionTransformadorFisico;
 	proteccion?: ConfiguracionProteccionFisica;
 	diferencial?: ConfiguracionDiferencialFisico;
+	motor?: ConfiguracionMotorFisico;
 	analogica?: ConfiguracionAnalogicaFisica;
 }
 
@@ -215,9 +233,26 @@ export function leerFisicaDispositivo(v: unknown): ConfiguracionFisicaDispositiv
 			conductoresMedidos: conductoresMedidos.length ? conductoresMedidos : undefined,
 		};
 	}
+	let motor: ConfiguracionMotorFisico | undefined;
+	if (objeto(v.motor)) {
+		const potenciaMecanicaNominalW = numero(v.motor.potenciaMecanicaNominalW, false);
+		const tensionNominalV = numero(v.motor.tensionNominalV, false);
+		const frecuenciaHz = numero(v.motor.frecuenciaHz, false);
+		const fases = v.motor.fases === 1 || v.motor.fases === 3 ? v.motor.fases : undefined;
+		const eficiencia = numero(v.motor.eficiencia, false);
+		const factorPotencia = numero(v.motor.factorPotencia, false);
+		if (potenciaMecanicaNominalW && tensionNominalV && frecuenciaHz && fases && eficiencia && eficiencia <= 1
+			&& factorPotencia && factorPotencia <= 1) motor = {
+			potenciaMecanicaNominalW, tensionNominalV, frecuenciaHz, fases, eficiencia, factorPotencia,
+			corrienteNominalA: numero(v.motor.corrienteNominalA, false), rpmNominal: numero(v.motor.rpmNominal, false),
+			polos: numero(v.motor.polos, false), corrienteArranqueMultiplo: numero(v.motor.corrienteArranqueMultiplo, false),
+			tiempoArranqueS: numero(v.motor.tiempoArranqueS, false), factorServicio: numero(v.motor.factorServicio, false),
+			umbralSubtension: numero(v.motor.umbralSubtension, false),
+		};
+	}
 	const analogica = sencillo<ConfiguracionAnalogicaFisica>(v.analogica, {
 		burdenOhm: {}, resistenciaSalidaOhm: {}, tensionMinimaTransmisorV: {}, tensionComplianceV: {},
 	});
-	const salida = { version: 1 as const, fuente, carga, transformador, proteccion, diferencial, analogica };
-	return fuente || carga || transformador || proteccion || diferencial || analogica ? salida : undefined;
+	const salida = { version: 1 as const, fuente, carga, transformador, proteccion, diferencial, motor, analogica };
+	return fuente || carga || transformador || proteccion || diferencial || motor || analogica ? salida : undefined;
 }

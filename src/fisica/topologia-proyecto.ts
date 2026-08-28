@@ -15,6 +15,8 @@ import type {
 	RamaRedFisica, TransformadorRedFisica,
 } from './tipos.js';
 import type { ResultadoLazoAnalogicoFisico } from './analogicas.js';
+import { calcularPlacaMotor, factorCorrienteMotor,
+	type EstadoMotorParaFisica, type ResultadoMotorFisico } from './motores.js';
 
 const Z_CONTACTO_OHM = complejo(1e-6);
 
@@ -24,6 +26,7 @@ export interface ContextoTopologiaFisica {
 	seccionesMm2?: ReadonlyMap<string, number>;
 	fallas?: readonly FallaFisicaRuntime[];
 	bornesEnergizados?: ReadonlySet<string>;
+	motores?: ReadonlyMap<string, EstadoMotorParaFisica>;
 }
 
 export interface ResultadoConductorProyectoFisica extends ResultadoConductorFisico {
@@ -62,6 +65,7 @@ export interface ResultadoFisicaElectrica {
 	fallas: ResultadoFallaFisica[];
 	selectividad: CoordinacionFisicaProyecto[];
 	lazosAnalogicos: ResultadoLazoAnalogicoFisico[];
+	motores: Map<string, ResultadoMotorFisico>;
 	diagnosticos: DiagnosticoFisica[];
 }
 
@@ -84,11 +88,37 @@ export function resultadoFisicaVacio(): ResultadoFisicaElectrica {
 		red: { nodos: new Map(), ramas: new Map(), cargas: new Map(), fuentes: new Map(), transformadores: new Map(), diagnosticos: [],
 			potenciaCargasW: 0, potenciaPerdidasW: 0, potenciaFuentesW: 0,
 			metricas: { nodos: 0, ramas: 0, iteraciones: 0, convergio: true, tiempoMs: 0, residuoKclA: 0, errorBalanceW: 0 } },
-		conductores: new Map(), protecciones: new Map(), fallas: [], selectividad: [], lazosAnalogicos: [], diagnosticos: [],
+		conductores: new Map(), protecciones: new Map(), fallas: [], selectividad: [], lazosAnalogicos: [], motores: new Map(), diagnosticos: [],
 	};
 }
 
-function cargaDesde(dispositivo: Dispositivo): CargaRedFisica[] {
+function cargaDesde(dispositivo: Dispositivo, estadoMotor?: EstadoMotorParaFisica): CargaRedFisica[] {
+	const motor = dispositivo.fisica?.motor;
+	if (motor) {
+		const perfil = resolverComportamiento(dispositivo);
+		if (perfil?.clase !== 'carga' || perfil.efecto !== 'giro') return [];
+		const placa = calcularPlacaMotor(motor);
+		const factor = factorCorrienteMotor(motor, estadoMotor);
+		if (factor <= 0) return [];
+		const pares: [string, string, number][] = motor.fases === 3 && perfil.alimentacion.fases.length >= 3
+			? perfil.alimentacion.fases.slice(0, 3).map((fase, i) => [fase, '__estrella_v5', i] as [string, string, number])
+			: perfil.alimentacion.fases[0] && perfil.alimentacion.retornos[0]
+				? [[perfil.alimentacion.fases[0], perfil.alimentacion.retornos[0], 0]] : [];
+		const transitorio = estadoMotor?.estado === 'arrancando' || estadoMotor?.motivoFalla === 'motor-bloqueado'
+			|| estadoMotor?.motivoFalla === 'perdida-fase';
+		return pares.map(([de, a, indice]): CargaRedFisica => {
+			const comunes = { id: `motor:${dispositivo.id}:${indice}`, de: clave(dispositivo.id, de),
+				a: a === '__estrella_v5' ? `${dispositivo.id}::__estrella_v5` : clave(dispositivo.id, a),
+				dispositivoId: dispositivo.id, origen: transitorio ? 'ESTIMADO' as const : 'CALCULADO' as const };
+			/* Equivalente Z de ingeniería en todo el régimen V6. Conserva In/PF a tensión de placa,
+			 * permite estrella flotante y hace que la caída de red limite la corriente. No pretende
+			 * ser el circuito electromagnético dq de una máquina real. */
+			const vFase = motor.tensionNominalV / (motor.fases === 3 ? Math.sqrt(3) : 1);
+			const z = vFase / Math.max(1e-9, placa.corrienteNominalUsadaA * factor);
+			const angulo = Math.acos(motor.factorPotencia);
+			return { ...comunes, modelo: 'CONSTANT_Z', zOhm: complejo(z * Math.cos(angulo), z * Math.sin(angulo)) };
+		});
+	}
 	const c = dispositivo.fisica?.carga;
 	if (!c) return [];
 	const pares: [string, string, number][] = c.fases
@@ -211,7 +241,7 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 	if (!activo) return resultadoFisicaVacio();
 	const diagnosticos: DiagnosticoFisica[] = [];
 	const nodos = proyecto.dispositivos.flatMap((d) => d.bornes.map((b) => ({ id: clave(d.id, b.id), referencia: false })));
-	for (const d of proyecto.dispositivos) if (d.fisica?.carga?.fases) nodos.push({ id: `${d.id}::__estrella_v5`, referencia: false });
+	for (const d of proyecto.dispositivos) if (d.fisica?.carga?.fases || d.fisica?.motor?.fases === 3) nodos.push({ id: `${d.id}::__estrella_v5`, referencia: false });
 	for (const d of proyecto.dispositivos) if (d.fisica?.fuente) {
 		const id = clave(d.id, d.fisica.fuente.referencia);
 		const nodo = nodos.find((n) => n.id === id); if (nodo) nodo.referencia = true;
@@ -285,7 +315,8 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			a: clave(d.id, t.primarioTerminales[1]), zOhm: complejo(rNucleo), tipo: 'TRANSFORMADOR',
 			dispositivoId: d.id, origen: 'CONFIGURADO' });
 	}
-	const redBase: RedFisica = { nodos, ramas, fuentes, transformadores, cargas: proyecto.dispositivos.flatMap(cargaDesde) };
+	const redBase: RedFisica = { nodos, ramas, fuentes, transformadores,
+		cargas: proyecto.dispositivos.flatMap((d) => cargaDesde(d, contexto.motores?.get(d.id))) };
 	/*
 	 * Abrir un conductor o aumentar la resistencia de un terminal no es solo un diagnostico:
 	 * cambia la matriz que se resuelve. Los cortocircuitos siguen usando Thevenin como corriente
@@ -328,6 +359,40 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			modeloResidual: medidas.length >= 2 ? 'RESIDUAL_RMS_MODELED' : undefined,
 			fallas: [] });
 	}
+	const motores = new Map<string, ResultadoMotorFisico>();
+	for (const d of proyecto.dispositivos) {
+		const config = d.fisica?.motor; if (!config) continue;
+		const placa = calcularPlacaMotor(config); const estadoMotor = contexto.motores?.get(d.id);
+		const cargasMotor = [...resultadoRed.cargas].filter(([id]) => id.startsWith(`motor:${d.id}:`)).map(([, c]) => c);
+		const s = cargasMotor.reduce((a, c) => ({ re: a.re + c.potenciaVA.re, im: a.im + c.potenciaVA.im }), complejo(0));
+		const corrienteA = Math.max(0, ...cargasMotor.map((c) => magnitud(c.corrienteA)));
+		const tensionFase = cargasMotor.length ? cargasMotor.reduce((a, c) => a + magnitud(c.tensionV), 0) / cargasMotor.length : 0;
+		const tensionV = config.fases === 3 ? tensionFase * Math.sqrt(3) : tensionFase;
+		const diagnosticosMotor = [...placa.diagnosticos];
+		const tensionNominalFase = config.tensionNominalV / (config.fases === 3 ? Math.sqrt(3) : 1);
+		const fasesFisicasPresentes = cargasMotor.filter((c) => magnitud(c.tensionV) >= tensionNominalFase * 0.2).length;
+		const fasesPresentes = Math.min(estadoMotor?.fasesPresentes ?? config.fases, fasesFisicasPresentes);
+		if (fasesPresentes < config.fases) diagnosticosMotor.push({
+			codigo: 'PERDIDA_FASE', mensaje: `${fasesPresentes}/${config.fases} fases físicas presentes.`, origen: 'CALCULADO' });
+		if (estadoMotor?.motivoFalla === 'motor-bloqueado') diagnosticosMotor.push({ codigo: 'ROTOR_BLOQUEADO',
+			mensaje: 'RPM nulas con corriente de rotor bloqueado estimada.', origen: 'ESTIMADO' });
+		if (estadoMotor?.motivoFalla === 'sobrecarga') diagnosticosMotor.push({ codigo: 'SOBRECARGA_MECANICA',
+			mensaje: 'Carga mecánica de ensayo superior a la nominal.', origen: 'INYECTADO' });
+		if (tensionV > 0 && tensionV < config.tensionNominalV * (config.umbralSubtension ?? 0.9)) diagnosticosMotor.push({
+			codigo: 'UNDERVOLTAGE', mensaje: `${tensionV.toFixed(1)} V por debajo del umbral configurado.`, origen: 'CALCULADO' });
+		const aparente = magnitud(s); const bloqueado = estadoMotor?.motivoFalla === 'motor-bloqueado';
+		const fallaFisica = diagnosticosMotor.some((x) => ['PERDIDA_FASE', 'UNDERVOLTAGE', 'ROTOR_BLOQUEADO'].includes(x.codigo));
+		motores.set(d.id, { dispositivoId: d.id, tensionV, corrienteA,
+			potenciaEntradaW: s.re, potenciaReactivaVar: s.im, potenciaAparenteVA: aparente,
+			factorPotencia: aparente > 1e-9 ? s.re / aparente : undefined,
+			potenciaMecanicaEstimadaW: bloqueado ? 0 : Math.max(0, s.re * config.eficiencia * (estadoMotor?.velocidadActual ?? 1)),
+			eficiencia: config.eficiencia, rpm: bloqueado ? 0 : estadoMotor?.rpmEstimada,
+			rpmSincronas: placa.rpmSincronas, deslizamiento: placa.deslizamiento,
+			corrienteNominalCalculadaA: placa.corrienteNominalCalculadaA,
+			corrienteNominalUsadaA: placa.corrienteNominalUsadaA,
+			estado: fallaFisica ? 'falla' : estadoMotor?.estado ?? 'marcha', diagnosticos: diagnosticosMotor,
+			origen: estadoMotor?.estado === 'arrancando' || estadoMotor?.estado === 'falla' ? 'ESTIMADO' : 'CALCULADO' });
+	}
 	const fallas = fallasRuntime.map((f) => resolverFalla(redPrefalla, f));
 	const selectividad: CoordinacionFisicaProyecto[] = [];
 	for (const falla of fallas) {
@@ -353,6 +418,6 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 				...analizarSelectividad(eAbajo, eArriba) });
 		}
 	}
-	return { activo, red: resultadoRed, conductores, protecciones, fallas, selectividad,
+	return { activo, red: resultadoRed, conductores, protecciones, fallas, selectividad, motores,
 		lazosAnalogicos: [], diagnosticos: [...diagnosticos, ...resultadoRed.diagnosticos, ...fallas.flatMap((f) => f.diagnosticos)] };
 }
