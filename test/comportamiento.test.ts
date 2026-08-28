@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-	ComportamientoSimulacion, MATRIZ_FIDELIDAD_SIMULACION, resolverComportamiento,
+	ComportamientoSimulacion, MATRIZ_CAPACIDADES_FISICAS_V5, MATRIZ_FIDELIDAD_SIMULACION, resolverComportamiento,
 	validarComportamiento,
 } from '../src/modelo/comportamiento.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
@@ -46,13 +46,21 @@ const base24V = (): Proyecto => {
 	return p;
 };
 
-test('la matriz de fidelidad v4 cubre exactamente los 22 TipoDispositivo', () => {
-	assert.equal(MATRIZ_FIDELIDAD_SIMULACION.version, 4);
+test('la matriz de fidelidad v5 cubre exactamente los 22 TipoDispositivo', () => {
+	assert.equal(MATRIZ_FIDELIDAD_SIMULACION.version, 5);
 	assert.deepEqual(Object.keys(MATRIZ_FIDELIDAD_SIMULACION.tipos).sort(), [...TIPOS].sort());
 	for (const tipo of TIPOS) {
 		assert.match(MATRIZ_FIDELIDAD_SIMULACION.tipos[tipo].nivel,
-			/^(completa-v4|completa-v3|completa-v2|completa-v1|parcial|sin-comportamiento)$/);
+			/^(completa-v5|completa-v4|completa-v3|completa-v2|completa-v1|parcial|sin-comportamiento)$/);
 	}
+});
+
+test('la matriz fisica V5 declara capacidades y limites sin inflar diferenciales, motores ni VFD', () => {
+	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5.capacidades.conductor.nivel, 'completa-v5');
+	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5.capacidades.proteccion.nivel, 'completa-v5');
+	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5.capacidades.diferencial.nivel, 'parcial');
+	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5.capacidades.motor.nivel, 'parcial');
+	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5.capacidades.vfd.nivel, 'parcial');
 });
 
 test('el validador comprueba todos los roles contra bornes reales', () => {

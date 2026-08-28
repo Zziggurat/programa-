@@ -144,7 +144,7 @@ export type ComportamientoSimulacion =
 		motivo: string;
 	};
 
-export type NivelFidelidadSimulacion = 'completa-v4' | 'completa-v3' | 'completa-v2' | 'completa-v1' | 'parcial' | 'sin-comportamiento';
+export type NivelFidelidadSimulacion = 'completa-v5' | 'completa-v4' | 'completa-v3' | 'completa-v2' | 'completa-v1' | 'parcial' | 'sin-comportamiento';
 
 export interface FilaFidelidadSimulacion {
 	nivel: NivelFidelidadSimulacion;
@@ -157,21 +157,21 @@ export interface FilaFidelidadSimulacion {
  * añadir una familia al modelo obliga a declarar qué sabe hacer el motor con ella.
  */
 export const MATRIZ_FIDELIDAD_SIMULACION = {
-	version: 4,
+	version: 5,
 	tipos: {
 		plc: {
 			nivel: 'completa-v4',
 			participacion: 'Scan determinista, imágenes DI/DO/AI/AO, IR tipada, timers/counters, secuencias, alarmas, interlocks, fuerzas y PID V1.',
 			limitacion: 'DSL propia, no IEC 61131-3; PID sin modelo físico de planta ni módulos/protocolos industriales específicos.',
 		},
-		fuente: { nivel: 'parcial', participacion: 'Crea un secundario si el primario está alimentado.', limitacion: 'Sin límite de potencia, eficiencia ni fallo.' },
-		transformador: { nivel: 'parcial', participacion: 'Crea un secundario aislado condicionado por el primario.', limitacion: 'Sin impedancia, pérdidas ni saturación.' },
+		fuente: { nivel: 'completa-v5', participacion: 'Con perfil físico explícito publica fasores DC/AC, frecuencia e impedancia interna para V, I, potencia e Icc.', limitacion: 'Sin perfil V5 conserva la fuente funcional ideal; no modela regulación ni límite dinámico de potencia.' },
+		transformador: { nivel: 'parcial', participacion: 'Secundario monofásico aislado con relación y Z porcentual configurables.', limitacion: 'Equivalente desacoplado estimado: no refleja carga al primario, saturación, inrush ni grupos vectoriales.' },
 		contactor: { nivel: 'completa-v1', participacion: 'Bobina, polos y auxiliares NA/NC.', limitacion: 'Sin tiempos mecánicos ni desgaste.' },
 		rele: { nivel: 'completa-v2', participacion: 'Relé auxiliar/temporizado y térmico con acumulación, enfriamiento, 95-96 y 97-98.', limitacion: 'Curva térmica funcional estimada; sin modelo de bimetal certificado.' },
-		disyuntor: { nivel: 'completa-v2', participacion: 'ABIERTO/CERRADO/DISPARADO, térmica simplificada y magnética funcional.', limitacion: 'Sin impedancia, Icc exacta ni selectividad certificada.' },
-		guardamotor: { nivel: 'completa-v2', participacion: 'Corte y disparo térmico/magnético, con fallos de motor compatibles.', limitacion: 'Pérdida de fase y sobrecarga son aproximaciones; sin coordinación certificada.' },
-		diferencial: { nivel: 'completa-v2', participacion: 'CERRADO/ABIERTO/DISPARADO por fuga a tierra inyectada.', limitacion: 'No calcula corriente residual: la fuga se identifica expresamente como inyectada.' },
-		fusible: { nivel: 'completa-v2', participacion: 'OK/FUNDIDO, no rearmable y reemplazo explícito.', limitacion: 'Curva de fusión estimada; sin energía pasante I²t certificada.' },
+		disyuntor: { nivel: 'completa-v5', participacion: 'Estado V2 alimentado por corriente V5, curva genérica térmica/instantánea, Icc y ventana de disparo.', limitacion: 'Modelo de ingeniería; sin selectividad, poder de corte ni curva certificada de fabricante.' },
+		guardamotor: { nivel: 'completa-v5', participacion: 'Corte V2 y memoria térmica/magnética consumen corriente física V5 cuando está disponible.', limitacion: 'Pérdida de fase y curva son aproximaciones; sin coordinación certificada.' },
+		diferencial: { nivel: 'completa-v2', participacion: 'CERRADO/ABIERTO/DISPARADO por fuga inyectada; V5 publica suma vectorial si hay polos resueltos.', limitacion: 'El disparo residual calculado aún no sustituye el ensayo inyectado; no modela red de tierra externa.' },
+		fusible: { nivel: 'completa-v5', participacion: 'OK/FUNDIDO no rearmable, curva/I²t genéricos y apertura real de la rama física.', limitacion: 'Sin energía pasante o curva certificada de fabricante.' },
 		seccionador: { nivel: 'parcial', participacion: 'Apertura y cierre de polos.', limitacion: 'Sin enclavamientos ni poder de corte.' },
 		variador: { nivel: 'completa-v3', participacion: 'V2 más referencia cableada 0-10 V/4-20 mA, calidad y pérdida configurable.', limitacion: 'Salida trifásica conceptual; sin PWM, par ni frenado regenerativo.' },
 		motor: {
@@ -184,13 +184,34 @@ export const MATRIZ_FIDELIDAD_SIMULACION = {
 		piloto: { nivel: 'completa-v1', participacion: 'Carga binaria e indicación luminosa.', limitacion: 'No modela vida útil o destrucción por sobretensión.' },
 		sensor: { nivel: 'completa-v3', participacion: 'PNP alimentado y transmisor 0-10 V/4-20 mA de 2/3 hilos con calidad.', limitacion: 'Topología funcional sin impedancias ni protocolo HART.' },
 		valvula: { nivel: 'completa-v3', participacion: 'ON/OFF o modulante, carrera temporal, fail-safe y feedback opcional.', limitacion: 'Sin presión, caudal, fuerzas ni dinámica hidráulica.' },
-		resistencia: { nivel: 'parcial', participacion: 'Carga de corriente declarada.', limitacion: 'Sin cálculo R/P ni temperatura.' },
+		resistencia: { nivel: 'completa-v5', participacion: 'Carga física Z explícita con V, I, P, Q, S y PF calculados por la red.', limitacion: 'No deriva temperatura ni variación térmica de la carga.' },
 		condensador: { nivel: 'parcial', participacion: 'Carga genérica.', limitacion: 'Sin carga, descarga, reactancia ni transitorio.' },
 		bornero: { nivel: 'parcial', participacion: 'Conectividad pasiva, puentes y continuidad de señales analógicas.', limitacion: 'Sin resistencia de contacto ni accesorios de desconexión o prueba.' },
 		cable: { nivel: 'sin-comportamiento', participacion: 'El tipo de dispositivo no participa.', limitacion: 'Los conductores del proyecto son otra entidad y sí participan.' },
 		otro: { nivel: 'parcial', participacion: 'Ejecuta cualquier perfil explícito válido; una acometida legacy puede actuar como fuente.', limitacion: 'Sin perfil explícito queda inerte salvo una acometida legacy reconocible.' },
 	},
-} as const satisfies { version: 4; tipos: Record<TipoDispositivo, FilaFidelidadSimulacion> };
+} as const satisfies { version: 5; tipos: Record<TipoDispositivo, FilaFidelidadSimulacion> };
+
+export type NivelCapacidadFisicaV5 = 'completa-v5' | 'parcial' | 'no-modelado';
+
+/** Segunda matriz: separa la capacidad cuantitativa V5 del comportamiento funcional por carcasa. */
+export const MATRIZ_CAPACIDADES_FISICAS_V5 = {
+	version: 1,
+	capacidades: {
+		conductor: { nivel: 'completa-v5', alcance: 'Cu/Al/personalizado, R20, R(T), X declarada, longitud y pérdidas I²R.', limite: 'Sin ampacidad ni modelo térmico del cable.' },
+		fuente: { nivel: 'completa-v5', alcance: 'DC, AC monofásica y trifásica balanceada, frecuencia y Z interna.', limite: 'Paralelo complejo de fuentes incompatibles no modelado.' },
+		transformador: { nivel: 'parcial', alcance: 'Secundario monofásico, relación y Z porcentual.', limite: 'No refleja carga al primario ni modela magnetización.' },
+		cargaZ: { nivel: 'completa-v5', alcance: 'Impedancia compleja lineal.', limite: 'Sin dependencia térmica automática.' },
+		cargaI: { nivel: 'completa-v5', alcance: 'Corriente constante con factor de potencia.', limite: 'Modelo fasorial estático.' },
+		cargaPQ: { nivel: 'completa-v5', alcance: 'P/Q constante con iteración acotada y diagnóstico.', limite: 'No representa estabilidad dinámica de potencia.' },
+		motor: { nivel: 'parcial', alcance: 'Puede declarar carga Z/I/PQ y coexistir con estados/RPM V2.', limite: 'No deriva aún toda la carga desde placa ni modela FEM/par.' },
+		vfd: { nivel: 'parcial', alcance: 'Conserva V2/V3 y puede incorporar cargas físicas explícitas.', limite: 'Sin PWM, armónicos, DC link ni balance físico entrada/salida.' },
+		proteccion: { nivel: 'completa-v5', alcance: 'Corriente, Icc, curvas, ventanas, thermal/I²t y selectividad de modelo.', limite: 'No certifica coordinación ni cascading de fabricante.' },
+		diferencial: { nivel: 'parcial', alcance: 'Publica corriente residual vectorial cuando la topología la permite.', limite: 'La actuación calculada queda pendiente; fuga V2 sigue inyectada.' },
+		lazo420: { nivel: 'completa-v5', alcance: 'Cable, burden, caída, tensión disponible y compliance.', limite: 'Sin HART ni electrónica interna del transmisor.' },
+		senal010: { nivel: 'completa-v5', alcance: 'Resistencia de salida, cable y carga de entrada.', limite: 'Sin dinámica electrónica ni ruido.' },
+	},
+} as const satisfies { version: 1; capacidades: Record<string, { nivel: NivelCapacidadFisicaV5; alcance: string; limite: string }> };
 
 const esObjeto = (v: unknown): v is Record<string, unknown> =>
 	typeof v === 'object' && v !== null && !Array.isArray(v);
