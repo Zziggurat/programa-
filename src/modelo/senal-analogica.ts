@@ -17,7 +17,15 @@ export type CalidadSenalAnalogica =
 	| 'fallo-sensor'
 	| 'senal-invalida'
 	| 'under-range'
-	| 'over-range';
+	| 'over-range'
+	| 'compliance-insuficiente'
+	| 'carga-excesiva'
+	| 'caida-excesiva'
+	| 'no-converge';
+
+/** Causas cuantitativas V5; se agregan a la semantica V3, no crean otra calidad paralela. */
+export type CalidadFisicaAnalogica = Extract<CalidadSenalAnalogica,
+	'compliance-insuficiente' | 'carga-excesiva' | 'caida-excesiva' | 'no-converge'>;
 
 export type OrigenSenalAnalogica = 'calculado' | 'estimado' | 'inyectado' | 'no-modelado';
 

@@ -67,6 +67,26 @@ test('transmisor 4–20 mA: variable física → señal → AI escalada', () => 
 	assert.equal(r.controladores[0].sondas.AI1, 50);
 });
 
+test('V5 sobre V3: burden y cables declarados limitan fisicamente el lazo 4-20 mA', () => {
+	const p = tableroInstrumentacion('mA');
+	p.dispositivos.find((d) => d.id === 'tt1')!.fisica = { version: 1,
+		analogica: { tensionMinimaTransmisorV: 12, tensionComplianceV: 24 } };
+	p.dispositivos.find((d) => d.id === 'plc1')!.fisica = { version: 1, analogica: { burdenOhm: 250 } };
+	for (const c of p.conductores.filter((c) => c.id === 'c5' || c.id === 'c6')) {
+		c.seccion = 0.5; c.fisica = { material: 'COBRE', longitudManualM: 10 };
+	}
+	const sano = simular(p, { tt1: { valor: 100 } });
+	assert.equal(sano.entradasAnalogicas[0].senal.calidad, 'normal');
+	assert.equal(sano.entradasAnalogicas[0].senal.valorElectrico, 20);
+	assert.equal(sano.fisica.lazosAnalogicos[0].calidad, 'NORMAL');
+	p.dispositivos.find((d) => d.id === 'plc1')!.fisica!.analogica!.burdenOhm = 1000;
+	const limitado = simular(p, { tt1: { valor: 100 } });
+	assert.equal(limitado.entradasAnalogicas[0].senal.calidad, 'compliance-insuficiente');
+	assert.ok(limitado.entradasAnalogicas[0].senal.valorElectrico! < 20);
+	assert.equal(limitado.entradasAnalogicas[0].valorIngenieria, undefined);
+	assert.equal(limitado.fisica.lazosAnalogicos[0].calidad, 'COMPLIANCE_INSUFICIENTE');
+});
+
 test('sensor 0–10 V necesita alimentación y conserva unidades reales', () => {
 	const p = tableroInstrumentacion('V');
 	const sano = simular(p, { tt1: { valor: 50 } });

@@ -14,6 +14,7 @@ import type {
 	CargaRedFisica, DiagnosticoFisica, RedFisica, ResultadoRedFisica,
 	RamaRedFisica,
 } from './tipos.js';
+import type { ResultadoLazoAnalogicoFisico } from './analogicas.js';
 
 const Z_CONTACTO_OHM = complejo(1e-6);
 
@@ -54,6 +55,7 @@ export interface ResultadoFisicaElectrica {
 	protecciones: Map<string, ResultadoProteccionProyectoFisica>;
 	fallas: ResultadoFallaFisica[];
 	selectividad: CoordinacionFisicaProyecto[];
+	lazosAnalogicos: ResultadoLazoAnalogicoFisico[];
 	diagnosticos: DiagnosticoFisica[];
 }
 
@@ -65,7 +67,7 @@ export function resultadoFisicaVacio(): ResultadoFisicaElectrica {
 		red: { nodos: new Map(), ramas: new Map(), cargas: new Map(), fuentes: new Map(), diagnosticos: [],
 			potenciaCargasW: 0, potenciaPerdidasW: 0, potenciaFuentesW: 0,
 			metricas: { nodos: 0, ramas: 0, iteraciones: 0, convergio: true, tiempoMs: 0, residuoKclA: 0, errorBalanceW: 0 } },
-		conductores: new Map(), protecciones: new Map(), fallas: [], selectividad: [], diagnosticos: [],
+		conductores: new Map(), protecciones: new Map(), fallas: [], selectividad: [], lazosAnalogicos: [], diagnosticos: [],
 	};
 }
 
@@ -220,5 +222,5 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		}
 	}
 	return { activo, red: resultadoRed, conductores, protecciones, fallas, selectividad,
-		diagnosticos: [...diagnosticos, ...resultadoRed.diagnosticos, ...fallas.flatMap((f) => f.diagnosticos)] };
+		lazosAnalogicos: [], diagnosticos: [...diagnosticos, ...resultadoRed.diagnosticos, ...fallas.flatMap((f) => f.diagnosticos)] };
 }

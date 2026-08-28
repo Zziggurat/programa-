@@ -19,3 +19,4 @@ export * from './fisica/solver.js';
 export * from './fisica/fallas.js';
 export * from './fisica/protecciones.js';
 export * from './fisica/topologia-proyecto.js';
+export * from './fisica/analogicas.js';

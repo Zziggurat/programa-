@@ -76,6 +76,8 @@ import { compilarProgramaPLC, type IOProgramaPLC, type ProgramaPLCCompilado } fr
 import { actualizarRuntimePLC, configLegacyPLC, crearRuntimePLC, esperasLegacyPLC } from './plc-runtime.js';
 import { simularFisicaProyecto, type ResultadoFisicaElectrica } from '../fisica/topologia-proyecto.js';
 import type { FallaFisicaRuntime } from '../fisica/fallas.js';
+import { resistenciaCaminoAnalogico, resolverLazo420, resolverSenal010,
+	type ResultadoLazoAnalogicoFisico } from '../fisica/analogicas.js';
 
 /** Estado que el usuario controla de cada aparato. */
 export interface EstadoAparato {
@@ -253,6 +255,8 @@ export interface EstadoEntradaAnalogica {
 	valorIngenieria?: number;
 	magnitud: string;
 	unidad: string;
+	/** Burden, caidas y compliance V5, solo si todos los parametros fisicos estan declarados. */
+	fisica?: ResultadoLazoAnalogicoFisico;
 }
 
 export interface EstadoActuador {
@@ -1652,9 +1656,35 @@ function leerEntradaAnalogica(
 	if (!retornoCerrado || fuente.senal.calidad === 'circuito-abierto') {
 		return { ...base, senal: senalInvalida(rango, 'circuito-abierto', fuente.senal.origen) };
 	}
-	const escalado = escalarSenalAIngenieria(fuente.senal, rango, entrada.variable, { clamp: true });
+	let senal = fuente.senal;
+	let fisica: ResultadoLazoAnalogicoFisico | undefined;
+	const configFuente = fuente.dispositivo.fisica?.analogica;
+	const configEntrada = controlador.fisica?.analogica;
+	const ida = resistenciaCaminoAnalogico(proyecto, `${fuente.dispositivo.id}::${fuente.borne}`, `${controlador.id}::${entrada.borne}`);
+	const vuelta = resistenciaCaminoAnalogico(proyecto, `${fuente.dispositivo.id}::${fuente.comun}`, `${controlador.id}::${entrada.comun}`);
+	const resistenciaCableOhm = ida.ohm !== undefined && vuelta.ohm !== undefined ? ida.ohm + vuelta.ohm : undefined;
+	if (senal.calidad === 'normal' && senal.valorElectrico !== undefined && resistenciaCableOhm !== undefined
+		&& senal.unidadElectrica === 'mA' && configEntrada?.burdenOhm !== undefined
+		&& configFuente?.tensionMinimaTransmisorV !== undefined && configFuente.tensionComplianceV !== undefined) {
+		fisica = resolverLazo420({ corrienteDemandadaMA: senal.valorElectrico,
+			tensionDisponibleV: configFuente.tensionComplianceV,
+			tensionMinimaTransmisorV: configFuente.tensionMinimaTransmisorV,
+			resistenciaCableOhm, burdenOhm: configEntrada.burdenOhm });
+		fisica.fuenteId = fuente.dispositivo.id; fisica.entradaId = `${controlador.id}::${entrada.borne}`;
+		senal = { ...senal, valorElectrico: fisica.corrienteMA,
+			calidad: fisica.calidad === 'NORMAL' ? 'normal' : 'compliance-insuficiente', origen: 'calculado' };
+	} else if (senal.calidad === 'normal' && senal.valorElectrico !== undefined && senal.unidadElectrica === 'V'
+		&& configFuente?.resistenciaSalidaOhm !== undefined && configEntrada?.burdenOhm !== undefined) {
+		fisica = resolverSenal010({ tensionDemandadaV: senal.valorElectrico,
+			resistenciaSalidaOhm: configFuente.resistenciaSalidaOhm + (resistenciaCableOhm ?? 0),
+			resistenciaEntradaOhm: configEntrada.burdenOhm });
+		fisica.fuenteId = fuente.dispositivo.id; fisica.entradaId = `${controlador.id}::${entrada.borne}`;
+		senal = { ...senal, valorElectrico: fisica.tensionV,
+			calidad: fisica.calidad === 'NORMAL' ? 'normal' : 'carga-excesiva', origen: 'calculado' };
+	}
+	const escalado = escalarSenalAIngenieria(senal, rango, entrada.variable, { clamp: true });
 	return {
-		...base, senal: { ...fuente.senal, calidad: escalado.calidad },
+		...base, senal: { ...senal, calidad: escalado.calidad }, ...(fisica ? { fisica } : {}),
 		...(escalado.valor === undefined ? {} : { valorIngenieria: escalado.valor }),
 	};
 }
@@ -2412,6 +2442,7 @@ export function simular(
 		conexionesCerradas: conexionesFisicas, bornesEnergizados: new Set(vivos.keys()),
 		fallas: Object.values(estado).flatMap((s) => s.fallasFisicas ?? []),
 	});
+	fisica.lazosAnalogicos = entradasAnalogicas.flatMap((e) => e.fisica ? [e.fisica] : []);
 	return {
 		vivos, conductoresVivos, activos, funcionando, avisos, analogicas, salidasAnalogicas,
 		pasadas, oscila: !estable,
