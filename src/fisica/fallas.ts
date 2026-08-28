@@ -5,7 +5,8 @@ import { resolverRedFisica } from './solver.js';
 import { TOLERANCIAS_FISICA } from './tolerancias.js';
 import type { DiagnosticoFisica, RedFisica } from './tipos.js';
 
-export type TipoFallaFisica = 'L_N' | 'L_L' | 'L_PE' | 'TRIFASICA' | 'CONDUCTOR_ABIERTO' | 'RESISTENCIA_ANORMAL';
+export type TipoFallaFisica = 'L_N' | 'L_L' | 'L_PE' | 'TRIFASICA' | 'CONDUCTOR_ABIERTO'
+	| 'NEUTRO_ABIERTO' | 'RESISTENCIA_ANORMAL';
 
 export interface FallaFisicaRuntime {
 	id: string;
@@ -35,7 +36,7 @@ export interface ResultadoFallaFisica {
 export const IMPEDANCIA_FALLA_FRANCA_OHM: Complejo = Object.freeze({ re: 0.001, im: 0 });
 
 export function aplicarAlteracionesSerieTopologia(red: RedFisica, fallas: readonly FallaFisicaRuntime[]): RedFisica {
-	const abiertas = new Set(fallas.filter((f) => f.tipo === 'CONDUCTOR_ABIERTO').map((f) => f.ramaId));
+	const abiertas = new Set(fallas.filter((f) => f.tipo === 'CONDUCTOR_ABIERTO' || f.tipo === 'NEUTRO_ABIERTO').map((f) => f.ramaId));
 	const resistencias = new Map(fallas.filter((f) => f.tipo === 'RESISTENCIA_ANORMAL' && f.ramaId)
 		.map((f) => [f.ramaId!, Math.max(0, f.resistenciaAdicionalOhm ?? 0)]));
 	return {
@@ -104,7 +105,7 @@ export function impedanciaThevenin(red: RedFisica, nodoA: string, nodoB: string)
 
 export function resolverFalla(redOriginal: RedFisica, falla: FallaFisicaRuntime): ResultadoFallaFisica {
 	const red = aplicarAlteracionesSerieTopologia(redOriginal, [falla]);
-	if (falla.tipo === 'CONDUCTOR_ABIERTO' || falla.tipo === 'RESISTENCIA_ANORMAL') return {
+	if (falla.tipo === 'CONDUCTOR_ABIERTO' || falla.tipo === 'NEUTRO_ABIERTO' || falla.tipo === 'RESISTENCIA_ANORMAL') return {
 		id: falla.id, tipo: falla.tipo, origen: 'INYECTADO', diagnosticos: [],
 	};
 	if (!falla.nodoA || !falla.nodoB) return { id: falla.id, tipo: falla.tipo, origen: 'NO_MODELADO',

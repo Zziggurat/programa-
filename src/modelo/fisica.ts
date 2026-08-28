@@ -31,6 +31,8 @@ export interface ConfiguracionFuenteFisica {
 	fases: { borne: string; fase: 'POSITIVO' | 'L' | 'L1' | 'L2' | 'L3'; anguloDeg?: number }[];
 	rOhm?: number;
 	xOhm?: number;
+	/** Umbral de ingeniería para la métrica MAX_DESVIACION_MEDIA; no implica conformidad normativa. */
+	umbralDesequilibrioPct?: number;
 }
 
 export interface ConfiguracionCargaFisica {
@@ -184,6 +186,7 @@ export function leerFisicaDispositivo(v: unknown): ConfiguracionFisicaDispositiv
 		if (sistema && tensionNominalV !== undefined && referencia && fases.length) fuente = {
 			sistema, tensionNominalV, referencia, referenciaPe: texto(v.fuente.referenciaPe), fases,
 			frecuenciaHz: numero(v.fuente.frecuenciaHz, false), rOhm: numero(v.fuente.rOhm), xOhm: numero(v.fuente.xOhm),
+			umbralDesequilibrioPct: numero(v.fuente.umbralDesequilibrioPct, false),
 		};
 	}
 	let carga: ConfiguracionCargaFisica | undefined;

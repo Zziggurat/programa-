@@ -19,6 +19,7 @@ import { calcularPlacaMotor, factorCorrienteMotor,
 	type EstadoMotorParaFisica, type ResultadoMotorFisico } from './motores.js';
 import { tensionSalidaVfd, validarVfdFisico,
 	type EstadoVfdParaFisica, type ResultadoVfdFisico } from './variadores.js';
+import { analizarTrifasico, type AnalisisTrifasicoFisico } from './trifasica.js';
 
 const Z_CONTACTO_OHM = complejo(1e-6);
 
@@ -70,6 +71,7 @@ export interface ResultadoFisicaElectrica {
 	lazosAnalogicos: ResultadoLazoAnalogicoFisico[];
 	motores: Map<string, ResultadoMotorFisico>;
 	variadores: Map<string, ResultadoVfdFisico>;
+	trifasicos: Map<string, AnalisisTrifasicoFisico>;
 	diagnosticos: DiagnosticoFisica[];
 }
 
@@ -93,7 +95,7 @@ export function resultadoFisicaVacio(): ResultadoFisicaElectrica {
 			potenciaCargasW: 0, potenciaPerdidasW: 0, potenciaFuentesW: 0,
 			metricas: { nodos: 0, ramas: 0, iteraciones: 0, convergio: true, tiempoMs: 0, residuoKclA: 0, errorBalanceW: 0 } },
 		conductores: new Map(), protecciones: new Map(), fallas: [], selectividad: [], lazosAnalogicos: [],
-		motores: new Map(), variadores: new Map(), diagnosticos: [],
+		motores: new Map(), variadores: new Map(), trifasicos: new Map(), diagnosticos: [],
 	};
 }
 
@@ -499,6 +501,22 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			eficiencia: potenciaEntradaW > 1e-9 ? Math.max(0, Math.min(1, potenciaSalidaW / potenciaEntradaW)) : undefined,
 			frecuenciaSalidaHz: estadoVfd.frecuenciaHz, estado: estadoVfd.estado, diagnosticos: diagnosticosVfd, origen: 'ESTIMADO' });
 	}
+	const trifasicos = new Map<string, AnalisisTrifasicoFisico>();
+	for (const d of proyecto.dispositivos) {
+		const config = d.fisica?.fuente; if (config?.sistema !== 'AC_TRIFASICA') continue;
+		const orden = { L1: 0, L2: 1, L3: 2 } as const;
+		const fases = config.fases.map((fase, indice) => ({ fase, indice }))
+			.filter((x): x is { fase: typeof x.fase & { fase: keyof typeof orden }; indice: number } => x.fase.fase in orden)
+			.sort((a, b) => orden[a.fase.fase] - orden[b.fase.fase]);
+		if (fases.length !== 3) continue;
+		const tensiones = fases.map(({ indice }) => resultadoRed.fuentes.get(`fuente:${d.id}:${indice}`)?.tensionTerminalV);
+		const corrientes = fases.map(({ indice }) => resultadoRed.fuentes.get(`fuente:${d.id}:${indice}`)?.corrienteEntregadaA);
+		if (tensiones.some((x) => !x) || corrientes.some((x) => !x)) continue;
+		trifasicos.set(d.id, analizarTrifasico(d.id,
+			tensiones as [{ re: number; im: number }, { re: number; im: number }, { re: number; im: number }],
+			corrientes as [{ re: number; im: number }, { re: number; im: number }, { re: number; im: number }],
+			config.umbralDesequilibrioPct));
+	}
 	const fallas = fallasRuntime.map((f) => resolverFalla(redPrefalla, f));
 	const selectividad: CoordinacionFisicaProyecto[] = [];
 	for (const falla of fallas) {
@@ -524,6 +542,6 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 				...analizarSelectividad(eAbajo, eArriba) });
 		}
 	}
-	return { activo, red: resultadoRed, conductores, protecciones, fallas, selectividad, motores, variadores,
+	return { activo, red: resultadoRed, conductores, protecciones, fallas, selectividad, motores, variadores, trifasicos,
 		lazosAnalogicos: [], diagnosticos: [...diagnosticos, ...resultadoRed.diagnosticos, ...fallas.flatMap((f) => f.diagnosticos)] };
 }
