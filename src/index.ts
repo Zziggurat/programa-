@@ -14,3 +14,5 @@ export * from './fisica/complejos.js';
 export * from './fisica/algebra.js';
 export * from './fisica/materiales.js';
 export * from './fisica/conductores.js';
+export * from './fisica/tipos.js';
+export * from './fisica/solver.js';
