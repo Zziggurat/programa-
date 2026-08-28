@@ -7,7 +7,7 @@ import type { FallaFisicaRuntime, ResultadoFallaFisica } from './fallas.js';
 import { aplicarFallosTopologia, resolverFalla } from './fallas.js';
 import {
 	CURVAS_PROTECCION_GENERICAS, analizarSelectividad, evaluarCurva, type EvaluacionCurvaProteccion,
-	type ResultadoSelectividad,
+	type PerfilCurvaProteccion, type ResultadoSelectividad,
 } from './protecciones.js';
 import { resolverRedFisica } from './solver.js';
 import type {
@@ -21,6 +21,7 @@ const Z_CONTACTO_OHM = complejo(1e-6);
 export interface ContextoTopologiaFisica {
 	conexionesCerradas?: ReadonlyMap<string, readonly (readonly [string, string])[]>;
 	longitudesM?: ReadonlyMap<string, { metros: number; origen: OrigenDatoFisico }>;
+	seccionesMm2?: ReadonlyMap<string, number>;
 	fallas?: readonly FallaFisicaRuntime[];
 	bornesEnergizados?: ReadonlySet<string>;
 }
@@ -60,6 +61,17 @@ export interface ResultadoFisicaElectrica {
 }
 
 const clave = (dispositivoId: string, borneId: string): string => `${dispositivoId}::${borneId}`;
+
+function curvaProteccion(dispositivo: Dispositivo): PerfilCurvaProteccion | undefined {
+	const config = dispositivo.fisica?.proteccion;
+	return config?.puntos?.length ? {
+		id: config.curva ?? `CURVA:${dispositivo.id}`,
+		descripcion: 'Curva configurada por el proyecto',
+		puntos: config.puntos,
+		instantaneoDesdeIn: config.instantaneoDesdeIn,
+		origen: 'CONFIGURADO',
+	} : CURVAS_PROTECCION_GENERICAS[config?.curva ?? dispositivo.curvaDisparo ?? ''];
+}
 
 export function resultadoFisicaVacio(): ResultadoFisicaElectrica {
 	return {
@@ -188,12 +200,14 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		const estimacionM = de && a ? Math.hypot(de.x - a.x, de.y - a.y) / 1000 : undefined;
 		const declarada = contexto.longitudesM?.get(c.id);
 		const longitud = declarada ?? resolverLongitudConductor(c.fisica, undefined, estimacionM);
-		if (!(c.seccion && c.seccion > 0) || longitud.metros <= 0) {
+		const seccionMm2 = contexto.seccionesMm2?.get(c.id) ?? c.seccion;
+		if (!(seccionMm2 && seccionMm2 > 0) || longitud.metros <= 0) {
 			diagnosticos.push({ codigo: 'CONFIGURACION_INVALIDA', mensaje: `Cable ${c.id} sin seccion o longitud fisica fiable`, elementos: [c.id] });
 			return [{ id: `conductor:${c.id}`, de: clave(c.de.dispositivoId, c.de.borneId), a: clave(c.a.dispositivoId, c.a.borneId),
 				zOhm: Z_CONTACTO_OHM, tipo: 'CONDUCTOR' as const, conductorId: c.id, origen: 'NO_MODELADO' as const }];
 		}
-		const datos = calcularConductorFisico({ seccionMm2: c.seccion, longitud, config: c.fisica });
+		const datos = calcularConductorFisico({ seccionMm2, longitud, config: c.fisica,
+			origenSeccion: contexto.seccionesMm2?.has(c.id) ? 'INYECTADO' : 'CONFIGURADO' });
 		datosConductores.set(c.id, datos);
 		return [{ id: `conductor:${c.id}`, de: clave(c.de.dispositivoId, c.de.borneId), a: clave(c.a.dispositivoId, c.a.borneId),
 			zOhm: magnitud(datos.zOhm) > 0 ? datos.zOhm : Z_CONTACTO_OHM, tipo: 'CONDUCTOR' as const,
@@ -236,13 +250,9 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		const corrientes = [...resultadoRed.ramas].filter(([id]) => id.startsWith(`interno:${d.id}:`)).map(([, r]) => r.corrienteA);
 		const corrienteA = Math.max(0, ...corrientes.map(magnitud));
 		const inA = d.fisica?.proteccion?.inA ?? d.corrienteNominal;
-		const curvaPropia = d.fisica?.proteccion?.puntos?.length ? {
-			id: d.fisica.proteccion.curva ?? `CURVA:${d.id}`, descripcion: 'Curva configurada por el proyecto',
-			puntos: d.fisica.proteccion.puntos, instantaneoDesdeIn: d.fisica.proteccion.instantaneoDesdeIn, origen: 'CONFIGURADO' as const,
-		} : CURVAS_PROTECCION_GENERICAS[d.fisica?.proteccion?.curva ?? d.curvaDisparo ?? ''];
 		const residual = corrientes.length > 1 ? magnitud(corrientes.reduce((s, i) => ({ re: s.re + i.re, im: s.im + i.im }), complejo(0))) : undefined;
 		protecciones.set(d.id, { dispositivoId: d.id, corrienteA, inA,
-			evaluacion: evaluarCurva(curvaPropia, corrienteA, inA ?? 0), corrienteResidualA: residual, fallas: [] });
+			evaluacion: evaluarCurva(curvaProteccion(d), corrienteA, inA ?? 0), corrienteResidualA: residual, fallas: [] });
 	}
 	const fallas = (contexto.fallas ?? []).map((f) => resolverFalla(red, f));
 	const selectividad: CoordinacionFisicaProyecto[] = [];
@@ -253,9 +263,8 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		for (const id of camino) {
 			const p = protecciones.get(id); const d = proyecto.dispositivos.find((x) => x.id === id);
 			if (!p || !d) continue;
-			const curva = CURVAS_PROTECCION_GENERICAS[d.fisica?.proteccion?.curva ?? d.curvaDisparo ?? ''];
 			if (corriente > p.corrienteA) {
-				p.corrienteA = corriente; p.evaluacion = evaluarCurva(curva, corriente, p.inA ?? 0);
+				p.corrienteA = corriente; p.evaluacion = evaluarCurva(curvaProteccion(d), corriente, p.inA ?? 0);
 			}
 			p.fallas.push(falla.id);
 		}
@@ -264,9 +273,8 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			if (!abajo || !arriba) continue;
 			const da = proyecto.dispositivos.find((d) => d.id === camino[i])!;
 			const ar = proyecto.dispositivos.find((d) => d.id === camino[i + 1])!;
-			const curva = (d: Dispositivo) => CURVAS_PROTECCION_GENERICAS[d.fisica?.proteccion?.curva ?? d.curvaDisparo ?? ''];
-			const eAbajo = evaluarCurva(curva(da), corriente, abajo.inA ?? 0);
-			const eArriba = evaluarCurva(curva(ar), corriente, arriba.inA ?? 0);
+			const eAbajo = evaluarCurva(curvaProteccion(da), corriente, abajo.inA ?? 0);
+			const eArriba = evaluarCurva(curvaProteccion(ar), corriente, arriba.inA ?? 0);
 			selectividad.push({ fallaId: falla.id, aguasAbajoId: da.id, aguasArribaId: ar.id,
 				...analizarSelectividad(eAbajo, eArriba) });
 		}

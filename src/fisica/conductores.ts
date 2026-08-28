@@ -18,6 +18,7 @@ export interface ResultadoConductorFisico {
 	xOhm: number;
 	zOhm: Complejo;
 	origenLongitud: OrigenDatoFisico;
+	origenSeccion: OrigenDatoFisico;
 	origenReactancia: OrigenDatoFisico;
 }
 
@@ -40,6 +41,7 @@ export function calcularConductorFisico(datos: {
 	seccionMm2: number;
 	longitud: LongitudFisica;
 	config?: ConfiguracionFisicaConductor;
+	origenSeccion?: OrigenDatoFisico;
 }): ResultadoConductorFisico {
 	const seccionMm2 = positivo('seccion', datos.seccionMm2);
 	const longitudM = finito('longitud', datos.longitud.metros);
@@ -56,7 +58,7 @@ export function calcularConductorFisico(datos: {
 	return {
 		material: material.nombre, seccionMm2, longitudM, temperaturaC, r20Ohm, rOhm, xOhm,
 		zOhm: { re: rOhm, im: xOhm }, origenLongitud: datos.longitud.origen,
+		origenSeccion: datos.origenSeccion ?? 'CONFIGURADO',
 		origenReactancia: xDeclarada === undefined ? 'NO_MODELADO' : 'CONFIGURADO',
 	};
 }
-

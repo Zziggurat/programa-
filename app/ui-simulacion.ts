@@ -26,6 +26,8 @@ import {
 import { emisionDeCable } from './animacion-sim.js';
 import { Escenario } from './escena3d.js';
 import { avisar, escaparHtml } from './dialogos.js';
+import { htmlFisicaV5 } from './panel-fisica.js';
+import type { FallaFisicaRuntime } from '../src/fisica/fallas.js';
 
 /** Lo que la simulación necesita del editor. */
 export interface ContextoSimulacion {
@@ -34,6 +36,8 @@ export interface ContextoSimulacion {
 	escenario: () => Escenario;
 	/** Selecciona un aparato del tablero (al pinchar una fila del panel). */
 	seleccionar: (id: string | undefined) => void;
+	/** Selecciona el tubo visible de un conductor desde sus magnitudes V5. */
+	seleccionarCable?: (id: string) => void;
 	/** Sincroniza la visibilidad del cajón cuando Energizar lo fuerza fuera de su herramienta. */
 	refrescarPanel?: () => void;
 }
@@ -404,8 +408,15 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		}
 		if (!actualizado.cambio) return;
 		// Un disparo/reemplazo cambia la topología; se resuelve inmediatamente con el nuevo estado.
+		const fallasAntesDelDisparo = ultimaSim.fisica.fallas;
+		const selectividadAntesDelDisparo = ultimaSim.fisica.selectividad;
 		ultimaSim = simular(proyecto(), estadoSim, activosPrevios, relojSim);
 		activosPrevios = ultimaSim.activos;
+		/* La red posterior debe mostrar corriente cero, pero el analisis prospectivo que provoco el
+		 * disparo sigue siendo evidencia del evento. Se conserva marcado como despejado durante el
+		 * mismo ensayo para que la UI pueda explicar Icc, curva y coordinacion despues de abrir Q. */
+		ultimaSim.fisica.fallas = fallasAntesDelDisparo.map((f) => ({ ...f, despejada: true }));
+		ultimaSim.fisica.selectividad = selectividadAntesDelDisparo;
 	}
 
 	/** Arranca o para el reloj según esté el tablero energizado. */
@@ -487,6 +498,63 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		pintarPanelSimulacion();
 	}
 
+	/** Proyecta V5 y enlaza sus controles sin alargar el renderer historico de PLC/mandos. */
+	function pintarPanelFisica(r: ResultadoSimulacion): void {
+		const panel = $('sim-fisica');
+		panel.innerHTML = htmlFisicaV5(proyecto(), r.fisica, estadoSim);
+		for (const el of panel.querySelectorAll<HTMLElement>('[data-fisica-dispositivo]')) {
+			el.onclick = (ev) => {
+				if ((ev.target as HTMLElement).closest('button,input,label')) return;
+				seleccionar(el.dataset.fisicaDispositivo);
+			};
+		}
+		for (const el of panel.querySelectorAll<HTMLButtonElement>('[data-fisica-seleccionar-cable]')) {
+			el.onclick = () => ctx.seleccionarCable?.(el.dataset.fisicaSeleccionarCable!);
+		}
+		const ajustarCable = (id: string, campo: 'longitudM' | 'seccionMm2', valor: number) => {
+			if (!(Number.isFinite(valor) && valor > 0)) return;
+			const clave = `@fisica:${id}`;
+			estadoSim[clave] = { ...(estadoSim[clave] ?? {}), ajustesFisicos: {
+				...(estadoSim[clave]?.ajustesFisicos ?? {}), [campo]: valor,
+			} };
+			recalcularSimulacion();
+		};
+		for (const el of panel.querySelectorAll<HTMLInputElement>('[data-fisica-longitud]')) {
+			el.onchange = () => ajustarCable(el.dataset.fisicaLongitud!, 'longitudM', Number(el.value));
+		}
+		for (const el of panel.querySelectorAll<HTMLInputElement>('[data-fisica-seccion]')) {
+			el.onchange = () => ajustarCable(el.dataset.fisicaSeccion!, 'seccionMm2', Number(el.value));
+		}
+		for (const el of panel.querySelectorAll<HTMLInputElement>('[data-fisica-burden]')) {
+			el.onchange = () => {
+				const valor = Number(el.value); if (!(Number.isFinite(valor) && valor >= 0)) return;
+				const id = el.dataset.fisicaBurden!; const clave = `@fisica:analog:${id}`;
+				estadoSim[clave] = { ...(estadoSim[clave] ?? {}), ajustesAnalogicos: { burdenOhm: valor } };
+				recalcularSimulacion();
+			};
+		}
+		for (const el of panel.querySelectorAll<HTMLButtonElement>('[data-fisica-falla-id]')) {
+			el.onclick = () => {
+				const clave = '@fisica:fallas'; const id = el.dataset.fisicaFallaId!;
+				const actuales = [...(estadoSim[clave]?.fallasFisicas ?? [])];
+				const indice = actuales.findIndex((f) => f.id === id);
+				if (indice >= 0) actuales.splice(indice, 1);
+				else {
+					const falla: FallaFisicaRuntime = { id, tipo: el.dataset.fisicaFallaTipo as FallaFisicaRuntime['tipo'] };
+					if (el.dataset.fisicaNodoA) falla.nodoA = el.dataset.fisicaNodoA;
+					if (el.dataset.fisicaNodoB) falla.nodoB = el.dataset.fisicaNodoB;
+					if (el.dataset.fisicaRama) falla.ramaId = el.dataset.fisicaRama;
+					if (el.dataset.fisicaResistencia) falla.resistenciaAdicionalOhm = Number(el.dataset.fisicaResistencia);
+					actuales.push(falla);
+				}
+				estadoSim[clave] = { ...(estadoSim[clave] ?? {}), fallasFisicas: actuales };
+				recalcularSimulacion();
+				avisar(indice >= 0 ? `Falla física ${id} retirada.` : `Falla física ${id} inyectada para simulación.`,
+					indice >= 0 ? 'info' : 'error');
+			};
+		}
+	}
+
 	function pintarPanelSimulacion(): void {
 		const cont = $('sim-funcionando');
 		const avisos = $('sim-avisos');
@@ -502,7 +570,11 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		$('sim-referencias-vfd').innerHTML = '';
 		$('sim-sondas').innerHTML = '';
 		$('sim-controladores').innerHTML = '';
+		$('sim-fisica').innerHTML = '';
 		if (!r) return;
+
+		/* Longitud/seccion de ensayo y fallas viven en runtime: no mutan el Proyecto de ejemplo. */
+		pintarPanelFisica(r);
 
 		/*
 		 * LOS MANDOS: la botonera de la maniobra.

@@ -28,6 +28,8 @@ export interface ResultadoFallaFisica {
 	iccA?: Complejo;
 	origen: OrigenDatoFisico;
 	diagnosticos: DiagnosticoFisica[];
+	/** La proteccion ya abrio, pero se conserva el calculo prospectivo del instante de disparo. */
+	despejada?: boolean;
 }
 
 export const IMPEDANCIA_FALLA_FRANCA_OHM: Complejo = Object.freeze({ re: 0.001, im: 0 });
@@ -116,4 +118,3 @@ export function resolverFalla(redOriginal: RedFisica, falla: FallaFisicaRuntime)
 		origen: th.origen, diagnosticos: [{ codigo: 'FALLA', mensaje: `Falla ${falla.tipo} inyectada entre ${falla.nodoA} y ${falla.nodoB}` }],
 	};
 }
-

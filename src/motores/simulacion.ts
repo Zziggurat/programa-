@@ -95,6 +95,10 @@ export interface EstadoAparato {
 	fallos?: TipoFalloRuntime[];
 	/** Fallas electricas cuantitativas V5. Son runtime y nunca se serializan en Proyecto. */
 	fallasFisicas?: FallaFisicaRuntime[];
+	/** Valores de ensayo V5 para un conductor; no modifican ni se guardan en Proyecto. */
+	ajustesFisicos?: { longitudM?: number; seccionMm2?: number };
+	/** Carga de entrada analogica de ensayo; tampoco pertenece al diseño. */
+	ajustesAnalogicos?: { burdenOhm?: number };
 	/** Pulso runtime de reset para equipos con fallo enclavado. */
 	resetFallo?: boolean;
 	/** Acciones de un solo ciclo; la UI las consume al actualizar el runtime. */
@@ -1659,7 +1663,9 @@ function leerEntradaAnalogica(
 	let senal = fuente.senal;
 	let fisica: ResultadoLazoAnalogicoFisico | undefined;
 	const configFuente = fuente.dispositivo.fisica?.analogica;
-	const configEntrada = controlador.fisica?.analogica;
+	const ajusteEntrada = estado[`@fisica:analog:${controlador.id}`]?.ajustesAnalogicos;
+	const configEntrada = controlador.fisica?.analogica || ajusteEntrada
+		? { ...(controlador.fisica?.analogica ?? {}), ...(ajusteEntrada ?? {}) } : undefined;
 	const ida = resistenciaCaminoAnalogico(proyecto, `${fuente.dispositivo.id}::${fuente.borne}`, `${controlador.id}::${entrada.borne}`);
 	const vuelta = resistenciaCaminoAnalogico(proyecto, `${fuente.dispositivo.id}::${fuente.comun}`, `${controlador.id}::${entrada.comun}`);
 	const resistenciaCableOhm = ida.ohm !== undefined && vuelta.ohm !== undefined ? ida.ohm + vuelta.ohm : undefined;
@@ -2438,9 +2444,17 @@ export function simular(
 		const conSalidas = salidas?.size ? { ...base, salidas: [...new Set([...(base.salidas ?? []), ...salidas])] } : base;
 		conexionesFisicas.set(d.id, contactosCerrados(d, conSalidas, conmutados.has(manda)));
 	}
+	const longitudesFisicas = new Map<string, { metros: number; origen: 'INYECTADO' }>();
+	const seccionesFisicas = new Map<string, number>();
+	for (const c of proyecto.conductores) {
+		const ajuste = estado[`@fisica:${c.id}`]?.ajustesFisicos;
+		if (ajuste?.longitudM !== undefined) longitudesFisicas.set(c.id, { metros: ajuste.longitudM, origen: 'INYECTADO' });
+		if (ajuste?.seccionMm2 !== undefined) seccionesFisicas.set(c.id, ajuste.seccionMm2);
+	}
 	const fisica = simularFisicaProyecto(proyecto, {
 		conexionesCerradas: conexionesFisicas, bornesEnergizados: new Set(vivos.keys()),
 		fallas: Object.values(estado).flatMap((s) => s.fallasFisicas ?? []),
+		longitudesM: longitudesFisicas, seccionesMm2: seccionesFisicas,
 	});
 	fisica.lazosAnalogicos = entradasAnalogicas.flatMap((e) => e.fisica ? [e.fisica] : []);
 	return {

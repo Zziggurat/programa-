@@ -19,6 +19,21 @@ test('fixture V5 caida: publica corriente, caida, perdidas y balance calculables
 	assert.ok(Math.abs(r.fisica.red.metricas.errorBalanceW) < 0.1);
 });
 
+test('fixture V5 caida: ajustes runtime cambian tendencias sin mutar el diseno persistente', () => {
+	const p = fixtureCaidaTensionV5();
+	const normal = simular(p).fisica.conductores.get('w-fase-carga')!;
+	const largo = simular(p, { '@fisica:w-fase-carga': { ajustesFisicos: { longitudM: 40 } } })
+		.fisica.conductores.get('w-fase-carga')!;
+	const grueso = simular(p, { '@fisica:w-fase-carga': { ajustesFisicos: { seccionMm2: 5 } } })
+		.fisica.conductores.get('w-fase-carga')!;
+	assert.ok(largo.rOhm > normal.rOhm && largo.caidaV > normal.caidaV);
+	assert.ok(grueso.rOhm < normal.rOhm && grueso.caidaV < normal.caidaV);
+	assert.equal(largo.origenLongitud, 'INYECTADO');
+	assert.equal(grueso.origenSeccion, 'INYECTADO');
+	assert.equal(p.conductores.find((c) => c.id === 'w-fase-carga')!.fisica?.longitudManualM, 20);
+	assert.equal(p.conductores.find((c) => c.id === 'w-fase-carga')!.seccion, 2.5);
+});
+
 test('fixture V5 trifasico: el contactor funcional gobierna una carga PQ fisica balanceada', () => {
 	const p = fixtureMotorTrifasicoV5();
 	const abierto = simular(p);
@@ -57,6 +72,15 @@ test('fixture V3 reutilizado: el lazo 4-20 publica carga fisica y conserva 12 mA
 	assert.equal(ai.fisica?.tipo, '4_20_MA');
 	assert.equal(ai.fisica?.burdenOhm, 250);
 	assert.ok((ai.fisica?.resistenciaCableOhm ?? 0) > 0);
+});
+
+test('fixture V3 reutilizado: aumentar burden por UI runtime rompe compliance sin mutar el proyecto', () => {
+	const p = fixtureInstrumentacionV3();
+	const r = simular(p, { tt1: { valor: 100 }, '@fisica:analog:plc1': { ajustesAnalogicos: { burdenOhm: 1000 } } });
+	const ai = r.entradasAnalogicas.find((entrada) => entrada.dispositivoId === 'plc1' && entrada.borne === 'AI1')!;
+	assert.equal(ai.senal.calidad, 'compliance-insuficiente');
+	assert.ok((ai.senal.valorElectrico ?? 20) < 20);
+	assert.equal(p.dispositivos.find((d) => d.id === 'plc1')!.fisica?.analogica?.burdenOhm, 250);
 });
 
 test('V5 persistencia: configuracion fisica sobrevive guardar/cargar y los resultados runtime no se serializan', () => {

@@ -7310,6 +7310,7 @@ const panelSim = instalarSimulacion({
 	proyecto: () => proyecto,
 	escenario: () => escenario,
 	seleccionar,
+	seleccionarCable: (id) => aplicarSeleccion({ tipo: 'cable', id }),
 	refrescarPanel: pintarRail,
 });
 
@@ -10112,6 +10113,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		/** Resumen de la simulación en curso (modo Energizar). */
 		simulacion: () => {
 			const r = panelSim.resultado();
+			const fisica = r?.fisica;
 			return {
 				energizado: panelSim.energizado(),
 				conductoresVivos: r?.conductoresVivos.size ?? 0,
@@ -10125,6 +10127,19 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				oscila: r?.oscila ?? false,
 				// Hay tensión y todavía nadie ha accionado nada: es normal, no es avería.
 				sinAccionar: r?.sinAccionar ?? false,
+				/* Sonda de solo lectura: serializa Maps para que Playwright observe exactamente lo que
+				 * el panel recibió. Ninguna acción de QA entra por aquí. */
+				fisica: !fisica ? undefined : {
+					activo: fisica.activo, metricas: fisica.red.metricas,
+					potenciaFuentesW: fisica.red.potenciaFuentesW,
+					potenciaCargasW: fisica.red.potenciaCargasW,
+					potenciaPerdidasW: fisica.red.potenciaPerdidasW,
+					nodos: [...fisica.red.nodos.values()], ramas: [...fisica.red.ramas.values()],
+					cargas: [...fisica.red.cargas.values()], fuentes: [...fisica.red.fuentes.values()],
+					conductores: [...fisica.conductores.values()], protecciones: [...fisica.protecciones.values()],
+					fallas: fisica.fallas, selectividad: fisica.selectividad,
+					lazosAnalogicos: fisica.lazosAnalogicos, diagnosticos: fisica.diagnosticos,
+				},
 			};
 		},
 		/** Recalcula si los rótulos de la barra caben (lo hace la app al cambiar tamaño o estado). */
