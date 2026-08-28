@@ -4,14 +4,14 @@ import type { OrigenDatoFisico } from '../modelo/fisica.js';
 import { calcularConductorFisico, resolverLongitudConductor, type ResultadoConductorFisico } from './conductores.js';
 import { complejo, magnitud, polar } from './complejos.js';
 import type { FallaFisicaRuntime, ResultadoFallaFisica } from './fallas.js';
-import { resolverFalla } from './fallas.js';
+import { aplicarFallosTopologia, resolverFalla } from './fallas.js';
 import {
 	CURVAS_PROTECCION_GENERICAS, analizarSelectividad, evaluarCurva, type EvaluacionCurvaProteccion,
 	type ResultadoSelectividad,
 } from './protecciones.js';
 import { resolverRedFisica } from './solver.js';
 import type {
-	CargaRedFisica, DiagnosticoFisica, RedFisica, ResultadoRedFisica,
+	CargaRedFisica, DiagnosticoFisica, FuenteRedFisica, RedFisica, ResultadoRedFisica,
 	RamaRedFisica,
 } from './tipos.js';
 import type { ResultadoLazoAnalogicoFisico } from './analogicas.js';
@@ -108,6 +108,41 @@ function fuenteDesde(dispositivo: Dispositivo) {
 	});
 }
 
+function fuenteTransformadorDesde(
+	dispositivo: Dispositivo,
+	bornesEnergizados: ReadonlySet<string> | undefined,
+	diagnosticos: DiagnosticoFisica[],
+): FuenteRedFisica[] {
+	const t = dispositivo.fisica?.transformador;
+	if (!t) return [];
+	const perfil = resolverComportamiento(dispositivo);
+	if (perfil?.clase !== 'fuente') {
+		diagnosticos.push({ codigo: 'CONFIGURACION_INVALIDA',
+			mensaje: `${dispositivo.id} declara transformador fisico sin perfil funcional de fuente`, elementos: [dispositivo.id] });
+		return [];
+	}
+	const fases = perfil.salidas.filter((s) => s.papel === 'fase');
+	const retornos = perfil.salidas.filter((s) => s.papel === 'retorno');
+	if (fases.length !== 1 || retornos.length !== 1) {
+		diagnosticos.push({ codigo: 'CONFIGURACION_INVALIDA',
+			mensaje: `${dispositivo.id}: V5 basico solo modela un secundario monofasico`, elementos: [dispositivo.id] });
+		return [];
+	}
+	const de = clave(dispositivo.id, fases[0].borne); const a = clave(dispositivo.id, retornos[0].borne);
+	/* En la integracion funcional, un secundario solo existe si V2 ya lo marco energizado. La
+	 * llamada directa al adaptador (sin ese conjunto) se usa en tests matematicos y lo habilita. */
+	if (bornesEnergizados && !bornesEnergizados.has(de)) return [];
+	let zInternaOhm;
+	if (t.potenciaVA && t.impedanciaPct !== undefined) {
+		const modulo = t.secundarioV * t.secundarioV / t.potenciaVA * t.impedanciaPct / 100;
+		const xr = Math.max(0, t.xSobreR ?? 3);
+		const r = modulo / Math.sqrt(1 + xr * xr);
+		zInternaOhm = complejo(r, r * xr);
+	}
+	return [{ id: `transformador:${dispositivo.id}`, de, a, tensionV: complejo(t.secundarioV), zInternaOhm,
+		origenImpedancia: zInternaOhm ? 'CONFIGURADO' : 'NO_MODELADO', frecuenciaHz: t.frecuenciaHz }];
+}
+
 function rutaProtecciones(red: RedFisica, desde: string): string[] {
 	const objetivos = new Set(red.fuentes.map((f) => f.de));
 	const vecinos = new Map<string, { nodo: string; proteccion?: string }[]>();
@@ -140,6 +175,12 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		const id = clave(d.id, d.fisica.fuente.referencia);
 		const nodo = nodos.find((n) => n.id === id); if (nodo) nodo.referencia = true;
 	}
+	for (const d of proyecto.dispositivos) if (d.fisica?.transformador) {
+		const perfil = resolverComportamiento(d);
+		if (perfil?.clase === 'fuente') for (const retorno of perfil.salidas.filter((s) => s.papel === 'retorno')) {
+			const nodo = nodos.find((n) => n.id === clave(d.id, retorno.borne)); if (nodo) nodo.referencia = true;
+		}
+	}
 	const datosConductores = new Map<string, ResultadoConductorFisico>();
 	const ramas: RamaRedFisica[] = proyecto.conductores.flatMap((c): RamaRedFisica[] => {
 		const de = proyecto.dispositivos.find((d) => d.id === c.de.dispositivoId)?.posicion;
@@ -170,7 +211,16 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			tipo: 'CONTACTO', dispositivoId: d.id, origen: 'CONFIGURADO',
 		});
 	}
-	const red: RedFisica = { nodos, ramas, fuentes: proyecto.dispositivos.flatMap(fuenteDesde), cargas: proyecto.dispositivos.flatMap(cargaDesde) };
+	const fuentes: FuenteRedFisica[] = proyecto.dispositivos.flatMap(fuenteDesde);
+	for (const d of proyecto.dispositivos) fuentes.push(...fuenteTransformadorDesde(d, contexto.bornesEnergizados, diagnosticos));
+	const redBase: RedFisica = { nodos, ramas, fuentes, cargas: proyecto.dispositivos.flatMap(cargaDesde) };
+	/*
+	 * Abrir un conductor o aumentar la resistencia de un terminal no es solo un diagnostico:
+	 * cambia la matriz que se resuelve. Los cortocircuitos siguen usando Thevenin como corriente
+	 * prospectiva, pero las alteraciones serie se aplican primero y por tanto tambien modifican
+	 * el camino, la caida y la Icc que ven los demas fallos del mismo ensayo.
+	 */
+	const red = aplicarFallosTopologia(redBase, contexto.fallas ?? []);
 	const resultadoRed = resolverRedFisica(red);
 	const tensionReferencia = Math.max(0, ...red.fuentes.map((f) => magnitud(f.tensionV)));
 	const conductores = new Map<string, ResultadoConductorProyectoFisica>();

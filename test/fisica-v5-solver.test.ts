@@ -77,7 +77,23 @@ test('V5 solver: una isla sin referencia se degrada sin NaN ni bloqueo', () => {
 	});
 	assert.equal(r.metricas.convergio, false);
 	assert.ok(r.diagnosticos.some((d) => d.codigo === 'SIN_REFERENCIA'));
+	assert.ok(r.diagnosticos.some((d) => d.codigo === 'ISLA_FLOTANTE'));
+	assert.equal(r.nodos.get('A')!.calidad, 'SIN_REFERENCIA');
+	assert.equal(r.nodos.get('A')!.tensionV, undefined);
 	for (const rama of r.ramas.values()) assert.ok(Number.isFinite(rama.corrienteA.re));
+});
+
+test('V5 solver: una isla flotante no destruye las magnitudes de la isla referenciada', () => {
+	const r = resolverRedFisica({
+		nodos: [{ id: 'N', referencia: true }, { id: 'L' }, { id: 'A' }, { id: 'B' }],
+		fuentes: [{ id: 'red', de: 'L', a: 'N', tensionV: complejo(24), origenImpedancia: 'NO_MODELADO' }],
+		ramas: [{ id: 'flotante', de: 'A', a: 'B', zOhm: complejo(10) }],
+		cargas: [{ id: 'carga', de: 'L', a: 'N', modelo: 'CONSTANT_Z', zOhm: complejo(12) }],
+	});
+	cerca(magnitud(r.nodos.get('L')!.tensionV!), 24);
+	cerca(magnitud(r.cargas.get('carga')!.corrienteA), 2);
+	assert.equal(r.nodos.get('A')!.calidad, 'SIN_REFERENCIA');
+	assert.equal(r.ramas.get('flotante')!.corrienteA.re, 0);
 });
 
 test('V5 solver: invertir arrays no cambia resultados', () => {

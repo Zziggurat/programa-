@@ -52,6 +52,28 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 	const ids = idsValidos(red, diagnosticos);
 	const referencia = new Set(red.nodos.filter((n) => n.referencia).map((n) => n.id));
 	if (!referencia.size) diagnosticos.push({ codigo: 'SIN_REFERENCIA', mensaje: 'La red no declara un nodo de referencia' });
+	/*
+	 * Resolver una unica matriz con islas flotantes vuelve singular tambien la parte sana. Se
+	 * separan primero las componentes alcanzables desde una referencia: la red conectada conserva
+	 * sus magnitudes y los nodos flotantes se publican expresamente SIN_REFERENCIA, nunca como 0 V.
+	 */
+	const vecinos = new Map<string, string[]>();
+	const conectar = (de: string, a: string) => {
+		(vecinos.get(de) ?? vecinos.set(de, []).get(de)!).push(a);
+		(vecinos.get(a) ?? vecinos.set(a, []).get(a)!).push(de);
+	};
+	for (const e of [...red.ramas, ...red.fuentes, ...red.cargas]) conectar(e.de, e.a);
+	const conReferencia = new Set<string>(referencia);
+	const cola = [...referencia];
+	while (cola.length) {
+		const actual = cola.shift()!;
+		for (const siguiente of vecinos.get(actual) ?? []) if (!conReferencia.has(siguiente)) {
+			conReferencia.add(siguiente); cola.push(siguiente);
+		}
+	}
+	const flotantes = ids.filter((id) => !conReferencia.has(id));
+	if (flotantes.length) diagnosticos.push({ codigo: 'ISLA_FLOTANTE',
+		mensaje: `${flotantes.length} nodos no tienen camino a una referencia electrica`, elementos: flotantes });
 
 	const fijas = new Map<string, Complejo>();
 	for (const id of referencia) fijas.set(id, CERO);
@@ -70,7 +92,7 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 		codigo: 'FUENTES_PARALELAS_NO_MODELADAS', mensaje: `La fuente ideal ${f.id} no esta referenciada de forma resoluble`, elementos: [f.id],
 	});
 
-	const variables = ids.filter((id) => !fijas.has(id));
+	const variables = ids.filter((id) => conReferencia.has(id) && !fijas.has(id));
 	const indice = new Map(variables.map((id, i) => [id, i]));
 	const tension = new Map<string, Complejo>([...fijas].map(([id, v]) => [id, { ...v }]));
 	for (const id of variables) tension.set(id, CERO);
@@ -78,7 +100,7 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 	const tolerancia = opciones.toleranciaV ?? TOLERANCIAS_FISICA.convergenciaV;
 	const damping = opciones.damping ?? 0.7;
 	let iteraciones = 0;
-	let convergio = variables.length === 0;
+	let convergioNumerico = variables.length === 0;
 	let residuoKclA = 0;
 	let ultimaG: Complejo[][] = [];
 	let ultimoB: Complejo[] = [];
@@ -133,9 +155,9 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 			cambio = Math.max(cambio, magnitud(restar(nuevo, anterior)));
 			tension.set(variables[i], nuevo);
 		}
-		if (cambio <= tolerancia) { convergio = true; break; }
+		if (cambio <= tolerancia) { convergioNumerico = true; break; }
 	}
-	if (!convergio && variables.length && !diagnosticos.some((d) => d.codigo === 'MATRIZ_SINGULAR')) diagnosticos.push({
+	if (!convergioNumerico && variables.length && !diagnosticos.some((d) => d.codigo === 'MATRIZ_SINGULAR')) diagnosticos.push({
 		codigo: 'NO_CONVERGE', mensaje: `La red no convergio en ${maxIteraciones} iteraciones`,
 	});
 	if (ultimaG.length) for (let i = 0; i < variables.length; i++) {
@@ -146,10 +168,10 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 
 	const nodos = new Map<string, ResultadoNodoFisica>();
 	for (const id of ids) {
-		const sinReferencia = !referencia.size || (!fijas.has(id) && !indice.has(id));
+		const sinReferencia = !conReferencia.has(id);
 		nodos.set(id, { id, tensionV: sinReferencia ? undefined : tension.get(id),
-			calidad: sinReferencia ? 'SIN_REFERENCIA' : convergio ? 'VALIDA' : 'NO_CONVERGE',
-			origen: convergio ? 'CALCULADO' : 'NO_MODELADO' });
+			calidad: sinReferencia ? 'SIN_REFERENCIA' : convergioNumerico ? 'VALIDA' : 'NO_CONVERGE',
+			origen: sinReferencia || !convergioNumerico ? 'NO_MODELADO' : 'CALCULADO' });
 	}
 
 	const ramas = new Map<string, ResultadoRamaFisica>();
@@ -164,14 +186,15 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 	const cargas = new Map<string, ResultadoCargaFisica>();
 	let potenciaCargasW = 0;
 	for (const c of red.cargas) {
-		const v = restar(tension.get(c.de) ?? CERO, tension.get(c.a) ?? CERO);
-		const i = corrienteCarga(c, v);
+		const referenciada = conReferencia.has(c.de) && conReferencia.has(c.a);
+		const v = referenciada ? restar(tension.get(c.de) ?? CERO, tension.get(c.a) ?? CERO) : CERO;
+		const i = referenciada ? corrienteCarga(c, v) : CERO;
 		const s = multiplicar(v, conjugado(i));
 		potenciaCargasW += s.re;
 		const aparente = magnitud(s);
 		cargas.set(c.id, { id: c.id, tensionV: v, corrienteA: i, potenciaVA: s,
 			factorPotencia: aparente > TOLERANCIAS_FISICA.cero ? Math.max(-1, Math.min(1, s.re / aparente)) : undefined,
-			origen: c.origen ?? 'CALCULADO' });
+			origen: referenciada ? c.origen ?? 'CALCULADO' : 'NO_MODELADO' });
 	}
 
 	const corrientePasivaDesde = (id: string): Complejo => {
@@ -203,7 +226,7 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 	return {
 		nodos, ramas, cargas, fuentes, diagnosticos, potenciaCargasW, potenciaPerdidasW, potenciaFuentesW,
 		metricas: { nodos: ids.length, ramas: red.ramas.length, iteraciones: Math.max(0, Math.min(iteraciones, maxIteraciones)),
-			convergio, tiempoMs: ahora() - inicio, residuoKclA, errorBalanceW },
+			convergio: convergioNumerico && flotantes.length === 0, tiempoMs: ahora() - inicio, residuoKclA, errorBalanceW },
 	};
 }
 
@@ -218,4 +241,3 @@ export function fuenteTrifasicaBalanceada(datos: {
 		frecuenciaHz: datos.frecuenciaHz,
 	}));
 }
-
