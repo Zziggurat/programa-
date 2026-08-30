@@ -41,6 +41,17 @@ export interface ResultadoConductorProyectoFisica extends ResultadoConductorFisi
 	perdidaW: number;
 }
 
+export interface ResultadoContactoProyectoFisica {
+	ramaId: string;
+	dispositivoId: string;
+	terminales: [string, string];
+	corrienteA: number;
+	caidaV: number;
+	resistenciaEfectivaOhm?: number;
+	perdidaW: number;
+	origen: OrigenDatoFisico;
+}
+
 export interface ResultadoProteccionProyectoFisica {
 	dispositivoId: string;
 	corrienteA: number;
@@ -65,6 +76,7 @@ export interface ResultadoFisicaElectrica {
 	activo: boolean;
 	red: ResultadoRedFisica;
 	conductores: Map<string, ResultadoConductorProyectoFisica>;
+	contactos: Map<string, ResultadoContactoProyectoFisica>;
 	protecciones: Map<string, ResultadoProteccionProyectoFisica>;
 	fallas: ResultadoFallaFisica[];
 	selectividad: CoordinacionFisicaProyecto[];
@@ -94,7 +106,7 @@ export function resultadoFisicaVacio(): ResultadoFisicaElectrica {
 		red: { nodos: new Map(), ramas: new Map(), cargas: new Map(), fuentes: new Map(), transformadores: new Map(), diagnosticos: [],
 			potenciaCargasW: 0, potenciaPerdidasW: 0, potenciaFuentesW: 0,
 			metricas: { nodos: 0, ramas: 0, iteraciones: 0, convergio: true, tiempoMs: 0, residuoKclA: 0, errorBalanceW: 0 } },
-		conductores: new Map(), protecciones: new Map(), fallas: [], selectividad: [], lazosAnalogicos: [],
+		conductores: new Map(), contactos: new Map(), protecciones: new Map(), fallas: [], selectividad: [], lazosAnalogicos: [],
 		motores: new Map(), variadores: new Map(), trifasicos: new Map(), diagnosticos: [],
 	};
 }
@@ -320,6 +332,7 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		}
 	}
 	const datosConductores = new Map<string, ResultadoConductorFisico>();
+	const datosContactos = new Map<string, { dispositivoId: string; terminales: [string, string]; origen: OrigenDatoFisico }>();
 	const ramasMedidasDiferencial = new Map<string, { ramaId: string; signo: 1 | -1 }[]>();
 	const ramas: RamaRedFisica[] = proyecto.conductores.flatMap((c): RamaRedFisica[] => {
 		const de = proyecto.dispositivos.find((d) => d.id === c.de.dispositivoId)?.posicion;
@@ -350,6 +363,7 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			: [];
 		for (const [i, par] of conexiones.entries()) {
 			const ramaId = `interno:${d.id}:${i}`;
+			datosContactos.set(ramaId, { dispositivoId: d.id, terminales: [...par], origen: 'ESTIMADO' });
 			ramas.push({ id: ramaId, de: clave(d.id, par[0]), a: clave(d.id, par[1]), zOhm: Z_CONTACTO_OHM,
 				tipo, dispositivoId: d.id, origen: 'ESTIMADO' });
 			const medido = medidos.find((p) => (p.entrada === par[0] && p.salida === par[1])
@@ -405,6 +419,13 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		const caidaV = magnitud(rr.caidaV);
 		conductores.set(id, { ...datos, conductorId: id, corrienteA: magnitud(rr.corrienteA), caidaV,
 			caidaPct: tensionReferencia > 0 ? caidaV / tensionReferencia * 100 : undefined, perdidaW: rr.perdidaW });
+	}
+	const contactos = new Map<string, ResultadoContactoProyectoFisica>();
+	for (const [ramaId, datos] of datosContactos) {
+		const rr = resultadoRed.ramas.get(ramaId); if (!rr) continue;
+		const corrienteA = magnitud(rr.corrienteA); const caidaV = magnitud(rr.caidaV);
+		contactos.set(ramaId, { ramaId, ...datos, corrienteA, caidaV,
+			resistenciaEfectivaOhm: corrienteA > 1e-9 ? caidaV / corrienteA : undefined, perdidaW: rr.perdidaW });
 	}
 	const protecciones = new Map<string, ResultadoProteccionProyectoFisica>();
 	for (const d of proyecto.dispositivos) {
@@ -542,6 +563,6 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 				...analizarSelectividad(eAbajo, eArriba) });
 		}
 	}
-	return { activo, red: resultadoRed, conductores, protecciones, fallas, selectividad, motores, variadores, trifasicos,
+	return { activo, red: resultadoRed, conductores, contactos, protecciones, fallas, selectividad, motores, variadores, trifasicos,
 		lazosAnalogicos: [], diagnosticos: [...diagnosticos, ...resultadoRed.diagnosticos, ...fallas.flatMap((f) => f.diagnosticos)] };
 }

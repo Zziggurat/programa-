@@ -266,6 +266,7 @@ function resultado(parcial: Partial<ResultadoSimulacion> = {}): ResultadoSimulac
 		actuadores: [],
 		fisica: resultadoFisicaVacio(),
 		diagnosticosFallasEquipo: [],
+		diagnosticoIndustrial: { hallazgos: [], aristas: [], advertencias: [] },
 		...parcial,
 		motores: parcial.motores ?? [],
 	};

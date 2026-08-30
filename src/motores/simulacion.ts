@@ -82,6 +82,7 @@ import { calcularPlacaMotor } from '../fisica/motores.js';
 import type { DiagnosticoVfdFisico, EstadoVfdParaFisica } from '../fisica/variadores.js';
 import { fallaContactoActiva, resolverFallasEquipo,
 	type DiagnosticoBaseFallaEquipo, type FallaEquipoRuntime } from '../fisica/fallas-equipos.js';
+import { diagnosticarProyecto, type ResultadoDiagnosticoIndustrial } from '../diagnostico/motor-causal.js';
 
 /** Estado que el usuario controla de cada aparato. */
 export interface EstadoAparato {
@@ -444,6 +445,8 @@ export interface ResultadoSimulacion {
 	fisica: ResultadoFisicaElectrica;
 	/** Trazabilidad V6, incluida una combinación incompatible o un efecto no modelado. */
 	diagnosticosFallasEquipo: DiagnosticoBaseFallaEquipo[];
+	/** Diagnóstico causal basado exclusivamente en resultados y evidencia observable. */
+	diagnosticoIndustrial: ResultadoDiagnosticoIndustrial;
 }
 
 /** Lo que hace un controlador con su programa: qué lee, qué enciende y qué está esperando. */
@@ -2549,6 +2552,7 @@ export function simular(
 		}
 	}
 	fisica.lazosAnalogicos = entradasAnalogicas.flatMap((e) => e.fisica ? [e.fisica] : []);
+	const diagnosticoIndustrial = diagnosticarProyecto({ proyecto, fisica, motores, variadores });
 	return {
 		vivos, conductoresVivos, activos, funcionando, avisos, analogicas, salidasAnalogicas,
 		pasadas, oscila: !estable,
@@ -2565,6 +2569,7 @@ export function simular(
 		sensoresAnalogicos, entradasAnalogicas, actuadores,
 		fisica,
 		diagnosticosFallasEquipo: efectosFallasEquipo.diagnosticos,
+		diagnosticoIndustrial,
 		temporizadores: cuentasAtras(aparatos, activos, reloj),
 	};
 }
