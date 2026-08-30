@@ -26,7 +26,7 @@ import {
 import { emisionDeCable } from './animacion-sim.js';
 import { Escenario } from './escena3d.js';
 import { avisar, escaparHtml } from './dialogos.js';
-import { htmlFisicaV5 } from './panel-fisica.js';
+import { actualizarInstrumentosFisica, htmlFisicaV5, type SeleccionInstrumentosFisica } from './panel-fisica.js';
 import type { FallaFisicaRuntime } from '../src/fisica/fallas.js';
 
 /** Lo que la simulación necesita del editor. */
@@ -295,6 +295,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	 * enclavamiento se sostenga al soltar el pulsador de marcha en vez de caerse.
 	 */
 	let energizado = false;
+	const seleccionInstrumentos: SeleccionInstrumentosFisica = {};
 	let estadoSim: EstadoTablero = {};
 	let activosPrevios = new Set<string>();
 	let ultimaSim: ResultadoSimulacion | undefined;
@@ -501,7 +502,20 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	/** Proyecta V5 y enlaza sus controles sin alargar el renderer historico de PLC/mandos. */
 	function pintarPanelFisica(r: ResultadoSimulacion): void {
 		const panel = $('sim-fisica');
-		panel.innerHTML = htmlFisicaV5(proyecto(), r.fisica, estadoSim);
+		panel.innerHTML = htmlFisicaV5(proyecto(), r.fisica, estadoSim, seleccionInstrumentos);
+		actualizarInstrumentosFisica(panel, r.fisica);
+		const selectoresInstrumento: [string, keyof SeleccionInstrumentosFisica][] = [
+			['[data-instrumento-nodo-a]', 'nodoA'], ['[data-instrumento-nodo-b]', 'nodoB'],
+			['[data-instrumento-modo]', 'modoTension'], ['[data-instrumento-conductor]', 'conductorId'],
+			['[data-instrumento-sistema]', 'sistemaId'], ['[data-instrumento-carga]', 'cargaId'],
+		];
+		for (const [selector, campo] of selectoresInstrumento) {
+			const el = panel.querySelector<HTMLSelectElement>(selector); if (!el) continue;
+			el.onchange = () => {
+				seleccionInstrumentos[campo] = el.value as never;
+				actualizarInstrumentosFisica(panel, r.fisica);
+			};
+		}
 		for (const el of panel.querySelectorAll<HTMLElement>('[data-fisica-dispositivo]')) {
 			el.onclick = (ev) => {
 				if ((ev.target as HTMLElement).closest('button,input,label')) return;

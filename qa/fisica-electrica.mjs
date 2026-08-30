@@ -112,6 +112,12 @@ async function cambiarNumeroVisible(selector, valor) {
 	if (problema) throw new Error(problema);
 }
 
+async function elegirInstrumento(selector, valor) {
+	const control = page.locator(selector);
+	await control.waitFor({ state: 'attached' });
+	await control.selectOption(valor);
+}
+
 const angulo = (v) => Math.atan2(v.im, v.re) * 180 / Math.PI;
 const distanciaAngular = (a, b) => Math.abs((((a - b) % 360) + 540) % 360 - 180);
 
@@ -158,6 +164,22 @@ try {
 	comprobar('los ensayos runtime no mutan longitud ni seccion persistentes',
 		persistente.fisica.longitudManualM === 20 && persistente.seccion === 2.5);
 
+	console.log('\n=== 1b. Instrumentos profesionales sobre el resultado físico ===');
+	await elegirInstrumento('[data-instrumento-nodo-a]', 'red::L');
+	await elegirInstrumento('[data-instrumento-nodo-b]', 'red::N');
+	await elegirInstrumento('[data-instrumento-modo]', 'VAC');
+	let lectura = await page.locator('[data-instrumento-multimetro]').innerText();
+	comprobar('multimetro VAC visible lee aproximadamente 230 V calculados', /22\d(?:[,.]\d+)? V/.test(lectura) && /CALCULADA/.test(lectura), lectura);
+	await elegirInstrumento('[data-instrumento-conductor]', 'w-fase-carga');
+	lectura = await page.locator('[data-instrumento-pinza]').innerText();
+	comprobar('pinza visible publica corriente RMS, fase y sentido', /\d+[,.]\d+ A/.test(lectura) && /∠/.test(lectura) && /q1::2.*r1::L/.test(lectura), lectura);
+	await elegirInstrumento('[data-instrumento-carga]', 'carga:r1:0');
+	lectura = await page.locator('[data-instrumento-potencia]').innerText();
+	comprobar('analizador visible publica P Q S PF y provenance', /P .* W.*Q .* var.*S .* VA.*PF .*CALCULADA/.test(lectura), lectura);
+	await elegirInstrumento('[data-instrumento-modo]', 'OHM');
+	lectura = await page.locator('[data-instrumento-multimetro]').innerText();
+	comprobar('ohmios/continuidad queda bloqueado con tension presente', /NO_DISPONIBLE.*BLOQUEADA/.test(lectura), lectura);
+
 	console.log('\n=== 2. Fuente y carga trifasicas ===');
 	await abrirEjemplo('Fixture V5: motor trifásico', 'Fixture V5 — motor trifásico');
 	await energizar(true);
@@ -175,6 +197,9 @@ try {
 	comprobar('el panel publica P, Q, S y PF de la carga trifasica',
 		cargasMotor.reduce((s, c) => s + c.potenciaVA.re, 0) > 5000
 		&& cargasMotor.every((c) => c.potenciaVA.im > 0 && c.factorPotencia > 0.85 && c.factorPotencia < 0.95));
+	lectura = await page.locator('[data-instrumento-trifasico]').innerText();
+	comprobar('analizador trifasico visible publica V12/V23/V31 I1/I2/I3/IN y desequilibrio',
+		/V12 .*V23 .*V31 .*I1 .*I2 .*I3 .*IN .*desbal/.test(lectura), lectura);
 
 	console.log('\n=== 3. Icc y selectividad por una accion visible ===');
 	await abrirEjemplo('Fixture V5: cortocircuito y selectividad', 'Fixture V5 — cortocircuito y selectividad');
@@ -193,6 +218,11 @@ try {
 	console.log('\n=== 4. Compliance 4-20 mA y burden runtime ===');
 	await abrirEjemplo('Fixture V3: temperatura, PLC y válvula', 'Fixture V3 — temperatura, PLC y válvula modulante');
 	await energizar(true);
+	await elegirInstrumento('[data-instrumento-nodo-a]', 'ps24::+24');
+	await elegirInstrumento('[data-instrumento-nodo-b]', 'ps24::0V');
+	await elegirInstrumento('[data-instrumento-modo]', 'VDC');
+	lectura = await page.locator('[data-instrumento-multimetro]').innerText();
+	comprobar('multimetro VDC visible lee la fuente funcional de 24 V', /2[34](?:[,.]\d+)? V.*CALCULADA/.test(lectura), lectura);
 	const sonda = page.locator('#sim-sondas input[data-sonda="tt1"]');
 	await sonda.waitFor({ state: 'visible' });
 	await sonda.fill('100');

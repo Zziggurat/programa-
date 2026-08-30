@@ -817,6 +817,17 @@
 	.fisica-inyeccion b { width: 100%; color: #ffb4b4; font-size: 11px; }
 	.fisica-inyeccion button.activo { border-color: #e45b5b; color: #ffb4b4; }
 	.fisica-diagnosticos { margin-top: 6px; padding: 6px; border-radius: 7px; background: #30281a; color: #f2d38c; font-size: 10.5px; }
+	.fisica-instrumentos > div { display: grid; gap: 6px; padding: 7px; max-height: none; }
+	.instrumento-tarjeta { display: grid; grid-template-columns: minmax(105px, .65fr) minmax(120px, 1fr);
+		gap: 5px 8px; align-items: center; padding: 6px; border: 1px solid #ffffff12; border-radius: 6px;
+		background: #10191f; font-size: 10.5px; }
+	.instrumento-tarjeta b { color: #8dd7ff; }
+	.instrumento-tarjeta label { display: flex; align-items: center; gap: 4px; color: var(--texto-suave); }
+	.instrumento-tarjeta select { min-width: 0; max-width: 190px; background: var(--panel); color: var(--texto);
+		border: 1px solid var(--borde); border-radius: 5px; padding: 3px 4px; font: inherit; }
+	.instrumento-tarjeta output { grid-column: 1 / -1; min-height: 22px; padding: 4px 6px; border-left: 3px solid #315c75;
+		background: #0a1116; color: var(--texto); font-variant-numeric: tabular-nums; }
+	.instrumento-tarjeta output[data-proveniencia="NO_DISPONIBLE"] { border-color: #ba6c49; color: #efbd9f; }
 
 	/* El selector de color de la ficha del aparato, con su botón de volver al de fábrica. */
 	.fila-color { display: flex; align-items: center; gap: 6px; }

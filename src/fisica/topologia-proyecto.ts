@@ -72,6 +72,25 @@ export interface CoordinacionFisicaProyecto extends ResultadoSelectividad {
 	aguasArribaId: string;
 }
 
+/**
+ * Datos ya normalizados por PhysicsEngine que puede consultar un instrumento.
+ *
+ * No es una segunda red ni se persiste: conserva exactamente la topologia efectiva (incluidas
+ * aperturas y resistencias de ensayo) que produjo `red`. La UI puede medir sobre este snapshot,
+ * pero no volver a resolverlo ni reconstruirlo desde el Proyecto.
+ */
+export interface ContextoMedicionFisica {
+	energizada: boolean;
+	ramas: ReadonlyMap<string, Pick<RamaRedFisica, 'id' | 'de' | 'a' | 'zOhm' | 'tipo' | 'origen'>>;
+	fuentes: readonly {
+		id: string;
+		de: string;
+		a: string;
+		modo: 'AC' | 'DC';
+		frecuenciaHz?: number;
+	}[];
+}
+
 export interface ResultadoFisicaElectrica {
 	activo: boolean;
 	red: ResultadoRedFisica;
@@ -84,6 +103,7 @@ export interface ResultadoFisicaElectrica {
 	motores: Map<string, ResultadoMotorFisico>;
 	variadores: Map<string, ResultadoVfdFisico>;
 	trifasicos: Map<string, AnalisisTrifasicoFisico>;
+	medicion: ContextoMedicionFisica;
 	diagnosticos: DiagnosticoFisica[];
 }
 
@@ -107,7 +127,8 @@ export function resultadoFisicaVacio(): ResultadoFisicaElectrica {
 			potenciaCargasW: 0, potenciaPerdidasW: 0, potenciaFuentesW: 0,
 			metricas: { nodos: 0, ramas: 0, iteraciones: 0, convergio: true, tiempoMs: 0, residuoKclA: 0, errorBalanceW: 0 } },
 		conductores: new Map(), contactos: new Map(), protecciones: new Map(), fallas: [], selectividad: [], lazosAnalogicos: [],
-		motores: new Map(), variadores: new Map(), trifasicos: new Map(), diagnosticos: [],
+		motores: new Map(), variadores: new Map(), trifasicos: new Map(),
+		medicion: { energizada: false, ramas: new Map(), fuentes: [] }, diagnosticos: [],
 	};
 }
 
@@ -563,6 +584,15 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 				...analizarSelectividad(eAbajo, eArriba) });
 		}
 	}
-	return { activo, red: resultadoRed, conductores, contactos, protecciones, fallas, selectividad, motores, variadores, trifasicos,
+	const medicion: ContextoMedicionFisica = {
+		/* Tension presente, aunque el circuito no consuma, exige la misma precaucion que en campo. */
+		energizada: [...resultadoRed.nodos.values()].some((n) => n.tensionV && magnitud(n.tensionV) > 1e-6),
+		ramas: new Map(red.ramas.map((r) => [r.id, {
+			id: r.id, de: r.de, a: r.a, zOhm: r.zOhm, tipo: r.tipo, origen: r.origen,
+		}])),
+		fuentes: red.fuentes.map((f) => ({ id: f.id, de: f.de, a: f.a,
+			modo: f.frecuenciaHz === 0 ? 'DC' as const : 'AC' as const, frecuenciaHz: f.frecuenciaHz })),
+	};
+	return { activo, red: resultadoRed, conductores, contactos, protecciones, fallas, selectividad, motores, variadores, trifasicos, medicion,
 		lazosAnalogicos: [], diagnosticos: [...diagnosticos, ...resultadoRed.diagnosticos, ...fallas.flatMap((f) => f.diagnosticos)] };
 }

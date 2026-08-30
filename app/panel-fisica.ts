@@ -1,5 +1,9 @@
 /** Proyeccion compacta de ResultadoFisicaElectrica. Aqui no se calcula ninguna magnitud. */
 import { faseDeg, magnitud } from '../src/fisica/complejos.js';
+import {
+	medirPinza, medirPotenciaCarga, medirResistenciaDirecta, medirTension, medirTrifasico,
+	type LecturaInstrumento,
+} from '../src/fisica/instrumentos.js';
 import type { ResultadoFisicaElectrica } from '../src/fisica/topologia-proyecto.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
 import type { EstadoTablero } from '../src/motores/simulacion.js';
@@ -17,6 +21,103 @@ const titulo = (proyecto: Proyecto, id: string): string => {
 const fila = (clase: string, id: string, etiqueta: string, detalle: string) =>
 	`<div class="fisica-fila ${clase}" data-fisica-dispositivo="${escaparHtml(id)}">`
 	+ `<b>${escaparHtml(etiqueta)}</b><span>${detalle}</span></div>`;
+
+export interface SeleccionInstrumentosFisica {
+	nodoA?: string;
+	nodoB?: string;
+	modoTension?: 'VAC' | 'VDC' | 'OHM';
+	conductorId?: string;
+	sistemaId?: string;
+	cargaId?: string;
+}
+
+const opcion = (valor: string, etiqueta: string, actual: string | undefined): string =>
+	`<option value="${escaparHtml(valor)}"${valor === actual ? ' selected' : ''}>${escaparHtml(etiqueta)}</option>`;
+
+function instrumentos(
+	proyecto: Proyecto,
+	fisica: ResultadoFisicaElectrica,
+	seleccion: SeleccionInstrumentosFisica,
+): string {
+	const nodos = [...fisica.red.nodos.values()].filter((x) => x.calidad === 'VALIDA').sort((a, b) => a.id.localeCompare(b.id));
+	const fuente = fisica.medicion.fuentes[0];
+	const nodoA = nodos.some((x) => x.id === seleccion.nodoA) ? seleccion.nodoA
+		: fuente?.de ?? nodos[0]?.id;
+	const nodoB = nodos.some((x) => x.id === seleccion.nodoB) ? seleccion.nodoB
+		: fuente?.a ?? nodos.find((x) => x.id !== nodoA)?.id;
+	const modo = seleccion.modoTension ?? (fuente?.modo === 'DC' ? 'VDC' : 'VAC');
+	const conductores = [...fisica.conductores.keys()].sort((a, b) => a.localeCompare(b));
+	const conductor = conductores.includes(seleccion.conductorId ?? '') ? seleccion.conductorId : conductores[0];
+	const sistemas = [...fisica.trifasicos.keys()].sort((a, b) => a.localeCompare(b));
+	const sistema = sistemas.includes(seleccion.sistemaId ?? '') ? seleccion.sistemaId : sistemas[0];
+	const cargas = [...fisica.red.cargas.keys()].sort((a, b) => a.localeCompare(b));
+	const carga = cargas.includes(seleccion.cargaId ?? '') ? seleccion.cargaId : cargas[0];
+	const etiquetaNodo = (id: string) => `${titulo(proyecto, idDispositivo(id))}:${id.split('::').slice(1).join('::')}`;
+	const selectorNodos = (campo: 'a' | 'b', actual: string | undefined) => `<select data-instrumento-nodo-${campo}>`
+		+ nodos.slice(0, 160).map((x) => opcion(x.id, etiquetaNodo(x.id), actual)).join('') + '</select>';
+	return '<details class="fisica-bloque fisica-instrumentos" open><summary>Instrumentos V6</summary><div>'
+		+ `<div class="instrumento-tarjeta"><b>Multímetro</b><label>A ${selectorNodos('a', nodoA)}</label>`
+		+ `<label>B ${selectorNodos('b', nodoB)}</label><label>Función <select data-instrumento-modo>`
+		+ opcion('VAC', 'VAC', modo) + opcion('VDC', 'VDC', modo) + opcion('OHM', 'Ω / continuidad', modo) + '</select></label>'
+		+ '<output data-instrumento-multimetro>—</output></div>'
+		+ `<div class="instrumento-tarjeta"><b>Pinza amperimétrica</b><label>Conductor <select data-instrumento-conductor>`
+		+ conductores.map((id) => opcion(id, id, conductor)).join('') + '</select></label>'
+		+ '<output data-instrumento-pinza>—</output></div>'
+		+ (sistemas.length ? `<div class="instrumento-tarjeta"><b>Analizador trifásico</b><label>Sistema <select data-instrumento-sistema>`
+			+ sistemas.map((id) => opcion(id, titulo(proyecto, id), sistema)).join('') + '</select></label>'
+			+ '<output data-instrumento-trifasico>—</output></div>' : '')
+		+ (cargas.length ? `<div class="instrumento-tarjeta"><b>Analizador de potencia</b><label>Carga <select data-instrumento-carga>`
+			+ cargas.map((id) => opcion(id, id, carga)).join('') + '</select></label>'
+			+ '<output data-instrumento-potencia>—</output></div>' : '')
+		+ '<small>Lecturas proyectadas del último resultado de PhysicsEngine; este panel no recalcula la red.</small>'
+		+ '</div></details>';
+}
+
+const textoLectura = (x: LecturaInstrumento, decimales = 3): string => x.valor === undefined
+	? `${x.proveniencia} · ${x.detalle ?? 'sin valor'}`
+	: `${n(x.valor, x.unidad, decimales)} · ${x.proveniencia}${x.detalle ? ` · ${x.detalle}` : ''}`;
+
+/** Refresca salidas desde el snapshot físico recibido; nunca invoca `simular` ni el solver. */
+export function actualizarInstrumentosFisica(panel: HTMLElement, fisica: ResultadoFisicaElectrica): void {
+	const nodoA = panel.querySelector<HTMLSelectElement>('[data-instrumento-nodo-a]')?.value;
+	const nodoB = panel.querySelector<HTMLSelectElement>('[data-instrumento-nodo-b]')?.value;
+	const modo = panel.querySelector<HTMLSelectElement>('[data-instrumento-modo]')?.value;
+	const salidaMultimetro = panel.querySelector<HTMLOutputElement>('[data-instrumento-multimetro]');
+	if (nodoA && nodoB && salidaMultimetro) {
+		const lectura = modo === 'OHM' ? medirResistenciaDirecta(fisica, nodoA, nodoB)
+			: medirTension(fisica, nodoA, nodoB, modo === 'VDC' ? 'VDC' : 'VAC');
+		salidaMultimetro.textContent = textoLectura(lectura);
+		salidaMultimetro.title = lectura.detalle ?? '';
+		salidaMultimetro.dataset.proveniencia = lectura.proveniencia;
+	}
+	const conductor = panel.querySelector<HTMLSelectElement>('[data-instrumento-conductor]')?.value;
+	const salidaPinza = panel.querySelector<HTMLOutputElement>('[data-instrumento-pinza]');
+	if (conductor && salidaPinza) {
+		const lectura = medirPinza(fisica, conductor);
+		salidaPinza.textContent = `${textoLectura(lectura)}${lectura.faseDeg === undefined ? '' : ` · ∠ ${n(lectura.faseDeg, '°', 1)}`}`
+			+ `${lectura.sentido ? ` · ${lectura.sentido}` : ''}`;
+		salidaPinza.dataset.proveniencia = lectura.proveniencia;
+	}
+	const sistema = panel.querySelector<HTMLSelectElement>('[data-instrumento-sistema]')?.value;
+	const salidaTrifasica = panel.querySelector<HTMLOutputElement>('[data-instrumento-trifasico]');
+	if (sistema && salidaTrifasica) {
+		const t = medirTrifasico(fisica, sistema);
+		salidaTrifasica.textContent = !t ? 'NO_DISPONIBLE' : [
+			`V12 ${n(t.v12.valor, 'V', 1)}`, `V23 ${n(t.v23.valor, 'V', 1)}`, `V31 ${n(t.v31.valor, 'V', 1)}`,
+			`I1 ${n(t.i1.valor, 'A')}`, `I2 ${n(t.i2.valor, 'A')}`, `I3 ${n(t.i3.valor, 'A')}`, `IN ${n(t.in.valor, 'A')}`,
+			`desbal. V ${n(t.desequilibrioTension.valor, '%', 2)}`, `I ${n(t.desequilibrioCorriente.valor, '%', 2)}`,
+			`V+ ${n(t.secuenciaPositivaV.valor, 'V', 1)}`, `V− ${n(t.secuenciaNegativaV.valor, 'V', 1)}`, `V0 ${n(t.secuenciaCeroV.valor, 'V', 1)}`,
+			`· ${t.v12.proveniencia}`,
+		].join(' · ');
+	}
+	const carga = panel.querySelector<HTMLSelectElement>('[data-instrumento-carga]')?.value;
+	const salidaPotencia = panel.querySelector<HTMLOutputElement>('[data-instrumento-potencia]');
+	if (carga && salidaPotencia) {
+		const p = medirPotenciaCarga(fisica, carga);
+		salidaPotencia.textContent = !p ? 'NO_DISPONIBLE' : `P ${n(p.p.valor, 'W', 1)} · Q ${n(p.q.valor, 'var', 1)}`
+			+ ` · S ${n(p.s.valor, 'VA', 1)} · PF ${n(p.pf.valor, '', 3)} · ${p.p.proveniencia}`;
+	}
+}
 
 function resumenNodos(proyecto: Proyecto, fisica: ResultadoFisicaElectrica): string {
 	const todos = [...fisica.red.nodos.values()].sort((a, b) => a.id.localeCompare(b.id));
@@ -123,7 +224,12 @@ function resumenAnalogico(fisica: ResultadoFisicaElectrica): string {
 		+ '</div></details>';
 }
 
-export function htmlFisicaV5(proyecto: Proyecto, fisica: ResultadoFisicaElectrica, estado: EstadoTablero): string {
+export function htmlFisicaV5(
+	proyecto: Proyecto,
+	fisica: ResultadoFisicaElectrica,
+	estado: EstadoTablero,
+	seleccionInstrumentos: SeleccionInstrumentosFisica = {},
+): string {
 	if (!fisica.activo) return '';
 	const m = fisica.red.metricas;
 	const cabecera = `<div class="fisica-resumen"><b>PhysicsEngine V5</b>`
@@ -133,7 +239,8 @@ export function htmlFisicaV5(proyecto: Proyecto, fisica: ResultadoFisicaElectric
 		+ `<em>${m.convergio ? 'CONVERGIÓ' : 'RESULTADO DEGRADADO'}</em></div>`;
 	const diagnosticos = fisica.diagnosticos.length ? `<div class="fisica-diagnosticos">${fisica.diagnosticos.map((d) =>
 		`<div><b>${escaparHtml(d.codigo)}</b> ${escaparHtml(d.mensaje)}</div>`).join('')}</div>` : '';
-	return '<h3 class="titulo-sim">Magnitudes físicas V5</h3>' + cabecera + controlesFalla(proyecto, estado)
+	return '<h3 class="titulo-sim">Magnitudes físicas V6</h3>' + cabecera + instrumentos(proyecto, fisica, seleccionInstrumentos)
+		+ controlesFalla(proyecto, estado)
 		+ resumenFallas(fisica) + resumenConductores(proyecto, fisica) + resumenNodos(proyecto, fisica)
 		+ resumenCargas(proyecto, fisica) + resumenProtecciones(proyecto, fisica) + resumenAnalogico(fisica) + diagnosticos;
 }
