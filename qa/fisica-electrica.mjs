@@ -5,7 +5,7 @@
  * ResultadoSimulacion ya publicado, para comparar magnitudes sin copiar calculos al test.
  */
 import { chromium } from 'playwright-core';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
@@ -186,6 +186,15 @@ try {
 		/PROTECCION.*CERRADO.*Corriente.*Calibre In.*Corriente \/ In.*Memoria térmica.*Ventana de disparo/s.test(analisis), analisis.slice(0, 500));
 	comprobar('ANALIZAR deriva red → q1 → r1 como trayecto inequívoco',
 		/Topología · INEQUIVOCA.*red → q1 → r1/s.test(analisis), analisis.slice(0, 500));
+	const descargaInforme = page.waitForEvent('download');
+	await page.locator('[data-analisis-exportar]').click();
+	const descarga = await descargaInforme; const rutaInforme = await descarga.path();
+	const htmlInforme = rutaInforme ? readFileSync(rutaInforme, 'utf8') : '';
+	comprobar('EXPORTAR INFORME genera HTML offline trazable con Build ID, magnitudes y límites',
+		/EJEMPLO_EFIMERO/.test(htmlInforme) && /DESARROLLO-/.test(htmlInforme)
+		&& /Magnitudes/.test(htmlInforme) && /Provenance/.test(htmlInforme)
+		&& /No constituyen certificación, conformidad legal ni informe oficial/.test(htmlInforme)
+		&& !/<script\b/i.test(htmlInforme));
 	await elegirInstrumento('[data-analisis-equipo]', '@circuito');
 	analisis = await page.locator('[data-analisis-resultado]').innerText();
 	comprobar('ANALIZAR circuito resume fuente, cargas, pérdidas y balance sin orientación inventada',

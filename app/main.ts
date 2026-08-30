@@ -7312,6 +7312,16 @@ const panelSim = instalarSimulacion({
 	seleccionar,
 	seleccionarCable: (id) => aplicarSeleccion({ tipo: 'cable', id }),
 	refrescarPanel: pintarRail,
+	trazabilidadInforme: async () => {
+		if (!gestorDocumentos || gestorDocumentos.estaMostrandoEjemplo()) {
+			return { projectId: proyecto.esEjemplo ? 'EJEMPLO_EFIMERO' : 'SIN_REPOSITORIO' };
+		}
+		await gestorDocumentos.flush();
+		const documento = gestorDocumentos.documentoActivo();
+		if (!documento) return { projectId: 'SIN_REPOSITORIO' };
+		const snapshot = (await gestorDocumentos.listarSnapshots())[0];
+		return { projectId: documento.id, revision: documento.revision, snapshotId: snapshot?.id };
+	},
 });
 
 

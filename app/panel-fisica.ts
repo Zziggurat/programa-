@@ -141,7 +141,8 @@ function panelAnalisis(
 		+ '<div class="analisis-barra"><label>Objetivo <select data-analisis-equipo>'
 		+ opcion('@circuito', `Circuito · ${proyecto.nombre}`, actual)
 		+ candidatos.map((d) => opcion(d.id, `${d.designacion ?? d.id} · ${d.descripcion ?? d.tipo}`, actual)).join('')
-		+ '</select></label><button data-analisis-ejecutar>ANALIZAR</button></div><div data-analisis-resultado></div>'
+		+ '</select></label><button data-analisis-ejecutar>ANALIZAR</button><button data-analisis-exportar>EXPORTAR INFORME</button></div>'
+		+ '<div data-analisis-resultado></div>'
 		+ '</div></details>';
 }
 

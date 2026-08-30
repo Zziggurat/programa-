@@ -23,11 +23,14 @@ import {
 import {
 	ETIQUETA_FALLO_RUNTIME, cambiarFalloRuntime, fallosCompatibles,
 } from '../src/motores/fallos-runtime.js';
+import { crearInformeAnalisisV6, informeAnalisisV6AHtml } from '../src/diagnostico/informe.js';
 import { emisionDeCable } from './animacion-sim.js';
 import { Escenario } from './escena3d.js';
-import { avisar, escaparHtml } from './dialogos.js';
+import { avisar, descargar, escaparHtml } from './dialogos.js';
 import { actualizarAnalisisFisica, actualizarInstrumentosFisica, htmlFisicaV5, type SeleccionInstrumentosFisica } from './panel-fisica.js';
 import type { FallaFisicaRuntime } from '../src/fisica/fallas.js';
+
+declare const __VERSION__: string;
 
 /** Lo que la simulación necesita del editor. */
 export interface ContextoSimulacion {
@@ -40,6 +43,9 @@ export interface ContextoSimulacion {
 	seleccionarCable?: (id: string) => void;
 	/** Sincroniza la visibilidad del cajón cuando Energizar lo fuerza fuera de su herramienta. */
 	refrescarPanel?: () => void;
+	/** Identidad persistente de la revisión que se citará en un informe V6. */
+	trazabilidadInforme?: () => Promise<{ projectId: string; revision?: number; snapshotId?: string }>
+		| { projectId: string; revision?: number; snapshotId?: string };
 }
 
 /** Lo que el editor puede pedirle a la simulación una vez instalada. */
@@ -505,7 +511,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		const contextoAnalisis = { diagnostico: r.diagnosticoIndustrial, estadosProteccion: r.protecciones };
 		panel.innerHTML = htmlFisicaV5(proyecto(), r.fisica, estadoSim, seleccionInstrumentos, contextoAnalisis);
 		actualizarInstrumentosFisica(panel, r.fisica);
-		actualizarAnalisisFisica(panel, proyecto(), r.fisica, contextoAnalisis);
+		let ultimoAnalisis = actualizarAnalisisFisica(panel, proyecto(), r.fisica, contextoAnalisis);
 		const selectoresInstrumento: [string, keyof SeleccionInstrumentosFisica][] = [
 			['[data-instrumento-nodo-a]', 'nodoA'], ['[data-instrumento-nodo-b]', 'nodoB'],
 			['[data-instrumento-modo]', 'modoTension'], ['[data-instrumento-conductor]', 'conductorId'],
@@ -517,11 +523,25 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			el.onchange = () => {
 				seleccionInstrumentos[campo] = el.value as never;
 				actualizarInstrumentosFisica(panel, r.fisica);
-				actualizarAnalisisFisica(panel, proyecto(), r.fisica, contextoAnalisis);
+				ultimoAnalisis = actualizarAnalisisFisica(panel, proyecto(), r.fisica, contextoAnalisis);
 			};
 		}
 		const ejecutarAnalisis = panel.querySelector<HTMLButtonElement>('[data-analisis-ejecutar]');
-		if (ejecutarAnalisis) ejecutarAnalisis.onclick = () => actualizarAnalisisFisica(panel, proyecto(), r.fisica, contextoAnalisis);
+		if (ejecutarAnalisis) ejecutarAnalisis.onclick = () => {
+			ultimoAnalisis = actualizarAnalisisFisica(panel, proyecto(), r.fisica, contextoAnalisis);
+		};
+		const exportarAnalisis = panel.querySelector<HTMLButtonElement>('[data-analisis-exportar]');
+		if (exportarAnalisis) exportarAnalisis.onclick = () => { void (async () => {
+			ultimoAnalisis = actualizarAnalisisFisica(panel, proyecto(), r.fisica, contextoAnalisis);
+			if (!ultimoAnalisis) throw new Error('No existe un análisis técnico para exportar.');
+			const identidad = await ctx.trazabilidadInforme?.() ?? { projectId: 'SIN_REPOSITORIO' };
+			const buildId = (window as Window & { __TABLEROSTUDIO_BUILD_ID__?: string }).__TABLEROSTUDIO_BUILD_ID__
+				?? `DESARROLLO-${__VERSION__}`;
+			const informe = crearInformeAnalisisV6({ proyecto: proyecto(), fisica: r.fisica, analisis: ultimoAnalisis,
+				trazabilidad: { ...identidad, buildId, generadoEn: new Date().toISOString() } });
+			descargar(`${proyecto().nombre} - analisis-v6.html`, informeAnalisisV6AHtml(informe), 'text/html');
+			avisar(`Informe V6 exportado · ${buildId}.`, 'ok');
+		})().catch((error) => avisar(`No se pudo exportar el informe V6: ${(error as Error).message}`, 'error')); };
 		for (const el of panel.querySelectorAll<HTMLElement>('[data-fisica-dispositivo]')) {
 			el.onclick = (ev) => {
 				if ((ev.target as HTMLElement).closest('button,input,label')) return;
