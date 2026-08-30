@@ -4,6 +4,8 @@ import {
 	medirPinza, medirPotenciaCarga, medirResistenciaDirecta, medirTension, medirTrifasico,
 	type LecturaInstrumento,
 } from '../src/fisica/instrumentos.js';
+import { analizarTecnico, type ContextoAnalisisTecnico, type ResultadoAnalisisTecnico } from '../src/diagnostico/analisis.js';
+import type { ResultadoDiagnosticoIndustrial } from '../src/diagnostico/motor-causal.js';
 import type { ResultadoFisicaElectrica } from '../src/fisica/topologia-proyecto.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
 import type { EstadoTablero } from '../src/motores/simulacion.js';
@@ -29,6 +31,12 @@ export interface SeleccionInstrumentosFisica {
 	conductorId?: string;
 	sistemaId?: string;
 	cargaId?: string;
+	equipoAnalisisId?: string;
+}
+
+export interface ContextoPanelAnalisisFisica {
+	diagnostico: ResultadoDiagnosticoIndustrial;
+	estadosProteccion?: ContextoAnalisisTecnico['estadosProteccion'];
 }
 
 const opcion = (valor: string, etiqueta: string, actual: string | undefined): string =>
@@ -117,6 +125,61 @@ export function actualizarInstrumentosFisica(panel: HTMLElement, fisica: Resulta
 		salidaPotencia.textContent = !p ? 'NO_DISPONIBLE' : `P ${n(p.p.valor, 'W', 1)} · Q ${n(p.q.valor, 'var', 1)}`
 			+ ` · S ${n(p.s.valor, 'VA', 1)} · PF ${n(p.pf.valor, '', 3)} · ${p.p.proveniencia}`;
 	}
+}
+
+function panelAnalisis(
+	proyecto: Proyecto,
+	fisica: ResultadoFisicaElectrica,
+	seleccion: SeleccionInstrumentosFisica,
+): string {
+	const candidatos = proyecto.dispositivos.filter((d) => d.fisica?.motor || d.fisica?.vfd || d.fisica?.transformador
+		|| d.fisica?.proteccion || d.fisica?.diferencial || [...fisica.red.cargas.keys()].some((id) => id.includes(`:${d.id}:`)))
+		.sort((a, b) => a.id.localeCompare(b.id));
+	const actual = seleccion.equipoAnalisisId === '@circuito' || candidatos.some((d) => d.id === seleccion.equipoAnalisisId)
+		? seleccion.equipoAnalisisId : '@circuito';
+	return '<details class="fisica-bloque fisica-analisis" open><summary>ANALIZAR circuito / equipo</summary><div>'
+		+ '<div class="analisis-barra"><label>Objetivo <select data-analisis-equipo>'
+		+ opcion('@circuito', `Circuito · ${proyecto.nombre}`, actual)
+		+ candidatos.map((d) => opcion(d.id, `${d.designacion ?? d.id} · ${d.descripcion ?? d.tipo}`, actual)).join('')
+		+ '</select></label><button data-analisis-ejecutar>ANALIZAR</button></div><div data-analisis-resultado></div>'
+		+ '</div></details>';
+}
+
+function htmlAnalisis(a: ResultadoAnalisisTecnico): string {
+	const topologia = `<div class="analisis-seccion"><b>Topología · ${a.topologia.orientacion}</b>`
+		+ `<span>${escaparHtml(a.topologia.explicacion)}</span>`
+		+ (a.topologia.trayecto.length ? `<span>${a.topologia.trayecto.map(escaparHtml).join(' → ')}</span>` : '')
+		+ (a.topologia.conductores.length ? `<small>Conductores: ${a.topologia.conductores.map(escaparHtml).join(', ')}</small>` : '') + '</div>';
+	const magnitudes = `<div class="analisis-magnitudes">${a.magnitudes.map((m) => `<div><b>${escaparHtml(m.etiqueta)}</b>`
+		+ `<span>${n(m.valor, m.unidad ?? '', 3)}</span><small>${escaparHtml(m.origen)}</small></div>`).join('')}</div>`;
+	const diagnosticos = a.diagnosticos.length ? `<div class="analisis-seccion"><b>Diagnósticos y evidencias</b>${a.diagnosticos.map((d) =>
+		`<article><strong>${escaparHtml(d.clasificacion)} · ${escaparHtml(d.confianza)}</strong><span>${escaparHtml(d.resumen)}</span>`
+		+ `<ul>${d.evidencias.map((e) => `<li>${escaparHtml(e.codigo)} · ${escaparHtml(e.descripcion)}`
+			+ `${e.valor === undefined ? '' : ` · ${n(e.valor, e.unidad ?? '')}`} · ${escaparHtml(e.origen)}</li>`).join('')}</ul></article>`).join('')}</div>`
+		: '<div class="analisis-seccion"><b>Diagnósticos</b><span>Sin hallazgos sostenidos para este objetivo.</span></div>';
+	const hotspots = a.hotspots.length ? `<div class="analisis-seccion"><b>Pérdidas elevadas localizadas</b>${a.hotspots.map((h) =>
+		`<span>${escaparHtml(h.elementoId)} · ${n(h.perdidaW, 'W')} · ${escaparHtml(h.detalle)}</span>`).join('')}</div>` : '';
+	return `<header><b>${escaparHtml(a.titulo)}</b><span>${escaparHtml(a.estado)}</span></header><p>${escaparHtml(a.resumen)}</p>`
+		+ topologia + magnitudes + hotspots + diagnosticos
+		+ `<details><summary>Limitaciones del modelo</summary><ul>${a.limitaciones.map((l) => `<li>${escaparHtml(l)}</li>`).join('')}</ul></details>`;
+}
+
+export function actualizarAnalisisFisica(
+	panel: HTMLElement,
+	proyecto: Proyecto,
+	fisica: ResultadoFisicaElectrica,
+	contexto: ContextoPanelAnalisisFisica,
+): ResultadoAnalisisTecnico | undefined {
+	const selector = panel.querySelector<HTMLSelectElement>('[data-analisis-equipo]');
+	const salida = panel.querySelector<HTMLElement>('[data-analisis-resultado]');
+	if (!selector || !salida) return undefined;
+	const analisis = analizarTecnico({ proyecto, fisica, diagnostico: contexto.diagnostico,
+		equipoId: selector.value === '@circuito' ? undefined : selector.value,
+		estadosProteccion: contexto.estadosProteccion });
+	salida.innerHTML = htmlAnalisis(analisis);
+	salida.dataset.tipoAnalisis = analisis.tipo;
+	salida.dataset.objetivoAnalisis = analisis.objetivoId;
+	return analisis;
 }
 
 function resumenNodos(proyecto: Proyecto, fisica: ResultadoFisicaElectrica): string {
@@ -229,6 +292,7 @@ export function htmlFisicaV5(
 	fisica: ResultadoFisicaElectrica,
 	estado: EstadoTablero,
 	seleccionInstrumentos: SeleccionInstrumentosFisica = {},
+	contextoAnalisis?: ContextoPanelAnalisisFisica,
 ): string {
 	if (!fisica.activo) return '';
 	const m = fisica.red.metricas;
@@ -240,6 +304,7 @@ export function htmlFisicaV5(
 	const diagnosticos = fisica.diagnosticos.length ? `<div class="fisica-diagnosticos">${fisica.diagnosticos.map((d) =>
 		`<div><b>${escaparHtml(d.codigo)}</b> ${escaparHtml(d.mensaje)}</div>`).join('')}</div>` : '';
 	return '<h3 class="titulo-sim">Magnitudes físicas V6</h3>' + cabecera + instrumentos(proyecto, fisica, seleccionInstrumentos)
+		+ (contextoAnalisis ? panelAnalisis(proyecto, fisica, seleccionInstrumentos) : '')
 		+ controlesFalla(proyecto, estado)
 		+ resumenFallas(fisica) + resumenConductores(proyecto, fisica) + resumenNodos(proyecto, fisica)
 		+ resumenCargas(proyecto, fisica) + resumenProtecciones(proyecto, fisica) + resumenAnalogico(fisica) + diagnosticos;

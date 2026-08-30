@@ -828,6 +828,22 @@
 	.instrumento-tarjeta output { grid-column: 1 / -1; min-height: 22px; padding: 4px 6px; border-left: 3px solid #315c75;
 		background: #0a1116; color: var(--texto); font-variant-numeric: tabular-nums; }
 	.instrumento-tarjeta output[data-proveniencia="NO_DISPONIBLE"] { border-color: #ba6c49; color: #efbd9f; }
+	.fisica-analisis > div { padding: 7px; max-height: none; }
+	.analisis-barra { display: flex; gap: 6px; align-items: end; }
+	.analisis-barra label { display: grid; flex: 1; gap: 3px; color: var(--texto-suave); font-size: 10.5px; }
+	.analisis-barra select, .analisis-barra button { min-width: 0; background: var(--panel); color: var(--texto);
+		border: 1px solid var(--borde); border-radius: 5px; padding: 5px 7px; font: inherit; }
+	.analisis-barra button { color: #8dd7ff; cursor: pointer; }
+	[data-analisis-resultado] { display: grid; gap: 6px; margin-top: 7px; font-size: 10.5px; }
+	[data-analisis-resultado] > header { display: flex; justify-content: space-between; gap: 8px; color: #8dd7ff; }
+	[data-analisis-resultado] > p { margin: 0; color: var(--texto); }
+	.analisis-magnitudes { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 4px; }
+	.analisis-magnitudes > div { display: grid; padding: 5px; background: #0a1116; border-left: 2px solid #315c75; }
+	.analisis-magnitudes span { color: var(--texto); font-variant-numeric: tabular-nums; }
+	.analisis-magnitudes small, .analisis-seccion small { color: var(--texto-suave); }
+	.analisis-seccion { display: grid; gap: 3px; padding: 6px; background: #10191f; border: 1px solid #ffffff12; border-radius: 6px; }
+	.analisis-seccion article { display: grid; gap: 2px; border-top: 1px solid #ffffff0d; padding-top: 4px; }
+	.analisis-seccion ul, [data-analisis-resultado] details ul { margin: 2px 0 0; padding-left: 18px; color: var(--texto-suave); }
 
 	/* El selector de color de la ficha del aparato, con su botón de volver al de fábrica. */
 	.fila-color { display: flex; align-items: center; gap: 6px; }

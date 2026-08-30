@@ -179,6 +179,18 @@ try {
 	await elegirInstrumento('[data-instrumento-modo]', 'OHM');
 	lectura = await page.locator('[data-instrumento-multimetro]').innerText();
 	comprobar('ohmios/continuidad queda bloqueado con tension presente', /NO_DISPONIBLE.*BLOQUEADA/.test(lectura), lectura);
+	await elegirInstrumento('[data-analisis-equipo]', 'q1');
+	await page.locator('[data-analisis-ejecutar]').click();
+	let analisis = await page.locator('[data-analisis-resultado]').innerText();
+	comprobar('ANALIZAR protección publica estado, I/In, thermal y curva',
+		/PROTECCION.*CERRADO.*Corriente.*Calibre In.*Corriente \/ In.*Memoria térmica.*Ventana de disparo/s.test(analisis), analisis.slice(0, 500));
+	comprobar('ANALIZAR deriva red → q1 → r1 como trayecto inequívoco',
+		/Topología · INEQUIVOCA.*red → q1 → r1/s.test(analisis), analisis.slice(0, 500));
+	await elegirInstrumento('[data-analisis-equipo]', '@circuito');
+	analisis = await page.locator('[data-analisis-resultado]').innerText();
+	comprobar('ANALIZAR circuito resume fuente, cargas, pérdidas y balance sin orientación inventada',
+		/CIRCUITO.*RED_RESUELTA.*Topología · INDETERMINADA.*Potencia activa de fuentes.*Potencia activa de cargas.*Pérdidas de red.*Error de balance/s.test(analisis),
+		analisis.slice(0, 500));
 
 	console.log('\n=== 2. Fuente y carga trifasicas ===');
 	await abrirEjemplo('Fixture V5: motor trifásico', 'Fixture V5 — motor trifásico');
