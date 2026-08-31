@@ -335,7 +335,7 @@ await page.waitForFunction(() => /Tensión primaria.*Corriente primaria.*Tensió
 const panelV6 = (await page.locator('#sim-fisica').innerText()).replace(/\s+/g, ' ');
 const resultadoV6 = (await page.locator('[data-analisis-resultado]').innerText()).replace(/\s+/g, ' ');
 must('el HTML offline incluye instrumentos y análisis V6 sobre el solver',
-	/Instrumentos V6/.test(panelV6) && /ANALIZAR circuito \/ equipo/.test(panelV6)
+	/Instrumentos V6/.test(panelV6) && /ANALIZAR CIRCUITO \/ EQUIPO/.test(panelV6)
 		&& /Tensión primaria.*Corriente primaria.*Tensión secundaria.*Corriente secundaria/.test(resultadoV6),
 	panelV6.slice(0, 360));
 const informeEsperado = page.waitForEvent('download', { timeout: 30_000 });
