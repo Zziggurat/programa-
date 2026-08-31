@@ -48,11 +48,26 @@ export interface TransmisorAnalogicoSimulacion {
 	modoSalida: 'activa' | 'pasiva';
 }
 
+export interface DatosBobinaSimulacion {
+	tensionNominalV: number;
+	sistema: 'DC' | 'AC';
+	frecuenciaHz?: number;
+	/** Consumo declarado por ficha/perfil; ausente significa que no puede validarse la carga de la DO. */
+	corrienteA?: number;
+}
+
+export interface DatosSalidaDigitalSimulacion {
+	tensionV: number;
+	sistema: 'DC' | 'AC';
+	tipoSalida: 'PNP' | 'NPN' | 'RELE' | 'TRIAC';
+	corrienteMaxA?: number;
+}
+
 export type ComportamientoSimulacion =
 	| {
 		version: 1;
 		clase: 'contactos-electromagneticos';
-		bobina: { entrada: string; retorno: string };
+		bobina: { entrada: string; retorno: string; electrica?: DatosBobinaSimulacion };
 		polos: ParBornesSimulacion[];
 		contactos: ContactoSimulacion[];
 	}
@@ -60,7 +75,7 @@ export type ComportamientoSimulacion =
 		version: 1;
 		clase: 'controlador';
 		alimentacion: { entradas: string[]; retornos: string[] };
-		salidasDigitales: { borne: string; comun: string }[];
+		salidasDigitales: { borne: string; comun: string; electrica?: DatosSalidaDigitalSimulacion }[];
 		entradasAnalogicas?: EntradaAnalogicaSimulacion[];
 		salidasAnalogicas: {
 			borne: string;
@@ -268,6 +283,27 @@ const rango = (v: unknown): [number, number] | undefined =>
 		&& typeof v[1] === 'number' && Number.isFinite(v[1]) && v[0] <= v[1]
 		? [v[0], v[1]] : undefined;
 
+const datosBobina = (v: unknown): DatosBobinaSimulacion | undefined => {
+	if (!esObjeto(v)) return undefined;
+	const tensionNominalV = typeof v.tensionNominalV === 'number' && Number.isFinite(v.tensionNominalV) && v.tensionNominalV > 0
+		? v.tensionNominalV : undefined;
+	const sistema = v.sistema === 'DC' || v.sistema === 'AC' ? v.sistema : undefined;
+	const frecuenciaHz = typeof v.frecuenciaHz === 'number' && Number.isFinite(v.frecuenciaHz) && v.frecuenciaHz > 0 ? v.frecuenciaHz : undefined;
+	const corrienteA = typeof v.corrienteA === 'number' && Number.isFinite(v.corrienteA) && v.corrienteA > 0 ? v.corrienteA : undefined;
+	return tensionNominalV && sistema ? { tensionNominalV, sistema, frecuenciaHz, corrienteA } : undefined;
+};
+
+const datosSalidaDigital = (v: unknown): DatosSalidaDigitalSimulacion | undefined => {
+	if (!esObjeto(v)) return undefined;
+	const tensionV = typeof v.tensionV === 'number' && Number.isFinite(v.tensionV) && v.tensionV > 0 ? v.tensionV : undefined;
+	const sistema = v.sistema === 'DC' || v.sistema === 'AC' ? v.sistema : undefined;
+	const tipoSalida = ['PNP', 'NPN', 'RELE', 'TRIAC'].includes(String(v.tipoSalida))
+		? v.tipoSalida as DatosSalidaDigitalSimulacion['tipoSalida'] : undefined;
+	const corrienteMaxA = typeof v.corrienteMaxA === 'number' && Number.isFinite(v.corrienteMaxA) && v.corrienteMaxA > 0
+		? v.corrienteMaxA : undefined;
+	return tensionV && sistema && tipoSalida ? { tensionV, sistema, tipoSalida, corrienteMaxA } : undefined;
+};
+
 const referenciaAnalogica = (v: unknown): ReferenciaAnalogicaSimulacion | undefined => {
 	if (!esObjeto(v)) return undefined;
 	const borne = texto(v.borne); const comun = texto(v.comun); const r = rango(v.rango);
@@ -298,15 +334,23 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 			const retorno = texto(bruto.bobina.retorno);
 			const ps = pares(bruto.polos);
 			const cs = contactos(bruto.contactos);
+			const electrica = esObjeto(bruto.bobina) && bruto.bobina.electrica !== undefined
+				? datosBobina(bruto.bobina.electrica) : undefined;
+			if (esObjeto(bruto.bobina) && bruto.bobina.electrica !== undefined && !electrica) return undefined;
 			return entrada && retorno && ps && cs
-				? { version: 1, clase: bruto.clase, bobina: { entrada, retorno }, polos: ps, contactos: cs }
+				? { version: 1, clase: bruto.clase, bobina: { entrada, retorno, electrica }, polos: ps, contactos: cs }
 				: undefined;
 		}
 		case 'controlador': {
 			const alim = alimentacion(bruto.alimentacion);
 			if (!alim || !Array.isArray(bruto.salidasDigitales) || !Array.isArray(bruto.salidasAnalogicas)) return undefined;
-			const digitales = bruto.salidasDigitales.map((x) => esObjeto(x) && texto(x.borne) && texto(x.comun)
-				? { borne: texto(x.borne)!, comun: texto(x.comun)! } : undefined);
+			type SalidaDigital = { borne: string; comun: string; electrica?: DatosSalidaDigitalSimulacion };
+			const digitales: (SalidaDigital | undefined)[] = bruto.salidasDigitales.map((x): SalidaDigital | undefined => {
+				if (!esObjeto(x) || !texto(x.borne) || !texto(x.comun)) return undefined;
+				const electrica = x.electrica === undefined ? undefined : datosSalidaDigital(x.electrica);
+				return x.electrica !== undefined && !electrica ? undefined
+					: { borne: texto(x.borne)!, comun: texto(x.comun)!, ...(electrica ? { electrica } : {}) };
+			});
 			const analogas = bruto.salidasAnalogicas.map((x) => {
 				if (!esObjeto(x)) return undefined;
 				const borne = texto(x.borne); const referencia = texto(x.referencia); const r = rango(x.rango);
@@ -324,7 +368,7 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 						? { ...referencia, unidad: referencia.unidad, variable, modoEntrada } as EntradaAnalogicaSimulacion
 						: undefined;
 				}) : [undefined];
-			return digitales.every((x): x is { borne: string; comun: string } => !!x)
+			return digitales.every((x): x is SalidaDigital => !!x)
 				&& analogas.every((x): x is { borne: string; referencia: string; rango: [number, number]; unidad: 'V' | 'mA' } => !!x)
 				&& entradas.every((x): x is EntradaAnalogicaSimulacion => !!x)
 				? { version: 1, clase: bruto.clase, alimentacion: alim, salidasDigitales: digitales,
