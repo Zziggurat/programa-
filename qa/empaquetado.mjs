@@ -330,10 +330,13 @@ if (!await page.evaluate(() => document.body.classList.contains('modo-trabajo'))
 await energizarVisible(true);
 await page.locator('[data-analisis-equipo]').selectOption('t1');
 await page.locator('[data-analisis-ejecutar]').click();
+await page.waitForFunction(() => /Tensión primaria.*Corriente primaria.*Tensión secundaria.*Corriente secundaria/s
+	.test(document.querySelector('[data-analisis-resultado]')?.textContent ?? ''));
 const panelV6 = (await page.locator('#sim-fisica').innerText()).replace(/\s+/g, ' ');
+const resultadoV6 = (await page.locator('[data-analisis-resultado]').innerText()).replace(/\s+/g, ' ');
 must('el HTML offline incluye instrumentos y análisis V6 sobre el solver',
 	/Instrumentos V6/.test(panelV6) && /ANALIZAR circuito \/ equipo/.test(panelV6)
-		&& /Tensión primaria.*Corriente primaria.*Tensión secundaria.*Corriente secundaria/.test(panelV6),
+		&& /Tensión primaria.*Corriente primaria.*Tensión secundaria.*Corriente secundaria/.test(resultadoV6),
 	panelV6.slice(0, 360));
 const informeEsperado = page.waitForEvent('download', { timeout: 30_000 });
 await page.locator('[data-analisis-exportar]').click();
