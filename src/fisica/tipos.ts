@@ -83,6 +83,8 @@ export interface ResultadoRamaFisica {
 
 export interface ResultadoCargaFisica {
 	id: string;
+	/** Identidad persistente de la carga; evita inferirla analizando el id técnico de la rama. */
+	dispositivoId?: string;
 	tensionV: Complejo;
 	corrienteA: Complejo;
 	potenciaVA: Complejo;

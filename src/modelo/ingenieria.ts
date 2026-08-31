@@ -29,6 +29,8 @@ export interface MetadatosCircuitoIngenieria {
 	nombre?: string;
 	tipo?: TipoCircuitoIngenieria;
 	criterios?: CriteriosCircuitoIngenieria;
+	/** Decisión humana explícita: solo estos ramales pueden proponerse para otra fase. */
+	conductoresReasignablesFase?: string[];
 }
 
 export interface ConfiguracionIngenieriaProyecto {
@@ -79,7 +81,12 @@ export function leerConfiguracionIngenieria(v: unknown): ConfiguracionIngenieria
 				? bruto.nombre.trim().slice(0, 200) : undefined;
 			const tipo = TIPOS.has(bruto.tipo as TipoCircuitoIngenieria)
 				? bruto.tipo as TipoCircuitoIngenieria : undefined;
-			circuitos[id] = { version: 1, nombre, tipo, criterios: leerCriterios(bruto.criterios) };
+			const conductoresReasignablesFase = Array.isArray(bruto.conductoresReasignablesFase)
+				? [...new Set(bruto.conductoresReasignablesFase.filter((x): x is string => typeof x === 'string' && !!x.trim())
+					.map((x) => x.trim().slice(0, 200)))].sort((a, b) => a.localeCompare(b)).slice(0, 500)
+				: undefined;
+			circuitos[id] = { version: 1, nombre, tipo, criterios: leerCriterios(bruto.criterios),
+				conductoresReasignablesFase: conductoresReasignablesFase?.length ? conductoresReasignablesFase : undefined };
 		}
 	}
 	const criterios = leerCriterios(v.criterios);

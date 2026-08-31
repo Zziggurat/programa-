@@ -226,7 +226,7 @@ export function resolverRedFisica(red: RedFisica, opciones: OpcionesSolverFisica
 		const s = multiplicar(v, conjugado(i));
 		potenciaCargasW += s.re;
 		const aparente = magnitud(s);
-		cargas.set(c.id, { id: c.id, tensionV: v, corrienteA: i, potenciaVA: s,
+		cargas.set(c.id, { id: c.id, dispositivoId: c.dispositivoId, tensionV: v, corrienteA: i, potenciaVA: s,
 			factorPotencia: aparente > TOLERANCIAS_FISICA.cero ? Math.max(-1, Math.min(1, s.re / aparente)) : undefined,
 			origen: referenciada ? c.origen ?? 'CALCULADO' : 'NO_MODELADO' });
 	}
