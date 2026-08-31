@@ -144,7 +144,7 @@ try {
 	await energizar(true);
 	let fisica = await esperarFisica((f) => f.activo && f.conductores.some((c) => c.conductorId === 'w-fase-carga'));
 	let conductor = fisica.conductores.find((c) => c.conductorId === 'w-fase-carga');
-	comprobar('el panel visible publica PhysicsEngine V5', await page.locator('#sim-fisica').getByText('PhysicsEngine V5').isVisible());
+	comprobar('el panel visible publica PhysicsEngine V6', await page.locator('#sim-fisica').getByText('PhysicsEngine V6').isVisible());
 	comprobar('fuente, carga y perdidas cierran el balance calculado',
 		fisica.potenciaFuentesW > fisica.potenciaCargasW && fisica.potenciaPerdidasW > 0
 		&& fisica.metricas.errorBalanceW < 0.5,
