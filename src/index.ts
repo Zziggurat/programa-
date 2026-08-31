@@ -22,3 +22,4 @@ export * from './fisica/protecciones.js';
 export * from './fisica/topologia-proyecto.js';
 export * from './fisica/analogicas.js';
 export * from './ingenieria/circuitos.js';
+export * from './ingenieria/validacion.js';
