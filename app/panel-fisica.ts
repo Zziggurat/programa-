@@ -133,7 +133,9 @@ function panelAnalisis(
 	seleccion: SeleccionInstrumentosFisica,
 ): string {
 	const candidatos = proyecto.dispositivos.filter((d) => d.fisica?.motor || d.fisica?.vfd || d.fisica?.transformador
-		|| d.fisica?.proteccion || d.fisica?.diferencial || [...fisica.red.cargas.keys()].some((id) => id.includes(`:${d.id}:`)))
+		|| d.fisica?.proteccion || d.fisica?.diferencial
+		|| [...fisica.contactos.values()].some((c) => c.dispositivoId === d.id)
+		|| [...fisica.red.cargas.keys()].some((id) => id.includes(`:${d.id}:`)))
 		.sort((a, b) => a.id.localeCompare(b.id));
 	const actual = seleccion.equipoAnalisisId === '@circuito' || candidatos.some((d) => d.id === seleccion.equipoAnalisisId)
 		? seleccion.equipoAnalisisId : '@circuito';
@@ -217,6 +219,23 @@ function resumenConductores(proyecto: Proyecto, fisica: ResultadoFisicaElectrica
 		}).join('') + '</div></details>';
 }
 
+function resumenContactos(proyecto: Proyecto, fisica: ResultadoFisicaElectrica, estado: EstadoTablero): string {
+	const contactos = [...fisica.contactos.values()].sort((a, b) => a.ramaId.localeCompare(b.ramaId));
+	if (!contactos.length) return '';
+	const activas = new Set(Object.values(estado).flatMap((s) => s.fallasFisicas ?? []).map((f) => f.id));
+	return '<details class="fisica-bloque" open><summary>Contactos internos (' + contactos.length + ')</summary><div>'
+		+ contactos.map((c) => {
+			const idFalla = `contacto-resistivo:${c.ramaId}`; const activa = activas.has(idFalla);
+			return `<div class="fisica-conductor" data-fisica-dispositivo="${escaparHtml(c.dispositivoId)}">`
+				+ `<b>${escaparHtml(titulo(proyecto, c.dispositivoId))} · ${escaparHtml(c.terminales.join(' → '))}</b>`
+				+ `<span>I ${n(c.corrienteA, 'A')} · ΔV ${n(c.caidaV, 'V')} · R efectiva ${n(c.resistenciaEfectivaOhm, 'Ω', 4)} · pérdidas ${n(c.perdidaW, 'W')}</span>`
+				+ `<small>${escaparHtml(c.ramaId)} · ${escaparHtml(c.origen)}</small>`
+				+ `<span class="fisica-acciones"><button class="${activa ? 'activo' : ''}" data-fisica-falla-id="${escaparHtml(idFalla)}" `
+				+ `data-fisica-falla-tipo="RESISTENCIA_ANORMAL" data-fisica-rama="${escaparHtml(c.ramaId)}" data-fisica-resistencia="1">`
+				+ `${activa ? 'Retirar' : 'Inyectar'} contacto resistivo +1 Ω</button></span></div>`;
+		}).join('') + '</div></details>';
+}
+
 function resumenCargas(proyecto: Proyecto, fisica: ResultadoFisicaElectrica): string {
 	const cargas = [...fisica.red.cargas.values()].sort((a, b) => a.id.localeCompare(b.id));
 	if (!cargas.length) return '';
@@ -297,7 +316,7 @@ export function htmlFisicaV5(
 ): string {
 	if (!fisica.activo) return '';
 	const m = fisica.red.metricas;
-	const cabecera = `<div class="fisica-resumen"><b>PhysicsEngine V5</b>`
+	const cabecera = `<div class="fisica-resumen"><b>PhysicsEngine V6</b>`
 		+ `<span>fuente ${n(fisica.red.potenciaFuentesW, 'W', 1)}</span><span>carga ${n(fisica.red.potenciaCargasW, 'W', 1)}</span>`
 		+ `<span>pérdidas ${n(fisica.red.potenciaPerdidasW, 'W', 2)}</span><span>balance ${n(m.errorBalanceW, 'W', 3)}</span>`
 		+ `<span>${m.nodos} nodos · ${m.ramas} ramas · ${m.iteraciones} iter. · ${n(m.tiempoMs, 'ms', 2)}</span>`
@@ -307,6 +326,6 @@ export function htmlFisicaV5(
 	return '<h3 class="titulo-sim">Magnitudes físicas V6</h3>' + cabecera + instrumentos(proyecto, fisica, seleccionInstrumentos)
 		+ (contextoAnalisis ? panelAnalisis(proyecto, fisica, seleccionInstrumentos) : '')
 		+ controlesFalla(proyecto, estado)
-		+ resumenFallas(fisica) + resumenConductores(proyecto, fisica) + resumenNodos(proyecto, fisica)
+		+ resumenFallas(fisica) + resumenConductores(proyecto, fisica) + resumenContactos(proyecto, fisica, estado) + resumenNodos(proyecto, fisica)
 		+ resumenCargas(proyecto, fisica) + resumenProtecciones(proyecto, fisica) + resumenAnalogico(fisica) + diagnosticos;
 }
