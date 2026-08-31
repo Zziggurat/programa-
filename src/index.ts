@@ -24,3 +24,4 @@ export * from './fisica/analogicas.js';
 export * from './ingenieria/circuitos.js';
 export * from './ingenieria/validacion.js';
 export * from './ingenieria/conductores.js';
+export * from './ingenieria/protecciones.js';

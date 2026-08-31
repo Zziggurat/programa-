@@ -76,6 +76,8 @@ export interface ConfiguracionProteccionFisica {
 	puntos?: PuntoCurvaProteccionFisica[];
 	instantaneoDesdeIn?: number;
 	i2tA2s?: number;
+	/** Capacidades declaradas por ficha. Ausentes = no validables, nunca valores por defecto. */
+	capacidadCorte?: { icnKA?: number; icuKA?: number; icsKA?: number };
 }
 
 /**
@@ -237,6 +239,16 @@ export function leerFisicaDispositivo(v: unknown): ConfiguracionFisicaDispositiv
 			&& numero(p.multiploIn, false) !== undefined && numero(p.tMinS) !== undefined && numero(p.tMaxS) !== undefined
 			? [{ multiploIn: p.multiploIn as number, tMinS: p.tMinS as number, tMaxS: p.tMaxS as number }] : []);
 		if (puntos.length) proteccion = { ...(proteccion ?? {}), puntos };
+	}
+	if (objeto(v.proteccion) && objeto(v.proteccion.capacidadCorte)) {
+		const capacidadCorte = {
+			icnKA: numero(v.proteccion.capacidadCorte.icnKA, false),
+			icuKA: numero(v.proteccion.capacidadCorte.icuKA, false),
+			icsKA: numero(v.proteccion.capacidadCorte.icsKA, false),
+		};
+		if (Object.values(capacidadCorte).some((x) => x !== undefined)) {
+			proteccion = { ...(proteccion ?? {}), capacidadCorte };
+		}
 	}
 	let diferencial: ConfiguracionDiferencialFisico | undefined;
 	if (objeto(v.diferencial)) {

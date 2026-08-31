@@ -47,7 +47,10 @@ export function evaluarCurva(perfil: PerfilCurvaProteccion | undefined, corrient
 	const ordenados = [...perfil.puntos].sort((a, b) => a.multiploIn - b.multiploIn);
 	if (!ordenados.length || multiploIn < ordenados[0].multiploIn) return { region: 'NORMAL', multiploIn,
 		origen: perfil.origen, explicacion: `${multiploIn.toFixed(2)} In por debajo de la banda modelada` };
-	let izq = ordenados[0]; let der = ordenados[ordenados.length - 1];
+	/* Por encima del último punto y antes del umbral instantáneo no se extrapola fuera del
+	 * dataset: se conserva la última ventana declarada. La inicialización anterior usaba el
+	 * primer y último punto y producía tiempos artificialmente menores que ambos. */
+	let izq = ordenados[ordenados.length - 1]; let der = izq;
 	for (let i = 1; i < ordenados.length; i++) if (multiploIn <= ordenados[i].multiploIn) { izq = ordenados[i - 1]; der = ordenados[i]; break; }
 	const tMinS = izq === der ? izq.tMinS : interpolarLog(izq, der, multiploIn, 'tMinS');
 	const tMaxS = izq === der ? izq.tMaxS : interpolarLog(izq, der, multiploIn, 'tMaxS');
@@ -102,4 +105,3 @@ export function analizarSelectividad(
 	return { clasificacion: 'PARCIAL', aguasAbajo, aguasArriba,
 		explicacion: 'Las bandas tiempo-corriente se solapan; no se garantiza que despeje solo la proteccion aguas abajo' };
 }
-

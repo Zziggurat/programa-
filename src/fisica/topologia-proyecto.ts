@@ -109,7 +109,7 @@ export interface ResultadoFisicaElectrica {
 
 const clave = (dispositivoId: string, borneId: string): string => `${dispositivoId}::${borneId}`;
 
-function curvaProteccion(dispositivo: Dispositivo): PerfilCurvaProteccion | undefined {
+export function perfilCurvaProteccionDispositivo(dispositivo: Dispositivo): PerfilCurvaProteccion | undefined {
 	const config = dispositivo.fisica?.proteccion;
 	return config?.puntos?.length ? {
 		id: config.curva ?? `CURVA:${dispositivo.id}`,
@@ -463,7 +463,7 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			?? (d.sensibilidadMA !== undefined ? d.sensibilidadMA / 1000 : undefined);
 		const residual = fasorResidual ? magnitud(fasorResidual) : undefined;
 		protecciones.set(d.id, { dispositivoId: d.id, corrienteA, inA,
-			evaluacion: evaluarCurva(curvaProteccion(d), corrienteA, inA ?? 0),
+			evaluacion: evaluarCurva(perfilCurvaProteccionDispositivo(d), corrienteA, inA ?? 0),
 			corrienteResidualA: residual, corrienteResidualFasorA: fasorResidual,
 			corrienteResidualNominalA: umbralResidual,
 			retardoResidualS: d.fisica?.diferencial?.retardoS ?? 0,
@@ -569,7 +569,7 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			const p = protecciones.get(id); const d = proyecto.dispositivos.find((x) => x.id === id);
 			if (!p || !d) continue;
 			if (corriente > p.corrienteA) {
-				p.corrienteA = corriente; p.evaluacion = evaluarCurva(curvaProteccion(d), corriente, p.inA ?? 0);
+				p.corrienteA = corriente; p.evaluacion = evaluarCurva(perfilCurvaProteccionDispositivo(d), corriente, p.inA ?? 0);
 			}
 			p.fallas.push(falla.id);
 		}
@@ -578,8 +578,8 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			if (!abajo || !arriba) continue;
 			const da = proyecto.dispositivos.find((d) => d.id === camino[i])!;
 			const ar = proyecto.dispositivos.find((d) => d.id === camino[i + 1])!;
-			const eAbajo = evaluarCurva(curvaProteccion(da), corriente, abajo.inA ?? 0);
-			const eArriba = evaluarCurva(curvaProteccion(ar), corriente, arriba.inA ?? 0);
+			const eAbajo = evaluarCurva(perfilCurvaProteccionDispositivo(da), corriente, abajo.inA ?? 0);
+			const eArriba = evaluarCurva(perfilCurvaProteccionDispositivo(ar), corriente, arriba.inA ?? 0);
 			selectividad.push({ fallaId: falla.id, aguasAbajoId: da.id, aguasArribaId: ar.id,
 				...analizarSelectividad(eAbajo, eArriba) });
 		}

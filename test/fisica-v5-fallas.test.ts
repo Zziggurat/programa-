@@ -46,6 +46,10 @@ test('V5 curvas: interpolacion logaritmica y region instantanea', () => {
 	assert.ok(termica.tMinS! > 1 && termica.tMaxS! < 3600);
 	const instantanea = evaluarCurva(CURVAS_PROTECCION_GENERICAS.C, 120, 10);
 	assert.equal(instantanea.region, 'INSTANTANEA');
+	const entreUltimoEInstantaneo = evaluarCurva(CURVAS_PROTECCION_GENERICAS.C, 54, 10);
+	assert.equal(entreUltimoEInstantaneo.region, 'TERMICA');
+	assert.deepEqual([entreUltimoEInstantaneo.tMinS, entreUltimoEInstantaneo.tMaxS], [1, 60],
+		'no debe extrapolar tiempos fuera del último punto térmico configurado');
 	assert.equal(instantanea.origen, 'ESTIMADO');
 });
 
