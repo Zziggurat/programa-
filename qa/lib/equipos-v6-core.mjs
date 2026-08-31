@@ -1,14 +1,19 @@
-/** Regresión de navegador focal para los vertical slices públicos de Física Eléctrica V6. */
+/** Núcleo compartido de las regresiones públicas de Física Eléctrica V6. */
 import { chromium } from 'playwright-core';
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, esperarEditorListo, servidorDeQA } from './entorno.mjs';
 
 const inicio = Date.now();
 let servidor; let browser; let page; let fallos = 0; let comprobaciones = 0;
 const erroresJS = []; const debugLog = join(process.cwd(), 'debug.log'); const debugLogExistia = existsSync(debugLog);
 const chromeLogAnterior = process.env.CHROME_LOG_FILE;
 process.env.CHROME_LOG_FILE = process.platform === 'win32' ? 'NUL' : '/dev/null';
+const alcance = process.env.QA_EQUIPOS_V6_SCOPE;
+if (!['red', 'motor', 'accionamientos'].includes(alcance)) {
+	console.error(`QA_EQUIPOS_V6_SCOPE inválido: ${alcance ?? 'ausente'}`);
+	process.exit(2);
+}
 
 function comprobar(nombre, condicion, detalle = '') {
 	comprobaciones++;
@@ -83,10 +88,12 @@ try {
 	});
 	await page.goto(`${entorno.url}/?qa=1`, { waitUntil: 'load' }); await esperarEditorListo(page);
 	await cerrarSiVisible('#modal-ayuda', 'btn-cerrar-ayuda');
+	let fisica; let texto;
 
+	if (alcance === 'red') {
 	console.log('\n=== 1. Diferencial RMS y PE ===');
 	await abrirEjemplo('Fixture V6: diferencial y fuga PE', 'Fixture V6 — diferencial y fuga PE'); await energizar(true);
-	let fisica = await esperarFisica((f) => f.protecciones.some((q) => q.dispositivoId === 'qf1' && q.estadoResidual === 'NORMAL'));
+	fisica = await esperarFisica((f) => f.protecciones.some((q) => q.dispositivoId === 'qf1' && q.estadoResidual === 'NORMAL'));
 	let qf = fisica.protecciones.find((q) => q.dispositivoId === 'qf1');
 	comprobar('servicio normal suma IΔ casi cero', qf.corrienteResidualA < 1e-6, `IΔ=${qf.corrienteResidualA}`);
 	comprobar('el panel identifica el modelo RMS y el umbral de 30 mA', qf.modeloResidual === 'RESIDUAL_RMS_MODELED'
@@ -105,14 +112,17 @@ try {
 	comprobar('regulación y pérdidas son finitas y conservan potencia', t1.regulacionPct > 0 && t1.perdidaCobreW >= 0
 		&& t1.potenciaEntradaVA.re >= t1.potenciaSalidaVA.re);
 	await seleccionar('[data-analisis-equipo]', 't1'); await accionar('[data-analisis-ejecutar]');
-	let texto = await page.locator('[data-analisis-resultado]').innerText();
+	texto = await page.locator('[data-analisis-resultado]').innerText();
 	comprobar('ANALIZAR T1 muestra Vpri/Vsec, Ipri/Isec, Z%, regulación, carga y pérdidas',
 		/Tensión primaria.*Corriente primaria.*Tensión secundaria.*Corriente secundaria.*Impedancia.*Regulación.*Pérdidas cobre.*Carga/s.test(texto), texto.slice(0, 500));
+	}
 
+	if (alcance === 'motor') {
 	console.log('\n=== 3. Motor de placa y diagnóstico causal ===');
 	await abrirEjemplo('Fixture V6: motor desde placa y diagnóstico', 'Fixture V6 — motor desde placa y diagnóstico'); await energizar(true);
 	await accionar('#sim-mandos button[data-mando="s-run"]');
-	fisica = await esperarFisica((f) => f.motores.some((m) => m.dispositivoId === 'm1' && m.rpm > 1400), 20_000);
+	fisica = await esperarFisica((f) => f.motores.some((m) => m.dispositivoId === 'm1'
+		&& m.estado === 'marcha' && m.rpm > 1400), 20_000);
 	let m1 = fisica.motores.find((m) => m.dispositivoId === 'm1');
 	comprobar('el motor alcanza marcha desde placa', m1.estado === 'marcha'
 		&& Math.abs(m1.rpm - 1450) / 1450 < 0.03 && m1.potenciaEntradaW > 5900,
@@ -151,7 +161,8 @@ try {
 	await abrirEjemplo('Fixture V6: motor desde placa y diagnóstico', 'Fixture V6 — motor desde placa y diagnóstico'); await energizar(true);
 	await clickId('btn-sim-reposo');
 	await accionar('#sim-mandos button[data-mando="s-run"]');
-	await esperarFisica((f) => f.motores.some((m) => m.dispositivoId === 'm1' && m.rpm > 1400), 20_000);
+	await esperarFisica((f) => f.motores.some((m) => m.dispositivoId === 'm1'
+		&& m.estado === 'marcha' && m.rpm > 1400), 20_000);
 	await seleccionar('[data-fallo="m1"]', 'motor-bloqueado');
 	await page.waitForFunction(() => window.qa.estadoSim().some((x) => x.id === 'q1' && x.disparado === true));
 	fisica = await esperarFisica((f) => f.protecciones.some((q) => q.dispositivoId === 'q1' && q.corrienteA < 1e-9));
@@ -161,7 +172,8 @@ try {
 		estados.some((x) => x.id === 'q1' && x.disparado === true)
 		&& (await page.locator('[data-mando="q1"]').locator('..').innerText()).includes('DISPARADO'));
 	await clickId('btn-sim-reposo'); await accionar('#sim-mandos button[data-mando="s-run"]');
-	await esperarFisica((f) => f.motores.some((m) => m.dispositivoId === 'm1' && m.rpm > 1400), 20_000);
+	await esperarFisica((f) => f.motores.some((m) => m.dispositivoId === 'm1'
+		&& m.estado === 'marcha' && m.rpm > 1400), 20_000);
 	await accionar('[data-fisica-falla-id="abierto:w-k-m2"]');
 	fisica = await esperarFisica((f) => f.motores.some((m) => m.dispositivoId === 'm1'
 		&& m.diagnosticos.some((d) => d.codigo === 'PERDIDA_FASE'))
@@ -170,12 +182,15 @@ try {
 		fisica.diagnosticoIndustrial.hallazgos.some((h) => h.codigo === 'CONDUCTOR_ABIERTO_PROBABLE'
 			&& h.evidencias.some((e) => e.codigo === 'RAMA_AUSENTE'))
 		&& !fisica.diagnosticoIndustrial.hallazgos.some((h) => h.codigo === 'ROTOR_BLOQUEADO' && h.estado === 'SOSTENIDA'));
+	}
 
+	if (alcance === 'accionamientos') {
 	console.log('\n=== 4. VFD físico hacia motor ===');
 	await abrirEjemplo('Fixture V6: VFD físico y motor', 'Fixture V6 — VFD y motor'); await energizar(true);
 	await accionar('#sim-mandos button[data-mando="s-run"]'); await moverRango('[data-ref-vfd="vfd"]', 100);
 	fisica = await esperarFisica((f) => f.variadores.some((v) => v.dispositivoId === 'vfd' && v.frecuenciaSalidaHz > 49)
-		&& f.motores.some((m) => m.dispositivoId === 'm1' && m.rpm > 1400), 20_000);
+		&& f.motores.some((m) => m.dispositivoId === 'm1'
+			&& m.estado === 'marcha' && m.rpm > 1400), 20_000);
 	const v50 = fisica.variadores.find((v) => v.dispositivoId === 'vfd'); const rpm50 = fisica.motores.find((m) => m.dispositivoId === 'm1').rpm;
 	comprobar('50 Hz publica Vout, Iout, Pin, Pout y pérdidas coherentes', Math.abs(v50.tensionSalidaV - 400) / 400 < 0.03 && v50.corrienteSalidaA > 0
 		&& v50.potenciaEntradaW > 0 && v50.potenciaSalidaW > 0 && v50.perdidasW >= 0
@@ -213,6 +228,7 @@ try {
 	});
 	comprobar('abrir N desplaza el punto estrella sin NaN/Infinity', fisica.fallas.some((f) => f.tipo === 'CONDUCTOR_ABIERTO' && f.id === 'abierto:wn')
 		&& fisica.nodos.every((n) => n.tensionV === undefined || Number.isFinite(n.tensionV.re) && Number.isFinite(n.tensionV.im)));
+	}
 
 	console.log('\n=== 6. Integridad ===');
 	comprobar('no hubo errores JavaScript', erroresJS.length === 0, erroresJS.slice(0, 3).join(' | '));
