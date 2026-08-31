@@ -10,6 +10,10 @@ import { fixtureFallosIndustriales, fixtureVariadorV2 } from './fixtures-simulac
 import { fixtureInstrumentacionV3, fixtureReferenciaVfdV3 } from './fixtures-simulacion-v3.js';
 import { fixtureAutomatizacionSecuencialV4, fixturePIDV4 } from './fixtures-automatizacion-v4.js';
 import { fixtureCaidaTensionV5, fixtureMotorTrifasicoV5, fixtureSelectividadV5 } from './fixtures-fisica-v5.js';
+import {
+	fixtureDesequilibrioV6, fixtureDiferencialV6, fixtureMotorPlacaV6,
+	fixtureTransformadorV6, fixtureVfdMotorV6,
+} from './fixtures-fisica-v6.js';
 import { tableroEjemplo } from './tablero-ejemplo.js';
 
 export interface EjemploTablero {
@@ -1238,5 +1242,80 @@ export const EJEMPLOS: EjemploTablero[] = [
 			'Abre el lazo y observa que la pérdida no conserva una referencia saludable ficticia.',
 		],
 		crear: fixtureReferenciaVfdV3,
+	},
+	{
+		id: 'fixture-diferencial-v6',
+		titulo: 'Fixture V6: diferencial y fuga PE',
+		resumen: 'Carga L-N, toroide de dos polos y PE explícito para medir IΔ y ensayar una fuga real.',
+		queHace: 'En servicio normal suma fasorialmente fase y neutro y obtiene residual casi nulo. Una fuga L-PE '
+			+ 'evita el retorno por el toroide, supera 30 mA y hace actuar al diferencial por el circuito calculado.',
+		comoFunciona: [
+			'La corriente que entra por L retorna por N con orientación opuesta: IΔ es aproximadamente cero.',
+			'Inyecta Corto L-PE en Z1 desde el panel físico; PE nunca atraviesa el toroide.',
+			'QF1 dispara, abre L y N y la red se vuelve a resolver ya despejada.',
+		],
+		aprender: ['IΔ es una magnitud RMS calculada; el ensayo no pretende modelar formas de onda de tipos A/F/B.',
+			'Retira la fuga y rearma QF1 desde Energizar.'],
+		crear: fixtureDiferencialV6,
+	},
+	{
+		id: 'fixture-transformador-v6',
+		titulo: 'Fixture V6: transformador bajo carga',
+		resumen: 'Primario, transformador acoplado y carga secundaria para observar relación, regulación y pérdidas.',
+		queHace: 'Refleja la carga secundaria al primario mediante la relación declarada y la impedancia de cortocircuito, '
+			+ 'sin inventar una segunda fuente ideal independiente.',
+		comoFunciona: [
+			'La red alimenta P1-P2 a 230 V y T1 entrega aproximadamente 23 V en vacío.',
+			'Z1 carga el secundario; aparecen Ipri, Isec, caída de regulación y pérdidas de cobre.',
+			'ANALIZAR T1 presenta relación, Z%, carga, eficiencia y procedencia de cada magnitud.',
+		],
+		aprender: ['Cambia la resistencia de Z1 en el diseño y compara carga ligera y cargada.',
+			'No se modelan saturación, inrush ni grupos vectoriales.'],
+		crear: fixtureTransformadorV6,
+	},
+	{
+		id: 'fixture-motor-placa-v6',
+		titulo: 'Fixture V6: motor desde placa y diagnóstico',
+		resumen: 'Red, protección, contactor y motor cuya corriente, potencia, RPM y slip se derivan de placa.',
+		queHace: 'El selector excita KM1; el motor arranca con corriente estimada y converge a las magnitudes nominales. '
+			+ 'Las fallas físicas permiten distinguir fase abierta, rotor bloqueado y contacto resistivo.',
+		comoFunciona: [
+			'Energiza y acciona S1: KM1 incorpora sus tres polos al grafo eléctrico.',
+			'Durante dos segundos M1 pasa de arranque a marcha sin integrar dos veces el mismo Δt.',
+			'ANALIZAR M1 muestra placa, V/I/P/Q/S/PF, RPM, slip, causa raíz y evidencia.',
+		],
+		aprender: ['Abre una fase o añade resistencia a un conductor y compara consecuencias.',
+			'Inyecta Motor bloqueado desde Fallas de ensayo y observa corriente, protección y diagnóstico.'],
+		crear: fixtureMotorPlacaV6,
+	},
+	{
+		id: 'fixture-vfd-motor-v6',
+		titulo: 'Fixture V6: VFD físico y motor',
+		resumen: 'VFD V/f con balance entrada/salida, límites y un motor de placa que sigue su frecuencia.',
+		queHace: 'Una fuente monofásica alimenta U1; RUN y la referencia visible generan una salida trifásica '
+			+ 'cuya tensión, frecuencia, corriente, potencia y pérdidas alimentan M1.',
+		comoFunciona: [
+			'Energiza, acciona RUN y mueve la referencia a 25 o 50 Hz.',
+			'Compara Vout, Iout, Pin, Pout, eficiencia y la velocidad/RPM del motor.',
+			'Un rotor bloqueado o una entrada insuficiente enclava FAULT y despeja la salida.',
+		],
+		aprender: ['La salida es un equivalente fundamental V/f, no PWM.',
+			'Retira la causa, ejecuta RESET y vuelve a ordenar RUN.'],
+		crear: fixtureVfdMotorV6,
+	},
+	{
+		id: 'fixture-desequilibrio-v6',
+		titulo: 'Fixture V6: neutro y desequilibrio',
+		resumen: 'Tres cargas L-N distintas para medir I1/I2/I3, IN, Fortescue y desplazamiento del neutro.',
+		queHace: 'Resuelve las tres fases en fasores, suma la corriente real de neutro y publica secuencias '
+			+ 'positiva, negativa y cero. La apertura de N desplaza el punto estrella.',
+		comoFunciona: [
+			'Las resistencias 40/80/160 Ω producen corrientes diferentes y un IN no nulo.',
+			'El analizador trifásico muestra tensiones, corrientes y MAX_DESVIACION_MEDIA.',
+			'Abre el conductor wn para observar tensiones L-N desplazadas sin valores hardcodeados.',
+		],
+		aprender: ['La métrica es de ingeniería y no una declaración normativa de conformidad.',
+			'Prueba valores iguales para comprobar que IN y secuencias negativa/cero tienden a cero.'],
+		crear: fixtureDesequilibrioV6,
 	},
 ];

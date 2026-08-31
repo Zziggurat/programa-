@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-	ComportamientoSimulacion, MATRIZ_CAPACIDADES_FISICAS_V5, MATRIZ_FIDELIDAD_SIMULACION, resolverComportamiento,
+	ComportamientoSimulacion, MATRIZ_CAPACIDADES_FISICAS_V5, MATRIZ_CAPACIDADES_FISICAS_V6,
+	MATRIZ_FIDELIDAD_SIMULACION, resolverComportamiento,
 	validarComportamiento,
 } from '../src/modelo/comportamiento.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
@@ -46,21 +47,25 @@ const base24V = (): Proyecto => {
 	return p;
 };
 
-test('la matriz de fidelidad v5 cubre exactamente los 22 TipoDispositivo', () => {
-	assert.equal(MATRIZ_FIDELIDAD_SIMULACION.version, 5);
+test('la matriz de fidelidad v6 cubre exactamente los 22 TipoDispositivo', () => {
+	assert.equal(MATRIZ_FIDELIDAD_SIMULACION.version, 6);
 	assert.deepEqual(Object.keys(MATRIZ_FIDELIDAD_SIMULACION.tipos).sort(), [...TIPOS].sort());
 	for (const tipo of TIPOS) {
 		assert.match(MATRIZ_FIDELIDAD_SIMULACION.tipos[tipo].nivel,
-			/^(completa-v5|completa-v4|completa-v3|completa-v2|completa-v1|parcial|sin-comportamiento)$/);
+			/^(completa-v6|completa-v5|completa-v4|completa-v3|completa-v2|completa-v1|parcial|sin-comportamiento)$/);
 	}
 });
 
-test('la matriz fisica V5 declara capacidades y limites sin inflar diferenciales, motores ni VFD', () => {
-	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5.capacidades.conductor.nivel, 'completa-v5');
-	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5.capacidades.proteccion.nivel, 'completa-v5');
-	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5.capacidades.diferencial.nivel, 'parcial');
-	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5.capacidades.motor.nivel, 'parcial');
-	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5.capacidades.vfd.nivel, 'parcial');
+test('la matriz física V6 separa alcance completo de ingeniería de límites no modelados', () => {
+	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V6.version, 2);
+	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V6.capacidades.conductor.nivel, 'completa-v5');
+	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V6.capacidades.proteccion.nivel, 'completa-v5');
+	for (const capacidad of ['transformador', 'diferencial', 'motor', 'vfd', 'trifasica', 'instrumentacion', 'diagnostico'] as const) {
+		assert.equal(MATRIZ_CAPACIDADES_FISICAS_V6.capacidades[capacidad].nivel, 'completa-v6');
+		assert.ok(MATRIZ_CAPACIDADES_FISICAS_V6.capacidades[capacidad].limite.length > 25);
+	}
+	assert.equal(MATRIZ_CAPACIDADES_FISICAS_V5, MATRIZ_CAPACIDADES_FISICAS_V6,
+		'la exportación legacy debe apuntar a una sola fuente de verdad');
 });
 
 test('el validador comprueba todos los roles contra bornes reales', () => {
