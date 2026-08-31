@@ -16,6 +16,12 @@ export interface CriteriosCircuitoIngenieria {
 	maxLossW?: number;
 	maxLossPercent?: number;
 	maxUnbalancePercent?: number;
+	/** Tabla técnica elegida por el usuario; V7 no incorpora una tabla normativa implícita. */
+	ampacityProfile?: {
+		nombre: string;
+		fuente: string;
+		puntos: { seccionMm2: number; corrienteMaxA: number }[];
+	};
 }
 
 export interface MetadatosCircuitoIngenieria {
@@ -43,10 +49,21 @@ const numeroNoNegativo = (v: unknown): number | undefined =>
 function leerCriterios(v: unknown): CriteriosCircuitoIngenieria | undefined {
 	if (!objeto(v)) return undefined;
 	const r: CriteriosCircuitoIngenieria = {};
-	const copiar = (campo: keyof CriteriosCircuitoIngenieria) => {
+	type CriterioNumerico = Exclude<keyof CriteriosCircuitoIngenieria, 'ampacityProfile'>;
+	const copiar = (campo: CriterioNumerico) => {
 		const valor = numeroNoNegativo(v[campo]); if (valor !== undefined) r[campo] = valor;
 	};
 	copiar('maxVoltageDropPercent'); copiar('maxLossW'); copiar('maxLossPercent'); copiar('maxUnbalancePercent');
+	if (objeto(v.ampacityProfile)) {
+		const nombre = typeof v.ampacityProfile.nombre === 'string' ? v.ampacityProfile.nombre.trim().slice(0, 120) : '';
+		const fuente = typeof v.ampacityProfile.fuente === 'string' ? v.ampacityProfile.fuente.trim().slice(0, 300) : '';
+		const puntos = Array.isArray(v.ampacityProfile.puntos) ? v.ampacityProfile.puntos.flatMap((p) => {
+			if (!objeto(p)) return []; const seccionMm2 = numeroNoNegativo(p.seccionMm2);
+			const corrienteMaxA = numeroNoNegativo(p.corrienteMaxA);
+			return seccionMm2 && corrienteMaxA ? [{ seccionMm2, corrienteMaxA }] : [];
+		}).sort((a, b) => a.seccionMm2 - b.seccionMm2).slice(0, 200) : [];
+		if (nombre && fuente && puntos.length) r.ampacityProfile = { nombre, fuente, puntos };
+	}
 	return Object.keys(r).length ? r : undefined;
 }
 

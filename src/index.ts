@@ -23,3 +23,4 @@ export * from './fisica/topologia-proyecto.js';
 export * from './fisica/analogicas.js';
 export * from './ingenieria/circuitos.js';
 export * from './ingenieria/validacion.js';
+export * from './ingenieria/conductores.js';
