@@ -1,5 +1,6 @@
 export * from './modelo/tipos.js';
 export * from './modelo/fisica.js';
+export * from './modelo/ingenieria.js';
 export * from './modelo/proyecto.js';
 export * from './motores/potenciales.js';
 export * from './motores/numeracion.js';
@@ -20,3 +21,4 @@ export * from './fisica/fallas.js';
 export * from './fisica/protecciones.js';
 export * from './fisica/topologia-proyecto.js';
 export * from './fisica/analogicas.js';
+export * from './ingenieria/circuitos.js';

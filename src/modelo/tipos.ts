@@ -18,6 +18,7 @@ import { AjustesDossier } from './dossier.js';
 import type { ComportamientoSimulacion } from './comportamiento.js';
 import type { ConfiguracionProgramaPLC } from './programa-plc.js';
 import type { ConfiguracionFisicaConductor, ConfiguracionFisicaDispositivo } from './fisica.js';
+import type { ConfiguracionIngenieriaProyecto } from './ingenieria.js';
 
 export type TipoDispositivo =
 	| 'plc' | 'fuente' | 'transformador' | 'contactor' | 'rele'
@@ -637,6 +638,8 @@ export interface Proyecto {
 	esquema?: AjustesEsquema;
 	/** Qué apartados lleva el dossier y qué le añade a mano quien lo firma. */
 	dossier?: AjustesDossier;
+	/** Decisiones persistentes V7. Topología, magnitudes e issues siempre se recalculan. */
+	ingenieria?: ConfiguracionIngenieriaProyecto;
 }
 
 /** Lo que se puede cambiar del esquema sin tocar el circuito. */

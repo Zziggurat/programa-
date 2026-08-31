@@ -16,6 +16,7 @@ import {
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 import { leerComportamientoSimulacion, validarComportamiento } from './comportamiento.js';
 import { leerFisicaConductor, leerFisicaDispositivo } from './fisica.js';
+import { leerConfiguracionIngenieria } from './ingenieria.js';
 import type { ConfiguracionProgramaPLC, EtiquetaPLC } from './programa-plc.js';
 
 /** Versión de formato que escribe este programa. */
@@ -237,6 +238,7 @@ export function cargarProyecto(json: string): ResultadoCarga {
 		opciones: leerOpciones(bruto.opciones),
 		esquema: leerAjustesEsquema(bruto.esquema),
 		dossier: leerAjustesDossier(bruto.dossier),
+		ingenieria: leerConfiguracionIngenieria(bruto.ingenieria),
 	};
 	/*
 	 * Y lo apuntado por el camino sube a `arreglos`, que es lo que congela el guardado.
