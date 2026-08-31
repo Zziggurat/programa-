@@ -327,6 +327,12 @@ try {
 	comprobar('al parar, la armadura 3D vuelve a reposo',
 		Math.abs((kmTrasParo?.armadura?.[0]?.z ?? 999) - (kmReposo?.armadura?.[0]?.z ?? 0)) < 0.2,
 		`z ${kmTrasParo?.armadura?.[0]?.z}`);
+	await page.waitForFunction(() => {
+		const motor = window.qa.simulacion().fisica?.motores.find((m) => m.dispositivoId === 'm1');
+		return motor !== undefined && motor.velocidadActual <= 0.001;
+	}, undefined, { timeout: 6_000 });
+	// El resultado puede llegar entre dos frames; esperar uno evita medir el último paso de frenado.
+	await page.waitForTimeout(100);
 	const giroQuieto1 = (await qa('piezas', 'm1'))?.eje?.[0]?.giro;
 	await page.waitForTimeout(450);
 	const giroQuieto2 = (await qa('piezas', 'm1'))?.eje?.[0]?.giro;
