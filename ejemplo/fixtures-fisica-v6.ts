@@ -137,7 +137,7 @@ export function fixtureVfdMotorV6(): Proyecto {
 	const p = crearProyecto('Fixture V6 — VFD y motor', { frecuenciaHz: 50, temperaturaAmbienteC: 25 });
 	p.hojas = [{ id: 'h1', numero: 1, titulo: 'VFD y motor V6' }];
 	p.dispositivos = [
-		fuenteMonofasica(false),
+		fuenteMonofasica(true),
 		{
 			id: 's-run', tipo: 'selector', designacion: '-S1', congelado: true, descripcion: 'Selector RUN',
 			bornes: [borne('13', 'control'), borne('14', 'control')],
@@ -178,6 +178,7 @@ export function fixtureVfdMotorV6(): Proyecto {
 		cable('wo-u', ['vfd', 'U'], ['m1', 'U1'], 5, 2.5, 'marrón'),
 		cable('wo-v', ['vfd', 'V'], ['m1', 'V1'], 5, 2.5, 'negro'),
 		cable('wo-w', ['vfd', 'W'], ['m1', 'W1'], 5, 2.5, 'gris'),
+		cable('w-pe', ['red', 'PE'], ['m1', 'PE'], 5, 4, 'verde/amarillo'),
 	];
 	p.gabinete = gabinete([
 		{ dispositivoId: 'vfd', x: 105, y: 42, ancho: 120, alto: 128, rielId: 'r1' },
