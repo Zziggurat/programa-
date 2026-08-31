@@ -42,6 +42,22 @@ jobs:
       - run: npx playwright-core install --with-deps chromium
       - run: npm run qa:run
 
+  qa-v6:
+    name: QA equipos y diagnóstico V6
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run editor:build -- --mode qa
+      - run: npx playwright-core install --with-deps chromium
+      # Gate V6 separado: no infla ni redefine las 13 suites históricas.
+      - run: npm run qa:equipos:run
+
   entrega:
     name: Entregable offline
     # Plataforma y runtime canónicos del HTML offline/desktop versionado.

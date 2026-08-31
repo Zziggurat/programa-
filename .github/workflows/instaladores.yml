@@ -44,6 +44,9 @@ jobs:
       # cubren lo que de verdad no puede salir roto —recuperación del guardado, datos del proyecto,
       # texto hostil, entradas hostiles, el puente eléctrico— no entraban.
       - run: npm run qa
+      # V6 conserva su gate especializado, pero una release también debe demostrar equipos,
+      # fallas, instrumentos y diagnóstico físico antes de empaquetar.
+      - run: npm run qa:equipos
       - run: npm run empaquetar
       - run: node qa/entrega.mjs
       - run: node qa/empaquetado.mjs
