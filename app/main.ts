@@ -10132,6 +10132,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				activos: [...(r?.activos ?? [])],
 				funcionando: r?.funcionando ?? [],
 				controladores: r?.controladores ?? [],
+				motores: r?.motores ?? [],
 				actuadores: r?.actuadores ?? [],
 				avisos: r?.avisos ?? [],
 				oscila: r?.oscila ?? false,
