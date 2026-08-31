@@ -51,7 +51,7 @@ must('no quedan referencias a archivos externos',
 must('no lleva dentro la sonda de pruebas', !html.includes('puntoParaAgarrar'));
 const buildId = html.match(/<meta name="tablerostudio-build" content="([A-F0-9]{10})">/)?.[1];
 must('declara un Build ID de contenido', !!buildId, buildId ?? 'ausente');
-must('la entrega V5 tiene un Build ID nuevo respecto de V4', buildId !== '41EEF410B9', buildId ?? 'ausente');
+must('la entrega V6 tiene un Build ID nuevo respecto de V5', buildId !== 'B5303F6750', buildId ?? 'ausente');
 must('desktop/app.html corresponde byte a byte a la misma build', htmlDesktop === html,
 	htmlDesktop ? `Build ${buildId}` : 'desktop/app.html ausente');
 // El marcado de los diálogos vive en index.html: comprobamos que el empaquetador lo copió.
@@ -301,15 +301,47 @@ if (!await page.evaluate(() => document.body.classList.contains('modo-trabajo'))
 	await page.waitForFunction(() => document.body.classList.contains('modo-trabajo'));
 }
 await energizarVisible(true);
-await page.waitForFunction(() => /PhysicsEngine V5/.test(document.getElementById('sim-fisica')?.innerText ?? ''));
+await page.waitForFunction(() => /PhysicsEngine V6/.test(document.getElementById('sim-fisica')?.innerText ?? ''));
 const panelV5 = (await page.locator('#sim-fisica').innerText()).replace(/\s+/g, ' ');
 must('el HTML offline resuelve y muestra tensión, corriente y caída V5',
-	/PhysicsEngine V5/.test(panelV5) && /I\s+[0-9,.]+\s*A/.test(panelV5)
+	/PhysicsEngine V6/.test(panelV5) && /I\s+[0-9,.]+\s*A/.test(panelV5)
 		&& /ΔV\s+[0-9,.]+\s*V/.test(panelV5) && /balance\s+[0-9,.]+\s*W/.test(panelV5),
 	panelV5.slice(0, 300));
 must('el smoke V5 conserva controles humanos de longitud y sección',
 	await page.locator('#sim-fisica [data-fisica-longitud="w-fase-carga"]').isVisible()
 		&& await page.locator('#sim-fisica [data-fisica-seccion="w-fase-carga"]').isVisible());
+
+/* ---------- 8. Instrumentos, análisis e informe V6 dentro del HTML entregado ---------- */
+console.log('\n--- 8. Equipos y diagnóstico V6 dentro del HTML entregado ---');
+await energizarVisible(false);
+await page.click('#btn-aprender');
+await page.click('#btn-ejemplos');
+await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
+await page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V6: transformador bajo carga' })
+	.getByRole('button', { name: /Abrir y estudiar/i }).click();
+if (await page.isVisible('#modal-dialogo')) { await page.click('#dialogo-ok'); }
+await page.waitForFunction(() => document.getElementById('nombre-proyecto')?.value
+	=== 'Fixture V6 — transformador bajo carga');
+await cerrar('btn-cerrar-explicacion');
+if (!await page.evaluate(() => document.body.classList.contains('modo-trabajo'))) {
+	await page.click('#modo-trabajo');
+	await page.waitForFunction(() => document.body.classList.contains('modo-trabajo'));
+}
+await energizarVisible(true);
+await page.locator('[data-analisis-equipo]').selectOption('t1');
+await page.locator('[data-analisis-ejecutar]').click();
+const panelV6 = (await page.locator('#sim-fisica').innerText()).replace(/\s+/g, ' ');
+must('el HTML offline incluye instrumentos y análisis V6 sobre el solver',
+	/Instrumentos V6/.test(panelV6) && /ANALIZAR circuito \/ equipo/.test(panelV6)
+		&& /Tensión primaria.*Corriente primaria.*Tensión secundaria.*Corriente secundaria/.test(panelV6),
+	panelV6.slice(0, 360));
+const informeEsperado = page.waitForEvent('download', { timeout: 30_000 });
+await page.locator('[data-analisis-exportar]').click();
+const informeDescarga = await informeEsperado; const rutaInforme = await informeDescarga.path();
+const informeHtml = rutaInforme ? readFileSync(rutaInforme, 'utf8') : '';
+must('el informe V6 offline lleva Build ID, trazabilidad, provenance y limitaciones sin scripts',
+	informeHtml.includes(buildId) && /EJEMPLO_EFIMERO/.test(informeHtml)
+		&& /Provenance/.test(informeHtml) && /Limitaciones/.test(informeHtml) && !/<script\b/i.test(informeHtml));
 
 must('no hizo ninguna petición HTTP externa obligatoria', peticionesExternas.length === 0,
 	peticionesExternas.slice(0, 3).join(' | '));
