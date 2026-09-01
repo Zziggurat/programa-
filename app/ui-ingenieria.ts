@@ -71,7 +71,8 @@ function etiquetaDispositivo(p: Proyecto, id: string): string {
 }
 
 function botonEntidad(issue: EngineeringIssue): string {
-	const e = issue.relatedEntities.find((x) => x.tipo === 'DEVICE')
+	const e = (issue.category === 'CIRCUIT' ? issue.relatedEntities.find((x) => x.tipo === 'CIRCUIT') : undefined)
+		?? issue.relatedEntities.find((x) => x.tipo === 'DEVICE')
 		?? issue.relatedEntities.find((x) => x.tipo === 'CONDUCTOR')
 		?? issue.relatedEntities.find((x) => x.tipo === 'CIRCUIT');
 	if (!e) return '';
@@ -121,6 +122,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	function invalidar(): void {
 		if (!analisis) return;
 		analisis = undefined; alternativas = []; definicionesAlternativas = []; informe = undefined;
+		filtroSeveridad = ''; filtroCategoria = ''; filtroCircuito = '';
 		pintarEstado('El proyecto cambió. Ejecuta Validar proyecto para crear un snapshot nuevo.', 'pendiente');
 		pintar();
 	}
@@ -269,7 +271,8 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		const dispositivo = issue.relatedEntities.find((x) => x.tipo === 'DEVICE');
 		const conductor = issue.relatedEntities.find((x) => x.tipo === 'CONDUCTOR');
 		const circuito = issue.relatedEntities.find((x) => x.tipo === 'CIRCUIT')?.id ?? issue.circuitId;
-		if (dispositivo) ctx.seleccionarDispositivo(dispositivo.id);
+		if (circuito && issue.category === 'CIRCUIT') { circuitoId = circuito; vista = 'circuitos'; pintar(); }
+		else if (dispositivo) ctx.seleccionarDispositivo(dispositivo.id);
 		else if (conductor) ctx.seleccionarConductor(conductor.id);
 		else if (circuito) { circuitoId = circuito; vista = 'circuitos'; pintar(); }
 	}
