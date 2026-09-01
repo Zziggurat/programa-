@@ -346,6 +346,45 @@ must('el informe V6 offline lleva Build ID, trazabilidad, provenance y limitacio
 	informeHtml.includes(buildId) && /EJEMPLO_EFIMERO/.test(informeHtml)
 		&& /Provenance/.test(informeHtml) && /Limitaciones/.test(informeHtml) && !/<script\b/i.test(informeHtml));
 
+/* ---------- 9. Ingeniería V7 funciona desde el mismo HTML offline ---------- */
+console.log('\n--- 9. Ingeniería V7 dentro del HTML entregado ---');
+await energizarVisible(false);
+await page.click('#btn-aprender');
+await page.click('#btn-ejemplos');
+await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
+await page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V7: proyecto sano' })
+	.getByRole('button', { name: /Abrir y estudiar/i }).click();
+if (await page.isVisible('#modal-dialogo')) { await page.click('#dialogo-ok'); }
+await page.waitForFunction(() => document.getElementById('nombre-proyecto')?.value
+	=== 'Fixture V7 — proyecto sano');
+await cerrar('btn-cerrar-explicacion');
+await page.click('#hta-ingenieria');
+must('Ingeniería V7 abre desde el artefacto offline', await page.locator('#seccion-ingenieria').isVisible());
+await page.click('#ingenieria-validar');
+await page.locator('[data-ing-circuit-inspector]').waitFor({ state: 'visible' });
+must('validar deriva un circuito con evidencia',
+	await page.locator('[data-ing-circuit]').count() > 0
+		&& /Fuente.*Protecciones.*I.*ΔV.*Icc/s.test(await page.locator('[data-ing-circuit-inspector]').innerText()));
+await page.locator('[data-ing-view="validacion"]').click();
+const issueCenterV7 = await page.locator('[data-ing-issue-center]').innerText();
+must('Issue Center V7 separa estados y conserva el proyecto sano',
+	/0\s*Errores/.test(issueCenterV7)
+		&& /Errores.*Advertencias.*Información.*Indeterminadas/s.test(issueCenterV7), issueCenterV7);
+await page.locator('[data-ing-view="escenarios"]').click();
+const conductorEscenario = page.locator('[data-ing-scenario-conductor]');
+await conductorEscenario.selectOption({ index: 1 });
+await page.locator('[data-ing-scenario-section]').fill('4');
+await page.locator('[data-ing-scenario-run]').click();
+await page.locator('[data-ing-scenario-result="A"]').waitFor({ state: 'visible' });
+must('ScenarioEngine V7 compara sin mutar BASE',
+	/BASE vs.*4 mm².*BASE NO MODIFICADA/s.test(await page.locator('[data-ing-scenario-result="A"]').innerText()));
+await page.locator('[data-ing-view="documentacion"]').click();
+await page.locator('[data-ing-doc="prepare"]').click();
+await page.locator('.ing-doc-preview').waitFor({ state: 'visible' });
+const documentacionV7 = await page.locator('.ing-doc-preview').innerText();
+must('Documentación V7 prepara informe, BOM, wiring y terminales offline',
+	/Build ID.*BOM.*Conductores.*Borneras/s.test(documentacionV7), documentacionV7);
+
 must('no hizo ninguna petición HTTP externa obligatoria', peticionesExternas.length === 0,
 	peticionesExternas.slice(0, 3).join(' | '));
 
