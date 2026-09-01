@@ -338,7 +338,7 @@ export function leerComportamientoSimulacion(bruto: unknown): ComportamientoSimu
 				? datosBobina(bruto.bobina.electrica) : undefined;
 			if (esObjeto(bruto.bobina) && bruto.bobina.electrica !== undefined && !electrica) return undefined;
 			return entrada && retorno && ps && cs
-				? { version: 1, clase: bruto.clase, bobina: { entrada, retorno, electrica }, polos: ps, contactos: cs }
+				? { version: 1, clase: bruto.clase, bobina: { entrada, retorno, ...(electrica ? { electrica } : {}) }, polos: ps, contactos: cs }
 				: undefined;
 		}
 		case 'controlador': {
