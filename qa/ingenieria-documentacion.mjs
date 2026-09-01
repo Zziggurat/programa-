@@ -10,9 +10,9 @@ function comprobar(n,c,d=''){comprobaciones++;if(!c)fallos++;console.log(`${c?'O
 async function click(id){const b=page.locator(`#${id}`);await b.waitFor({state:'visible'});await b.click()}
 async function abrirEjemplo(){
 	if(await page.locator('#inicio').isVisible().catch(()=>false))await click('inicio-ejemplos');else{await click('btn-aprender');await click('btn-ejemplos')}
-	await page.locator('#modal-ejemplos').waitFor({state:'visible'});await page.locator('.tarjeta-ejemplo',{hasText:'Fixture V5: caída de tensión'}).first().getByRole('button',{name:/Abrir y estudiar/i}).click();
-	await Promise.race([page.locator('#modal-dialogo').waitFor({state:'visible',timeout:1200}).catch(()=>false),page.waitForFunction(()=>window.qa.proyecto().nombre==='Fixture V5 — caída de tensión',null,{timeout:1200}).catch(()=>false)]);
-	if(await page.locator('#modal-dialogo').isVisible().catch(()=>false))await click('dialogo-ok');await page.waitForFunction(()=>window.qa.proyecto().nombre==='Fixture V5 — caída de tensión',null,{timeout:30000});
+	await page.locator('#modal-ejemplos').waitFor({state:'visible'});await page.locator('.tarjeta-ejemplo',{hasText:'Fixture V7: proyecto sano'}).first().getByRole('button',{name:/Abrir y estudiar/i}).click();
+	await Promise.race([page.locator('#modal-dialogo').waitFor({state:'visible',timeout:1200}).catch(()=>false),page.waitForFunction(()=>window.qa.proyecto().nombre==='Fixture V7 — proyecto sano',null,{timeout:1200}).catch(()=>false)]);
+	if(await page.locator('#modal-dialogo').isVisible().catch(()=>false))await click('dialogo-ok');await page.waitForFunction(()=>window.qa.proyecto().nombre==='Fixture V7 — proyecto sano',null,{timeout:30000});
 	if(await page.locator('#modal-explicacion').isVisible().catch(()=>false))await click('btn-cerrar-explicacion');
 }
 async function descargarAccion(accion){const evento=page.waitForEvent('download');await page.locator(`[data-ing-doc="${accion}"]`).click();const d=await evento;const ruta=await d.path();return ruta?readFileSync(ruta,'utf8'):''}
@@ -26,11 +26,11 @@ try{
 	comprobar('documentación publica BOM, conductores y borneras desde Gate H',/BOM.*líneas.*Conductores.*Borneras/s.test(previa));
 	const json=await descargarAccion('json');const informe=JSON.parse(json);
 	comprobar('JSON conserva formato, Build ID y ejemplo efímero',informe.formato==='tablerostudio-informe-ingenieria'&&informe.trazabilidad.buildId==='DEV-1.0.0'&&informe.proyecto.id==='EJEMPLO_EFIMERO');
-	comprobar('JSON contiene circuitos, potencia, issues, procedencia y limitaciones',informe.circuitos.length>0&&informe.potencia&&Array.isArray(informe.issues)&&informe.conductores.every(c=>c.origenLongitud)&&informe.limitaciones.length>0);
+	comprobar('JSON contiene circuitos, potencia, issues, procedencia, criterios y limitaciones',informe.circuitos.length>0&&informe.potencia&&Array.isArray(informe.issues)&&informe.conductores.every(c=>c.origenLongitud)&&informe.criterios?.criterios?.maxVoltageDropPercent===5&&informe.limitaciones.length>0);
 	const bom=await descargarAccion('bom');comprobar('BOM CSV incluye metadatos sin inventar precios',/^Cantidad;Tipo;Descripción;Fabricante;Referencia;Perfil;Modelo físico;Designaciones/m.test(bom)&&!/Precio|Costo/.test(bom));
 	const wiring=await descargarAccion('wiring');comprobar('Wiring CSV incluye extremos, sección, longitud y provenance',/^ID;Número;De dispositivo;De terminal;A dispositivo;A terminal;Sección mm²;Color;Material;Longitud m;Provenance;Circuitos/m.test(wiring)&&/CONFIGURADO/.test(wiring));
-	const terminal=await descargarAccion('terminal');comprobar('Terminal list CSV usa esquema explícito aun sin bornero en el fixture',/^Bornero;Designación;Borne;Tipo;Conexiones;Circuitos/.test(terminal));
-	const html=await descargarAccion('html');comprobar('HTML técnico es autocontenido, trazable y declara límites',/<!doctype html>/i.test(html)&&/DEV-1\.0\.0/.test(html)&&/No constituye certificación normativa/.test(html)&&!/<script\b|https?:\/\//i.test(html));
+	const terminal=await descargarAccion('terminal');comprobar('Terminal list CSV contiene la bornera y sus conexiones reales',/^Bornero;Designación;Borne;Tipo;Conexiones;Circuitos/m.test(terminal)&&/x1;'-X1;1;L;/.test(terminal)&&/w-fase-carga:q1:2/.test(terminal)&&/w-bornero-carga:r1:L/.test(terminal));
+	const html=await descargarAccion('html');comprobar('HTML técnico es autocontenido, trazable, escapado y declara límites',/<!doctype html>/i.test(html)&&/DEV-1\.0\.0/.test(html)&&/Protección &amp; distribución/.test(html)&&!/Protección & distribución/.test(html)&&/No constituye certificación normativa/.test(html)&&!/<script\b|https?:\/\//i.test(html));
 	comprobar('no hubo errores JavaScript',erroresJS.length===0,erroresJS.slice(0,4).join(' | '));
 }catch(error){fallos++;console.error(`ERROR NO CONTROLADO: ${error?.stack??error}`)}finally{
 	try{await page?.close()}catch(e){fallos++;console.error(e)}try{await browser?.close()}catch(e){fallos++;console.error(e)}if(servidor)try{servidor.closeAllConnections?.();await new Promise((ok,no)=>servidor.close(e=>e?no(e):ok()))}catch(e){fallos++;console.error(e)}

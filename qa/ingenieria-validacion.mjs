@@ -14,19 +14,24 @@ function comprobar(nombre, condicion, detalle = '') {
 	console.log(`${condicion ? 'OK  ' : 'FAIL'}  ${nombre}${detalle ? ` → ${detalle}` : ''}`);
 }
 async function click(id) { const b = page.locator(`#${id}`); await b.waitFor({ state: 'visible' }); await b.click(); }
-async function abrirEjemplo() {
+async function abrirEjemplo(titulo, nombre) {
 	if (await page.locator('#inicio').isVisible().catch(() => false)) await click('inicio-ejemplos');
 	else { await click('btn-aprender'); await click('btn-ejemplos'); }
 	await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
-	const tarjeta = page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V5: caída de tensión' }).first();
+	const tarjeta = page.locator('.tarjeta-ejemplo', { hasText: titulo }).first();
 	await tarjeta.getByRole('button', { name: /Abrir y estudiar/i }).click();
 	await Promise.race([
 		page.locator('#modal-dialogo').waitFor({ state: 'visible', timeout: 1_200 }).then(() => true).catch(() => false),
-		page.waitForFunction(() => window.qa.proyecto().nombre === 'Fixture V5 — caída de tensión', null, { timeout: 1_200 }).then(() => true).catch(() => false),
+		page.waitForFunction((n) => window.qa.proyecto().nombre === n, nombre, { timeout: 1_200 }).then(() => true).catch(() => false),
 	]);
 	if (await page.locator('#modal-dialogo').isVisible().catch(() => false)) await click('dialogo-ok');
-	await page.waitForFunction(() => window.qa.proyecto().nombre === 'Fixture V5 — caída de tensión', null, { timeout: 30_000 });
+	await page.waitForFunction((n) => window.qa.proyecto().nombre === n, nombre, { timeout: 30_000 });
 	if (await page.locator('#modal-explicacion').isVisible().catch(() => false)) await click('btn-cerrar-explicacion');
+}
+async function validarIssue(nombre,codigo,estado,detalle=''){
+	let tarjetas=page.locator('[data-ing-issue-card]',{hasText:codigo});if(detalle)tarjetas=tarjetas.filter({hasText:detalle});
+	const tarjeta=tarjetas.first();await tarjeta.waitFor({state:'visible'});
+	const texto=await tarjeta.innerText();comprobar(`${nombre}: ${codigo} → ${estado}`,texto.includes(estado),texto.slice(0,300));return tarjeta;
 }
 
 try {
@@ -35,7 +40,7 @@ try {
 	page.on('pageerror', (e) => erroresJS.push(e.message));
 	page.on('console', (m) => { if (m.type() === 'error') erroresJS.push(`console: ${m.text()}`); });
 	await page.goto(`${entorno.url}/?qa=1`, { waitUntil: 'domcontentloaded' }); await esperarEditorListo(page);
-	await abrirEjemplo();
+	await abrirEjemplo('Fixture V7: proyecto sano','Fixture V7 — proyecto sano');
 
 	await click('hta-ingenieria');
 	comprobar('Ingeniería abre como panel contextual', await page.locator('#seccion-ingenieria').isVisible());
@@ -47,6 +52,7 @@ try {
 	const circuitos = await page.locator('[data-ing-circuit]').count(); comprobar('vista deriva al menos un circuito', circuitos > 0, String(circuitos));
 	await page.locator('[data-ing-view="validacion"]').click();
 	const center = await page.locator('[data-ing-issue-center]').innerText();
+	comprobar('proyecto sano no fabrica errores críticos',/0\s*Errores/.test(center));
 	comprobar('Issue Center separa errores, advertencias, información e indeterminadas', /Errores.*Advertencias.*Información.*Indeterminadas/s.test(center), center);
 	const issues = page.locator('[data-ing-issue-card]'); comprobar('issues tienen código estable y estado', await issues.count() > 0
 		&& /TS-.*(?:FAIL|WARNING|INDETERMINATE)/s.test(await issues.first().innerText()));
@@ -66,6 +72,16 @@ try {
 	await page.locator('[data-ing-view="potencia"]').click();
 	const potencia = await page.locator('[data-ing-power]').innerText();
 	comprobar('potencia muestra P/Q/S/PF, pérdidas, circuitos y frontera anti-double-count', /P.*Q.*S.*PF.*Pérdidas.*FUENTES_EXTERNAS_CONFIGURADAS.*Por circuito/s.test(potencia), potencia.slice(0, 700));
+
+	await abrirEjemplo('Fixture V7: banco de validación','Fixture V7 — banco de validación');await click('ingenieria-validar');await page.locator('[data-ing-view="validacion"]').click();
+	await validarIssue('Cable issue','TS-CABLE-VOLTAGE-DROP','FAIL');
+	const corte=await validarIssue('Icu ausente','TS-PROT-BREAKING-CAPACITY-DATA','INDETERMINATE','Icu o Icn configurado');
+	comprobar('Icu/Icn ausente queda como dato faltante',/Icu o Icn configurado/.test(await corte.innerText()));
+	await validarIssue('PLC DO','TS-IO-DO-COIL','FAIL');await validarIssue('Analógica','TS-ANALOG-COMPATIBILITY','FAIL');
+	await validarIssue('Desbalance','TS-PHASE-UNBALANCE','WARNING');const ambigua=await validarIssue('Topología ambigua','TS-CIRCUIT-AMBIGUOUS','WARNING');
+	await ambigua.click();comprobar('issue ambiguo navega al circuito sin árbol falso',/AMBIGUA/.test(await page.locator('[data-ing-circuit-inspector]').innerText()));
+	await page.locator('[data-ing-view="protecciones"]').click();
+	comprobar('fixture de selectividad muestra curvas superpuestas estimadas',await page.locator('[data-ing-protection-card]',{hasText:'MODELO_GEN_B'}).count()>=2&&/ESTIMADO/.test(await page.locator('#ingenieria-contenido').innerText()));
 	comprobar('no hubo errores JavaScript', erroresJS.length === 0, erroresJS.slice(0, 4).join(' | '));
 } catch (error) {
 	fallos++; console.error(`ERROR NO CONTROLADO: ${error?.stack ?? error}`);
