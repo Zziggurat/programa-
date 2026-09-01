@@ -11,7 +11,16 @@ const cable = (id: string, de: [string,string], a: [string,string], seccion=1): 
 /** Caso sano calculable: criterios y capacidad de corte están configurados, incluida una tabla local explícita. */
 export function fixtureProyectoSanoV7(): Proyecto {
 	const p = fixtureCaidaTensionV5(); p.nombre = 'Fixture V7 — proyecto sano';
+	const q1 = p.dispositivos.find((d) => d.id === 'q1')!;
+	q1.descripcion = 'Protección & distribución documentada';
 	p.dispositivos.find((d) => d.id === 'q1')!.fisica!.proteccion!.capacidadCorte = { icnKA: 6, icuKA: 10, icsKA: 5 };
+	p.dispositivos.push({ id: 'x1', tipo: 'bornero', designacion: '-X1', descripcion: 'Distribución de carga',
+		bornes: [{ id: '1', tipo: 'L', maxConductores: 4 }] });
+	const tramo = p.conductores.find((c) => c.id === 'w-fase-carga')!;
+	tramo.a = extremo('x1', '1'); tramo.fisica = { ...tramo.fisica, longitudManualM: 8 };
+	p.conductores.push({ ...structuredClone(tramo), id: 'w-bornero-carga',
+		de: extremo('x1', '1'), a: extremo('r1', 'L'), fisica: { ...tramo.fisica, longitudManualM: 12 } });
+	p.gabinete?.colocaciones.push({ dispositivoId: 'x1', x: 205, y: 75, ancho: 38, alto: 55, rielId: 'r1' });
 	p.ingenieria = { version: 1, criterios: { maxVoltageDropPercent: 5, maxLossW: 100,
 		ampacityProfile: { nombre: 'Tabla declarada del fixture', fuente: 'Fixture V7', puntos: [
 			{ seccionMm2: 1.5, corrienteMaxA: 15 }, { seccionMm2: 2.5, corrienteMaxA: 20 }, { seccionMm2: 4, corrienteMaxA: 26 },
@@ -72,7 +81,11 @@ export function fixtureAnalogicaIncompatibleV7(): Proyecto {
 }
 
 export const fixtureDesbalanceIngenieriaV7 = (): Proyecto => {
-	const p=fixtureDesequilibrioV6();p.nombre='Fixture V7 — trifásico desbalanceado';p.ingenieria={version:1,criterios:{maxUnbalancePercent:10}};return p;
+	const p=fixtureDesequilibrioV6();p.nombre='Fixture V7 — trifásico desbalanceado';
+	p.conductores.find((c)=>c.id==='wl1')!.seccion=2.5;
+	p.ingenieria={version:1,criterios:{maxUnbalancePercent:10},circuitos:{
+		'circuito:red->z1':{version:1,conductoresReasignablesFase:['wl1']},
+	}};return p;
 };
 
 export function fixtureEscenarioSeccionV7(): Proyecto {
@@ -92,6 +105,15 @@ function prefijar(parte:Proyecto,prefijo:string,p:Proyecto):void{
 	for(const d of parte.dispositivos)p.dispositivos.push({...structuredClone(d),id:prefijo+d.id});
 	for(const c of parte.conductores)p.conductores.push({...structuredClone(c),id:prefijo+c.id,
 		de:{...c.de,dispositivoId:prefijo+c.de.dispositivoId},a:{...c.a,dispositivoId:prefijo+c.a.dispositivoId}});
+}
+
+/** Banco de navegador: reúne los fixtures focales sin sustituir sus regresiones individuales. */
+export function fixtureBancoValidacionV7():Proyecto{
+	const p=crearProyecto('Fixture V7 — banco de validación');p.gabinete={ancho:900,alto:700,rieles:[],canaletas:[],colocaciones:[]};
+	const partes=[fixtureCaidaFueraCriterioV7(),fixtureProteccionSinCorteV7(),fixtureSelectividadParcialV7(),
+		fixtureDoBobinaInsuficienteV7(),fixtureAnalogicaIncompatibleV7(),fixtureDesbalanceIngenieriaV7(),fixtureTopologiaAmbiguaV7()];
+	for(let i=0;i<partes.length;i++)prefijar(partes[i]!,`v${i+1}-`,p);
+	p.ingenieria={version:1,criterios:{maxVoltageDropPercent:0.5,maxUnbalancePercent:10}};return p;
 }
 
 /** Cientos de entidades, con los mismos perfiles ordinarios que usa la aplicación. */

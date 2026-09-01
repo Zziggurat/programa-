@@ -14,6 +14,11 @@ import {
 	fixtureDesequilibrioV6, fixtureDiferencialV6, fixtureMotorPlacaV6,
 	fixtureTransformadorV6, fixtureVfdMotorV6,
 } from './fixtures-fisica-v6.js';
+import {
+	fixtureAnalogicaIncompatibleV7, fixtureBancoValidacionV7, fixtureCaidaFueraCriterioV7, fixtureDesbalanceIngenieriaV7,
+	fixtureDoBobinaInsuficienteV7, fixtureEscenarioSeccionV7, fixtureProteccionSinCorteV7,
+	fixtureProyectoSanoV7, fixtureSelectividadParcialV7, fixtureTopologiaAmbiguaV7,
+} from './fixtures-ingenieria-v7.js';
 import { tableroEjemplo } from './tablero-ejemplo.js';
 
 export interface EjemploTablero {
@@ -1317,5 +1322,65 @@ export const EJEMPLOS: EjemploTablero[] = [
 		aprender: ['La métrica es de ingeniería y no una declaración normativa de conformidad.',
 			'Prueba valores iguales para comprobar que IN y secuencias negativa/cero tienden a cero.'],
 		crear: fixtureDesequilibrioV6,
+	},
+	{
+		id:'fixture-sano-v7',titulo:'Fixture V7: proyecto sano',resumen:'Circuito calculable con criterios, poder de corte y bornera documentados.',
+		queHace:'Es la referencia de baja tasa de falsos positivos para Ingeniería V7.',
+		comoFunciona:['Abre Ingeniería y valida el proyecto.','Revisa evidencia, criterios, BOM, cableado y terminales.'],
+		aprender:['Un dato ausente permanece indeterminado; nunca se inventa conformidad.'],crear:fixtureProyectoSanoV7,
+	},
+	{
+		id:'fixture-caida-v7',titulo:'Fixture V7: caída fuera de criterio',resumen:'Conductor cuya caída supera el máximo explícito del proyecto.',
+		queHace:'Demuestra un FAIL calculado con evidencia y remediación trazable.',
+		comoFunciona:['Valida el proyecto.','Localiza TS-CABLE-VOLTAGE-DROP y compara 2,5 con 4 mm².'],
+		aprender:['El criterio es configurado; no se presenta como límite normativo universal.'],crear:fixtureCaidaFueraCriterioV7,
+	},
+	{
+		id:'fixture-corte-v7',titulo:'Fixture V7: Icu ausente',resumen:'Protecciones sin Icu/Icn declarado para conservar un resultado indeterminado.',
+		queHace:'Separa la Icc calculable del poder de corte que el proyecto no aporta.',
+		comoFunciona:['Valida el proyecto.','Revisa datos faltantes de las protecciones.'],
+		aprender:['Ics no sustituye silenciosamente a Icu o Icn.'],crear:fixtureProteccionSinCorteV7,
+	},
+	{
+		id:'fixture-selectividad-v7',titulo:'Fixture V7: selectividad parcial',resumen:'Dos curvas genéricas superpuestas para ensayar coordinación parcial.',
+		queHace:'Clasifica el solapamiento sin afirmar coordinación certificada de fabricante.',
+		comoFunciona:['Compara Q1 y Q2.','La regresión física inyecta una falla reproducible en Z1.'],
+		aprender:['La clasificación procede del modelo estimado y de la Icc del ensayo.'],crear:fixtureSelectividadParcialV7,
+	},
+	{
+		id:'fixture-do-v7',titulo:'Fixture V7: DO insuficiente',resumen:'Salida PLC de 0,1 A frente a bobina de 0,18 A.',
+		queHace:'Detecta incompatibilidad eléctrica sin depender de marca ni origen visual.',
+		comoFunciona:['Valida el proyecto.','Abre el issue TS-IO-DO-COIL.'],
+		aprender:['Tensión compatible no implica corriente disponible suficiente.'],crear:fixtureDoBobinaInsuficienteV7,
+	},
+	{
+		id:'fixture-analogica-v7',titulo:'Fixture V7: analógica incompatible',resumen:'Transmisor 4–20 mA conectado a entrada 0–10 V.',
+		queHace:'Expone incompatibilidad de unidad, rango y compliance con datos persistentes.',
+		comoFunciona:['Valida el proyecto.','Revisa TS-ANALOG-COMPATIBILITY y su evidencia.'],
+		aprender:['La UI no convierte unidades ni presume resistencias que no estén declaradas.'],crear:fixtureAnalogicaIncompatibleV7,
+	},
+	{
+		id:'fixture-desbalance-v7',titulo:'Fixture V7: desbalance trifásico',resumen:'Tres cargas distintas, neutro fasorial y un ramal explícitamente reasignable.',
+		queHace:'Compara el desequilibrio calculado con el criterio configurado y permite ensayar L1→L2.',
+		comoFunciona:['Valida el balance.','En Escenarios mueve wl1 de L1 a L2 sin tocar BASE.'],
+		aprender:['MAX_DESVIACION_MEDIA es una métrica de ingeniería, no una certificación IEC.'],crear:fixtureDesbalanceIngenieriaV7,
+	},
+	{
+		id:'fixture-escenario-v7',titulo:'Fixture V7: escenario de sección',resumen:'BASE 2,5 mm² y alternativa 4 mm² sobre una caída fuera de criterio.',
+		queHace:'Publica deltas antes de una aplicación explícita y transaccional.',
+		comoFunciona:['Compara A sin modificar BASE.','Aplica solo tras confirmar y comprueba persistencia.'],
+		aprender:['Cambiar selectores nunca modifica el diseño.'],crear:fixtureEscenarioSeccionV7,
+	},
+	{
+		id:'fixture-ambigua-v7',titulo:'Fixture V7: múltiples fuentes',resumen:'Una carga alcanzable desde dos fuentes explícitas.',
+		queHace:'Conserva la red como AMBIGUA en vez de inventar una jerarquía aguas arriba.',
+		comoFunciona:['Valida el proyecto.','Abre TS-CIRCUIT-AMBIGUOUS y navega al circuito.'],
+		aprender:['La ambigüedad topológica es información útil, no un árbol falso.'],crear:fixtureTopologiaAmbiguaV7,
+	},
+	{
+		id:'fixture-banco-validacion-v7',titulo:'Fixture V7: banco de validación',resumen:'Banco QA compuesto con los casos profesionales de validación V7.',
+		queHace:'Permite revisar en una sola sesión caída, protecciones, I/O, analógicas, fases y topología ambigua.',
+		comoFunciona:['Abre Ingeniería y valida.','Filtra por código, categoría o circuito y navega a la evidencia.'],
+		aprender:['Cada caso también conserva su fixture pequeño y su regresión rápida independiente.'],crear:fixtureBancoValidacionV7,
 	},
 ];
