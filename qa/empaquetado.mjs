@@ -202,7 +202,9 @@ const bajar = async (selector, patron, abridor) => {
 
 // El botón 📄 abre la VISTA PREVIA del dossier; se descarga desde ella. Aquí se comprueba
 // también que la vista previa funciona en el archivo entregado, sin sonda de pruebas.
-await page.click('#btn-pdf');
+// Abrir la vista genera un iframe blob. En Windows CI Playwright puede confundir esa carga con
+// una navegación de la página y esperar 30 s aunque el clic y la vista ya hayan ocurrido.
+await page.locator('#btn-pdf').click({ noWaitAfter: true });
 await page.waitForFunction(
 	() => /KB/.test(document.getElementById('dos-estado')?.textContent ?? ''), { timeout: 40000 });
 must('la vista previa del dossier se abre en el archivo entregado', await page.isVisible('#panel-dossier'));
