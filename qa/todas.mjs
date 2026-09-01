@@ -200,7 +200,9 @@ for (const [i, suite] of suites.entries()) {
 	});
 	hijoActivo = undefined;
 	comprobaciones += resultado.salida.split(/\r?\n/)
-		.filter((linea) => /^(?:OK|FAIL|MAL)\s/.test(linea.trimStart())).length;
+		/* Las comprobaciones usan dos espacios tras el marcador. Texto técnico como
+		 * "FAIL · ERROR" dentro de una tarjeta no es una comprobación adicional. */
+		.filter((linea) => /^(?:OK|FAIL|MAL) {2,}/.test(linea.trimStart())).length;
 	if (resultado.timeout) agotaronTiempo.push(suite);
 	if (resultado.codigo !== 0) fallaron.push(suite);
 }
