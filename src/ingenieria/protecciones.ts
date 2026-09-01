@@ -71,7 +71,10 @@ function validarCorte(fisica: ResultadoFisicaElectrica | undefined, c: CircuitoI
 			'No existe información suficiente para comparar la Icc del punto con Icu/Icn.');
 		r.provenance = 'NO_DISPONIBLE'; r.missingData = [
 			...(icc.ka === undefined ? ['Icc calculada en el punto'] : []), ...(capacidad === undefined ? ['Icu o Icn configurado'] : []),
-		]; if (perfil?.icsKA !== undefined) r.evidence.push({ codigo: 'ICS', descripcion: 'Ics declarada (no usada como Icu/Icn)', valor: perfil.icsKA, unidad: 'kA', origen: 'CONFIGURADO' });
+		];
+		if (icc.ka !== undefined) r.evidence.push({ codigo: 'ICC', descripcion: 'Corriente de cortocircuito prospectiva',
+			valor: icc.ka, unidad: 'kA', origen: icc.origen });
+		if (perfil?.icsKA !== undefined) r.evidence.push({ codigo: 'ICS', descripcion: 'Ics declarada (no usada como Icu/Icn)', valor: perfil.icsKA, unidad: 'kA', origen: 'CONFIGURADO' });
 		return r;
 	}
 	const falla = icc.ka - capacidad > tol(icc.ka, capacidad); const r = resultado(c, 'TS-PROT-BREAKING-CAPACITY', d.id,

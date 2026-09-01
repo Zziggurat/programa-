@@ -19,10 +19,17 @@ export function ejecutarIngenieria(entrada: {
 	contextoFisico?: ContextoTopologiaFisica;
 	reglas?: readonly EngineeringRule[];
 }) {
-	const circuitos = descubrirCircuitos(entrada.proyecto).circuitos;
-	const fisica = simularFisicaProyecto(entrada.proyecto, entrada.contextoFisico);
-	const validacion = validarIngenieria({ proyecto: entrada.proyecto, circuitos, fisica,
+	/* El orden visual/persistido no forma parte del modelo eléctrico. Una vista canónica evita
+	 * que el orden de inserción altere el pivoteo del solver y deje diferencias flotantes de
+	 * último bit en informes reproducibles. Los objetos y el Proyecto original no se mutan. */
+	const proyecto = { ...entrada.proyecto,
+		dispositivos: [...entrada.proyecto.dispositivos].sort((a, b) => a.id.localeCompare(b.id)),
+		conductores: [...entrada.proyecto.conductores].sort((a, b) => a.id.localeCompare(b.id)),
+	};
+	const circuitos = descubrirCircuitos(proyecto).circuitos;
+	const fisica = simularFisicaProyecto(proyecto, entrada.contextoFisico);
+	const validacion = validarIngenieria({ proyecto, circuitos, fisica,
 		reglas: entrada.reglas ?? REGLAS_INGENIERIA_V7 });
-	const potencia = resumirPotenciaIngenieria({ proyecto: entrada.proyecto, circuitos, fisica });
+	const potencia = resumirPotenciaIngenieria({ proyecto, circuitos, fisica });
 	return { circuitos, fisica, validacion, potencia };
 }
