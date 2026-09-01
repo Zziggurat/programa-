@@ -58,6 +58,22 @@ jobs:
       # Gate V6 separado: no infla ni redefine las 13 suites históricas.
       - run: npm run qa:equipos:run
 
+  qa-v7:
+    name: QA Ingeniería V7
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run editor:build -- --mode qa
+      - run: npx playwright-core install --with-deps chromium
+      # Gate V7 separado: validación, escenarios y documentación profesional.
+      - run: node qa/todas.mjs ingenieria-
+
   entrega:
     name: Entregable offline
     # Plataforma y runtime canónicos del HTML offline/desktop versionado.
