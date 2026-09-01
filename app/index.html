@@ -840,6 +840,16 @@
 	.analisis-magnitudes { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 4px; }
 	.analisis-magnitudes > div { display: grid; padding: 5px; background: #0a1116; border-left: 2px solid #315c75; }
 	.analisis-magnitudes span { color: var(--texto); font-variant-numeric: tabular-nums; }
+	/* Ingeniería V7: panel técnico contextual, sin convertir la barra global en un tablero de mando. */
+	#seccion-ingenieria .contenido{padding:8px}#ingenieria-cabecera{display:grid;gap:8px;position:sticky;top:0;z-index:3;background:var(--panel);padding-bottom:8px}
+	#ingenieria-validar{width:100%;font-weight:700}#ingenieria-estado{font-size:11px;color:var(--texto-suave);line-height:1.35}#ingenieria-estado.ok{color:#91e6ae}#ingenieria-estado.pendiente{color:#f0c878}
+	.ing-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}.ing-tabs button{background:var(--panel-2);border:1px solid var(--borde);border-radius:6px;color:var(--texto-suave);padding:5px;font-size:11px}.ing-tabs button.activo{border-color:#4da3d9;color:#ccecff;background:#173044}
+	#ingenieria-contenido{font-size:11.5px;line-height:1.4}.ing-inicio,.ing-vacio,.ing-alerta{padding:9px;border:1px solid var(--borde);border-radius:7px;background:var(--panel-2)}.ing-alerta{border-left:3px solid #d89b3c}.ing-meta{color:var(--texto-suave);font-size:10.5px}
+	.ing-resumen,.ing-kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-bottom:8px}.ing-resumen span,.ing-kpis span{padding:7px;border:1px solid var(--borde);border-radius:6px;background:var(--panel-2)}.ing-resumen b,.ing-kpis b{display:block;font-size:14px}.ing-resumen .fail{border-left:3px solid #ed5c64}.ing-resumen .warn{border-left:3px solid #e1a543}.ing-resumen .info{border-left:3px solid #559fd5}.ing-resumen .ind{border-left:3px solid #a985d6}
+	.ing-filtros,.ing-scenario-form{display:grid;gap:6px;margin:8px 0}.ing-filtros label,.ing-scenario-form label{display:grid;gap:3px;color:var(--texto-suave)}.ing-filtros select,.ing-scenario-form select,.ing-scenario-form input{min-width:0;width:100%;box-sizing:border-box;background:var(--panel-2);border:1px solid var(--borde);color:var(--texto);border-radius:5px;padding:5px}
+	.ing-issue,.ing-proteccion,.ing-inspector,.ing-resultado-escenario,.ing-doc-preview{border:1px solid var(--borde);border-left:3px solid #647583;border-radius:7px;background:var(--panel-2);padding:8px;margin:7px 0}.ing-issue.fail{border-left-color:#ed5c64}.ing-issue.warning{border-left-color:#e1a543}.ing-issue.indeterminate{border-left-color:#a985d6}.ing-issue header{display:grid;gap:2px}.ing-issue header span{color:var(--texto-suave);font-size:10px}.ing-issue p{margin:5px 0}.ing-enlace,.ing-inspector button,.ing-proteccion button,.ing-mini-issue{background:transparent;border:0;color:#7cc0ff;text-align:left;padding:2px;cursor:pointer}.ing-mini-issue{display:block;width:100%}
+	.ing-circuitos{display:grid;gap:8px}.ing-arbol{display:grid;gap:4px}.ing-circuito{display:grid;text-align:left;background:var(--panel-2);border:1px solid var(--borde);border-radius:6px;color:var(--texto);padding:7px}.ing-circuito small{color:var(--texto-suave)}.ing-circuito.activo{border-color:#4da3d9}.ing-estado{font-size:9px;color:var(--texto-suave)}
+	.ing-magnitudes{display:grid;grid-template-columns:minmax(72px,auto) 1fr;gap:4px 7px;margin:8px 0}.ing-magnitudes dt{color:var(--texto-suave)}.ing-magnitudes dd{margin:0;min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.ing-tabla-wrap{max-width:100%;overflow:auto;margin:6px 0 10px}.ing-tabla{border-collapse:collapse;width:max-content;min-width:100%;font-size:10.5px}.ing-tabla th,.ing-tabla td{border:1px solid #35414b;padding:4px 5px;text-align:left;white-space:nowrap}.ing-tabla th{background:#111a21;color:#bdd0dd;position:sticky;top:0}.ing-curva{border-top:1px solid var(--borde);margin-top:7px}.ing-base-intacta{color:#9fe2b6;font-weight:700;letter-spacing:.04em}
 	.analisis-magnitudes small, .analisis-seccion small { color: var(--texto-suave); }
 	.analisis-seccion { display: grid; gap: 3px; padding: 6px; background: #10191f; border: 1px solid #ffffff12; border-radius: 6px; }
 	.analisis-seccion article { display: grid; gap: 2px; border-top: 1px solid #ffffff0d; padding-top: 4px; }
@@ -1411,6 +1421,8 @@
 	<div class="raya"></div>
 	<button class="hta" id="hta-proyecto" data-hta="proyecto" title="Lo que hay en el tablero: aparatos, cables y verificación (P)">
 		<span class="ico">☰</span><span class="txt">Tablero</span></button>
+	<button class="hta" id="hta-ingenieria" data-hta="ingenieria" title="Validación, circuitos, potencia y documentación de Ingeniería V7">
+		<span class="ico">∑</span><span class="txt">Ingeniería</span></button>
 	<div class="empuje"></div>
 	<button class="hta" id="btn-componentes-personalizados" disabled aria-label="Abrir Mis Componentes"
 		title="Crear, importar y reutilizar componentes con imagen, terminales y comportamiento eléctrico"><span class="ico">🧩</span><span class="txt">Componentes</span></button>
@@ -1559,6 +1571,24 @@
 	<details open id="seccion-verificacion" data-cajon="proyecto">
 		<summary>Verificación eléctrica</summary>
 		<div class="contenido"><ul id="lista-drc"></ul></div>
+	</details>
+	<details open id="seccion-ingenieria" data-cajon="ingenieria">
+		<summary>Ingeniería V7</summary>
+		<div class="contenido">
+			<div id="ingenieria-cabecera">
+				<button class="boton primario" id="ingenieria-validar">VALIDAR PROYECTO</button>
+				<div id="ingenieria-estado"></div>
+				<nav class="ing-tabs" aria-label="Secciones de Ingeniería">
+					<button data-ing-view="circuitos" class="activo">Circuitos</button>
+					<button data-ing-view="validacion">Validación</button>
+					<button data-ing-view="protecciones">Protecciones</button>
+					<button data-ing-view="potencia">Potencia</button>
+					<button data-ing-view="escenarios">Escenarios</button>
+					<button data-ing-view="documentacion">Documentación</button>
+				</nav>
+			</div>
+			<div id="ingenieria-contenido"></div>
+		</div>
 	</details>
 	<details id="seccion-resumen-cables" data-cajon="proyecto">
 		<summary>Cableado</summary>

@@ -70,6 +70,7 @@ import { instalarDossier } from './ui-dossier.js';
 import { instalarInicio } from './ui-inicio.js';
 import { instalarEsquema } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
+import { instalarIngenieria, type PanelIngenieria } from './ui-ingenieria.js';
 import { animarSimulacion } from './animacion-sim.js';
 import { dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
 import { idUnico } from '../src/modelo/ids.js';
@@ -231,6 +232,7 @@ let repositorioDocumentos: RepositorioProyectos | undefined;
 let cerrarRepositorioDocumentos: (() => void) | undefined;
 let recursosImagenActivos: { liberar(): void } | undefined;
 let panelComponentesPersonalizados: PanelComponentesPersonalizados | undefined;
+let panelIngenieria: PanelIngenieria | undefined;
 /** Hasta que la migración termine no se toca la clave legacy que constituye su fuente segura. */
 let persistenciaDocumentalPendiente = true;
 // El editor ya está renderizado mientras IndexedDB abre. Dejarlo interactivo aquí crearía una
@@ -260,6 +262,7 @@ function recalcular(): void {
 	// puede calcular la caída de tensión de cada circuito. Se las pasa el PDF también, desde la
 	// misma función, para que el papel y la pantalla no digan cosas distintas.
 	revision = revisarTablero(proyecto, { longitudesMm: longitudesDibujadasMm(proyecto) });
+	panelIngenieria?.invalidar();
 	autoguardar();
 }
 
@@ -7123,6 +7126,31 @@ const panelDossier = instalarDossier({
 });
 ($('btn-pdf') as HTMLButtonElement).onclick = () => panelDossier.abrir(true);
 
+panelIngenieria = instalarIngenieria({
+	proyecto: () => proyecto,
+	seleccionarDispositivo: seleccionar,
+	seleccionarConductor: (id) => aplicarSeleccion({ tipo: 'cable', id }),
+	avisar,
+	confirmar: (mensaje) => confirmar(mensaje, { ok: 'Aplicar al proyecto' }),
+	aplicarProyecto: async (candidato) => {
+		if (!sePuedeEditar()) return false;
+		mutarProyecto(() => { proyecto = structuredClone(candidato); });
+		await gestorDocumentos?.flush();
+		return true;
+	},
+	trazabilidad: async () => {
+		if (!gestorDocumentos || gestorDocumentos.estaMostrandoEjemplo()) {
+			return { projectId: proyecto.esEjemplo ? 'EJEMPLO_EFIMERO' : 'SIN_REPOSITORIO' };
+		}
+		await gestorDocumentos.flush();
+		const documento = gestorDocumentos.documentoActivo();
+		if (!documento) return { projectId: 'SIN_REPOSITORIO' };
+		const snapshot = (await gestorDocumentos.listarSnapshots())[0];
+		return { projectId: documento.id, revision: documento.revision, snapshotId: snapshot?.id };
+	},
+	abrirDossierPDF: () => panelDossier.abrir(true),
+});
+
 /* ------------------------------- Modos ------------------------------- */
 
 /* ==================================================================================
@@ -7138,7 +7166,7 @@ const panelDossier = instalarDossier({
  * cambio de modo sigue pasando por `aplicarModo`, que es el único sitio donde `modo` se toca.
  * ================================================================================== */
 
-type Herramienta = 'seleccionar' | 'anadir' | 'conectar' | 'estructura' | 'proyecto';
+type Herramienta = 'seleccionar' | 'anadir' | 'conectar' | 'estructura' | 'proyecto' | 'ingenieria';
 
 interface FichaHerramienta {
 	/** El modo del editor que exige. `undefined` = no lo cambia (es un panel, no una herramienta). */
@@ -7178,6 +7206,10 @@ const HERRAMIENTAS: Record<Herramienta, FichaHerramienta> = {
 	proyecto: {
 		espacios: ['interior', 'frontal', 'conjunto'],
 		ayuda: ['Clic en la lista · localizarlo en el tablero'],
+	},
+	ingenieria: {
+		espacios: ['interior', 'frontal', 'conjunto'],
+		ayuda: ['Validar proyecto · snapshot derivado', 'Issue o circuito · localizar', 'Escenario · comparar antes de aplicar'],
 	},
 };
 
@@ -7266,6 +7298,7 @@ const TITULO_CAJON: Record<Herramienta, string> = {
 	conectar: 'Cables del tablero',
 	estructura: 'Gabinete y montaje',
 	proyecto: 'El tablero',
+	ingenieria: 'Ingeniería',
 };
 
 /**
