@@ -102,7 +102,8 @@ export function fixtureTopologiaAmbiguaV7(): Proyecto {
 }
 
 function prefijar(parte:Proyecto,prefijo:string,p:Proyecto):void{
-	for(const d of parte.dispositivos)p.dispositivos.push({...structuredClone(d),id:prefijo+d.id});
+	for(const d of parte.dispositivos)p.dispositivos.push({...structuredClone(d),id:prefijo+d.id,
+		designacion:d.designacion?`${d.designacion}-${prefijo.slice(0,-1).toUpperCase()}`:undefined});
 	for(const c of parte.conductores)p.conductores.push({...structuredClone(c),id:prefijo+c.id,
 		de:{...c.de,dispositivoId:prefijo+c.de.dispositivoId},a:{...c.a,dispositivoId:prefijo+c.a.dispositivoId}});
 }
@@ -113,6 +114,8 @@ export function fixtureBancoValidacionV7():Proyecto{
 	const partes=[fixtureCaidaFueraCriterioV7(),fixtureProteccionSinCorteV7(),fixtureSelectividadParcialV7(),
 		fixtureDoBobinaInsuficienteV7(),fixtureAnalogicaIncompatibleV7(),fixtureDesbalanceIngenieriaV7(),fixtureTopologiaAmbiguaV7()];
 	for(let i=0;i<partes.length;i++)prefijar(partes[i]!,`v${i+1}-`,p);
+	for(const id of ['v2-q1','v3-q1']){const d=p.dispositivos.find((x)=>x.id===id)!;d.corrienteNominal=16;
+		d.fisica!.proteccion!.inA=16;d.descripcion='Protección de 16 A del banco V7';}
 	p.ingenieria={version:1,criterios:{maxVoltageDropPercent:0.5,maxUnbalancePercent:10}};return p;
 }
 
