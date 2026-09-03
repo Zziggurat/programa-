@@ -12,6 +12,8 @@ import { verificarProyecto } from '../src/motores/drc.js';
 import { aCSV, bomACSV, generarBOM, generarListaConductores } from '../src/motores/documentacion.js';
 import { rutearConductores } from '../src/motores/ruteo.js';
 
+const sinBom = (texto: string) => texto.startsWith('\uFEFF') ? texto.slice(1) : texto;
+
 test('BOM: agrupa por referencia y suma cantidades', () => {
 	const p = tableroEjemplo();
 	numerarDispositivos(p);
@@ -25,7 +27,16 @@ test('BOM: agrupa por referencia y suma cantidades', () => {
 
 test('CSV: escapa separadores y comillas', () => {
 	const csv = aCSV([['a;b', 'con "comillas"', 'normal']]);
-	assert.equal(csv, '"a;b";"con ""comillas""";normal');
+	assert.equal(sinBom(csv), '"a;b";"con ""comillas""";normal');
+});
+
+test('CSV: sus bytes empiezan por BOM UTF-8 y conservan acentos para Excel', () => {
+	const texto = aCSV([['Descripción', 'Distribución', 'Protección', 'Número', 'Sección', 'Designación'],
+		['marrón', 'áéíóúñÑ', 'ASCII', '123', undefined, '']]);
+	const bytes = new TextEncoder().encode(texto);
+	assert.deepEqual([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf]);
+	assert.equal(new TextDecoder('utf-8').decode(bytes.slice(3)),
+		'Descripción;Distribución;Protección;Número;Sección;Designación\nmarrón;áéíóúñÑ;ASCII;123;;');
 });
 
 /*
@@ -44,7 +55,7 @@ test('CSV: una celda que empieza por = no se ejecuta al abrir la hoja', () => {
 		'-2+3+cmd|\' /c calc\'!A0',
 	];
 	for (const t of trampas) {
-		const celda = aCSV([[t]]).replace(/^"|"$/g, '');
+		const celda = sinBom(aCSV([[t]])).replace(/^"|"$/g, '');
 		assert.ok(celda.startsWith("'"), `«${t}» sigue arrancando fórmula: «${celda}»`);
 		// El apóstrofo no se ve en la hoja: el texto se sigue leyendo igual que se escribió.
 		assert.equal(celda.slice(1).replaceAll('""', '"'), t);
@@ -53,11 +64,11 @@ test('CSV: una celda que empieza por = no se ejecuta al abrir la hoja', () => {
 
 test('CSV: un número con signo sigue siendo un número, no texto', () => {
 	// Neutralizar de más rompería las columnas de cotas y longitudes, que salen negativas.
-	assert.equal(aCSV([[-5, 3.5, '-12', '+3,5', '-1.2e3']]), '-5;3.5;-12;+3,5;-1.2e3');
+	assert.equal(sinBom(aCSV([[-5, 3.5, '-12', '+3,5', '-1.2e3']])), '-5;3.5;-12;+3,5;-1.2e3');
 });
 
 test('CSV: el texto normal no se toca', () => {
-	assert.equal(aCSV([['UMA-3-343', 'Disyuntor 1P C10', 'iC60N', 10]]),
+	assert.equal(sinBom(aCSV([['UMA-3-343', 'Disyuntor 1P C10', 'iC60N', 10]])),
 		'UMA-3-343;Disyuntor 1P C10;iC60N;10');
 });
 

@@ -18,6 +18,9 @@ const ARRANQUE_DE_FORMULA = /^[=+\-@]/;
 /** Los separadores que algunas versiones de Excel tragan antes de mirar el primer carácter. */
 const ARRANQUE_INVISIBLE = /^[\t\r]/;
 
+/** Marca UTF-8 que Excel para Windows necesita al abrir un CSV directamente. */
+export const BOM_UTF8 = '\uFEFF';
+
 /**
  * Deja una celda como TEXTO, pase lo que pase.
  *
@@ -53,7 +56,7 @@ export function celdaSegura(valor: string | number | undefined): string {
  * Cada celda pasa antes por `celdaSegura`.
  */
 export function aCSV(filas: (string | number | undefined)[][]): string {
-	return filas
+	return BOM_UTF8 + filas
 		.map((fila) => fila
 			.map((celda) => {
 				const s = celdaSegura(celda);
