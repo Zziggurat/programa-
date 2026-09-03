@@ -61,6 +61,33 @@ async function esperarFisica(predicado, timeout = 15_000) {
 	}
 	throw new Error(`V6 no alcanzó el estado esperado: ${JSON.stringify(ultima)?.slice(0, 1800)}`);
 }
+async function estadoEnsayoMotor() {
+	return page.evaluate(() => {
+		const simulacion = window.qa.simulacion();
+		const estados = window.qa.estadoSim();
+		return {
+			energizado: simulacion.energizado,
+			tiempoSimulado: document.querySelector('#sim-transcurrido')?.textContent ?? '—',
+			falloMotor: estados.find((x) => x.id === 'm1'),
+			motor: simulacion.motores.find((x) => x.dispositivoId === 'm1'),
+			motorFisico: simulacion.fisica?.motores.find((x) => x.dispositivoId === 'm1'),
+			q1: estados.find((x) => x.id === 'q1'),
+			q1Fisica: simulacion.fisica?.protecciones.find((x) => x.dispositivoId === 'q1'),
+			termicaProteccion: document.querySelector('.fila-sim.proteccion[data-id="q1"]')?.textContent?.trim() ?? '—',
+			panelProteccion: document.querySelector('[data-mando="q1"]')?.parentElement?.textContent?.trim() ?? '—',
+		};
+	});
+}
+async function esperarEnsayoMotor(nombre, predicado, timeout) {
+	const limite = Date.now() + timeout; let ultimo;
+	while (Date.now() < limite) {
+		ultimo = await estadoEnsayoMotor();
+		if (predicado(ultimo)) return ultimo;
+		await page.waitForTimeout(80);
+	}
+	throw new Error(`${nombre}: estado motor/protección no alcanzado en ${timeout} ms: `
+		+ JSON.stringify(ultimo).slice(0, 3000));
+}
 async function accionar(selector) {
 	const problema = await page.evaluate((css) => {
 		const el = document.querySelector(css); if (!(el instanceof HTMLElement)) return `no existe ${css}`;
@@ -160,17 +187,40 @@ try {
 	 * para que el rotor bloqueado parta de una protección limpia, como dos ensayos separados. */
 	await abrirEjemplo('Fixture V6: motor desde placa y diagnóstico', 'Fixture V6 — motor desde placa y diagnóstico'); await energizar(true);
 	await clickId('btn-sim-reposo');
+	const inicioRotor = Date.now();
 	await accionar('#sim-mandos button[data-mando="s-run"]');
 	await esperarFisica((f) => f.motores.some((m) => m.dispositivoId === 'm1'
 		&& m.estado === 'marcha' && m.rpm > 1400), 20_000);
+	const marchaRotor = Date.now();
 	await seleccionar('[data-fallo="m1"]', 'motor-bloqueado');
-	await page.waitForFunction(() => window.qa.estadoSim().some((x) => x.id === 'q1' && x.disparado === true));
+	const falloRotor = await esperarEnsayoMotor('aplicación visible de rotor bloqueado',
+		(s) => s.falloMotor?.fallos?.includes('motor-bloqueado'), 5_000);
+	const falloAplicado = Date.now();
+	const sobreintensidad = await esperarEnsayoMotor('corriente de rotor bloqueado aguas arriba',
+		(s) => s.motorFisico?.diagnosticos?.some((d) => d.codigo === 'ROTOR_BLOQUEADO')
+			&& s.q1Fisica?.corrienteA > 50 && s.q1Fisica?.evaluacion?.region === 'TERMICA', 5_000);
+	const corrienteDetectada = Date.now();
+	/* Q1 es curva C de 10 A y el rotor bloqueado queda cerca de 6 In: su banda genérica es
+	 * 1..60 s y el integrador usa el punto medio (30,5 s). Esperar 30 s de pared era, por
+	 * construcción, más corto que el fenómeno que se quería observar. Se usa el acelerador público
+	 * del panel y un límite derivado del extremo superior de la curva, no una pausa arbitraria. */
+	const velocidadEnsayo = 20;
+	await seleccionar('#sim-velocidad', String(velocidadEnsayo));
+	const tMaxS = sobreintensidad.q1Fisica.evaluacion.tMaxS;
+	const timeoutDisparo = Math.max(5_000,
+		Math.ceil(((Number.isFinite(tMaxS) ? tMaxS : 60) / velocidadEnsayo) * 1000 + 5_000));
+	await esperarEnsayoMotor('disparo térmico de Q1', (s) => s.q1?.disparado === true, timeoutDisparo);
+	const disparoQ1 = Date.now();
 	fisica = await esperarFisica((f) => f.protecciones.some((q) => q.dispositivoId === 'q1' && q.corrienteA < 1e-9));
 	const estados = await page.evaluate(() => window.qa.estadoSim());
 	comprobar('rotor bloqueado se introduce por la UI y la protección abre el circuito', estados.some((x) => x.id === 'm1' && x.fallos?.includes('motor-bloqueado')));
 	comprobar('la actuación se propaga por Q1, no por una bandera visual del motor',
 		estados.some((x) => x.id === 'q1' && x.disparado === true)
 		&& (await page.locator('[data-mando="q1"]').locator('..').innerText()).includes('DISPARADO'));
+	console.log(`INFO  rotor V6: marcha=${marchaRotor - inicioRotor} ms · fallo UI=${falloAplicado - inicioRotor} ms`
+		+ ` · sobreintensidad=${corrienteDetectada - inicioRotor} ms · Q1=${disparoQ1 - inicioRotor} ms`
+		+ ` · I=${sobreintensidad.q1Fisica.corrienteA.toFixed(2)} A · banda=${sobreintensidad.q1Fisica.evaluacion.tMinS}`
+		+ `..${sobreintensidad.q1Fisica.evaluacion.tMaxS} s · sim=${falloRotor.tiempoSimulado}`);
 	await clickId('btn-sim-reposo'); await accionar('#sim-mandos button[data-mando="s-run"]');
 	await esperarFisica((f) => f.motores.some((m) => m.dispositivoId === 'm1'
 		&& m.estado === 'marcha' && m.rpm > 1400), 20_000);
@@ -182,6 +232,7 @@ try {
 		fisica.diagnosticoIndustrial.hallazgos.some((h) => h.codigo === 'CONDUCTOR_ABIERTO_PROBABLE'
 			&& h.evidencias.some((e) => e.codigo === 'RAMA_AUSENTE'))
 		&& !fisica.diagnosticoIndustrial.hallazgos.some((h) => h.codigo === 'ROTOR_BLOQUEADO' && h.estado === 'SOSTENIDA'));
+	console.log(`INFO  motor V6 final=${Date.now() - inicioRotor} ms desde el inicio del ensayo de rotor`);
 	}
 
 	if (alcance === 'accionamientos') {

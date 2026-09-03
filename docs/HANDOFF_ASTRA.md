@@ -112,6 +112,10 @@ rollback si falla la persistencia.
 
 - **Curva V5:** no extrapolar logarítmicamente más allá del último punto térmico antes del umbral
   instantáneo. Esa extrapolación generaba tiempos físicamente engañosos.
+- **QA térmico V6:** no esperar con un timeout de pared menor que la ventana que publica la curva.
+  El rotor bloqueado de Q1 (curva C, ≈6 In) usa 30,5 s simulados; la regresión debe confirmar
+  primero fallo, sobreintensidad y región térmica, y después usar el acelerador público del reloj
+  con un límite derivado de `tMaxS`. Un timeout ciego de 30 s fallaba de forma reproducible en CI.
 - **Serialización opcional:** no materializar `electrica: undefined`; cambia la forma persistida y
   rompe roundtrips/determinismo aunque el valor aparente ser equivalente.
 - **PDF offline:** al abrir el iframe/blob del dossier en Playwright no esperar una navegación que
