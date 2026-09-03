@@ -88,6 +88,17 @@ test('Gate H: HTML autocontenido escapa contenido y publica límites', () => {
 	assert.match(html, /<!doctype html>/i); assert.doesNotMatch(html, /<script>alert/);
 	assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/); assert.match(html, /BUILD-V7-FIJO/);
 	assert.match(html, /NO_MODELADO y NO_DISPONIBLE/); assert.doesNotMatch(html, /<script\b|https?:\/\//i);
+	assert.match(html, /<header class="cabecera">/); assert.match(html, /<section><h2>Resumen<\/h2>/);
+	assert.match(html, /@page\{size:A4/); assert.match(html, /@media print/);
+	assert.match(html, /break-inside:avoid-page/); assert.match(html, /tbody tr:nth-child\(even\)/);
+});
+
+test('Gate H: los tres CSV descargables declaran UTF-8 por bytes y conservan texto técnico', () => {
+	const p = fixtureDocumentacion(); const informe = crearInformeIngenieriaV7({ proyecto: p, analisis: analizar(p), trazabilidad });
+	const csvs = [bomIngenieriaACsv(informe.bom), conductoresIngenieriaACsv(informe.conductores), terminalesIngenieriaACsv(informe.terminales)];
+	for (const csv of csvs) assert.deepEqual([...new TextEncoder().encode(csv).slice(0, 3)], [0xef, 0xbb, 0xbf]);
+	assert.match(csvs[0]!, /Descripción/); assert.match(csvs[1]!, /Sección mm²/); assert.match(csvs[1]!, /marrón/);
+	assert.match(csvs[2]!, /Designación/);
 });
 
 test('Gate H: misma entrada produce JSON, HTML y CSV byte-idénticos y orden estable', () => {
