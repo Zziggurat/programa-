@@ -126,8 +126,9 @@ test('el parte en CSV lleva los datos del plano junto a lo anotado', () => {
 		tag: 'UMA-1', estado: 'problema', nota: 'falta el prensaestopas; ojo', fecha: '2026-08-01T10:00:00.000Z',
 	};
 	const texto = parteDeObraCSV(l, inf);
+	assert.deepEqual([...new TextEncoder().encode(texto).slice(0, 3)], [0xef, 0xbb, 0xbf]);
 	const filas = texto.split('\n');
-	assert.ok(filas[0].startsWith('Máquina;Tipo;Controlador'), filas[0]);
+	assert.ok(filas[0].startsWith('\uFEFFMáquina;Tipo;Controlador'), filas[0]);
 	assert.equal(filas.length, 2, 'solo se lista lo anotado, no las 129 máquinas');
 	assert.ok(filas[1].includes('UMA-1;UMA;XL50_CH8_17;1;Con problema'), filas[1]);
 	assert.ok(filas[1].includes('"falta el prensaestopas; ojo"'),
