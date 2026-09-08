@@ -70,6 +70,13 @@ const peticionesExternas = [];
 try {
 browser = await abrirNavegador(chromium);
 page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+// Diagnóstico optativo de máquinas lentas. Nunca acelera ni omite el recorrido del gate.
+if (process.env.QA_CPU_RATE) {
+    const rate = Number(process.env.QA_CPU_RATE);
+    if (!Number.isFinite(rate) || rate < 1 || rate > 8) throw new Error('QA_CPU_RATE debe estar entre 1 y 8');
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate });
+}
 page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
 page.on('console', (m) => {
 	if (m.type() !== 'error' || /favicon|404/i.test(m.text())) return;
@@ -158,10 +165,17 @@ console.log('\n--- 3. Se puede trabajar con él ---');
 await page.click('#btn-empezar-ejemplo'); await page.waitForTimeout(400);
 await page.locator('.tarjeta-ejemplo button').nth(2).click(); await page.waitForTimeout(1200);
 if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-await cerrar('btn-cerrar-explicacion'); await page.waitForTimeout(300);
+// La explicación se publica DESPUÉS de que mostrarEjemplo termine su transacción. El chip
+// puede aparecer durante el montaje: no basta ni el chip ni una pausa de 1200 ms.
+await page.locator('#modal-explicacion').waitFor({ state: 'visible', timeout: 60_000 });
+await page.locator('#btn-cerrar-explicacion').click();
 // Más abajo se añade un aparato del catálogo, y un ejemplo es de solo lectura: se trabaja sobre
 // una copia, igual que hace el usuario con «Hacer una copia para trabajar».
-await trabajarSobreCopia(page);
+// Medición CPU×4: cargar33,47s y copiar47,07s. El límite20s no cubría una operación
+// legítima en equipos lentos. Margen60s SOLO offline; no se amplía el gate completo.
+if (!await trabajarSobreCopia(page, { timeout: 60_000 })) throw new Error('El ejemplo esperado no estaba disponible para copiar');
+must('la copia tiene identidad visible propia antes de editar',
+    (await page.locator('#nombre-proyecto').inputValue()).startsWith('Copia de '));
 // La copia puede repintar la explicación del ejemplo en equipos lentos; se cierra después de que
 // la transición haya terminado, antes de usar la herramienta visible Añadir.
 await cerrar('btn-cerrar-explicacion');
@@ -183,7 +197,9 @@ await page.click('#hta-anadir'); await page.waitForTimeout(400);
 must('en modo Editor vuelve el catálogo', await page.isVisible('#catalogo'));
 // Añadir un aparato no navega. En Chromium/Windows el autocierre del panel puede dejar una
 // navegación espuria pendiente; esperar por ella agota 30 s aunque el clic ya se haya ejecutado.
-await page.locator('#catalogo .item-catalogo').first().click({ noWaitAfter: true }); await page.waitForTimeout(600);
+await page.locator('#catalogo .item-catalogo').first().click({ noWaitAfter: true });
+await page.waitForFunction(n => document.querySelectorAll('#lista-dispositivos li').length > n,
+    aparatos, { timeout: 30_000 });
 must('se puede añadir un aparato del catálogo',
 	(await page.evaluate(() => document.querySelectorAll('#lista-dispositivos li').length)) > aparatos);
 
@@ -400,6 +416,7 @@ await page.screenshot({ path: join(AQUI, '_salida', 'empaquetado.png') });
 } catch (error) {
 	fallos++;
 	console.error(`ERROR NO CONTROLADO: ${error?.stack ?? error}`);
+	console.error(`Errores JavaScript observados: ${JSON.stringify(errs)}`);
 } finally {
 	try { await page?.close(); } catch (error) { fallos++; console.error(`No se pudo cerrar la página: ${error.message}`); }
 	try { await browser?.close(); } catch (error) { fallos++; console.error(`No se pudo cerrar Chromium: ${error.message}`); }

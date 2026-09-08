@@ -101,7 +101,8 @@ export async function trabajarSobreCopia(page, { timeout = 20_000 } = {}) {
 	try {
 	await page.evaluate(() => document.getElementById('btn-copiar-ejemplo')?.click());
 	if (!(await esperar(() => document.getElementById('chip-ejemplo')?.hidden !== false))) {
-		throw new Error('se pulsó «Hacer una copia para trabajar» y el tablero siguió siendo un ejemplo');
+		throw new Error('se pulsó «Hacer una copia para trabajar» y el tablero siguió siendo un ejemplo. '
+			+ JSON.stringify(await confirmacion.estado()));
 	}
 	await confirmacion.esperar();
 	return true;

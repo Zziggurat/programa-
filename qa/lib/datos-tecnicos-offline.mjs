@@ -13,7 +13,7 @@ export async function comprobarDatosTecnicosOffline(page, must, buildId) {
     await copiarEjemploConfirmado(page, async () => {
         await page.locator('#btn-copiar-ejemplo').click();
         await page.locator('#chip-ejemplo').waitFor({ state: 'hidden' });
-    });
+    }, 60_000); // Misma frontera documental offline medida en empaquetado.mjs.
     await page.locator('#btn-datos-tecnicos').click(); await b('instalacion').click();
     await m.locator('[data-dt-input="conductor"]').selectOption('w-fase-carga');
     const amp = JSON.parse(await m.locator('.dt-cuerpo > pre').innerText());

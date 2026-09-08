@@ -48,7 +48,7 @@ test('QA conserva una nueva confirmación aunque el toast expire y no acepta la 
     let emitir!: () => void, desconectado = 0;
     Object.defineProperty(globalThis, 'document', { configurable: true, value: { getElementById: () => toast } });
     Object.defineProperty(globalThis, 'MutationObserver', { configurable: true, value: class {
-        constructor(cb: () => void) { emitir = cb; } observe() {} disconnect() { desconectado++; }
+        constructor(cb: (registros: unknown[]) => void) { emitir = () => cb([]); } observe() {} disconnect() { desconectado++; }
     } });
     const o = observarNuevoMensaje({ texto: 'confirmado', timeout: 1000 });
     try {

@@ -105,3 +105,11 @@ recarga el navegador y comprueba el estado restaurado. Las comparaciones visuale
 `_perf-formularios-v8.mjs` es diagnóstico manual fuera del gate: mide clics HTML a distintos
 tamaños de ventana sobre el mismo laboratorio. No demuestra por sí solo una regresión funcional;
 sirve para explicar el coste de rasterizado de Chromium/SwiftShader en las suites de formularios.
+
+`QA_CPU_RATE=4 node qa/empaquetado.mjs` ejecuta el mismo recorrido offline con CPU
+ralentizada mediante CDP (diagnóstico optativo, factor1–8). No omite aserciones, no cambia
+el resultado de salida y no reemplaza el gate normal sin throttling. Sirve para reproducir
+carreras de preparación/carga; no constituye una certificación de rendimiento mínimo.
+`_perf-copia-offline.mjs` aísla carga/copia de ese HTML, usa el mismo DOM público y mide
+su duración con CPU ralentizada. Su margen diagnóstico de120s no modifica los límites
+del gate ni acredita el resto del recorrido offline; cierra Chromium al terminar.
