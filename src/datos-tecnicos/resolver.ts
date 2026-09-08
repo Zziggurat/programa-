@@ -30,6 +30,7 @@ export function familiaDispositivo(d: Dispositivo): FamiliaTecnica | undefined {
 	return undefined;
 }
 const NO_RUNTIME = new Set<CampoTecnico>(['bobina.corrienteLlamadaA', 'bobina.tensionRangoV', 'plc.corrienteLlamadaMaxA', 'plc.tipoCarga']);
+const CONTRATO_ANALOGICO = new Set<CampoTecnico>(['analogica.modo', 'analogica.unidad', 'analogica.rango']);
 /** Lista de rutas derivada únicamente del registro cerrado; el usuario no controla rutas JS. */
 function rutaFisica(campo: CampoTecnico): string[] | undefined {
 	const [grupo, nombre] = campo.split('.');
@@ -85,6 +86,16 @@ function aplicarDato(entidad: Dispositivo | Conductor, campo: CampoTecnico, cana
 	if (!('bornes' in entidad)) return;
 	const p = entidad.comportamiento ?? structuredClone(resolverComportamiento(entidad));
 	if (!p) return;
+	// Rango/unidad/modo son obligatorios en el contrato de un canal, no propiedades físicas
+	// opcionales. Borrar solo rango dejaba un perfil inválido que lanzaba durante la siguiente
+	// resolución. La proyección retira únicamente la función analógica que ya no puede ejecutar;
+	// el diseño original, los bornes y los demás canales/funciones permanecen intactos.
+	if (valor === undefined && CONTRATO_ANALOGICO.has(campo)) {
+		if (p.clase === 'sensor') delete p.transmisor;
+		if (p.clase === 'controlador') p.entradasAnalogicas = p.entradasAnalogicas?.filter(ai => ai.borne !== canal);
+		entidad.comportamiento = p;
+		return;
+	}
 	const nombre = campo.split('.')[1];
 	if (campo.startsWith('bobina.') && p.clase === 'contactos-electromagneticos') escribirRuta(p, ['bobina', 'electrica', nombre], valor);
 	if (campo.startsWith('plc.') && p.clase === 'controlador') { const s = p.salidasDigitales.find(x => x.borne === canal); if (s) escribirRuta(s, ['electrica', nombre], valor); }
@@ -202,12 +213,28 @@ export function resolverProyectoTecnico(original: Proyecto): ResultadoProyectoTe
 					}
 				}
 				delete entidad.fisica;
+				if (entidad.comportamiento?.clase === 'controlador') {
+					// Sin la revisión completa no se puede saber qué AI era aplicable. No se
+					// conservan canales analógicos legacy como si la ficha estuviera resuelta.
+					for (const ai of entidad.comportamiento.entradasAnalogicas ?? []) resoluciones.push({
+						entidad: 'DEVICE', entidadId: entidad.id, clave: `analogica.rango@${ai.borne}`, campo: 'analogica.rango', canal: ai.borne,
+						estado: errores.has(k) ? 'CONFLICT' : 'MISSING', origen: 'AUSENTE', referencia: v.producto,
+						pasos: ['NO_MODELADO: AI retirada de la proyección por vínculo no resoluble; no usar lectura legacy.'],
+						motivos: [motivo], advertencias: [], modelado: false,
+					});
+					entidad.comportamiento.entradasAnalogicas = [];
+				}
 				if (familia && ['MOTOR', 'VFD', 'FUENTE', 'TRANSFORMADOR'].includes(familia)) entidad.comportamiento = { version: 1, clase: 'sin-comportamiento', motivo: `NO_MODELADO: ${motivo}` };
 			} else if (entidad) { delete entidad.fisica; }
 			continue;
 		}
 		const datos = resolverVinculo(v, r as RevisionProductoTecnico, entidad!); resoluciones.push(...datos);
-		for (const d of datos) if (!(d.estado === 'CONFLICT' && !d.modelado)) aplicarDato(entidad!, d.campo, d.canal, d.estado === 'RESOLVED' ? d.dato?.valor : undefined);
+		for (const d of datos) if (!(d.estado === 'CONFLICT' && !d.modelado)) {
+			aplicarDato(entidad!, d.campo, d.canal, d.estado === 'RESOLVED' ? d.dato?.valor : undefined);
+			if (d.estado !== 'RESOLVED' && CONTRATO_ANALOGICO.has(d.campo)) d.pasos.push(
+				`NO_MODELADO: ${d.canal ? `entrada analógica ${d.canal}` : 'transmisor analógico'} retirado solo de la proyección efectiva; contrato requerido ausente.`,
+			);
+		}
 		if ('bornes' in entidad!) {
 			const aparato = entidad as Dispositivo;
 			const vitales: Record<string, string[]> = {

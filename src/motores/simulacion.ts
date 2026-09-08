@@ -1758,6 +1758,12 @@ function leerControlador(
 		...perfil.salidasAnalogicas.flatMap((s) => [s.borne, s.referencia]),
 		...(perfil.entradasAnalogicas ?? []).flatMap((s) => [s.borne, s.comun]),
 	]) : new Set<string>();
+	// Una AI retirada del snapshot por datos técnicos ausentes no se transforma en entrada
+	// legacy. En particular, estado[sonda].valor no demuestra rango, unidad ni modo eléctricos.
+	if (proyecto.datosTecnicos) for (const dato of resolverProyectoTecnico(proyecto).resoluciones) {
+		if (dato.entidad === 'DEVICE' && dato.entidadId === d.id && dato.canal
+			&& dato.campo.startsWith('analogica.') && dato.estado !== 'RESOLVED') reservados.add(dato.canal);
+	}
 	for (const b of d.bornes) {
 		const v3 = entradasAnalogicas.find((entrada) => entrada.borne === b.id);
 		if (v3) {
