@@ -209,7 +209,9 @@ console.log('\n--- 4. Los entregables salen del archivo entregado ---');
 const bajar = async (selector, patron, abridor) => {
 	if (abridor) { await page.click(abridor); await page.waitForTimeout(250); }
 	const esperado = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
-	await page.click(selector);
+	// El resultado de esta acción es download, no una navegación. Chromium/Windows puede
+	// dejar una navegación programada pendiente aunque el clic ya haya terminado.
+	await page.locator(selector).click({ noWaitAfter: true });
 	const d = await esperado;
 	if (!d) return { ok: false, nombre: '(no descargó)' };
 	const destino = join(AQUI, '_salida', d.suggestedFilename());

@@ -11,7 +11,8 @@ descargado y comparado byte a byte con Git y ambas copias locales.
 
 La publicación final se verifica por `tablerostudio-v8^{}` y la anotación de ese tag:
 incluye el CI del main integrado y evidencia Pages/artifact. **Sin tag no dar por
-terminado ese paso.** Solo documentación cambia después del candidato; no se ocultan
+terminado ese paso.** Después del candidato cambian solo documentación y sincronización
+QA de descargas, no producto; no se ocultan
 los cuatro runs previos rechazados ni el diagnóstico adicional CPU×4 rojo descritos abajo.
 
 ## Resumen local definitivo
@@ -31,7 +32,7 @@ los cuatro runs previos rechazados ni el diagnóstico adicional CPU×4 rojo desc
 | Histórico | 13 fronteras verdes por agregado + focal, no 13/13 del primer intento | 12:42 agregado; focales 0:47 y 2:12 |
 | Stress dirigido | 3 tamaños; 0 fallos | 10,78 s |
 | entrega:check | bytes actuales; LF/CRLF idénticos | 22,24 s compilación |
-| file:// V2–V8 | 67 comprobaciones; copia propia exigida; 0JS/HTTP externo | 4:51 |
+| file:// V2–V8 | 67 comprobaciones; copia propia y descargas exigidas; 0JS/HTTP externo | 4:35 |
 
 La campaña renovada de 9 suites terminó 9/9,345 comprobaciones,25:07. No sumar sus
 comprobaciones a las filas anteriores: son evidencia solapada. Se cubrieron 30 suites
@@ -333,3 +334,29 @@ dc5edff descargado en `%TEMP%/tablerostudio-v8-html-candidato-936706ad00164495a9
 3308535bytes, SHA-256 `4b091b41761ab32e6758cf66342a74597e05f929cc8dbcd2e110cbe0d4f7822c`,
 idéntico al manifiesto/blobsGit/ambas copias locales. No se aumentó el límite30min
 del job. V6verde16:19 (32checks); V7verde13:32 (44checks). Histórico aún pendiente.
+
+## Verificación del main integrado: navegación espuria tras descarga
+
+Mainb6867cc,run34195775596: Pages34195773796 verde para el mismoSHA, HTTP200 y
+descarga pública HTML con hash correcto. Unit1382/1382,0fallos/cancelados/skipped,
+74,039sNode; buildQA5,26s. **Offline rojo9:11job**: Guardar ejecutó el clic, pero
+Playwright esperó una navegación programada hasta agotar30s. Log ci-offline-main-rojo:
+`click action done → waiting for scheduled navigations to finish`,0erroresJS.
+No falló el nuevo contrato de copia ni la adición de aparato; ambos pasaron.
+
+Se corrige exclusivamente QA: clics que producen archivos usan noWaitAfter, y la
+espera obligatoria sigue siendo el evento download, saveAs/lectura y validación del
+contenido/nombre. Se aplica al helper de descargas y las dos exportaciones V8 del
+smoke offline. Sin omitir descargas ni aumentar plazos. No cambia producto/HTML.
+El cierre público/tag sigue pendiente de la regresión renovada y CI del nuevoSHA.
+
+Primer focal de Guardar:67/67,4:34,exit0. Se repite tras alinear también las dos
+exportaciones V8 (portable e informe), pues ese cambio posterior afecta la evidencia
+de ese helper. No repetir las suites de producto no afectadas por estos clics QA.
+
+Focal definitivo con las tres acciones de descarga: **67/67,4:35,exit0**,
+0fallos/timeouts/skips/JS/HTTP externo; log offline-descargas-unificadas.
+No cambios de producto, assets ni HTML; el SHA del manifiesto se conserva.
+Publicar el correctivo vuelve obsoleto el run34195775596: la concurrencia del workflow
+puede cancelar sus jobs aún activos. Esa cancelación esperada no acredita esas suites;
+la aprobación final requiere los seis jobs del nuevoSHA. El error original9:11 queda registrado.

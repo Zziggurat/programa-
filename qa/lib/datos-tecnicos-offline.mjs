@@ -27,7 +27,7 @@ export async function comprobarDatosTecnicosOffline(page, must, buildId) {
     await b('preview-vinculo').click(); await b('aplicar-preview').waitFor();
     must('V8 offline revisión r2 se compara sin aplicar', /BASE todavía intacta/.test(await m.innerText()) && /0[,.]1 kA/.test(await m.innerText()));
     await b('cancelar-preview').click(); await b('biblioteca').click();
-    const portableEvent = page.waitForEvent('download'); await b('exportar-proyecto').click();
+    const portableEvent = page.waitForEvent('download'); await b('exportar-proyecto').click({ noWaitAfter: true });
     const portable = await portableEvent;
     const paquete = JSON.parse(readFileSync(await portable.path(), 'utf8'));
     const proyecto = paquete.formato === 'tablero-studio-paquete' ? paquete.proyecto : paquete;
@@ -38,7 +38,7 @@ export async function comprobarDatosTecnicosOffline(page, must, buildId) {
     must('V8 offline validación expone coordinación fallida del laboratorio', /FAIL/.test(await page.locator('[data-ing-issue-card]').filter({ hasText: 'TS-CABLE-IB-IN-IZ' }).first().innerText()));
     await page.locator('[data-ing-view="documentacion"]').click(); await page.locator('[data-ing-doc="prepare"]').click();
     await page.locator('[data-ing-doc="html"]:not([disabled])').waitFor();
-    const informeEvent = page.waitForEvent('download'); await page.locator('[data-ing-doc="html"]').click();
+    const informeEvent = page.waitForEvent('download'); await page.locator('[data-ing-doc="html"]').click({ noWaitAfter: true });
     const informe = await informeEvent, html = readFileSync(await informe.path(), 'utf8');
     must('V8 offline documento contiene Build, hash, fuente y ampacidad', html.includes(buildId)
         && html.includes('SINTETICO') && html.includes('22.56') && html.includes('sha256:') && html.includes('proteccion.Icu@'));

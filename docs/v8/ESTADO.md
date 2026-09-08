@@ -2,14 +2,28 @@
 
 ## Estado vigente (prevalece sobre todo el registro histórico inferior)
 
+- **Correctivo de cierre04:03 — tag todavía pendiente.** Main b6867cc fue integrado.
+  Run34195775596: offline rojo9:11 por `btn-guardar`:
+  clic terminado, espera de navegación espuria30s;0JS. Pages34195773796 verde/HTTP200,
+  descarga públicahashcorrecto. Unit1382/build,V6/V7verdes; jobsrestantes delrunanterior
+  pueden ser cancelados por concurrencia al publicar este correctivo, no acreditarlos.
+  Correctivo SOLO QA: noWaitAfter en descargas offline, conservando download/contenido.
+  Focal primero67/67verde4:34; focal definitivo26738 **67/67verde4:35**,0fallos/JS,
+  log offline-descargas-unificadas. Ningún QA local activo. No producto/HTML cambiado.
+  Este correctivo se publica normal en main (V8ya integrada) y exige CI final del
+  nuevoSHA,artifact yPages antes deltag. Consultar HEAD y `gh run list --branch main`.
+  Log del CI
+  correctivo se llamará `%TEMP%/tablerostudio-v8-ci-main-final.log`.
+
 - Gates A–J implementados, integrados, revisados y probados. No recrear V8 ni repetir A0.
 - Candidato de producto/QA **dc5edff269a6b70a57fe57b2b2b72191ba251864** en la rama
   `v8/astra-datos-tecnicos`: CI **34193274343**,attempt1, **6/6jobsverdes terminales**.
   Histórico13/13,263checks; V8 3/3,117checks; unit1382/1382; V6/V7/offline verdes.
 - HTML web/desktop/blobGit/artifact descargado idénticos: Build **C72A570F34**,
   3308535bytes; SHA-256 completo en ENTREGA.md. Capturas locales/remotas y A4 inspeccionados.
-- Baseline main/V7 **a65cc0cbb304cb153d5aaa030a39ad7400438a03** preservado. El único
-  incremento posterior al candidato es documentación de cierre, no producto ni QA.
+- Baseline main/V7 **a65cc0cbb304cb153d5aaa030a39ad7400438a03** preservado. El producto
+  permanece idéntico al candidato: después solo cambian documentación de cierre y el
+  correctivo de sincronización QA de descargas documentado arriba.
 - La publicación final se identifica por **tablerostudio-v8 anotado**. Crear solo tras
   preflight sin avance remoto inesperado → FFmain/push normal → CI del SHA integrado
   seis jobs verdes → Pages200 y descarga/artifact con hash correcto. Nunca force ni mover V7.
