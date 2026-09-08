@@ -110,5 +110,7 @@ export function evaluarCoordinacionIbInIz(entrada: { criterio: CriterioTecnicoRe
 	if (r.faltantes.length) return { ...r, motivos: ['Faltan corrientes válidas para evaluar Ib ≤ In ≤ Iz.'] };
 	const excede = (a: number, b: number) => a - b > 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
 	const falla = excede(ibA!, inA!) || excede(inA!, izA!);
-	return { ...r, estado: falla ? 'FAIL' : 'PASS', motivos: [`${ibA} A ≤ ${inA} A ≤ ${izA} A: ${falla ? 'no cumple' : 'cumple'} el criterio configurado; no es un dimensionamiento completo.`] };
+	// Formato del mensaje, nunca de la comparación ni de las magnitudes almacenadas.
+	const mostrar = (v: number | undefined) => v === undefined ? '—' : String(Number(v.toPrecision(10)));
+	return { ...r, estado: falla ? 'FAIL' : 'PASS', motivos: [`${mostrar(ibA)} A ≤ ${mostrar(inA)} A ≤ ${mostrar(izA)} A: ${falla ? 'no cumple' : 'cumple'} el criterio configurado; no es un dimensionamiento completo.`] };
 }

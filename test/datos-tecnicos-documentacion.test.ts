@@ -20,6 +20,11 @@ test('V8 informe usa datos efectivos, manifest, factores y criterios sin mutar n
 	assert.equal(i.datosTecnicos!.resoluciones.find(d=>d.campo==='proteccion.Icu')?.dato?.procedencia.origen,'SINTETICO');
 	assert.ok(i.datosTecnicos!.criterios.some(c=>c.parametros.capacidadCorte.decision?.modo==='VALOR'));
 	assert.equal(JSON.stringify(p),antes); assert.equal(Object.hasOwn(p.datosTecnicos!,'resoluciones'),false);
+	const html=informeIngenieriaV7AHtml(i);
+	assert.ok(html.includes('>22.56<')); assert.ok(!html.includes('22.560000000000002'));
+	assert.match(html,/Condiciones de instalación completas/); assert.match(html,/<colgroup>/);
+	i.datosTecnicos!.resoluciones[0].dato!.valor=0.000000123456;
+	assert.ok(informeIngenieriaV7AHtml(i).includes('1.23456e-7'), 'formato no convierte una magnitud pequeña en cero');
 });
 
 test('V8 informe reproducible con fecha explícita, metadata y orden de catálogo independiente',()=>{

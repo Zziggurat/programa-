@@ -229,14 +229,21 @@ const tabla = (h: string[], filas: unknown[][]) => `<table><thead><tr>${h.map((x
 const seccion = (titulo: string, contenido: string) => `<section><h2>${esc(titulo)}</h2>${contenido}</section>`;
 
 function informeDatosTecnicosHtml(d: NonNullable<InformeIngenieriaV7['datosTecnicos']>): string {
-	const dato = (v: unknown): string => typeof v === 'object' ? JSON.stringify(v) : String(v ?? '—');
+	// Solo formato de presentación; JSON/CSV conservan las magnitudes completas.
+	const dato = (v: unknown): string => typeof v === 'number' ? String(Number(v.toPrecision(10)))
+		: Array.isArray(v) ? v.map(dato).join(' … ')
+		: v && typeof v === 'object' ? Object.entries(v).map(([k, x]) => `${k}=${dato(x)}`).join('; ')
+		: String(v ?? '—');
+	const tecnica = (h: string[], filas: unknown[][], anchos: number[]) => tabla(h, filas)
+		.replace('<table>', `<table style="table-layout:fixed"><colgroup>${anchos.map(a => `<col style="width:${a}%">`).join('')}</colgroup>`);
 	return seccion('Datos técnicos V8 — revisiones y procedencia', `<p>Manifest ${esc(d.manifestHash)}. Integridad local, no autenticación ni certificación. Datos SINTÉTICOS permanecen sintéticos; fuentes documentales son declaradas salvo evidencia humana independiente.</p>`
-		+ tabla(['Catálogo','Producto / tabla / perfil','Revisión','Hash'],d.revisiones.map(r=>[r.catalogoId,r.id,r.revision,r.hash]))
-		+ tabla(['Entidad / campo','Valor resuelto','Estado','Decisión / fuente','Condiciones','Transformación / motivo'],d.resoluciones.map(r=>[`${r.entidadId} / ${r.clave}`,r.dato?`${dato(r.dato.valor)} ${r.dato.unidad}`:'—',r.estado,`${r.origen} / ${r.dato?.procedencia.origen??'—'}: ${r.dato?.procedencia.referencia??''}`,dato(r.dato?.condiciones??{}),[...r.pasos,...r.motivos,...r.advertencias].join('; ')])))
-		+ seccion('Ampacidad e instalación V8', tabla(['Conductor','Estado','Iz base A','Factores','Iz A','Condiciones','Procedencia / revisión'],d.ampacidad.map(a=>[a.conductorId,a.estado,a.izBaseA,a.factoresAplicados.map(f=>`${f.id}=${f.factor}`).join(' × '),a.izA,dato(a.condiciones),`${a.procedencia?.origen??'—'} · ${a.procedencia?.referencia??''} · r${a.referencia?.revision??'—'} ${a.referencia?.hash??''}`]))
-			+ `<ul>${d.ampacidad.flatMap(a=>[...a.transformaciones,...a.motivos,...a.faltantes]).map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`)
-		+ seccion('Criterios versionados y cobertura V8', tabla(['Circuito','Parámetro','Estado','Decisión','Procedencia / herencia'],d.criterios.flatMap(c=>Object.entries(c.parametros).map(([k,p])=>[c.circuitoId,k,p.estado,dato(p.decision),p.ruta.map(x=>`${x.origen} r${x.referencia?.revision??'—'}`).join(' → ')]))))
-		+ seccion('Ensayos prospectivos aislados', tabla(['Protección','Estado','Icc A','Origen','Motivo / límites'],d.prospectiva.map(p=>[p.proteccionId,p.estado,p.iccA,p.origen,[...p.motivos,...p.limitaciones].join('; ')])));
+		+ tecnica(['Catálogo','Producto / tabla / perfil','Revisión','Hash'],d.revisiones.map(r=>[r.catalogoId,r.id,r.revision,r.hash]),[17,23,8,52])
+		+ tecnica(['Entidad / campo','Valor resuelto','Estado','Decisión / fuente','Condiciones','Transformación / motivo'],d.resoluciones.map(r=>[`${r.entidadId} / ${r.clave}`,r.dato?`${dato(r.dato.valor)} ${r.dato.unidad}`:'—',r.estado,`${r.origen} / ${r.dato?.procedencia.origen??'—'}: ${r.dato?.procedencia.referencia??''}`,dato(r.dato?.condiciones??{}),[...r.pasos,...r.motivos,...r.advertencias].join('; ')]),[15,10,12,21,16,26]))
+		+ seccion('Ampacidad e instalación V8', tecnica(['Conductor','Estado','Iz base A','Factores','Iz A','Procedencia / revisión'],d.ampacidad.map(a=>[a.conductorId,a.estado,dato(a.izBaseA),a.factoresAplicados.map(f=>`${f.id}=${dato(f.factor)}`).join(' × '),dato(a.izA),`${a.procedencia?.origen??'—'} · ${a.procedencia?.referencia??''} · r${a.referencia?.revision??'—'} ${a.referencia?.hash??''}`]),[14,14,10,20,10,32])
+			+ tecnica(['Conductor','Condiciones de instalación completas'],d.ampacidad.map(a=>[a.conductorId,dato(a.condiciones)]),[18,82])
+			+ `<ul>${d.ampacidad.flatMap(a=>[...a.transformaciones.map(x=>x.startsWith('Iz = ') ? `Iz = ${dato(a.izBaseA)}${a.factoresAplicados.map(f=>` × ${dato(f.factor)}`).join('')} = ${dato(a.izA)} A.` : x),...a.motivos,...a.faltantes]).map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`)
+		+ seccion('Criterios versionados y cobertura V8', tecnica(['Circuito','Parámetro','Estado','Decisión','Procedencia / herencia'],d.criterios.flatMap(c=>Object.entries(c.parametros).map(([k,p])=>[c.circuitoId,k,p.estado,dato(p.decision),p.ruta.map(x=>`${x.origen} r${x.referencia?.revision??'—'}`).join(' → ')])),[16,24,16,24,20]))
+		+ seccion('Ensayos prospectivos aislados', tecnica(['Protección','Estado','Icc A','Origen','Motivo / límites'],d.prospectiva.map(p=>[p.proteccionId,p.estado,dato(p.iccA),p.origen,[...p.motivos,...p.limitaciones].join('; ')]),[14,18,14,14,40]));
 }
 
 export const datosTecnicosIngenieriaACsv = (i: InformeIngenieriaV7) => aCSV([
