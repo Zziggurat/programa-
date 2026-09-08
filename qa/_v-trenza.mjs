@@ -27,6 +27,7 @@ p.on('pageerror', (e) => errores.push(e.message));
 const fallos = [];
 const ok = (bien, t) => { console.log(`${bien ? 'OK ' : 'MAL'} ${t}`); if (!bien) fallos.push(t); };
 
+try {
 console.log(await abrirEjemplo(p, sv.address().port, 2));
 
 /** Abre el cajón de montaje, donde viven los campos de la puerta y del mazo. */
@@ -153,4 +154,11 @@ await abrirMontaje();
 console.log(errores.length ? `ERRORES JS: ${errores.join(' | ')}` : 'sin errores de JavaScript');
 if (errores.length) fallos.push('errores de JavaScript');
 console.log(fallos.length ? `\n${fallos.length} FALLOS` : '\nTODO PASA');
-await b.close(); sv.close(); process.exit(fallos.length ? 1 : 0);
+} catch (error) {
+	fallos.push(String(error)); console.error('ERROR mazo/trenza:', error);
+} finally {
+	try { await b.close(); } catch (error) { fallos.push(String(error)); console.error('Cierre Chromium:', error); }
+	sv.closeAllConnections?.();
+	await new Promise((resolve, reject) => sv.close(error => error ? reject(error) : resolve()));
+}
+process.exitCode = fallos.length ? 1 : 0;

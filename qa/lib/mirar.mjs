@@ -81,7 +81,10 @@ export async function abrirEjemplo(p, puerto, n) {
 		await p.evaluate(() => document.getElementById('btn-copiar-ejemplo')?.click());
 		await p.waitForFunction(() => document.getElementById('chip-ejemplo')?.hidden !== false,
 			null, { timeout: 30_000 });
-		await p.waitForTimeout(600);
+		// El montaje oculta el chip antes de confirmar el marcador activo en IndexedDB.
+		// Esperar la confirmación pública, no editar durante el bloqueo transaccional.
+		await p.getByText('La copia es un tablero nuevo, independiente y guardado localmente.', { exact: true })
+			.waitFor({ state: 'visible', timeout: 30_000 });
 	}
 	await p.evaluate(() => document.getElementById('modo-trabajo')?.click());
 	await p.waitForTimeout(700);

@@ -85,7 +85,8 @@ export async function esperarEditorListo(page, { timeout = 60_000 } = {}) {
  * nada. Hora y media de batería para descubrir que la prueba iba tarde.
  *
  * El chip «📚 Ejemplo — solo lectura» aparece justo cuando el ejemplo termina de cargar y
- * desaparece justo cuando la copia está hecha, así que sirve de bandera por los dos lados.
+ * desaparece al montar la copia. V8 confirma después el documento/activo en IndexedDB:
+ * para editar se espera también su confirmación pública, no solo el montaje.
  *
  * Devuelve `false` si no había ningún ejemplo que copiar, para que valga igual en las suites que
  * unas veces abren un ejemplo y otras no.
@@ -98,6 +99,8 @@ export async function trabajarSobreCopia(page, { timeout = 20_000 } = {}) {
 	if (!(await esperar(() => document.getElementById('chip-ejemplo')?.hidden !== false))) {
 		throw new Error('se pulsó «Hacer una copia para trabajar» y el tablero siguió siendo un ejemplo');
 	}
+	await page.getByText('La copia es un tablero nuevo, independiente y guardado localmente.', { exact: true })
+		.waitFor({ state: 'visible', timeout });
 	return true;
 }
 
