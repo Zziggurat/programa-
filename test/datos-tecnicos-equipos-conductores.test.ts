@@ -249,3 +249,18 @@ test('V8 analógica: dos fuentes nunca producen verde por elegir array[0]', () =
 	assert.ok(!io(p).some(r => r.code === 'TS-ANALOG-COMPATIBILITY'));
 	p.dispositivos.reverse(); p.conductores.reverse(); assert.deepEqual(regla(p, 'TS-ANALOG-SOURCES-AMBIGUOUS'), r);
 });
+
+test('V8 AI multicanal: un burden por canal no sobrescribe la impedancia común del modelo', () => {
+	const p = analogico(), plc = p.dispositivos.find(d => d.id === 'plc')!;
+	if (plc.comportamiento?.clase !== 'controlador') throw new Error('Fixture PLC inválido');
+	plc.bornes.push({ id: 'AI2', tipo: 'control' });
+	plc.comportamiento.entradasAnalogicas!.push({ ...structuredClone(plc.comportamiento.entradasAnalogicas![0]), borne: 'AI2' });
+	const r = producto('plc-burden', 'PLC', [d('analogica.burdenOhm', 250, 'ohm', 'AI')]);
+	p.datosTecnicos = { version: 1, revisiones: [r], instalaciones: [], vinculos: [{ entidad: 'DEVICE', entidadId: 'plc', producto: referenciaTecnica(r), condiciones: {}, decisiones: { 'analogica.burdenOhm@AI': { modo: 'CATALOGO' } } }] };
+	const a = resolverProyectoTecnico(p);
+	assert.equal(a.resoluciones[0].estado, 'CONFLICT');
+	assert.match(a.resoluciones[0].motivos.join(' '), /multicanal/);
+	assert.equal(a.proyecto.dispositivos.find(d => d.id === 'plc')!.fisica!.analogica!.burdenOhm, 100000);
+	plc.comportamiento.entradasAnalogicas!.reverse();
+	assert.deepEqual(resolverProyectoTecnico(p).resoluciones, a.resoluciones);
+});

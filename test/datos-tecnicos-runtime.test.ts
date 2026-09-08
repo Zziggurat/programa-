@@ -32,6 +32,18 @@ function todasFinitas(valor: unknown, camino = 'resultado'): void {
 	else if (valor && typeof valor === 'object') for (const [k, v] of Object.entries(valor)) todasFinitas(v, `${camino}.${k}`);
 }
 
+test('V8 fuente con salidas heterogéneas no iguala tensiones por orden de array', () => {
+	const p = fixtureMotorPlacaV6(); const red = p.dispositivos.find(d => d.id === 'red')!;
+	const perfil = structuredClone(resolverComportamiento(red)); assert.equal(perfil?.clase, 'fuente');
+	if (perfil?.clase !== 'fuente') throw new Error('Fixture sin fuente');
+	perfil.salidas.find(s => s.papel === 'fase')!.tensionV = 120; red.comportamiento = perfil;
+	vincular(p, 'red', 'FUENTE', [datoTecnico('fuente.tensionNominalV', 24, 'V')]);
+	const a = resolverProyectoTecnico(p);
+	assert.equal(a.resoluciones[0].estado, 'CONFLICT');
+	assert.deepEqual(a.proyecto.dispositivos.find(d => d.id === 'red')!.comportamiento, perfil);
+	perfil.salidas.reverse(); assert.equal(resolverProyectoTecnico(p).resoluciones[0].estado, 'CONFLICT');
+});
+
 test('V8 runtime: proyección común no muta diseño, no cachea el original mutable y reconoce su snapshot efectivo', () => {
 	const p = fixtureMotorPlacaV6();
 	vincular(p, 'm1', 'MOTOR', [datoTecnico('motor.corrienteNominalA', 7, 'A')]);

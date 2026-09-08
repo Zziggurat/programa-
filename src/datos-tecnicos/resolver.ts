@@ -127,7 +127,16 @@ export function resolverVinculo(v: VinculoTecnico, r: RevisionProductoTecnico, e
 			if (!canal || !entidad.bornes.some(b => b.id === canal) || !canales.some(c => c.borne === canal)) {
 				return { ...base, estado: 'CONFLICT', modelado: false, motivos: ['Canal inexistente o incompatible en los terminales y perfil persistentes.'] };
 			}
+			if (campo.startsWith('analogica.') && rutaFisica(campo) && canales.length > 1) {
+				return { ...base, estado: 'CONFLICT', modelado: false, motivos: ['El modelo físico tiene una impedancia analógica común: no admite asignarla a una AI particular de un equipo multicanal. No se sobrescriben los demás canales.'] };
+			}
 		} else if (canal) return { ...base, estado: 'CONFLICT', modelado: false, motivos: ['Este campo no declara un contrato por canal.'] };
+		if ('bornes' in entidad && (campo === 'fuente.tensionNominalV' || campo === 'transformador.secundarioV')) {
+			const perfil = resolverComportamiento(entidad);
+			if (perfil?.clase === 'fuente' && new Set(perfil.salidas.filter(s => s.papel === 'fase').map(s => s.tensionV)).size > 1) {
+				return { ...base, estado: 'CONFLICT', modelado: false, motivos: ['Fuente con salidas de distintas tensiones: un valor nominal común no identifica qué salida modificar.'] };
+			}
+		}
 		const decision = v.decisiones[clave];
 		if (decision?.modo === 'SIN_HERENCIA') return { ...base, estado: 'NOT_APPLICABLE', motivos: [decision.motivo], pasos: ['Herencia suprimida explícitamente'] };
 		const legacy = leerDatoLegacy(entidad, campo, canal);
