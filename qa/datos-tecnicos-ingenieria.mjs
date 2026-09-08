@@ -119,17 +119,20 @@ async function magnitudProteccion() {
 const watchdog = setTimeout(() => {
 	timeouts++;
 	fallos++;
-	console.error('TIMEOUT datos-tecnicos-ingenieria: límite total de 8 minutos; cerrando Chromium.');
+	console.error('TIMEOUT datos-tecnicos-ingenieria: límite total de 10 minutos; cerrando Chromium.');
 	void browser?.close().catch(error => console.error('Error cerrando Chromium:', error));
 	servidor?.closeAllConnections?.();
-}, 8 * 60_000);
+// Recorrido ampliado con Undo/Redo medido en 466 s, sin captura de impresión.
+// Diez minutos cubre esa evidencia visual; el supervisor externo mantiene sus doce minutos.
+}, 10 * 60_000);
 watchdog.unref();
 
 try {
 	const servicio = await servidorDeQA();
 	servidor = servicio.servidor;
 	browser = await abrirNavegador(chromium);
-	page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
+	const contexto = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
+	page = await contexto.newPage();
 	page.setDefaultTimeout(30_000);
 	page.setDefaultNavigationTimeout(60_000);
 	page.on('pageerror', error => erroresJS.push(error.message));
