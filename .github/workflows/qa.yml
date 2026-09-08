@@ -79,7 +79,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      TMPDIR: ${{ runner.temp }}
       QA_V8_CAPTURAS: '1'
     steps:
       - uses: actions/checkout@v4
@@ -92,6 +91,8 @@ jobs:
       - run: npx playwright-core install --with-deps chromium
       # Independiente del gate histórico y sin ocultar rechazos de datos hostiles.
       - run: npm run qa:datos-tecnicos:run
+        env:
+          TMPDIR: ${{ runner.temp }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

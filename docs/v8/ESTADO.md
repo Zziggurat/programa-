@@ -3,7 +3,8 @@
 **No entregada aún. No repetir A0 ni recrear gates.** El registro cronológico inferior conserva
 intentos anteriores; este bloque tiene prioridad para reanudar.
 
-- Rama v8/astra-datos-tecnicos, HEAD6ff50c8; UIaa123fe confirmada. Backup remotocf6ce24; main/origin/maina65cc0c intactos tras fetch. TagV8 ausente.
+- Rama v8/astra-datos-tecnicos, candidato1459078 ya respaldado; UIaa123fe y entrega16d07a7 confirmadas. Main/origin/maina65cc0c intactos tras fetch. TagV8 ausente.
+- CI34185617560 attempt1 rechazó workflow antes de crear jobs: contexto runner.temp inválido en env de job. Se corrige al env de step. No invalida tests/producto/HTML locales. Publicar corrección y esperar CI del nuevoSHA.
 - Gates A–J implementados/revisados; K local verde, pendiente CI/publicación. HTMLs y documentación se confirman como candidato, no como integración parcial a main.
 - Proceso75232 terminado exit0: **9/9,345checks,25:07**, buildCfUfls6e. V8 catálogo15/import55/ingeniería47 verdes. Física2:20, escenarios0:44, validación1:08, multiproyecto1:41, simulación5:45, automatización1:29.
 - Full definitivo **1379/1379**,0fail/cancel/skip,62,552sNode/74,326scomando; log tablerostudio-v8-unit-final-4.log. Incluye posterior48e6885 de demanda compartida y empaquetador6ff50c8.

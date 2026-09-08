@@ -123,3 +123,12 @@ correcta22,24sVite: ambosHTML actuales, LF/CRLFidénticos. SHA/tamaño en ENTREG
   Captura real qa/_salida/empaquetado.png inspeccionada: laboratorio, documentación y Build
   C72A570F34 visibles. No aprobación humana/Excel/impresora física inferida de esta inspección.
 - InventarioCim después del smoke:0procesos propios QA/node/Chromium restantes.
+
+## CI candidato
+
+Pushnormal1459078 en ramaV8 confirmado. Run34185617560,attempt1: failure **antes de jobs**,
+no tests ejecutados. Anotación pública: `.github/workflows/qa.yml` línea82 usa `runner.temp`
+en env de job, contexto no disponible allí. Se mueve TMPDIR al env del paso QA, donde está
+permitido; QA_V8_CAPTURAS constante y path de artifact se conservan. No cambia producto,
+bundle ni evidencia local. Fuente: [anotación de Actions](https://github.com/Zziggurat/programa-/actions/runs/34185617560)
+y [contextos admitidos](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability).
