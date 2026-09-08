@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import {
 	GestorDocumentos,
+	CandidatoDocumentoObsoleto,
+	OperacionDocumentoEnCurso,
 	type AplicarProyecto,
 	type EstadoGuardadoDocumento,
 } from '../app/gestor-documentos.js';
@@ -103,6 +106,7 @@ function entorno(opciones: {
 	aplicarProyecto?: AplicarProyecto;
 	reloj?: () => Date;
 	intervaloSnapshotMs?: number;
+	huellaProyecto?: (proyecto: Proyecto) => Promise<string>;
 } = {}): Entorno {
 	const backend = new BackendPersistenciaMemoria();
 	let secuencia = 0;
@@ -130,6 +134,7 @@ function entorno(opciones: {
 		alCambiarEstado: (estado) => estados.push(estado),
 		reloj,
 		intervaloSnapshotMs: opciones.intervaloSnapshotMs,
+		huellaProyecto: opciones.huellaProyecto,
 	});
 	return { backend, repositorio, estados, aplicados, gestor, pantalla: () => pantalla };
 }
@@ -643,4 +648,246 @@ test('cerrar espera el guardado pendiente y rechaza cualquier uso posterior', as
 		'Debe llegar antes de cerrar');
 	assert.throws(() => gestor.programarGuardado(proyecto), /cerrado/);
 	await assert.rejects(gestor.flush(), /cerrado/);
+});
+
+test('V8: preparar BASE espera autosave pendiente y fotografía identidad, revisión y contenido', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const escritura = diferido(); const entrando = diferido();
+	e.repositorio.bloquearSiguienteGuardado = escritura;
+	e.repositorio.guardadoBloqueado = entrando.resolver;
+	const editado = e.gestor.documentoActivo()!.proyecto;
+	editado.nombre = 'Cambio anterior al preview';
+	e.gestor.programarGuardado(editado);
+	await entrando.promesa;
+	let preparado = false;
+	const preparando = e.gestor.prepararCandidato().then((base) => { preparado = true; return base; });
+	await Promise.resolve(); assert.equal(preparado, false);
+	escritura.resolver();
+	const base = await preparando;
+	assert.equal(base.proyecto.nombre, 'Cambio anterior al preview');
+	assert.equal(base.token.documentoId, e.gestor.documentoActivo()!.id);
+	assert.equal(base.token.revision, 2);
+	assert.match(base.token.hashBase, /^sha256:[a-f\d]{64}$/);
+	base.proyecto.nombre = 'Modificación del snapshot retornado';
+	assert.equal(e.gestor.documentoActivo()!.nombre, 'Cambio anterior al preview');
+});
+
+test('V8: candidato se monta solo tras persistir y no sustituye el marcador activo', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const base = await e.gestor.prepararCandidato();
+	const anterior = e.pantalla()!;
+	const candidato = structuredClone(base.proyecto); candidato.nombre = 'Vinculado';
+	const escritura = diferido(); const entrando = diferido();
+	e.repositorio.bloquearSiguienteGuardado = escritura;
+	e.repositorio.guardadoBloqueado = entrando.resolver;
+	const confirmacion = e.gestor.confirmarCandidato({ base: base.token, proyecto: candidato });
+	await entrando.promesa;
+	assert.deepEqual(e.pantalla(), anterior, 'la pantalla sigue en BASE durante escritura');
+	assert.equal(e.gestor.estaRealizandoOperacion(), true);
+	assert.equal((await e.repositorio.abrir(base.token.documentoId)).nombre, anterior.nombre);
+	escritura.resolver();
+	const guardado = await confirmacion;
+	assert.equal(e.pantalla()!.nombre, 'Vinculado');
+	assert.equal(guardado.revision, base.token.revision + 1);
+	assert.equal(await e.repositorio.obtenerProyectoActivo(), base.token.documentoId);
+	assert.equal(e.aplicados.at(-1)!.origen, 'candidato');
+	assert.equal(e.gestor.estaRealizandoOperacion(), false);
+	await e.gestor.flush();
+	assert.equal(e.repositorio.guardados.length, 1, 'confirmar no encola otro autosave');
+});
+
+test('V8: quota rechaza el candidato conservando BASE, historial visible y cola limpia', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const base = await e.gestor.prepararCandidato();
+	const anterior = e.gestor.documentoActivo()!;
+	const candidato = structuredClone(base.proyecto); candidato.nombre = 'No debe entrar';
+	const montajes = e.aplicados.length;
+	e.backend.fallarProximaTransaccion(new DOMException('Espacio agotado', 'QuotaExceededError'));
+	await assert.rejects(e.gestor.confirmarCandidato({ base: base.token, proyecto: candidato }),
+		{ name: 'QuotaExceededError' });
+	assert.deepEqual(e.gestor.documentoActivo(), anterior);
+	assert.deepEqual((await e.repositorio.abrir(anterior.id)).proyecto, anterior.proyecto);
+	assert.equal(e.aplicados.length, montajes);
+	assert.deepEqual(e.pantalla(), anterior.proyecto);
+	await e.gestor.flush(); await e.gestor.reintentarGuardado();
+	assert.equal(e.repositorio.guardados.length, 1, 'un reintento no publica candidato rechazado');
+	assert.equal(e.gestor.estaRealizandoOperacion(), false);
+});
+
+test('V8: edición posterior al preview y hash BASE adulterado no pueden confirmarse', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const base = await e.gestor.prepararCandidato();
+	await assert.rejects(e.gestor.confirmarCandidato({
+		base: { ...base.token, hashBase: `sha256:${'0'.repeat(64)}` }, proyecto: base.proyecto,
+	}), CandidatoDocumentoObsoleto);
+	assert.equal(e.repositorio.guardados.length, 0);
+	const editado = structuredClone(base.proyecto); editado.nombre = 'Edición legítima posterior';
+	e.gestor.programarGuardado(editado);
+	await assert.rejects(e.gestor.confirmarCandidato({ base: base.token, proyecto: base.proyecto }),
+		CandidatoDocumentoObsoleto);
+	await e.gestor.flush();
+	assert.equal((await e.repositorio.abrir(base.token.documentoId)).nombre, editado.nombre);
+});
+
+test('V8: cambiar A/B mientras se calcula el hash invalida el candidato de A', async () => {
+	const hashing = diferido(); const entrando = diferido(); let calculos = 0;
+	const e = entorno({ huellaProyecto: async (p) => {
+		if (++calculos === 2) { entrando.resolver(); await hashing.promesa; }
+		return `sha256:${createHash('sha256').update(JSON.stringify(p)).digest('hex')}`;
+	} });
+	await e.gestor.inicializar();
+	const baseA = await e.gestor.prepararCandidato();
+	const b = await e.repositorio.crear({ proyecto: proyectoValido('B independiente') });
+	const confirmar = e.gestor.confirmarCandidato({ base: baseA.token, proyecto: baseA.proyecto });
+	const rechazo = assert.rejects(confirmar, CandidatoDocumentoObsoleto);
+	await entrando.promesa;
+	await e.gestor.abrir(b.id);
+	hashing.resolver(); await rechazo;
+	assert.equal(e.gestor.documentoActivo()!.id, b.id);
+	assert.equal(e.pantalla()!.nombre, 'B independiente');
+	assert.equal(e.repositorio.guardados.length, 0);
+	assert.equal(await e.repositorio.obtenerProyectoActivo(), b.id);
+});
+
+test('V8: volver A/B/A tampoco vuelve vigente un preview de la sesión anterior', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const baseA = await e.gestor.prepararCandidato();
+	const b = await e.repositorio.crear({ proyecto: proyectoValido('B') });
+	await e.gestor.abrir(b.id); await e.gestor.abrir(baseA.token.documentoId);
+	assert.equal(e.gestor.documentoActivo()!.revision, baseA.token.revision);
+	await assert.rejects(e.gestor.confirmarCandidato({ base: baseA.token, proyecto: baseA.proyecto }),
+		CandidatoDocumentoObsoleto);
+});
+
+test('V8: cancelación durante hashing no escribe ni monta candidato', async () => {
+	const hashing = diferido(); const entrando = diferido(); let calculos = 0;
+	const e = entorno({ huellaProyecto: async (p) => {
+		if (++calculos === 2) { entrando.resolver(); await hashing.promesa; }
+		return `sha256:${createHash('sha256').update(JSON.stringify(p)).digest('hex')}`;
+	} });
+	await e.gestor.inicializar();
+	const base = await e.gestor.prepararCandidato();
+	const controlador = new AbortController();
+	const confirmacion = e.gestor.confirmarCandidato({ base: base.token, proyecto: base.proyecto, signal: controlador.signal });
+	const rechazo = assert.rejects(confirmacion, { name: 'AbortError' });
+	await entrando.promesa; controlador.abort(); hashing.resolver(); await rechazo;
+	assert.equal(e.repositorio.guardados.length, 0);
+	assert.equal(e.aplicados.length, 1);
+	assert.equal(e.gestor.estaRealizandoOperacion(), false);
+});
+
+test('V8: durante escritura se bloquean edición/navegación; cancelar compensa sin montar', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const base = await e.gestor.prepararCandidato();
+	const b = await e.repositorio.crear({ proyecto: proyectoValido('B') });
+	const candidato = structuredClone(base.proyecto); candidato.nombre = 'No debe verse';
+	const escritura = diferido(); const entrando = diferido(); const controlador = new AbortController();
+	e.repositorio.bloquearSiguienteGuardado = escritura; e.repositorio.guardadoBloqueado = entrando.resolver;
+	const confirmacion = e.gestor.confirmarCandidato({ base: base.token, proyecto: candidato, signal: controlador.signal });
+	const rechazo = assert.rejects(confirmacion, { name: 'AbortError' });
+	await entrando.promesa;
+	await assert.rejects(e.gestor.abrir(b.id), OperacionDocumentoEnCurso);
+	assert.throws(() => e.gestor.programarGuardado(candidato), OperacionDocumentoEnCurso);
+	controlador.abort(); escritura.resolver(); await rechazo;
+	assert.deepEqual(e.pantalla(), base.proyecto);
+	const restaurado = await e.repositorio.abrir(base.token.documentoId);
+	assert.deepEqual(restaurado.proyecto, base.proyecto);
+	assert.equal(restaurado.revision, base.token.revision + 2, 'compensación explícita, no retroceso de revisión');
+	assert.equal(e.gestor.documentoActivo()!.revision, restaurado.revision);
+	assert.equal(e.aplicados.length, 1);
+	assert.equal(await e.repositorio.obtenerProyectoActivo(), base.token.documentoId);
+	await e.gestor.flush(); assert.equal(e.repositorio.guardados.length, 2);
+});
+
+test('V8: fallo de montaje atómico compensa contenido y permite una edición posterior', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const base = await e.gestor.prepararCandidato();
+	const candidato = structuredClone(base.proyecto); candidato.nombre = 'Rechazado por vista';
+	let montaje = 0;
+	await assert.rejects(e.gestor.confirmarCandidato({ base: base.token, proyecto: candidato,
+		aplicar: async (_p, contexto) => {
+			montaje++;
+			assert.equal(contexto.guardarAlFinal, false);
+			assert.equal((await e.repositorio.abrir(base.token.documentoId)).nombre, candidato.nombre,
+				'el candidato está confirmado en storage antes del intento visual');
+			throw new Error('MONTAJE_RECHAZADO');
+		},
+	}), /MONTAJE_RECHAZADO/);
+	assert.equal(montaje, 1);
+	assert.deepEqual(e.pantalla(), base.proyecto);
+	assert.deepEqual(e.gestor.documentoActivo()!.proyecto, base.proyecto);
+	assert.equal(e.gestor.estaEsperandoRecuperacion(), false);
+	const posterior = e.gestor.documentoActivo()!.proyecto; posterior.nombre = 'Edición posterior';
+	e.gestor.programarGuardado(posterior); await e.gestor.flush();
+	assert.equal((await e.repositorio.abrir(base.token.documentoId)).nombre, posterior.nombre);
+});
+
+test('V8: si falla también la compensación, el editor congela la divergencia y permite recuperación', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const base = await e.gestor.prepararCandidato();
+	const candidato = structuredClone(base.proyecto); candidato.nombre = 'Persistido, no montado';
+	await assert.rejects(e.gestor.confirmarCandidato({ base: base.token, proyecto: candidato,
+		aplicar: () => {
+			e.backend.fallarProximaTransaccion(new Error('FALLO_COMPENSACION'));
+			throw new Error('FALLO_MONTAJE');
+		},
+	}), /Falló el montaje y también la compensación/);
+	assert.equal(e.gestor.estaEsperandoRecuperacion(), true);
+	assert.equal(e.gestor.estaRealizandoOperacion(), false);
+	assert.throws(() => e.gestor.programarGuardado(base.proyecto), /restaura una versión/);
+	assert.deepEqual(e.pantalla(), base.proyecto);
+	assert.equal((await e.repositorio.abrir(base.token.documentoId)).nombre, candidato.nombre);
+	const snapshot = (await e.gestor.listarSnapshots())[0];
+	await e.gestor.restaurarSnapshot(snapshot.id);
+	assert.equal(e.gestor.estaEsperandoRecuperacion(), false);
+	assert.deepEqual(e.gestor.documentoActivo()!.proyecto, base.proyecto);
+});
+
+test('V8: ejemplos requieren copia editable y no permiten preparar/aplicar vínculos', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const base = await e.gestor.prepararCandidato();
+	await e.gestor.mostrarEjemplo(proyectoValido('Ejemplo'));
+	await assert.rejects(e.gestor.prepararCandidato(), /copia editable/);
+	await assert.rejects(e.gestor.confirmarCandidato({ base: base.token, proyecto: base.proyecto }),
+		CandidatoDocumentoObsoleto);
+	assert.equal(e.repositorio.guardados.length, 0);
+});
+
+test('V8: otra sesión que escribe durante confirmación gana por CAS sin montaje del candidato obsoleto', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const base = await e.gestor.prepararCandidato();
+	const candidato = structuredClone(base.proyecto); candidato.nombre = 'Preview obsoleto';
+	const escritura = diferido(); const entrando = diferido();
+	e.repositorio.bloquearSiguienteGuardado = escritura; e.repositorio.guardadoBloqueado = entrando.resolver;
+	const confirmacion = e.gestor.confirmarCandidato({ base: base.token, proyecto: candidato });
+	const rechazo = assert.rejects(confirmacion, ConflictoRevision);
+	await entrando.promesa;
+	const externo = structuredClone(base.proyecto); externo.nombre = 'Guardado de otra sesión';
+	await e.repositorio.guardar(base.token.documentoId, { revisionEsperada: base.token.revision, proyecto: externo });
+	escritura.resolver(); await rechazo;
+	assert.equal((await e.repositorio.abrir(base.token.documentoId)).nombre, externo.nombre);
+	assert.deepEqual(e.pantalla(), base.proyecto);
+	assert.equal(e.aplicados.length, 1);
+	await e.gestor.flush(); await e.gestor.reintentarGuardado();
+	assert.equal(e.repositorio.guardados.length, 2, 'no intenta pisar luego el cambio externo');
+});
+
+test('V8: reabrir después de confirmar conserva contenido, identidad activa y snapshot independiente', async () => {
+	const e = entorno(); await e.gestor.inicializar();
+	const base = await e.gestor.prepararCandidato();
+	const candidato = structuredClone(base.proyecto); candidato.nombre = 'Candidato confirmado';
+	const guardado = await e.gestor.confirmarCandidato({ base: base.token, proyecto: candidato });
+	await e.gestor.cerrar();
+	let reabierto: Proyecto | undefined;
+	const segunda = new GestorDocumentos({ repositorio: e.repositorio,
+		crearProyectoInicial: () => { throw new Error('No debe crear otro proyecto'); },
+		aplicarProyecto: (p) => { reabierto = structuredClone(p); },
+	});
+	await segunda.inicializar();
+	assert.equal(segunda.documentoActivo()!.id, guardado.id);
+	assert.equal(segunda.documentoActivo()!.revision, guardado.revision);
+	assert.equal(reabierto!.nombre, candidato.nombre);
+	const anteriores = await segunda.listarSnapshots();
+	assert.equal(anteriores.some((s) => s.proyecto.nombre === base.proyecto.nombre), true,
+		'el snapshot anterior no se modifica por confirmar candidato');
 });

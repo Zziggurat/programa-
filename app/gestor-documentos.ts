@@ -34,7 +34,8 @@ export type OrigenAplicacionProyecto =
 	| 'volver'
 	| 'copiar-ejemplo'
 	| 'renombrar'
-	| 'restaurar';
+	| 'restaurar'
+	| 'candidato';
 
 export interface ContextoAplicacionProyecto {
 	origen: OrigenAplicacionProyecto;
@@ -84,6 +85,44 @@ export interface OpcionesGestorDocumentos {
 	intervaloSnapshotMs?: number;
 	/** Un fallo de recuperación no convierte un guardado ya confirmado en fallido. */
 	alErrorRecuperacion?: (error: unknown) => void;
+	/** Hash del documento persistente, nunca del estado visual o de simulación. */
+	huellaProyecto?: (proyecto: Proyecto) => Promise<string>;
+}
+
+/** Identifica exactamente el BASE de un preview; tampoco se reutiliza después de A → B → A. */
+export interface TokenBaseDocumento {
+	documentoId: string;
+	revision: number;
+	hashBase: string;
+	generacion: number;
+	sesion: number;
+}
+
+export interface BaseCandidatoDocumento {
+	token: TokenBaseDocumento;
+	proyecto: Proyecto;
+}
+
+export interface OpcionesConfirmarCandidato {
+	base: TokenBaseDocumento;
+	proyecto: Proyecto;
+	signal?: AbortSignal;
+	/** Montaje atómico opcional que conserva el historial de una edición en la misma UI. */
+	aplicar?: AplicarProyecto;
+}
+
+export class CandidatoDocumentoObsoleto extends Error {
+	constructor() {
+		super('STALE_RESULT: el documento cambió desde la previsualización. Vuelve a calcularla.');
+		this.name = 'CandidatoDocumentoObsoleto';
+	}
+}
+
+export class OperacionDocumentoEnCurso extends Error {
+	constructor() {
+		super('Hay una operación documental en curso. Espera a que termine antes de editar o cambiar de tablero.');
+		this.name = 'OperacionDocumentoEnCurso';
+	}
 }
 
 export interface ResultadoInicializacionDocumentos {
@@ -109,6 +148,25 @@ interface VistaAnterior {
 
 const clonar = <T>(valor: T): T => structuredClone(valor);
 
+async function huellaDocumento(proyecto: Proyecto): Promise<string> {
+	// Ordenar claves evita que una reconstrucción equivalente invalide BASE. El orden de listas
+	// permanece significativo; las propiedades undefined se omiten como en el codec persistente.
+	const texto = JSON.stringify(proyecto, (_clave, valor: unknown) => {
+		if (typeof valor !== 'object' || valor === null || Array.isArray(valor)) return valor;
+		return Object.fromEntries(Object.entries(valor).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+	});
+	const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(texto));
+	return `sha256:${[...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function comprobarCancelacion(signal?: AbortSignal): void {
+	if (signal?.aborted) {
+		const error = new Error('Operación cancelada; el candidato no se aplicó.');
+		error.name = 'AbortError';
+		throw error;
+	}
+}
+
 function errorCompuesto(mensaje: string, causa: unknown, rollback: unknown): Error {
 	const error = new Error(mensaje, { cause: causa });
 	(error as Error & { rollback?: unknown }).rollback = rollback;
@@ -127,6 +185,7 @@ export class GestorDocumentos {
 	private readonly reloj: () => Date;
 	private readonly intervaloSnapshotMs: number;
 	private readonly alErrorRecuperacion?: (error: unknown) => void;
+	private readonly huellaProyecto: (proyecto: Proyecto) => Promise<string>;
 
 	private actual?: DocumentoProyecto;
 	private ejemplo?: Proyecto;
@@ -139,6 +198,9 @@ export class GestorDocumentos {
 	private generacionGuardada = 0;
 	private cerrado = false;
 	private inicializado = false;
+	private versionSesion = 0;
+	private transicionActiva = false;
+	private confirmandoCandidato = false;
 	/**
 	 * `actual` es aquí una vista derivada de un snapshot, no el contenido vigente del store. Se
 	 * conserva la revisión real del sobre para que una restauración explícita pueda reemplazarlo.
@@ -153,6 +215,108 @@ export class GestorDocumentos {
 		this.reloj = opciones.reloj ?? (() => new Date());
 		this.intervaloSnapshotMs = Math.max(0, opciones.intervaloSnapshotMs ?? 5 * 60_000);
 		this.alErrorRecuperacion = opciones.alErrorRecuperacion;
+		this.huellaProyecto = opciones.huellaProyecto ?? huellaDocumento;
+	}
+
+	/** La UI debe consultar esto ANTES de mutar su modelo, no solamente al autoguardar. */
+	estaRealizandoOperacion(): boolean {
+		return this.confirmandoCandidato || this.transicionActiva;
+	}
+
+	private async transicionar<T>(trabajo: () => Promise<T>): Promise<T> {
+		this.comprobarInicializado();
+		if (this.estaRealizandoOperacion()) throw new OperacionDocumentoEnCurso();
+		this.transicionActiva = true;
+		this.versionSesion++;
+		try { return await trabajo(); }
+		finally { this.transicionActiva = false; }
+	}
+
+	private comprobarBase(base: TokenBaseDocumento): void {
+		this.comprobarInicializado();
+		this.comprobarRecuperacionResuelta();
+		if (this.ejemplo || this.transicionActiva || this.actual!.id !== base.documentoId
+			|| this.actual!.revision !== base.revision || this.generacion !== base.generacion
+			|| this.versionSesion !== base.sesion) throw new CandidatoDocumentoObsoleto();
+	}
+
+	/** Drena autosave y fotografía BASE. La UI calcula y confirma usando ESTA copia y su token. */
+	async prepararCandidato(signal?: AbortSignal): Promise<BaseCandidatoDocumento> {
+		this.comprobarInicializado();
+		this.comprobarRecuperacionResuelta();
+		if (this.estaRealizandoOperacion()) throw new OperacionDocumentoEnCurso();
+		if (this.ejemplo) throw new Error('Crea una copia editable del ejemplo antes de vincular datos.');
+		comprobarCancelacion(signal);
+		const documentoId = this.actual!.id;
+		const sesion = this.versionSesion;
+		await this.flush();
+		if (this.actual!.id !== documentoId || this.versionSesion !== sesion || this.transicionActiva) {
+			throw new CandidatoDocumentoObsoleto();
+		}
+		const proyecto = clonar(this.actual!.proyecto);
+		const token: TokenBaseDocumento = {
+			documentoId, revision: this.actual!.revision, generacion: this.generacion, sesion,
+			hashBase: '',
+		};
+		token.hashBase = await this.huellaProyecto(clonar(proyecto));
+		this.comprobarBase(token);
+		comprobarCancelacion(signal);
+		return { token, proyecto };
+	}
+
+	/**
+	 * Persiste fuera de la cola de autosave y publica únicamente después de confirmarse la escritura.
+	 * El montaje debe ser atómico (incluido Undo/Redo). Si falla, se compensa el contenido guardando
+	 * BASE con una revisión nueva: no se falsifica un rollback del sobre que este repositorio no ofrece.
+	 * Durante escritura/montaje se rechazan navegación y ediciones. La cancelación posterior al
+	 * envío de la escritura también se compensa; nunca deja un candidato pendiente de reintento.
+	 */
+	async confirmarCandidato(opciones: OpcionesConfirmarCandidato): Promise<DocumentoProyecto> {
+		const base = clonar(opciones.base);
+		const candidato = clonar(opciones.proyecto);
+		if (this.estaRealizandoOperacion()) throw new OperacionDocumentoEnCurso();
+		this.comprobarBase(base);
+		comprobarCancelacion(opciones.signal);
+		await this.flush();
+		this.comprobarBase(base);
+		const hash = await this.huellaProyecto(clonar(this.actual!.proyecto));
+		this.comprobarBase(base);
+		if (hash !== base.hashBase) throw new CandidatoDocumentoObsoleto();
+		comprobarCancelacion(opciones.signal);
+		if (this.estaRealizandoOperacion()) throw new OperacionDocumentoEnCurso();
+		this.confirmandoCandidato = true;
+		const anterior = clonar(this.actual!);
+		try {
+			const guardado = await this.repositorio.guardar(anterior.id, {
+				revisionEsperada: anterior.revision, proyecto: candidato,
+			});
+			try {
+				comprobarCancelacion(opciones.signal);
+				await (opciones.aplicar ?? this.aplicarProyecto)(clonar(guardado.proyecto), {
+					origen: 'candidato', documentoId: guardado.id, ejemplo: false, guardarAlFinal: false,
+				});
+			} catch (error) {
+				try {
+					this.actual = await this.repositorio.guardar(anterior.id, {
+						revisionEsperada: guardado.revision, proyecto: anterior.proyecto,
+					});
+					this.versionSesion++;
+					this.emitirGuardado();
+				} catch (rollback) {
+					// El repositorio conserva el candidato válido; congelar evita pisarlo con una vista
+					// anterior. No ocultar el doble fallo ni reencolar el candidato automáticamente.
+					this.actual = guardado;
+					this.recuperacionPendiente = true;
+					throw errorCompuesto('Falló el montaje y también la compensación del documento.', error, rollback);
+				}
+				throw error;
+			}
+			this.actual = guardado;
+			this.versionSesion++;
+			this.emitirGuardado();
+			await this.intentarSnapshot(() => this.crearSnapshotPeriodicoDe(guardado));
+			return clonar(guardado);
+		} finally { this.confirmandoCandidato = false; }
 	}
 
 	/** Copia del sobre activo; modificar lo devuelto no modifica la revisión de la sesión. */
@@ -317,6 +481,7 @@ export class GestorDocumentos {
 	programarGuardado(proyecto: Proyecto): number | undefined {
 		this.comprobarInicializado();
 		this.comprobarRecuperacionResuelta();
+		if (this.confirmandoCandidato) throw new OperacionDocumentoEnCurso();
 		if (this.ejemplo) return undefined;
 		const documentoId = this.actual!.id;
 		const generacion = ++this.generacion;
@@ -501,28 +666,32 @@ export class GestorDocumentos {
 	}
 
 	async crear(proyecto = this.crearProyectoInicial(), nombre?: string): Promise<DocumentoProyecto> {
-		this.comprobarInicializado();
-		await this.prepararSalida();
-		const documento = await this.repositorio.crear({ proyecto: clonar(proyecto), nombre });
-		try {
-			return await this.publicarDocumento(documento, 'crear');
-		} catch (error) {
-			// `crear` ya escribió el sobre antes de comprobar que la UI pudiera montarlo. Si el montaje
-			// falla, ese documento nunca llegó a ser activo y debe desaparecer de la biblioteca.
+		return this.transicionar(async () => {
+			this.comprobarInicializado();
+			await this.prepararSalida();
+			const documento = await this.repositorio.crear({ proyecto: clonar(proyecto), nombre });
 			try {
-				await this.repositorio.eliminar(documento.id, documento.revision);
-			} catch (rollback) {
-				throw errorCompuesto('No se pudo montar el documento nuevo ni retirar su registro incompleto.', error, rollback);
+				return await this.publicarDocumento(documento, 'crear');
+			} catch (error) {
+				// `crear` ya escribió el sobre antes de comprobar que la UI pudiera montarlo. Si el montaje
+				// falla, ese documento nunca llegó a ser activo y debe desaparecer de la biblioteca.
+				try {
+					await this.repositorio.eliminar(documento.id, documento.revision);
+				} catch (rollback) {
+					throw errorCompuesto('No se pudo montar el documento nuevo ni retirar su registro incompleto.', error, rollback);
+				}
+				throw error;
 			}
-			throw error;
-		}
+		});
 	}
 
 	async abrir(id: string): Promise<DocumentoProyecto> {
-		this.comprobarInicializado();
-		await this.prepararSalida();
-		const documento = await this.repositorio.abrir(id);
-		return this.publicarDocumento(documento, this.ejemplo && id === this.actual?.id ? 'volver' : 'abrir');
+		return this.transicionar(async () => {
+			this.comprobarInicializado();
+			await this.prepararSalida();
+			const documento = await this.repositorio.abrir(id);
+			return this.publicarDocumento(documento, this.ejemplo && id === this.actual?.id ? 'volver' : 'abrir');
+		});
 	}
 
 	async duplicar(
@@ -530,35 +699,39 @@ export class GestorDocumentos {
 		nombre?: string,
 		opciones: OpcionesDuplicarDocumento = {},
 	): Promise<DocumentoProyecto> {
-		this.comprobarInicializado();
-		this.comprobarRecuperacionResuelta();
-		if (id === this.actual!.id) await this.flush();
-		const copia = await this.repositorio.duplicar(id, nombre);
-		if (!opciones.activar) return copia;
-		await this.prepararSalida();
-		return this.publicarDocumento(copia, 'duplicar');
+		return this.transicionar(async () => {
+			this.comprobarInicializado();
+			this.comprobarRecuperacionResuelta();
+			if (id === this.actual!.id) await this.flush();
+			const copia = await this.repositorio.duplicar(id, nombre);
+			if (!opciones.activar) return copia;
+			await this.prepararSalida();
+			return this.publicarDocumento(copia, 'duplicar');
+		});
 	}
 
 	async renombrar(id: string, nombre: string): Promise<DocumentoProyecto> {
-		this.comprobarInicializado();
-		this.comprobarRecuperacionResuelta();
-		let base: DocumentoProyecto;
-		if (id === this.actual!.id) {
-			await this.flush();
-			base = this.actual!;
-		} else {
-			base = await this.repositorio.abrir(id);
-		}
-		const renombrado = await this.repositorio.renombrar(id, nombre, base.revision);
-		if (id !== this.actual!.id) return renombrado;
-		this.actual = renombrado;
-		if (!this.ejemplo) {
-			await this.aplicarAtomico(renombrado.proyecto, {
-				origen: 'renombrar', documentoId: id, ejemplo: false, guardarAlFinal: false,
-			});
-		}
-		this.emitirGuardado(renombrado);
-		return clonar(renombrado);
+		return this.transicionar(async () => {
+			this.comprobarInicializado();
+			this.comprobarRecuperacionResuelta();
+			let base: DocumentoProyecto;
+			if (id === this.actual!.id) {
+				await this.flush();
+				base = this.actual!;
+			} else {
+				base = await this.repositorio.abrir(id);
+			}
+			const renombrado = await this.repositorio.renombrar(id, nombre, base.revision);
+			if (id !== this.actual!.id) return renombrado;
+			this.actual = renombrado;
+			if (!this.ejemplo) {
+				await this.aplicarAtomico(renombrado.proyecto, {
+					origen: 'renombrar', documentoId: id, ejemplo: false, guardarAlFinal: false,
+				});
+			}
+			this.emitirGuardado(renombrado);
+			return clonar(renombrado);
+		});
 	}
 
 	/**
@@ -566,27 +739,29 @@ export class GestorDocumentos {
 	 * `recovery`; esta operación solo normaliza la revisión saneada que la persona ya inspeccionó.
 	 */
 	async aceptarReparacion(id: string): Promise<DocumentoProyecto> {
-		this.comprobarInicializado();
-		this.comprobarRecuperacionResuelta();
-		let base: DocumentoProyecto;
-		if (id === this.actual!.id) {
-			if (this.ejemplo) throw new Error('Vuelve a tu tablero antes de aceptar una reparación.');
-			await this.flush();
-			base = this.actual!;
-		} else {
-			base = await this.repositorio.abrir(id);
-		}
-		if (base.estado !== 'requiere-revision') return clonar(base);
-		const aceptado = await this.repositorio.guardar(id, {
-			revisionEsperada: base.revision,
-			proyecto: clonar(base.proyecto),
-			aceptarReparacion: true,
+		return this.transicionar(async () => {
+			this.comprobarInicializado();
+			this.comprobarRecuperacionResuelta();
+			let base: DocumentoProyecto;
+			if (id === this.actual!.id) {
+				if (this.ejemplo) throw new Error('Vuelve a tu tablero antes de aceptar una reparación.');
+				await this.flush();
+				base = this.actual!;
+			} else {
+				base = await this.repositorio.abrir(id);
+			}
+			if (base.estado !== 'requiere-revision') return clonar(base);
+			const aceptado = await this.repositorio.guardar(id, {
+				revisionEsperada: base.revision,
+				proyecto: clonar(base.proyecto),
+				aceptarReparacion: true,
 		});
 		if (id === this.actual!.id) {
 			this.actual = aceptado;
 			this.emitirGuardado(aceptado);
 		}
 		return clonar(aceptado);
+		});
 	}
 
 	/**
@@ -595,43 +770,45 @@ export class GestorDocumentos {
 	 * detrás de él en la historia.
 	 */
 	async restaurarSnapshot(snapshotId: string): Promise<DocumentoProyecto> {
-		this.comprobarInicializado();
-		if (this.ejemplo) throw new Error('No se puede restaurar una versión mientras se muestra un ejemplo.');
-		await this.flush();
-		const anterior = this.vistaActual()!;
-		const snapshot = (await this.repositorio.listarSnapshots(this.actual!.id))
-			.find((item) => item.id === snapshotId);
-		if (!snapshot) throw new ProyectoNoEncontrado(`snapshot:${snapshotId}`);
-		const contexto: ContextoAplicacionProyecto = {
-			origen: 'restaurar', documentoId: this.actual!.id, ejemplo: false, guardarAlFinal: false,
-		};
+		return this.transicionar(async () => {
+			this.comprobarInicializado();
+			if (this.ejemplo) throw new Error('No se puede restaurar una versión mientras se muestra un ejemplo.');
+			await this.flush();
+			const anterior = this.vistaActual()!;
+			const snapshot = (await this.repositorio.listarSnapshots(this.actual!.id))
+				.find((item) => item.id === snapshotId);
+			if (!snapshot) throw new ProyectoNoEncontrado(`snapshot:${snapshotId}`);
+			const contexto: ContextoAplicacionProyecto = {
+				origen: 'restaurar', documentoId: this.actual!.id, ejemplo: false, guardarAlFinal: false,
+			};
 
-		// Se comprueba que la UI puede montar la versión ANTES de convertirla en el contenido actual.
-		// Si después falla la transacción (conflicto/almacenamiento), se devuelve la pantalla a la
-		// versión vigente. Así nunca queda una vista restaurada respaldada por una revisión antigua.
-		await this.aplicarAtomico(snapshot.proyecto, contexto);
-		let documento: DocumentoProyecto;
-		try {
-			documento = await this.repositorio.restaurarSnapshot(
-				this.actual!.id,
-				snapshotId,
-				this.actual!.revision,
-			);
-		} catch (error) {
+			// Se comprueba que la UI puede montar la versión ANTES de convertirla en el contenido actual.
+			// Si después falla la transacción (conflicto/almacenamiento), se devuelve la pantalla a la
+			// versión vigente. Así nunca queda una vista restaurada respaldada por una revisión antigua.
+			await this.aplicarAtomico(snapshot.proyecto, contexto);
+			let documento: DocumentoProyecto;
 			try {
-				await this.aplicarProyecto(clonar(anterior.proyecto), anterior.contexto);
-			} catch (rollback) {
-				throw errorCompuesto('Falló restaurar la versión y también devolver la vista anterior.', error, rollback);
+				documento = await this.repositorio.restaurarSnapshot(
+					this.actual!.id,
+					snapshotId,
+					this.actual!.revision,
+				);
+			} catch (error) {
+				try {
+					await this.aplicarProyecto(clonar(anterior.proyecto), anterior.contexto);
+				} catch (rollback) {
+					throw errorCompuesto('Falló restaurar la versión y también devolver la vista anterior.', error, rollback);
+				}
+				throw error;
 			}
-			throw error;
-		}
-		this.actual = documento;
-		this.recuperacionPendiente = false;
-		// `restaurarSnapshot` crea atómicamente otra versión (`antes-de-restaurar`). Se relee solo
-		// cuando vuelva a hacer falta; no se adivina cuál ganó si el reloj tiene la misma marca.
-		this.ultimoSnapshotPorProyecto.delete(documento.id);
-		this.emitirGuardado(documento);
-		return clonar(documento);
+			this.actual = documento;
+			this.recuperacionPendiente = false;
+			// `restaurarSnapshot` crea atómicamente otra versión (`antes-de-restaurar`). Se relee solo
+			// cuando vuelva a hacer falta; no se adivina cuál ganó si el reloj tiene la misma marca.
+			this.ultimoSnapshotPorProyecto.delete(documento.id);
+			this.emitirGuardado(documento);
+			return clonar(documento);
+		});
 	}
 
 	/**
@@ -640,66 +817,70 @@ export class GestorDocumentos {
 	 * documento anterior y cualquier tablero técnico recién creado se compensa.
 	 */
 	async eliminar(id: string): Promise<void> {
-		this.comprobarInicializado();
-		this.comprobarRecuperacionResuelta();
-		if (id !== this.actual!.id) {
-			const documento = await this.repositorio.abrir(id);
-			await this.repositorio.eliminar(id, documento.revision);
-			this.ultimoSnapshotPorProyecto.delete(id);
-			return;
-		}
+		return this.transicionar(async () => {
+			this.comprobarInicializado();
+			this.comprobarRecuperacionResuelta();
+			if (id !== this.actual!.id) {
+				const documento = await this.repositorio.abrir(id);
+				await this.repositorio.eliminar(id, documento.revision);
+				this.ultimoSnapshotPorProyecto.delete(id);
+				return;
+			}
 
-		await this.prepararSalida();
-		const anteriorDocumento = this.actual!;
-		const anteriorVista = this.vistaActual()!;
-		const otro = (await this.repositorio.listar()).find((x) => x.id !== id);
-		const reemplazo = otro
-			? await this.repositorio.abrir(otro.id)
-			: await this.repositorio.crear({ proyecto: clonar(this.crearProyectoInicial()) });
-		const reemplazoCreado = otro ? undefined : reemplazo;
-		const contexto: ContextoAplicacionProyecto = {
-			origen: 'eliminar', documentoId: reemplazo.id, ejemplo: false, guardarAlFinal: false,
-		};
-		try {
-			await this.aplicarAtomico(reemplazo.proyecto, contexto);
-		} catch (error) {
-			if (reemplazoCreado) {
-				try { await this.repositorio.eliminar(reemplazoCreado.id, reemplazoCreado.revision); }
-				catch (rollback) {
-					throw errorCompuesto('No se pudo montar el reemplazo ni retirar el tablero técnico.', error, rollback);
-				}
-			}
-			throw error;
-		}
-		try {
-			await this.repositorio.eliminarYActivar(id, anteriorDocumento.revision, reemplazo.id);
-		} catch (error) {
+			await this.prepararSalida();
+			const anteriorDocumento = this.actual!;
+			const anteriorVista = this.vistaActual()!;
+			const otro = (await this.repositorio.listar()).find((x) => x.id !== id);
+			const reemplazo = otro
+				? await this.repositorio.abrir(otro.id)
+				: await this.repositorio.crear({ proyecto: clonar(this.crearProyectoInicial()) });
+			const reemplazoCreado = otro ? undefined : reemplazo;
+			const contexto: ContextoAplicacionProyecto = {
+				origen: 'eliminar', documentoId: reemplazo.id, ejemplo: false, guardarAlFinal: false,
+			};
 			try {
-				await this.aplicarProyecto(clonar(anteriorVista.proyecto), anteriorVista.contexto);
+				await this.aplicarAtomico(reemplazo.proyecto, contexto);
+			} catch (error) {
 				if (reemplazoCreado) {
-					await this.repositorio.eliminar(reemplazoCreado.id, reemplazoCreado.revision);
+					try { await this.repositorio.eliminar(reemplazoCreado.id, reemplazoCreado.revision); }
+					catch (rollback) {
+						throw errorCompuesto('No se pudo montar el reemplazo ni retirar el tablero técnico.', error, rollback);
+					}
 				}
-			} catch (rollback) {
-				throw errorCompuesto('Falló eliminar el documento y también restaurar la sesión anterior.', error, rollback);
+				throw error;
 			}
-			throw error;
-		}
-		this.actual = reemplazo;
-		this.ultimoSnapshotPorProyecto.delete(id);
-		this.ejemplo = undefined;
-		this.emitirGuardado(reemplazo);
+			try {
+				await this.repositorio.eliminarYActivar(id, anteriorDocumento.revision, reemplazo.id);
+			} catch (error) {
+				try {
+					await this.aplicarProyecto(clonar(anteriorVista.proyecto), anteriorVista.contexto);
+					if (reemplazoCreado) {
+						await this.repositorio.eliminar(reemplazoCreado.id, reemplazoCreado.revision);
+					}
+				} catch (rollback) {
+					throw errorCompuesto('Falló eliminar el documento y también restaurar la sesión anterior.', error, rollback);
+				}
+				throw error;
+			}
+			this.actual = reemplazo;
+			this.ultimoSnapshotPorProyecto.delete(id);
+			this.ejemplo = undefined;
+			this.emitirGuardado(reemplazo);
+		});
 	}
 
 	/** Muestra una copia efímera de un ejemplo; el marcador del documento de la persona no cambia. */
 	async mostrarEjemplo(proyecto: Proyecto): Promise<void> {
-		this.comprobarInicializado();
-		await this.prepararSalida();
-		const ejemplo = clonar(proyecto);
-		ejemplo.esEjemplo = true;
-		await this.aplicarAtomico(ejemplo, {
-			origen: 'ejemplo', ejemplo: true, guardarAlFinal: false,
+		return this.transicionar(async () => {
+			this.comprobarInicializado();
+			await this.prepararSalida();
+			const ejemplo = clonar(proyecto);
+			ejemplo.esEjemplo = true;
+			await this.aplicarAtomico(ejemplo, {
+				origen: 'ejemplo', ejemplo: true, guardarAlFinal: false,
 		});
 		this.ejemplo = ejemplo;
+		});
 	}
 
 	async volverAMiTablero(): Promise<DocumentoProyecto> {
@@ -710,20 +891,24 @@ export class GestorDocumentos {
 
 	/** Convierte el ejemplo visible en un documento nuevo; nunca modifica el documento anterior. */
 	async copiarEjemplo(nombre?: string): Promise<DocumentoProyecto> {
-		this.comprobarInicializado();
-		if (!this.ejemplo) throw new Error('No hay ningún ejemplo abierto para copiar.');
-		await this.prepararSalida();
-		const copia = clonar(this.ejemplo);
-		delete copia.esEjemplo;
-		copia.nombre = nombre?.trim() || `Copia de ${copia.nombre}`;
-		const documento = await this.repositorio.crear({ proyecto: copia, nombre: copia.nombre });
-		return this.publicarDocumento(documento, 'copiar-ejemplo');
+		return this.transicionar(async () => {
+			this.comprobarInicializado();
+			if (!this.ejemplo) throw new Error('No hay ningún ejemplo abierto para copiar.');
+			await this.prepararSalida();
+			const copia = clonar(this.ejemplo);
+			delete copia.esEjemplo;
+			copia.nombre = nombre?.trim() || `Copia de ${copia.nombre}`;
+			const documento = await this.repositorio.crear({ proyecto: copia, nombre: copia.nombre });
+			return this.publicarDocumento(documento, 'copiar-ejemplo');
+		});
 	}
 
 	/** Punto de cierre de la página/escritorio. El propietario del repositorio lo cierra después. */
 	async cerrar(): Promise<void> {
-		this.comprobarInicializado();
-		await this.flush();
-		this.cerrado = true;
+		return this.transicionar(async () => {
+			this.comprobarInicializado();
+			await this.flush();
+			this.cerrado = true;
+		});
 	}
 }
