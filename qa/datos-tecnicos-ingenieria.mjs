@@ -131,7 +131,9 @@ try {
 	const servicio = await servidorDeQA();
 	servidor = servicio.servidor;
 	browser = await abrirNavegador(chromium);
-	const contexto = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
+	// Ventana compacta para el recorrido de formularios; capturas documentales amplias abajo.
+	// Mantiene todos los clics/aserciones y el límite original, sin tocar el render del producto.
+	const contexto = await browser.newContext({ viewport: { width: 800, height: 600 }, acceptDownloads: true });
 	page = await contexto.newPage();
 	page.setDefaultTimeout(30_000);
 	page.setDefaultNavigationTimeout(60_000);
@@ -304,6 +306,7 @@ try {
 		writeFileSync(join(carpeta, 'informe.html'), html);
 		const lectura = await page.context().newPage();
 		try {
+			await lectura.setViewportSize({ width: 1440, height: 1000 });
 			await lectura.setContent(html);
 			await lectura.screenshot({ path: join(carpeta, 'informe-pantalla.png') });
 			await lectura.emulateMedia({ media: 'print' });

@@ -101,3 +101,7 @@ ejecutarlas manualmente, pero siguen fuera del gate estable.
 La regresión oficial de persistencia es `se-guarda-solo.mjs`: modifica el proyecto mediante la UI,
 recarga el navegador y comprueba el estado restaurado. Las comparaciones visuales de
 `_v-persistencia.mjs` complementan esa prueba, pero no la sustituyen.
+
+`_perf-formularios-v8.mjs` es diagnóstico manual fuera del gate: mide clics HTML a distintos
+tamaños de ventana sobre el mismo laboratorio. No demuestra por sí solo una regresión funcional;
+sirve para explicar el coste de rasterizado de Chromium/SwiftShader en las suites de formularios.

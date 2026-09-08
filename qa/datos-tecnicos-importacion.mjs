@@ -58,7 +58,9 @@ async function iniciarPagina(ctx) {
 }
 async function capturar(nombre) {
 	if (!conservarCapturas) return;
-	const ruta = join(temporal, `${nombre}.png`); await pagina.screenshot({ path: ruta });
+	const ruta = join(temporal, `${nombre}.png`), anterior = pagina.viewportSize();
+	try { await pagina.setViewportSize({ width: 1440, height: 960 }); await pagina.screenshot({ path: ruta }); }
+	finally { if (anterior) await pagina.setViewportSize(anterior); }
 	console.log(`CAPTURA  ${ruta}`);
 }
 async function descargarProyecto(nombre) {
@@ -71,7 +73,9 @@ async function descargarProyecto(nombre) {
 async function recorrido() {
 	const entorno = await servidorDeQA(); servidor = entorno.servidor; url = entorno.url;
 	navegador = await abrirNavegador(chromium);
-	contexto = await navegador.newContext({ viewport: { width: 1440, height: 960 }, acceptDownloads: true }); contextos.add(contexto);
+	// Formularios a tamaño de ventana real compacto: evita rasterizar una escena HD por cada clic.
+	// Las capturas conservan 1440px; ningún control, clic, aserción ni límite se elimina.
+	contexto = await navegador.newContext({ viewport: { width: 800, height: 600 }, acceptDownloads: true }); contextos.add(contexto);
 	if (process.env.QA_V8_TRACE === '1') await contexto.tracing.start({ screenshots: false, snapshots: false, sources: false });
 	pagina = await iniciarPagina(contexto); const base = await snapshotProyectoVisible(pagina);
 	const paquete = paqueteSeguridadTecnica(), valido = JSON.stringify(paquete), hashProducto = paquete.revisiones[0].hash;
@@ -154,7 +158,7 @@ async function recorrido() {
 	// La reapertura ya se comprobó. No hace falta mantener otra escena WebGL renderizando
 	// durante la importación limpia; los snapshots esperados son valores capturados arriba.
 	await pagina.close();
-	const limpio = await navegador.newContext({ viewport: { width: 1440, height: 960 }, acceptDownloads: true }); contextos.add(limpio);
+	const limpio = await navegador.newContext({ viewport: { width: 800, height: 600 }, acceptDownloads: true }); contextos.add(limpio);
 	if (process.env.QA_V8_TRACE === '1') await limpio.tracing.start({ screenshots: false, snapshots: false, sources: false });
 	pagina = await iniciarPagina(limpio); const inicialLimpio = await snapshotProyectoVisible(pagina);
 	comprobar('destino empieza sin catálogo ni vínculos', (await leerBibliotecaTecnica(pagina)).length === 0 && !inicialLimpio.proyecto.datosTecnicos);
