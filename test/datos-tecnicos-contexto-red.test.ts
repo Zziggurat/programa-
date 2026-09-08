@@ -45,3 +45,20 @@ test('V8 contexto eléctrico ausente no recupera condiciones nominales del vínc
 	const c=contextoNominalProteccion(p,q,undefined);
 	assert.equal(c.condiciones.tensionV,undefined);assert.equal(c.condiciones.sistema,undefined);assert.ok(c.motivos.length);
 });
+
+test('V8 protección común suma cargas monofásicas únicas, no aprueba cada rama por separado',()=>{
+	const p=fixtureDatosTecnicosV8(),r=p.dispositivos.find(d=>d.id==='r1')!;
+	r.corrienteNominal=15;const otra=structuredClone(r);otra.id='r2';p.dispositivos.push(otra);
+	for(const w of p.conductores.filter(w=>w.de.dispositivoId==='r1'||w.a.dispositivoId==='r1')) {
+		const copia=structuredClone(w);copia.id+='-r2';
+		if(copia.de.dispositivoId==='r1')copia.de.dispositivoId='r2';
+		if(copia.a.dispositivoId==='r1')copia.a.dispositivoId='r2';p.conductores.push(copia);
+	}
+	const calificar=()=>analizar(p).filter(r=>r.code.startsWith('TS-PROT-RATING'));
+	assert.ok(calificar().length===2&&calificar().every(r=>r.status==='FAIL'&&r.evidence.some(e=>e.codigo==='I_DESIGN'&&e.valor===30)));
+	p.dispositivos.reverse();p.conductores.reverse();assert.ok(calificar().every(r=>r.status==='FAIL'));
+	otra.corrienteNominal=5;assert.ok(calificar().every(r=>r.status==='PASS'));
+	delete otra.corrienteNominal;assert.ok(calificar().every(r=>r.status==='INDETERMINATE'));
+	otra.corrienteNominal=15;p.dispositivos.find(d=>d.id==='red')!.fisica!.fuente!.sistema='AC_TRIFASICA';
+	assert.ok(calificar().every(r=>r.status==='INDETERMINATE'), 'no suma fases distintas como si fueran una sola');
+});

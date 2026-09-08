@@ -41,19 +41,29 @@ function corrienteDiseno(proyecto: Proyecto, fisica: ResultadoFisicaElectrica | 
 		detalle: valores.map((x) => `${x.id}:${x.valor}A`).join(', ') };
 }
 
-function validarIn(proyecto: Proyecto, fisica: ResultadoFisicaElectrica | undefined, c: CircuitoIngenieria, d: Dispositivo): ResultadoReglaIngenieria {
+function validarIn(proyecto: Proyecto, fisica: ResultadoFisicaElectrica | undefined, c: CircuitoIngenieria, d: Dispositivo,
+	circuitos: readonly CircuitoIngenieria[]): ResultadoReglaIngenieria {
 	const p = fisica?.protecciones.get(d.id); const inA = p?.inA ?? d.fisica?.proteccion?.inA ?? d.corrienteNominal;
-	const diseno = corrienteDiseno(proyecto, fisica, c);
+	const compartidos = proyecto.datosTecnicos ? circuitos.filter(x=>x.protecciones.includes(d.id)) : [c];
+	const cargas = [...new Set(compartidos.flatMap(x=>x.cargas))].sort();
+	const fuentes = [...new Set(compartidos.flatMap(x=>x.fuentes))];
+	const fuente = fuentes.length===1 ? proyecto.dispositivos.find(x=>x.id===fuentes[0])?.fisica?.fuente : undefined;
+	const requiereAgregacion = cargas.some(id=>!c.cargas.includes(id));
+	const puedeAgregar = compartidos.every(x=>x.estadoTopologia==='INEQUIVOCA')
+		&& fuente && ['DC','AC_MONOFASICA'].includes(fuente.sistema) && fuente.fases.length===1;
+	const diseno = requiereAgregacion && !puedeAgregar
+		? { origen:'NO_DISPONIBLE' as const, valor:undefined, detalle:'Protección compartida: falta una agregación de demanda inequívoca por fase.' }
+		: corrienteDiseno(proyecto, fisica, requiereAgregacion ? {...c,cargas} : c);
 	if (inA === undefined || diseno.valor === undefined) {
 		const r = resultado(c, 'TS-PROT-RATING-DATA', d.id, 'INDETERMINATE', 'Calibre no validable',
-			'Falta el calibre de la protección o la corriente de diseño de la carga.');
+			`Falta el calibre de la protección o la corriente de diseño de la carga. ${diseno.detalle}`);
 		r.provenance = 'NO_DISPONIBLE'; r.missingData = [
 			...(inA === undefined ? ['In de la protección'] : []), ...(diseno.valor === undefined ? ['corriente de diseño de la carga'] : []),
 		]; return r;
 	}
 	const falla = diseno.valor - inA > tol(diseno.valor, inA); const r = resultado(c, 'TS-PROT-RATING', d.id,
 		falla ? 'FAIL' : 'PASS', falla ? 'Calibre inferior a la corriente de diseño' : 'Calibre compatible con la corriente de diseño',
-		`Corriente de diseño ${diseno.valor.toFixed(3)} A; protección In ${inA} A.`);
+		`Corriente de diseño ${diseno.valor.toFixed(3)} A; protección In ${inA} A.${requiereAgregacion ? ' Suma de cargas únicas bajo la protección común en una misma fase/DC.' : ''}`);
 	r.evidence = [{ codigo: 'I_DESIGN', descripcion: diseno.detalle, valor: diseno.valor, unidad: 'A', origen: diseno.origen },
 		{ codigo: 'IN', descripcion: 'Calibre de protección', valor: inA, unidad: 'A', origen: 'CONFIGURADO' }];
 	if (p) r.evidence.push({ codigo: 'I_OPERATING', descripcion: 'Corriente del snapshot físico', valor: p.corrienteA, unidad: 'A', origen: 'CALCULADO' });
@@ -233,7 +243,7 @@ export const REGLA_PROTECCIONES: EngineeringRule = {
 		const porId = new Map(contexto.proyecto.dispositivos.map((d) => [d.id, d])); const salida: ResultadoReglaIngenieria[] = [];
 		for (const c of contexto.circuitos) {
 			for (const id of c.protecciones) { const d = porId.get(id); if (!d) continue;
-				salida.push(validarIn(contexto.proyecto, contexto.fisica, c, d), contexto.proyecto.datosTecnicos
+				salida.push(validarIn(contexto.proyecto, contexto.fisica, c, d, contexto.circuitos), contexto.proyecto.datosTecnicos
 					? validarCorteTecnico(contexto, c, d) : validarCorte(contexto.fisica, c, d));
 				const arranque = validarArranque(contexto.proyecto, contexto.fisica, c, d); if (arranque) salida.push(arranque);
 			}
