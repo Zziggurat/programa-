@@ -90,4 +90,36 @@ Agregado46qzRhcg terminó8/13,23:09,206checksreportados (tablerostudio-v8-especi
 - ingenieria-escenarios, ingenieria-validacion, multiproyecto y simulacion-industrial no pudieron arrancar por ERR_MODULE_NOT_FOUND. Durante la campaña, un revisor invocó por error `pnpm exec`, cuyo shim inició una instalación y alteró node_modules. No se acredita ejecución de esas suites ni compilación del revisor.
 - package.json/package-lock intactos; se retiraron exclusivamente los dos archivos nuevos pnpm-lock.yaml/pnpm-workspace.yaml tras comprobar Git. Sin reset/clean ni pérdida de código. `npm ci` real restauró49paquetes11s,exit0; log tablerostudio-v8-npm-ci-restauracion.log. Dependencias nuevamente canónicas antes del full1378/buildCfUfls6e. No se usa pnpm para cierre.
 
-Campaña renovadaCfUfls6e (9suites) en tablerostudio-v8-cierre-revisiones-qa.log; no contabilizar como completa hasta exit. Las fronteras de fusión/puerta y componentes sin datos V8 no quedan invalidadas por contexto de capacidad/contrato analógico condicionado.
+Campaña renovadaCfUfls6e (9suites) en tablerostudio-v8-cierre-revisiones-qa.log terminó exit0:
+**9/9,345comprobaciones,25:07,0fallos/timeouts/skipped/erroresJS**.
+Automatización1:29; catálogo15checks1:18; importación55checks3:36; ingenieríaV8 47checks7:08;
+física2:20; escenarios0:44; validación1:08; multiproyecto1:41; simulaciónindustrial5:45.
+Incluye cambios de formulario después del preview y quitar override antes de aplicar.
+Las fronteras de fusión/puerta y componentes sin datos V8 no quedan invalidadas por contexto
+de capacidad/contrato analógico condicionado. La suma común posterior tiene focal23/23 y
+se incluye en el full definitivo y bundle de producción.
+
+## Frontera de empaquetado
+
+Primera compilación producción correcta (394módulos,17,93s), empaquetado rechazó CSS con
+prefijo `./assets/`; no era un fallo de producto servido ni se dio por verde. Corrección6ff50c8
+acepta únicamente prefijos locales equivalentes y mantiene rechazo de URLs/traversal.
+Regresión1/1,164ms; BuildID C72A570F34 generado. Reconstrucción independiente de entrega
+correcta22,24sVite: ambosHTML actuales, LF/CRLFidénticos. SHA/tamaño en ENTREGA.md.
+
+## Candidato definitivo local
+
+- `npm test`: **1379/1379**,0fail/cancel/skip/todo,62,552sNode/74,326scomando.
+  Log tablerostudio-v8-unit-final-4.log. Incluye typecheckapp/tsc, demanda compartida y empaquetador.
+  ReferenciaV7 1182:197testsnetos añadidos; ninguna prueba retirada. Ajustes legacy de expectativa
+  de stores y contrato de protección, no exclusiones de cobertura.
+- Stress renovado tras resolver final: **3/3**,0fallos,10,78s;100/1000/10000productos,300bindings,
+  5muestras. Importp95 21,5/142,3/1341,6ms; resolverp50/p95 30,8/34,3;40,8/43,3;39,7/42,1ms.
+  Proyecto223357/397177/397177B. Informe externo tablerostudio-v8-stress-1788839769223.json.
+  No regresión atribuible frente a baseline local; variación CPU no es garantía de SLA ni
+  una medida de virtualización de10000filas en navegador.
+- `node qa/todas.mjs empaquetado`: **66/66,5:22**,exit0; V2–V8 conservados,0fail/skip/timeout,
+  0erroresJS y0peticionesHTTPexternas. Log tablerostudio-v8-offline-final.log.
+  Captura real qa/_salida/empaquetado.png inspeccionada: laboratorio, documentación y Build
+  C72A570F34 visibles. No aprobación humana/Excel/impresora física inferida de esta inspección.
+- InventarioCim después del smoke:0procesos propios QA/node/Chromium restantes.

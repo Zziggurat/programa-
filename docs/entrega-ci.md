@@ -9,9 +9,9 @@ no se editan manualmente.
 ```text
 desarrollar
   → tests focales
-  → pnpm test
-  → pnpm run editor:build --mode qa
-  → pnpm run qa:simulacion (cuando cambia simulación/UI)
+  → npm test
+  → npm run editor:build -- --mode qa
+  → npm run qa:simulacion (cuando cambia simulación/UI)
   → npm run empaquetar
   → npm run entrega:check
   → npm run qa:empaquetado
@@ -42,13 +42,17 @@ bundle lo modifica.
 
 ## Checks de GitHub Actions
 
-El workflow obligatorio `Pruebas` separa tres señales:
+El workflow obligatorio `Pruebas` separa seis señales:
 
 - **Unit / TypeScript / Build** (20 min): typecheck, tests rápidos y build QA.
 - **QA Gate navegador** (60 min): Chromium fijado por lockfile y gate histórico estable. El límite
   deja margen sobre los tiempos locales medidos, pero sigue detectando un proceso bloqueado.
+- **QA equipos y diagnóstico V6** (30 min): equipos, motor y red.
+- **QA Ingeniería V7** (30 min): validación, escenarios y documentación.
+- **QA Datos técnicos V8** (30 min): catálogo, imports/portabilidad y revisión/ingeniería;
+  conserva capturas como evidencia, sin incorporarlas al gate histórico.
 - **Entregable offline** (30 min, Windows/Node canónicos): frescura de ambos HTML, apertura real con `file://`, IndexedDB,
-  Mis Tableros, Energizar, V2/V3 y ausencia de dependencias HTTP. Publica el HTML de ese commit
+  Mis Tableros, Energizar, V2–V8 y ausencia de dependencias HTTP. Publica el HTML de ese commit
   como artifact durante 14 días.
 
 La concurrencia cancela un workflow viejo cuando llega otro commit a la misma rama; un timeout

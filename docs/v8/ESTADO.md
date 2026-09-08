@@ -3,19 +3,17 @@
 **No entregada aún. No repetir A0 ni recrear gates.** El registro cronológico inferior conserva
 intentos anteriores; este bloque tiene prioridad para reanudar.
 
-- Rama v8/astra-datos-tecnicos, producto48e6885. Backup remotocf6ce24; main/origin/maina65cc0c intactos tras fetch. TagV8 ausente.
-- Gates A–J implementados/revisados; K en campaña final. Sin commit UIformulario/QA ampliado y documentación; no descartar.
-- Proceso **75232**: terminó full1378/1378,0fail/skip/cancel,61421msNode y buildCfUfls6e,392módulos6,69s.
-  Ahora9QA seriales, log `%TEMP%/tablerostudio-v8-cierre-revisiones-qa.log`:
-  `node qa/todas.mjs fisica-electrica datos-tecnicos- ingenieria-escenarios ingenieria-validacion multiproyecto simulacion-industrial automatizacion-plc`.
-  Automatización1:29, catálogo1:18, importación3:36 verdes; ingeniería V8 en curso. No otro Chromium/rebuild hasta exit.
-- CfUfls6e incluye correcciones analógicas/contexto/evidencia; cambio posterior48e6885 solo regla de demanda compartida. Focal23/23verde804,9ms; full final debe renovarse.
-- Histórico13fronteras verdes por agregado+focal; especializadas anteriores8/13 con fusión/puerta/componentes/equipos/documentación verdes. Física roja real corregida; cuatro suites no arrancaron por incidente pnpm y están en repetición. Ver VALIDACION.
+- Rama v8/astra-datos-tecnicos, HEAD6ff50c8; UIaa123fe confirmada. Backup remotocf6ce24; main/origin/maina65cc0c intactos tras fetch. TagV8 ausente.
+- Gates A–J implementados/revisados; K local verde, pendiente CI/publicación. HTMLs y documentación se confirman como candidato, no como integración parcial a main.
+- Proceso75232 terminado exit0: **9/9,345checks,25:07**, buildCfUfls6e. V8 catálogo15/import55/ingeniería47 verdes. Física2:20, escenarios0:44, validación1:08, multiproyecto1:41, simulación5:45, automatización1:29.
+- Full definitivo **1379/1379**,0fail/cancel/skip,62,552sNode/74,326scomando; log tablerostudio-v8-unit-final-4.log. Incluye posterior48e6885 de demanda compartida y empaquetador6ff50c8.
+- Histórico13fronteras verdes por agregado+focal; fusión/puerta/componentes/equipos/documentación verdes. Rojos reales/sin entorno de especializadas ya superados por repetición anterior. No repetir sin causa. Ver VALIDACION.
 - npmci canónico restaurado49paquetes11s, package-lock/package.json intactos. Dos archivos pnpm generados retirados; no agente activo ni más acciones pnpm.21tests de revisor solo se acreditaron al ejecutar root44focales posteriormente.
-- Capturas reales escritorio/estrecha y PDF A4 de4páginas inspeccionados. Stress existente100/1000/10000y300bindings; renovar después de cambios de resolver.
+- Capturas reales escritorio/estrecha y PDF A4 de4páginas inspeccionados. Stress renovado3/3,10,78s;100/1000/10000y300bindings,0fallos; informe1788839769223.
+- Producción CrQBSR8I,394módulos, BuildC72A570F34. HTMLs3308535B iguales, SHA en ENTREGA.md; entrega:check verde incluidas entradas LF/CRLF. Primer empaquetado rechazó prefijo./assets, corregido y regresado sin relajar seguridad.
+- Proceso31909 terminó: offline **66/66,5:22**,0fallos/timeout/skip/JS/HTTPexterno. Captura del HTML real inspeccionada, BuildC72A570F34 visible. InventarioCim sin procesos propios QA/Chromium restantes. No proceso activo.
 
-Siguiente secuencia: recoger75232/corregir rojos → commitUI tras verde → full/stress final →
-empaquetar/check/offlineV2–V8 → HTMLs versionados idénticos+manifest/handoff → pushrama y CI
+Siguiente secuencia: confirmarHTMLs/manifiesto/documentación → pushrama y CI
 terminal del SHA → preflight e integración convencional main → CI main/Pages200/artifactHTML
 descargado/hash → tag anotadoV8 si ausente y pushnormal. No force/reset/clean/rebase; no V9.
 
