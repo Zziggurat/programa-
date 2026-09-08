@@ -6,7 +6,12 @@ import type { Dispositivo, Proyecto } from '../modelo/tipos.js';
 import { verificarProyecto } from '../motores/drc.js';
 import { calcularPotenciales } from '../motores/potenciales.js';
 import type { CircuitoIngenieria } from './circuitos.js';
-import type { EngineeringRule, ResultadoReglaIngenieria } from './validacion.js';
+import type { ContextoValidacionIngenieria, EngineeringRule, ResultadoReglaIngenieria } from './validacion.js';
+import { resolverProyectoTecnico, type ResultadoProyectoTecnico } from '../datos-tecnicos/resolver.js';
+import type { CampoTecnico } from '../datos-tecnicos/campos.js';
+import { evaluarCondicionesTecnicas } from '../datos-tecnicos/condiciones.js';
+import { indexarRevisiones, verificarRevision } from '../datos-tecnicos/hash.js';
+import { claveRevision, type ReferenciaTecnica } from '../datos-tecnicos/tipos.js';
 
 type Resultado = ResultadoReglaIngenieria;
 type Estado = Resultado['status'];
@@ -42,10 +47,17 @@ interface CargaSalidaDigital {
 	dispositivoId: string;
 	entradas: readonly string[];
 	corrienteA?: number;
+	corrienteLlamadaA?: number;
 }
 
+function dato(tecnica: ResultadoProyectoTecnico | undefined, id: string, campo: CampoTecnico, canal?: string) {
+	const d = tecnica?.resoluciones.find(r => r.entidad === 'DEVICE' && r.entidadId === id && r.campo === campo && r.canal === canal);
+	return d?.estado === 'RESOLVED' ? d.dato?.valor : undefined;
+}
+const numeroDato = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
+
 /** Solo consumos declarados: no se deduce I=P/V ni se cuenta cada cable como otra carga. */
-function cargasSalidasDigitales(proyecto: Proyecto): CargaSalidaDigital[] {
+function cargasSalidasDigitales(proyecto: Proyecto, tecnica?: ResultadoProyectoTecnico): CargaSalidaDigital[] {
 	return [...proyecto.dispositivos].sort((a, b) => a.id.localeCompare(b.id)).flatMap((d): CargaSalidaDigital[] => {
 		const p = resolverComportamiento(d); let entradas: readonly string[] = [];
 		let corriente = d.corrienteNominal;
@@ -59,8 +71,9 @@ function cargasSalidasDigitales(proyecto: Proyecto): CargaSalidaDigital[] {
 		else if (p?.clase === 'fuente' && p.primario) entradas = p.primario.entradas;
 		else if (p?.clase === 'variador') entradas = p.alimentacion.fases;
 		if (!entradas.length) return [];
-		return [{ dispositivoId: d.id, entradas,
-			corrienteA: corriente !== undefined && Number.isFinite(corriente) && corriente >= 0 ? corriente : undefined }];
+		if (tecnica?.problemas.some(x => x.entidad === 'DEVICE' && x.entidadId === d.id)) corriente = undefined;
+		return [{ dispositivoId: d.id, entradas, corrienteA: numeroDato(corriente),
+			corrienteLlamadaA: numeroDato(dato(tecnica, d.id, 'bobina.corrienteLlamadaA')) }];
 	});
 }
 
@@ -92,33 +105,57 @@ function resultadoCargaCanal(plc: Dispositivo, sd: Extract<ComportamientoSimulac
 			: faltan.length ? ['Completar los consumos declarados y el límite de este canal.'] : [] };
 }
 
-function resultadosDoBobina(proyecto: Proyecto): Resultado[] {
+function resultadosDoBobina(ctx: ContextoValidacionIngenieria): Resultado[] {
+	const proyecto = ctx.proyecto, tecnica = ctx.tecnica;
 	const conectado = conectividadPasiva(proyecto); const salida: Resultado[] = [];
-	const cargas = cargasSalidasDigitales(proyecto);
+	const cargas = cargasSalidasDigitales(proyecto, tecnica);
 	const bobinas = proyecto.dispositivos.flatMap((d) => {
 		const p = resolverComportamiento(d);
 		return p?.clase === 'contactos-electromagneticos' ? [{ d, p }] : [];
 	});
 	for (const plc of [...proyecto.dispositivos].sort((a, b) => a.id.localeCompare(b.id))) {
 		const p = resolverComportamiento(plc); if (p?.clase !== 'controlador') continue;
+		const problemaPlc = tecnica?.problemas.some(x => x.entidad === 'DEVICE' && x.entidadId === plc.id);
 		for (const sd of [...p.salidasDigitales].sort((a, b) => a.borne.localeCompare(b.borne))) {
 			const conectadas = cargas.filter((c) => c.dispositivoId !== plc.id
 				&& c.entradas.some((b) => conectado(nodo(plc.id, sd.borne), nodo(c.dispositivoId, b))));
-			if (conectadas.length) salida.push(resultadoCargaCanal(plc, sd, conectadas));
+			if (conectadas.length) salida.push(resultadoCargaCanal(plc, problemaPlc ? { ...sd, electrica: undefined } : sd, conectadas));
+			if (conectadas.length && proyecto.datosTecnicos) salida.push(resultadoSumaIo({ plcId: plc.id, clave: `canal:${sd.borne}`,
+				code: 'TS-IO-DO-CHANNEL-INRUSH', cargas: conectadas, llamada: true,
+				limite: numeroDato(dato(tecnica, plc.id, 'plc.corrienteLlamadaMaxA', sd.borne)), motivos: [], canales: [sd.borne] }));
 			for (const { d: carga, p: pc } of bobinas) {
 				if (!conectado(nodo(plc.id, sd.borne), nodo(carga.id, pc.bobina.entrada))) continue;
 				const so = sd.electrica; const bo = pc.bobina.electrica; const faltan: string[] = [];
+				if (problemaPlc || tecnica?.problemas.some(x => x.entidad === 'DEVICE' && x.entidadId === carga.id)) faltan.push('revisión técnica de salida/bobina no resoluble');
 				if (!so) faltan.push('datos eléctricos de salida digital');
 				if (!bo) faltan.push('datos eléctricos de bobina');
 				if (so && bo && so.corrienteMaxA === undefined) faltan.push('corriente máxima de salida');
 				if (so && bo && bo.corrienteA === undefined) faltan.push('corriente de bobina');
+				if (so && bo && (so.tensionV === undefined || bo.tensionNominalV === undefined || so.sistema === undefined || bo.sistema === undefined)) faltan.push('tensión/sistema explícitos de salida y bobina');
 				const estados: Estado[] = [];
 				if (faltan.length) estados.push('INDETERMINATE');
+				const rango = dato(tecnica, carga.id, 'bobina.tensionRangoV');
+				const rangoDeclarado = tecnica?.resoluciones.find(r => r.entidadId === carga.id && r.campo === 'bobina.tensionRangoV');
+				if (rangoDeclarado && rangoDeclarado.estado !== 'RESOLVED') faltan.push('rango técnico aplicable de bobina');
 				if (so && bo) {
-					if (so.sistema !== bo.sistema || Math.abs(so.tensionV - bo.tensionNominalV) > Math.max(1, bo.tensionNominalV * 0.01)) estados.push('FAIL');
-					else estados.push('PASS');
+					const tensionIncompatible = Array.isArray(rango) ? so.tensionV < rango[0] || so.tensionV > rango[1]
+						: Math.abs(so.tensionV - bo.tensionNominalV) > Math.max(1, bo.tensionNominalV * 0.01);
+					if (so.sistema !== undefined && bo.sistema !== undefined && so.sistema !== bo.sistema
+						|| so.tensionV !== undefined && bo.tensionNominalV !== undefined && tensionIncompatible) estados.push('FAIL');
+					else if (so.sistema !== undefined && bo.sistema !== undefined && so.tensionV !== undefined && bo.tensionNominalV !== undefined) estados.push('PASS');
 					if (so.corrienteMaxA !== undefined && bo.corrienteA !== undefined) estados.push(bo.corrienteA > so.corrienteMaxA ? 'FAIL' : 'PASS');
+					if (proyecto.datosTecnicos) {
+						const tipoCarga = dato(tecnica, plc.id, 'plc.tipoCarga', sd.borne);
+						if (tipoCarga === 'RESISTIVA') estados.push('FAIL');
+						else if (tipoCarga !== 'INDUCTIVA') faltan.push('capacidad de la salida para carga inductiva');
+						if (bo.sistema === 'AC') {
+							const frecuencia = proyecto.datosTecnicos.vinculos.find(v => v.entidad === 'DEVICE' && v.entidadId === plc.id)?.condiciones.frecuenciaHz;
+							if (typeof frecuencia !== 'number' || bo.frecuenciaHz === undefined) faltan.push('frecuencia explícita de salida AC y bobina');
+							else if (Math.abs(frecuencia - bo.frecuenciaHz) > 0.01) estados.push('FAIL');
+						}
+					}
 				}
+				if (faltan.length) estados.push('INDETERMINATE');
 				const status = peor(estados);
 				salida.push({ code: 'TS-IO-DO-COIL', category: 'IO', severity: status === 'FAIL' ? 'ERROR' : 'INFO', status,
 					title: 'Salida digital y bobina', description: status === 'FAIL'
@@ -130,12 +167,64 @@ function resultadosDoBobina(proyecto: Proyecto): Resultado[] {
 						...(so?.corrienteMaxA !== undefined ? [{ codigo: 'DO_IMAX', descripcion: 'Corriente máxima de salida', valor: so.corrienteMaxA, unidad: 'A', origen: 'CONFIGURADO' as const }] : []),
 						...(bo ? [{ codigo: 'COIL_V', descripcion: `Bobina ${bo.sistema}`, valor: bo.tensionNominalV, unidad: 'V', origen: 'CONFIGURADO' as const }] : []),
 						...(bo?.corrienteA !== undefined ? [{ codigo: 'COIL_I', descripcion: 'Consumo de bobina', valor: bo.corrienteA, unidad: 'A', origen: 'CONFIGURADO' as const }] : []),
+						...(Array.isArray(rango) ? [{ codigo: 'COIL_V_RANGE', descripcion: 'Rango de tensión explícito resuelto', valor: `${rango[0]}..${rango[1]}`, unidad: 'V', origen: 'CONFIGURADO' as const }] : []),
 					], relatedEntities: entidades([plc.id, carga.id]), provenance: faltan.length ? 'NO_DISPONIBLE' : 'CONFIGURADO',
 					criterion: { descripcion: 'Compatibilidad nominal explícita del perfil', origen: 'MODELO_V7' }, missingData: faltan,
 					remediationHints: status === 'FAIL' ? ['Revisar interfaz o relé intermedio; V7 no lo inserta automáticamente.'] : [],
 				});
 			}
 		}
+		if (proyecto.datosTecnicos) salida.push(...resultadosGruposIo(ctx, plc, cargas, conectado));
+	}
+	return salida;
+}
+
+function resultadoSumaIo(entrada: { plcId: string; clave: string; code: Resultado['code']; cargas: readonly CargaSalidaDigital[];
+	llamada: boolean; limite?: number; motivos: string[]; canales: string[]; referencia?: ReferenciaTecnica; procedencia?: string }): Resultado {
+	const propiedad = entrada.llamada ? 'corrienteLlamadaA' : 'corrienteA';
+	const suma = entrada.cargas.reduce((s, c) => s + (c[propiedad] ?? 0), 0);
+	const faltantes = [...entrada.motivos, ...entrada.cargas.filter(c => c[propiedad] === undefined).map(c => `${propiedad} de ${c.dispositivoId}`),
+		...(entrada.limite === undefined ? [`capacidad ${entrada.llamada ? 'de llamada' : 'sostenida'}`] : [])];
+	const falla = entrada.limite !== undefined && suma - entrada.limite > 1e-9 * Math.max(1, suma, entrada.limite);
+	const status: Estado = falla ? 'FAIL' : faltantes.length ? 'INDETERMINATE' : 'PASS';
+	return { code: entrada.code, category: 'IO', severity: falla ? 'ERROR' : 'INFO', status,
+		title: `${entrada.llamada ? 'Llamada' : 'Carga sostenida'} ${entrada.clave}`,
+		description: 'Suma simultánea de corrientes declaradas; los consumos desconocidos no se suponen cero. No modela una envolvente temporal de arranques.',
+		evidence: [{ codigo: 'IO_KNOWN_SUM', descripcion: 'Suma conocida, no necesariamente suma completa', valor: suma, unidad: 'A', origen: 'CALCULADO' },
+			{ codigo: 'IO_CHANNELS', descripcion: 'Identidades persistentes de canales', valor: [...entrada.canales].sort().join(', '), origen: 'CONFIGURADO' },
+			...(entrada.limite !== undefined ? [{ codigo: 'IO_LIMIT', descripcion: 'Límite aplicable declarado', valor: entrada.limite, unidad: 'A', origen: 'CONFIGURADO' as const }] : []),
+			...(entrada.referencia ? [{ codigo: 'IO_REFERENCE', descripcion: entrada.procedencia ?? '',
+				valor: `${entrada.referencia.catalogoId}/${entrada.referencia.id}@${entrada.referencia.revision}#${entrada.referencia.hash}`, origen: 'CONFIGURADO' as const }] : [])],
+		relatedEntities: [...entidades([entrada.plcId, ...entrada.cargas.map(c => c.dispositivoId)]),
+			...entrada.canales.map(c => ({ tipo: 'TERMINAL' as const, id: nodo(entrada.plcId, c) }))],
+		provenance: 'CALCULADO', missingData: faltantes, remediationHints: [],
+		criterion: { descripcion: `Límite explícito ${entrada.llamada ? 'de llamada' : 'sostenido'} ${entrada.clave}`, origen: 'CONFIGURADO' } };
+}
+
+function resultadosGruposIo(ctx: ContextoValidacionIngenieria, plc: Dispositivo, cargas: CargaSalidaDigital[],
+	conectado: (a: string, b: string) => boolean): Resultado[] {
+	const cfg = ctx.proyecto.datosTecnicos!, vinculo = cfg.vinculos.find(v => v.entidad === 'DEVICE' && v.entidadId === plc.id);
+	if (!vinculo) return [];
+	const salida: Resultado[] = []; let revision;
+	try { revision = indexarRevisiones(cfg.revisiones, false).get(claveRevision(vinculo.producto));
+		if (!revision || revision.hash !== vinculo.producto.hash || revision.tipo !== 'PRODUCTO' || revision.familia !== 'PLC') throw new Error('Revisión PLC exacta ausente o incompatible.');
+		verificarRevision(revision);
+	} catch (e) { return [resultadoSumaIo({ plcId: plc.id, clave: 'grupos no resolubles', code: 'TS-IO-DO-GROUP-DATA', cargas: [],
+		llamada: false, motivos: [String(e)], canales: [] })]; }
+	const perfil = resolverComportamiento(plc); if (perfil?.clase !== 'controlador') return [];
+	for (const grupo of [...(revision.gruposSalidas ?? [])].sort((a, b) => a.id.localeCompare(b.id))) {
+		const condicion = evaluarCondicionesTecnicas({ declaradas: grupo.condiciones, actuales: vinculo.condiciones });
+		const motivos = [...condicion.motivos];
+		for (const canal of grupo.canales) if (!perfil.salidasDigitales.some(s => s.borne === canal)) motivos.push(`Canal ${canal} no existe en el perfil PLC.`);
+		const conectadas = cargas.filter(c => c.dispositivoId !== plc.id && grupo.canales.some(canal =>
+			c.entradas.some(b => conectado(nodo(plc.id, canal), nodo(c.dispositivoId, b)))));
+		for (const carga of conectadas) if (grupo.canales.filter(canal => carga.entradas.some(b => conectado(nodo(plc.id, canal), nodo(carga.dispositivoId, b)))).length > 1)
+			motivos.push(`Carga ${carga.dispositivoId} une varias salidas: reparto de corriente no modelado.`);
+		for (const llamada of [false, true]) salida.push(resultadoSumaIo({ plcId: plc.id, clave: `grupo:${grupo.id}`,
+			code: llamada ? 'TS-IO-DO-GROUP-INRUSH' : 'TS-IO-DO-GROUP-LOAD', cargas: conectadas, llamada,
+			limite: condicion.estado === 'RESOLVED' ? llamada ? grupo.corrienteLlamadaMaxA : grupo.corrienteMaxA : undefined,
+			motivos, canales: grupo.canales, referencia: vinculo.producto,
+			procedencia: `${revision.procedencia.origen}: ${revision.procedencia.referencia}` }));
 	}
 	return salida;
 }
@@ -246,7 +335,17 @@ function resultadosAnalogicos(proyecto: Proyecto, fisica: Parameters<Engineering
 	for (const plc of [...proyecto.dispositivos].sort((a, b) => a.id.localeCompare(b.id))) {
 		const p = resolverComportamiento(plc); if (p?.clase !== 'controlador') continue;
 		for (const ai of p.entradasAnalogicas ?? []) {
-			const fuente = fuentes.find((f) => conectado(nodo(plc.id, ai.borne), nodo(f.dispositivo.id, f.borne)));
+			const candidatas = fuentes.filter((f) => conectado(nodo(plc.id, ai.borne), nodo(f.dispositivo.id, f.borne)))
+				.sort((a, b) => nodo(a.dispositivo.id, a.borne).localeCompare(nodo(b.dispositivo.id, b.borne)));
+			if (candidatas.length > 1) {
+				salida.push({ code: 'TS-ANALOG-SOURCES-AMBIGUOUS', category: 'ANALOG', severity: 'INFO', status: 'INDETERMINATE',
+					title: 'Varias fuentes analógicas en la misma entrada', description: 'No se elige la primera fuente del array ni se declara compatible la suma no modelada.',
+					evidence: [{ codigo: 'ANALOG_SOURCES', descripcion: 'Fuentes conectadas por señal', valor: candidatas.map(f => nodo(f.dispositivo.id, f.borne)).join(', '), origen: 'CALCULADO' }],
+					relatedEntities: [...entidades([plc.id, ...candidatas.map(f => f.dispositivo.id)]), { tipo: 'TERMINAL', id: nodo(plc.id, ai.borne) }],
+					provenance: 'NO_DISPONIBLE', missingData: ['fuente única de la entrada analógica'], remediationHints: ['Separar canales o declarar una interfaz sumadora modelada.'] });
+				continue;
+			}
+			const fuente = candidatas[0];
 			if (!fuente) continue;
 			const tipoIncompatible = fuente.unidad !== ai.unidad;
 			const modoIncompatible = fuente.modo === 'activa' && ai.modoEntrada === 'activa';
@@ -270,8 +369,9 @@ function resultadosAnalogicos(proyecto: Proyecto, fisica: Parameters<Engineering
 				} else {
 					if (configF?.resistenciaSalidaOhm === undefined) faltan.push('resistencia de salida');
 					if (configI?.burdenOhm === undefined) faltan.push('impedancia de entrada');
+					if (rCable === undefined) faltan.push('resistencia/longitud de cable');
 					if (!faltan.length) calidad = resolverSenal010({ tensionDemandadaV: fuente.rango[1],
-						resistenciaSalidaOhm: configF!.resistenciaSalidaOhm! + (rCable ?? 0), resistenciaEntradaOhm: configI!.burdenOhm! }).calidad;
+						resistenciaSalidaOhm: configF!.resistenciaSalidaOhm! + rCable!, resistenciaEntradaOhm: configI!.burdenOhm! }).calidad;
 				}
 				const runtime = fisica?.lazosAnalogicos.find((x) => x.fuenteId === fuente.dispositivo.id && x.entradaId === nodo(plc.id, ai.borne));
 				if (runtime) calidad = runtime.calidad;
@@ -334,8 +434,11 @@ function resultadosPe(proyecto: Proyecto): Resultado[] {
 export const REGLA_COMPATIBILIDAD_EQUIPOS: EngineeringRule = {
 	code: 'TS-EQUIPMENT-COMPATIBILITY', category: 'CIRCUIT', scope: 'PROJECT',
 	evaluate(contexto) {
+		if (contexto.proyecto.datosTecnicos && !contexto.tecnica) {
+			const tecnica = resolverProyectoTecnico(contexto.proyecto); contexto = { ...contexto, proyecto: tecnica.proyecto, tecnica };
+		}
 		const resultados = [
-			...resultadosDoBobina(contexto.proyecto),
+			...resultadosDoBobina(contexto),
 			...resultadosTensionFrecuencia(contexto.proyecto, contexto.circuitos),
 			...resultadosMotorVfd(contexto.proyecto, contexto.circuitos, contexto.fisica),
 			...resultadosAnalogicos(contexto.proyecto, contexto.fisica),

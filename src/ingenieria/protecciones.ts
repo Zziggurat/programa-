@@ -6,7 +6,9 @@ import {
 import type { Dispositivo, Proyecto } from '../modelo/tipos.js';
 import { resolverComportamiento } from '../modelo/comportamiento.js';
 import type { CircuitoIngenieria } from './circuitos.js';
-import type { EngineeringRule, EstadoValidacionIngenieria, ResultadoReglaIngenieria } from './validacion.js';
+import type { ContextoValidacionIngenieria, EngineeringRule, EstadoValidacionIngenieria, ResultadoReglaIngenieria } from './validacion.js';
+import { resolverCriteriosTecnicos } from '../datos-tecnicos/criterios.js';
+import { resolverProyectoTecnico } from '../datos-tecnicos/resolver.js';
 
 const tol = (a: number, b: number) => 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
 
@@ -22,12 +24,15 @@ function corrienteDiseno(proyecto: Proyecto, fisica: ResultadoFisicaElectrica | 
 	valor?: number; origen: 'CALCULADO' | 'CONFIGURADO' | 'NO_DISPONIBLE'; detalle: string;
 } {
 	const valores: { valor: number; origen: 'CALCULADO' | 'CONFIGURADO'; id: string }[] = [];
+	const faltantes: string[] = [];
 	for (const id of c.cargas) {
 		const motor = fisica?.motores.get(id);
 		if (motor) { valores.push({ valor: motor.corrienteNominalUsadaA, origen: 'CALCULADO', id }); continue; }
 		const d = proyecto.dispositivos.find((x) => x.id === id);
-		if (d?.corrienteNominal) valores.push({ valor: d.corrienteNominal, origen: 'CONFIGURADO', id });
+		if (d?.corrienteNominal !== undefined) valores.push({ valor: d.corrienteNominal, origen: 'CONFIGURADO', id });
+		else faltantes.push(id);
 	}
+	if (faltantes.length && proyecto.datosTecnicos) return { origen: 'NO_DISPONIBLE', detalle: `Corriente de diseño desconocida: ${faltantes.join(', ')}` };
 	if (!valores.length) return { origen: 'NO_DISPONIBLE', detalle: 'Las cargas no declaran corriente de diseño.' };
 	return { valor: valores.reduce((s, x) => s + x.valor, 0),
 		origen: valores.some((x) => x.origen === 'CALCULADO') ? 'CALCULADO' : 'CONFIGURADO',
@@ -87,6 +92,67 @@ function validarCorte(fisica: ResultadoFisicaElectrica | undefined, c: CircuitoI
 	return r;
 }
 
+/** V8 compara exclusivamente la capacidad seleccionada; ningún nombre de campo actúa como fallback. */
+function validarCorteTecnico(ctx: ContextoValidacionIngenieria, c: CircuitoIngenieria, d: Dispositivo): ResultadoReglaIngenieria {
+	const criterio = resolverCriteriosTecnicos(ctx.proyecto.datosTecnicos, c.id, c.criterios).parametros.capacidadCorte;
+	const tecnica = ctx.tecnica ?? resolverProyectoTecnico(ctx.proyecto);
+	const vinculada = ctx.proyecto.datosTecnicos!.vinculos.some(v => v.entidad === 'DEVICE' && v.entidadId === d.id);
+	const problema = tecnica.problemas.filter(p => p.entidad === 'DEVICE' && p.entidadId === d.id);
+	const prospectiva = ctx.prospectiva?.get(d.id);
+	const iccKA = prospectiva?.estado === 'RESUELTO' && prospectiva.iccA !== undefined ? prospectiva.iccA / 1000 : undefined;
+	const r = resultado(c, 'TS-PROT-BREAKING-CAPACITY-DATA', d.id, 'INDETERMINATE', 'Poder de corte no validable',
+		'La comparación exige un criterio explícito, una capacidad aplicable y un ensayo prospectivo resuelto.');
+	r.provenance = 'NO_DISPONIBLE';
+	if (iccKA !== undefined) r.evidence.push({ codigo: 'ICC', descripcion: 'Icc del ensayo prospectivo independiente',
+		valor: iccKA, unidad: 'kA', origen: prospectiva!.origen });
+	if (prospectiva) {
+		r.evidence.push({ codigo: 'ICC_STATE', descripcion: [...prospectiva.motivos, ...prospectiva.limitaciones].join(' '),
+			valor: prospectiva.estado, origen: prospectiva.origen });
+		if (prospectiva.ensayo) r.evidence.push({ codigo: 'ICC_POINT', descripcion: 'Dos terminales configurados, sin retorno inferido',
+			valor: `${prospectiva.ensayo.tipo}: ${prospectiva.ensayo.de.dispositivoId}::${prospectiva.ensayo.de.borneId} → ${prospectiva.ensayo.a.dispositivoId}::${prospectiva.ensayo.a.borneId}`, origen: 'CONFIGURADO' });
+	}
+	const capacidades = new Map<string, number>();
+	for (const [nombre, campo] of [['Icn', 'icnKA'], ['Icu', 'icuKA'], ['Ics', 'icsKA']] as const) {
+		const resuelta = tecnica.resoluciones.find(x => x.entidad === 'DEVICE' && x.entidadId === d.id && x.campo === `proteccion.${nombre}`);
+		const valor = vinculada ? !problema.length && resuelta?.estado === 'RESOLVED' && typeof resuelta.dato?.valor === 'number'
+			? resuelta.dato.valor : undefined : d.fisica?.proteccion?.capacidadCorte?.[campo];
+		if (valor !== undefined && Number.isFinite(valor) && valor > 0) {
+			capacidades.set(nombre, valor);
+			r.evidence.push({ codigo: nombre, descripcion: vinculada
+				? `${nombre} aplicable; ${resuelta!.dato!.procedencia.origen}: ${resuelta!.dato!.procedencia.referencia}`
+				: `${nombre} del perfil persistente sin vínculo V8; origen documental no corroborado`, valor, unidad: 'kA', origen: 'CONFIGURADO' });
+		}
+		if (resuelta) {
+			r.evidence.push({ codigo: `${nombre}_RESOLUTION`, descripcion: [...resuelta.pasos, ...resuelta.motivos, ...resuelta.advertencias].join(' '),
+				valor: resuelta.estado, origen: 'CONFIGURADO' });
+			r.evidence.push({ codigo: `${nombre}_REFERENCE`, descripcion: 'Revisión exacta de la resolución; no implica certificación del valor',
+				valor: `${resuelta.referencia.catalogoId}/${resuelta.referencia.id}@${resuelta.referencia.revision}#${resuelta.referencia.hash}`, origen: 'CONFIGURADO' });
+		}
+	}
+	r.evidence.push({ codigo: 'BREAKING_CRITERION', descripcion: [...criterio.motivos,
+		...criterio.ruta.map(p => `${p.origen}: ${p.estado}${p.motivo ? `; ${p.motivo}` : ''}`)].join(' '),
+		valor: criterio.decision?.modo === 'VALOR' ? String(criterio.decision.valor) : criterio.decision?.modo ?? criterio.estado, origen: 'CONFIGURADO' });
+	if (criterio.estado === 'NOT_APPLICABLE' && criterio.decision && criterio.decision.modo !== 'VALOR') {
+		r.status = 'NOT_APPLICABLE'; r.title = criterio.decision.modo === 'DESACTIVADO' ? 'Comparación de corte desactivada' : 'Comparación de corte no aplicable';
+		r.description = criterio.decision.motivo; return r;
+	}
+	const seleccion = criterio.estado === 'RESOLVED' && criterio.decision?.modo === 'VALOR' ? String(criterio.decision.valor) : undefined;
+	const capacidad = seleccion ? capacidades.get(seleccion) : undefined;
+	r.missingData = [
+		...(!seleccion ? ['criterio explícito Icn, Icu o Ics'] : []),
+		...(seleccion && capacidad === undefined ? [`${seleccion} aplicable en las condiciones de la protección`] : []),
+		...(iccKA === undefined ? [`Icc prospectiva: ${prospectiva?.estado ?? 'SIN_ENSAYO'}`] : []),
+		...problema.map(p => p.motivo),
+	];
+	if (seleccion) r.criterion = { descripcion: `${seleccion} ≥ Icc; selección explícita ${criterio.origen}`, valor: seleccion, origen: 'CONFIGURADO' };
+	if (r.missingData.length || capacidad === undefined || iccKA === undefined) return r;
+	const falla = iccKA - capacidad > tol(iccKA, capacidad);
+	r.code = 'TS-PROT-BREAKING-CAPACITY'; r.status = falla ? 'FAIL' : 'PASS'; r.severity = falla ? 'ERROR' : 'INFO';
+	r.title = falla ? 'Poder de corte seleccionado insuficiente' : 'Poder de corte seleccionado compatible con Icc modelada';
+	r.description = `Icc ${iccKA.toFixed(3)} kA frente a ${seleccion} ${capacidad} kA. No constituye selección ni coordinación certificada.`;
+	r.provenance = prospectiva!.origen; return r;
+}
+
 function validarArranque(proyecto: Proyecto, fisica: ResultadoFisicaElectrica | undefined, c: CircuitoIngenieria,
 	d: Dispositivo): ResultadoReglaIngenieria | undefined {
 	const motorId = c.cargas.find((id) => {
@@ -99,7 +165,7 @@ function validarArranque(proyecto: Proyecto, fisica: ResultadoFisicaElectrica | 
 	const nominal = fisica?.motores.get(motorId)?.corrienteNominalUsadaA ?? cfg?.corrienteNominalA ?? motor.corrienteNominal;
 	const multiplo = cfg?.corrienteArranqueMultiplo; const tiempo = cfg?.tiempoArranqueS;
 	const inA = fisica?.protecciones.get(d.id)?.inA ?? d.fisica?.proteccion?.inA ?? d.corrienteNominal;
-	const curva = perfilCurvaProteccionDispositivo(d);
+	const curva = perfilCurvaProteccionDispositivo(d, proyecto);
 	if (!(nominal && multiplo && tiempo && inA && curva)) {
 		const r = resultado(c, 'TS-PROT-MOTOR-START-DATA', d.id, 'INDETERMINATE', 'Arranque de motor no validable',
 			'Faltan datos de placa, tiempo de arranque, calibre o curva de protección.'); r.provenance = 'NO_DISPONIBLE';
@@ -158,7 +224,8 @@ export const REGLA_PROTECCIONES: EngineeringRule = {
 		const porId = new Map(contexto.proyecto.dispositivos.map((d) => [d.id, d])); const salida: ResultadoReglaIngenieria[] = [];
 		for (const c of contexto.circuitos) {
 			for (const id of c.protecciones) { const d = porId.get(id); if (!d) continue;
-				salida.push(validarIn(contexto.proyecto, contexto.fisica, c, d), validarCorte(contexto.fisica, c, d));
+				salida.push(validarIn(contexto.proyecto, contexto.fisica, c, d), contexto.proyecto.datosTecnicos
+					? validarCorteTecnico(contexto, c, d) : validarCorte(contexto.fisica, c, d));
 				const arranque = validarArranque(contexto.proyecto, contexto.fisica, c, d); if (arranque) salida.push(arranque);
 			}
 			salida.push(...validarCoordinacion(contexto.fisica, c));
@@ -190,9 +257,9 @@ export function datosCoordinacion(proyecto: Proyecto, circuitos: readonly Circui
 			const arriba = cadena[i]; const abajo = cadena[i + 1];
 			const dato = fisica?.selectividad.find((x) => x.aguasArribaId === arriba && x.aguasAbajoId === abajo);
 			salida.push({ circuitId: c.id, aguasArriba: { dispositivoId: arriba,
-				perfil: porId.get(arriba) ? perfilCurvaProteccionDispositivo(porId.get(arriba)!) : undefined,
+				perfil: porId.get(arriba) ? perfilCurvaProteccionDispositivo(porId.get(arriba)!, proyecto) : undefined,
 				evaluacion: dato?.aguasArriba }, aguasAbajo: { dispositivoId: abajo,
-				perfil: porId.get(abajo) ? perfilCurvaProteccionDispositivo(porId.get(abajo)!) : undefined,
+				perfil: porId.get(abajo) ? perfilCurvaProteccionDispositivo(porId.get(abajo)!, proyecto) : undefined,
 				evaluacion: dato?.aguasAbajo }, clasificacion: dato?.clasificacion ?? 'INDETERMINADA',
 				explicacion: dato?.explicacion ?? 'Faltan Icc o ventanas tiempo-corriente para este par.' });
 		}

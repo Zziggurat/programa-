@@ -4,9 +4,14 @@ import {
 } from '../fisica/topologia-proyecto.js';
 import type { CriteriosCircuitoIngenieria } from '../modelo/ingenieria.js';
 import type { Proyecto } from '../modelo/tipos.js';
+import { resolverComportamiento } from '../modelo/comportamiento.js';
+import { resolverAmpacidadTecnica } from '../datos-tecnicos/ampacidad.js';
+import { evaluarCoordinacionIbInIz, resolverCriteriosTecnicos } from '../datos-tecnicos/criterios.js';
+import { resolverProyectoTecnico } from '../datos-tecnicos/resolver.js';
 import { descubrirCircuitos, type CircuitoIngenieria } from './circuitos.js';
+import { analizarProspectivaProtecciones } from './prospectiva.js';
 import type {
-	EngineeringRule, EstadoValidacionIngenieria, ResultadoReglaIngenieria,
+	ContextoValidacionIngenieria, EngineeringRule, EstadoValidacionIngenieria, ResultadoReglaIngenieria,
 } from './validacion.js';
 
 const tolerancia = (a: number, b: number) => 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
@@ -92,13 +97,122 @@ function resultadoAmpacidad(c: CircuitoIngenieria, id: string, f: ResultadoCondu
 	return r;
 }
 
+/** Demanda declarada por cargas de todos los trayectos que usan el tramo, no corriente instantánea. */
+function demandaTramo(ctx: ContextoValidacionIngenieria, id: string): { ibA?: number; faltantes: string[]; cargas: string[] } {
+	const circuitos = ctx.circuitos.filter(c => c.conductores.includes(id));
+	const cargas = [...new Set(circuitos.flatMap(c => c.trayectos.filter(t => t.conductores.includes(id))
+		.flatMap(t => c.cargas.filter(carga => t.dispositivos.includes(carga)))))].sort();
+	const faltantes: string[] = []; let total = 0;
+	if (!cargas.length) faltantes.push('cargas aguas abajo identificadas por trayecto');
+	if (circuitos.some(c => c.estadoTopologia !== 'INEQUIVOCA')) faltantes.push('topología inequívoca de la demanda del tramo');
+	for (const carga of cargas) {
+		if (ctx.tecnica?.problemas.some(p => p.entidad === 'DEVICE' && p.entidadId === carga)) {
+			faltantes.push(`datos técnicos de carga ${carga} sin resolver`); continue;
+		}
+		const d = ctx.proyecto.dispositivos.find(d => d.id === carga), p = d && resolverComportamiento(d);
+		const corriente = p?.clase === 'contactos-electromagneticos' ? p.bobina.electrica?.corrienteA
+			: ctx.fisica?.motores.get(carga)?.corrienteNominalUsadaA ?? d?.corrienteNominal
+				?? (d?.fisica?.carga?.modelo === 'CONSTANT_I' ? d.fisica.carga.corrienteA : undefined);
+		if (corriente === undefined || !Number.isFinite(corriente) || corriente < 0) faltantes.push(`corriente de diseño de ${carga}`);
+		else total += corriente;
+	}
+	return { ibA: faltantes.length ? undefined : total, faltantes, cargas };
+}
+
+/** Protección más próxima antes del segmento: todos los trayectos deben coincidir. */
+function proteccionTramo(ctx: ContextoValidacionIngenieria, id: string): string | undefined {
+	const conductor = ctx.proyecto.conductores.find(c => c.id === id); if (!conductor) return undefined;
+	const extremos = [conductor.de, conductor.a].map(b => `${b.dispositivoId}::${b.borneId}`);
+	const candidatas = new Set<string>(); let sin = false;
+	for (const c of ctx.circuitos.filter(c => c.conductores.includes(id))) {
+		if (c.estadoTopologia !== 'INEQUIVOCA') return undefined;
+		for (const t of c.trayectos.filter(t => t.conductores.includes(id))) {
+			const i = t.nodos.findIndex((n, i) => extremos.includes(n) && extremos.includes(t.nodos[i + 1]));
+			if (i < 0) { sin = true; continue; }
+			let anterior: string | undefined;
+			for (let j = 0; j < i; j++) {
+				const dispositivo = dispositivoNodo(t.nodos[j]);
+				if (dispositivo === dispositivoNodo(t.nodos[j + 1]) && c.protecciones.includes(dispositivo)) anterior = dispositivo;
+			}
+			if (anterior) candidatas.add(anterior); else sin = true;
+		}
+	}
+	return !sin && candidatas.size === 1 ? [...candidatas][0] : undefined;
+}
+
+function resultadosAmpacidadTecnica(ctx: ContextoValidacionIngenieria, c: CircuitoIngenieria, id: string,
+	f: ResultadoConductorProyectoFisica | undefined): ResultadoReglaIngenieria[] {
+	const seccion = f?.seccionMm2 ?? ctx.proyecto.conductores.find(x => x.id === id)?.seccion;
+	const amp = resolverAmpacidadTecnica(ctx.proyecto.datosTecnicos, id, seccion), demanda = demandaTramo(ctx, id);
+	const erroresTramo = ctx.tecnica?.problemas.filter(p => p.entidad === 'CONDUCTOR' && p.entidadId === id) ?? [];
+	if (erroresTramo.length) { amp.estado = 'CONFLICT'; amp.izA = undefined; amp.motivos.push(...erroresTramo.map(p => p.motivo)); }
+	const disponible = amp.estado === 'RESOLVED' && amp.izA !== undefined;
+	const falla = disponible && demanda.ibA !== undefined && excede(demanda.ibA, amp.izA!);
+	const r = base(c, 'TS-CABLE-AMPACITY', id, falla ? 'FAIL' : disponible && demanda.ibA !== undefined ? 'PASS' : 'INDETERMINATE',
+		'Corriente de diseño frente a ampacidad', 'Comprobación parcial Ib ≤ Iz; no sustituye la coordinación Ib ≤ In ≤ Iz.');
+	r.missingData = [...amp.faltantes, ...amp.motivos, ...demanda.faltantes];
+	r.evidence = [{ codigo: 'AMPACITY_STATE', descripcion: [...amp.motivos, ...amp.advertencias].join(' '), valor: amp.estado, origen: 'CONFIGURADO' },
+		{ codigo: 'AMPACITY_LOADS', descripcion: 'Cargas asociadas al tramo; sin asumir corriente cero en reposo', valor: demanda.cargas.join(', '), origen: 'CALCULADO' },
+		...(demanda.ibA !== undefined ? [{ codigo: 'IB', descripcion: 'Suma de demanda nominal declarada', valor: demanda.ibA, unidad: 'A', origen: 'CALCULADO' as const }] : []),
+		...(f ? [{ codigo: 'I_OPERATING', descripcion: 'Corriente instantánea separada de Ib', valor: f.corrienteA, unidad: 'A', origen: 'CALCULADO' as const }] : []),
+		...(amp.izBaseA !== undefined ? [{ codigo: 'IZ_BASE', descripcion: 'Capacidad de las filas base seleccionadas', valor: amp.izBaseA, unidad: 'A', origen: 'CONFIGURADO' as const }] : []),
+		...(amp.izA !== undefined ? [{ codigo: 'IZ', descripcion: amp.transformaciones.join(' '), valor: amp.izA, unidad: 'A', origen: 'CALCULADO' as const }] : []),
+		...amp.filasBase.map((fila, i) => ({ codigo: `AMPACITY_ROW_${i}`, descripcion: 'Fila exacta de cálculo', valor: JSON.stringify(fila), origen: 'CONFIGURADO' as const })),
+		...amp.factoresAplicados.map(factor => ({ codigo: `AMPACITY_FACTOR_${factor.id}`, descripcion: `${factor.dimension}; entrada ${factor.entrada}; ${factor.politica}`, valor: factor.factor, origen: 'CALCULADO' as const })),
+	];
+	if (amp.referencia) r.evidence.push({ codigo: 'AMPACITY_REFERENCE', descripcion: `${amp.procedencia?.origen}: ${amp.procedencia?.referencia}`,
+		valor: `${amp.referencia.catalogoId}/${amp.referencia.id}@${amp.referencia.revision}#${amp.referencia.hash}`, origen: 'CONFIGURADO' });
+	r.provenance = disponible ? 'CALCULADO' : 'NO_DISPONIBLE';
+	const proteccionId = proteccionTramo(ctx, id), proteccion = ctx.proyecto.dispositivos.find(d => d.id === proteccionId);
+	const errorProteccion = ctx.tecnica?.problemas.some(p => p.entidad === 'DEVICE' && p.entidadId === proteccionId)
+		|| ctx.tecnica?.resoluciones.some(r => r.entidad === 'DEVICE' && r.entidadId === proteccionId && r.campo === 'proteccion.inA' && r.estado !== 'RESOLVED');
+	const inA = errorProteccion ? undefined : proteccion?.fisica?.proteccion?.inA ?? proteccion?.corrienteNominal;
+	const criterio = resolverCriteriosTecnicos(ctx.proyecto.datosTecnicos, c.id, c.criterios).parametros.coordinarIbInIz;
+	const coord = evaluarCoordinacionIbInIz({ criterio, ibA: demanda.ibA, inA, izA: disponible ? amp.izA : undefined });
+	const rc = base(c, 'TS-CABLE-IB-IN-IZ', id, coord.estado, 'Coordinación Ib ≤ In ≤ Iz', coord.motivos.join(' '));
+	rc.evidence = structuredClone(r.evidence); rc.missingData = [...coord.faltantes, ...(!proteccionId ? ['protección aguas arriba inequívoca del tramo'] : [])];
+	if (proteccionId) rc.relatedEntities.push({ tipo: 'DEVICE', id: proteccionId });
+	if (inA !== undefined) rc.evidence.push({ codigo: 'IN', descripcion: `Calibre de la protección aguas arriba ${proteccionId}`, valor: inA, unidad: 'A', origen: 'CONFIGURADO' });
+	rc.evidence.push({ codigo: 'COORDINATION_CRITERION', descripcion: criterio.motivos.join(' '), valor: JSON.stringify(criterio.decision ?? criterio.estado), origen: 'CONFIGURADO' });
+	rc.criterion = { descripcion: `Criterio de coordinación ${criterio.origen ?? 'ausente'}`, origen: 'CONFIGURADO' };
+	return [r, rc];
+}
+
+function circuitoConCriterios(ctx: Pick<ContextoValidacionIngenieria, 'proyecto'>, c: CircuitoIngenieria): CircuitoIngenieria {
+	if (!ctx.proyecto.datosTecnicos) return c;
+	const efectivos = resolverCriteriosTecnicos(ctx.proyecto.datosTecnicos, c.id, c.criterios);
+	const copia = { ...c, criterios: { ...c.criterios } };
+	for (const k of ['maxVoltageDropPercent', 'maxLossW', 'maxLossPercent'] as const) {
+		const d = efectivos.parametros[k];
+		if (d.estado === 'RESOLVED' && d.decision?.modo === 'VALOR' && typeof d.decision.valor === 'number') copia.criterios[k] = d.decision.valor;
+		else delete copia.criterios[k];
+	}
+	return copia;
+}
+
+function caidaSegunCriterio(ctx: Pick<ContextoValidacionIngenieria, 'proyecto'>, c: CircuitoIngenieria, id: string,
+	f: ResultadoConductorProyectoFisica | undefined): ResultadoReglaIngenieria {
+	if (ctx.proyecto.datosTecnicos) {
+		const criterio = resolverCriteriosTecnicos(ctx.proyecto.datosTecnicos, c.id, c.criterios).parametros.maxVoltageDropPercent;
+		if (criterio.estado === 'NOT_APPLICABLE') {
+			const r = base(c, 'TS-CABLE-VOLTAGE-DROP-CRITERION', id, 'NOT_APPLICABLE', 'Criterio de caída no aplicado', criterio.motivos.join(' '));
+			r.evidence = [{ codigo: 'VOLTAGE_CRITERION', descripcion: criterio.origen ?? '', valor: JSON.stringify(criterio.decision), origen: 'CONFIGURADO' }]; return r;
+		}
+	}
+	return resultadoCaida(c, id, f);
+}
+
 export const REGLA_CONDUCTORES: EngineeringRule = {
 	code: 'TS-CABLE-DESIGN', category: 'CABLE', scope: 'CIRCUIT',
 	evaluate(contexto) {
+		if (contexto.proyecto.datosTecnicos && !contexto.tecnica) { const tecnica = resolverProyectoTecnico(contexto.proyecto);
+			contexto = { ...contexto, proyecto: tecnica.proyecto, tecnica }; }
 		const salida: ResultadoReglaIngenieria[] = [];
-		for (const c of contexto.circuitos) for (const id of c.conductores) {
+		for (const original of contexto.circuitos) for (const id of original.conductores) {
+			const c = circuitoConCriterios(contexto, original);
 			const f = contexto.fisica?.conductores.get(id);
-			salida.push(resultadoCaida(c, id, f), resultadoAmpacidad(c, id, f), ...resultadoPerdida(c, id, f));
+			salida.push(caidaSegunCriterio(contexto, c, id, f), ...(contexto.proyecto.datosTecnicos?.instalaciones.some(i => i.conductorId === id)
+				? resultadosAmpacidadTecnica(contexto, c, id, f) : [resultadoAmpacidad(c, id, f)]), ...resultadoPerdida(c, id, f));
 		}
 		return salida;
 	},
@@ -155,18 +269,32 @@ export function evaluarAlternativasSeccion(entrada: {
 	circuitId?: string;
 	contextoFisico?: Omit<ContextoTopologiaFisica, 'seccionesMm2'>;
 }): ResultadoAlternativasSeccion {
-	const original = entrada.proyecto.conductores.find((c) => c.id === entrada.conductorId);
+	const tecnica = resolverProyectoTecnico(entrada.proyecto), proyecto = tecnica.proyecto;
+	const original = proyecto.conductores.find((c) => c.id === entrada.conductorId);
 	if (!original) throw new Error(`Conductor desconocido: ${entrada.conductorId}`);
-	const circuitos = descubrirCircuitos(entrada.proyecto).circuitos.filter((c) => c.conductores.includes(original.id));
-	const circuito = entrada.circuitId ? circuitos.find((c) => c.id === entrada.circuitId) : circuitos[0];
+	const circuitos = descubrirCircuitos(proyecto).circuitos.filter((c) => c.conductores.includes(original.id));
+	if (proyecto.datosTecnicos) for (const c of circuitos) {
+		const resueltos = resolverCriteriosTecnicos(proyecto.datosTecnicos, c.id, c.criterios); c.criterios = { ...c.criterios };
+		for (const k of ['maxVoltageDropPercent', 'maxLossW', 'maxLossPercent'] as const) {
+			const v = resueltos.parametros[k];
+			if (v.estado === 'RESOLVED' && v.decision?.modo === 'VALOR' && typeof v.decision.valor === 'number') c.criterios[k] = v.decision.valor;
+			else delete c.criterios[k];
+		}
+	}
+	const circuito = entrada.circuitId ? circuitos.find((c) => c.id === entrada.circuitId)
+		: proyecto.datosTecnicos && circuitos.length !== 1 ? undefined : circuitos[0];
 	const secciones = [...new Set(entrada.seccionesMm2.filter((x) => Number.isFinite(x) && x > 0))].sort((a, b) => a - b);
 	const alternativas = secciones.map((seccionMm2): AlternativaSeccionConductor => {
 		const seccionesMm2 = new Map([[original.id, seccionMm2]]);
-		const fisica = simularFisicaProyecto(entrada.proyecto, { ...entrada.contextoFisico, seccionesMm2 });
+		const fisica = simularFisicaProyecto(proyecto, { ...entrada.contextoFisico, seccionesMm2 });
 		const f = fisica.conductores.get(original.id);
 		let iccA: number | undefined; let origenIcc: AlternativaSeccionConductor['origenIcc'] = 'NO_MODELADO';
 		const fuente = circuito?.fuenteId ? fisica.medicion.fuentes.find((x) => dispositivoNodo(x.de) === circuito.fuenteId) : undefined;
-		if (fuente) {
+		if (proyecto.datosTecnicos) {
+			const proteccion = proteccionTramo({ proyecto, circuitos, fisica, tecnica }, original.id);
+			const ensayo = proteccion ? analizarProspectivaProtecciones(proyecto, { ...entrada.contextoFisico, seccionesMm2 }).get(proteccion) : undefined;
+			iccA = ensayo?.iccA; origenIcc = ensayo?.origen ?? 'NO_MODELADO';
+		} else if (fuente) {
 			const conFalla = simularFisicaProyecto(entrada.proyecto, { ...entrada.contextoFisico, seccionesMm2,
 				fallas: [{ id: `scenario-icc:${original.id}:${seccionMm2}`, tipo: 'L_N',
 					nodoA: `${original.a.dispositivoId}::${original.a.borneId}`, nodoB: fuente.a }] });
@@ -175,6 +303,14 @@ export function evaluarAlternativasSeccion(entrada: {
 		}
 		const parcial = { seccionMm2, resistenciaOhm: f?.rOhm, corrienteA: f?.corrienteA, caidaV: f?.caidaV,
 			caidaPct: f?.caidaPct, perdidaW: f?.perdidaW, iccA, origenIcc };
+		if (proyecto.datosTecnicos?.instalaciones.some(i => i.conductorId === original.id)) {
+			if (!circuito) return { ...parcial, estado: 'INDETERMINATE', motivos: ['Circuito ausente o ambiguo; elegir explícitamente el circuito de la alternativa.'] };
+			const comprobaciones = [caidaSegunCriterio({ proyecto }, circuito, original.id, f), ...resultadoPerdida(circuito, original.id, f),
+				...resultadosAmpacidadTecnica({ proyecto, circuitos, fisica, tecnica }, circuito, original.id, f)];
+			const estado = comprobaciones.some(r => r.status === 'FAIL') ? 'FAIL'
+				: comprobaciones.some(r => r.status === 'INDETERMINATE') ? 'INDETERMINATE' : 'PASS';
+			return { ...parcial, estado, motivos: comprobaciones.filter(r => r.status !== 'PASS').map(r => `${r.title}: ${r.description} ${r.missingData.join(', ')}`) };
+		}
 		return { ...parcial, ...evaluarCriteriosAlternativa(parcial, circuito?.criterios) };
 	});
 	const recomendadaMm2 = alternativas.find((a) => a.estado === 'PASS')?.seccionMm2;

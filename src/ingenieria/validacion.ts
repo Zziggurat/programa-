@@ -2,6 +2,8 @@ import type { ResultadoFisicaElectrica } from '../fisica/topologia-proyecto.js';
 import type { OrigenDatoFisico } from '../modelo/fisica.js';
 import type { Proyecto } from '../modelo/tipos.js';
 import { descubrirCircuitos, type CircuitoIngenieria } from './circuitos.js';
+import type { ResultadoProyectoTecnico } from '../datos-tecnicos/resolver.js';
+import type { ResultadoProspectivaProteccion } from './prospectiva.js';
 
 export type EstadoValidacionIngenieria = 'PASS' | 'WARNING' | 'FAIL' | 'INDETERMINATE' | 'NOT_APPLICABLE';
 export type SeveridadIngenieria = 'ERROR' | 'WARNING' | 'INFO';
@@ -50,6 +52,8 @@ export interface ResultadoReglaIngenieria {
 export interface EngineeringIssue extends ResultadoReglaIngenieria { id: string }
 
 export interface ContextoValidacionIngenieria {
+	prospectiva?: ReadonlyMap<string, ResultadoProspectivaProteccion>;
+	tecnica?: ResultadoProyectoTecnico;
 	proyecto: Proyecto;
 	circuitos: readonly CircuitoIngenieria[];
 	fisica?: ResultadoFisicaElectrica;
@@ -164,16 +168,40 @@ export const REGLA_TOPOLOGIA_CIRCUITOS: EngineeringRule = {
 };
 
 export function validarIngenieria(entrada: {
+	prospectiva?: ReadonlyMap<string, ResultadoProspectivaProteccion>;
+	tecnica?: ResultadoProyectoTecnico;
 	proyecto: Proyecto;
 	fisica?: ResultadoFisicaElectrica;
 	circuitos?: readonly CircuitoIngenieria[];
 	reglas?: readonly EngineeringRule[];
 }): ResultadoValidacionIngenieria {
 	const circuitos = entrada.circuitos ?? descubrirCircuitos(entrada.proyecto).circuitos;
-	const contexto: ContextoValidacionIngenieria = { proyecto: entrada.proyecto, circuitos, fisica: entrada.fisica };
+	const contexto: ContextoValidacionIngenieria = { proyecto: entrada.proyecto, circuitos, fisica: entrada.fisica, tecnica: entrada.tecnica, prospectiva: entrada.prospectiva };
 	const reglas = [...(entrada.reglas ?? [REGLA_TOPOLOGIA_CIRCUITOS])]
 		.sort((a, b) => a.code.localeCompare(b.code) || a.scope.localeCompare(b.scope));
-	const resultados = deduplicar(reglas.flatMap((r) => r.evaluate(contexto)));
+	const bloqueados = [...(entrada.tecnica?.problemas ?? []).map(p => ({ id: p.entidadId, campo: undefined as string | undefined, motivo: p.motivo })),
+		...(entrada.tecnica?.resoluciones ?? []).filter(d => d.estado !== 'RESOLVED').map(d => ({ id: d.entidadId, campo: d.campo, motivo: `${d.clave}: ${d.estado} ${d.motivos.join('; ')}` }))];
+	// Cobertura por dependencia: faltar Ics no invalida una comprobación independiente de
+	// In, ni una conexión PE. El dato ausente conserva además su issue técnico propio.
+	const depende = (r: ResultadoReglaIngenieria, campo?: string): boolean => {
+		if (['TS-CIRCUIT-TOPOLOGY', 'TS-PE-PATH', 'TS-POWER-EXTERNAL-BOUNDARY'].includes(r.code)) return false;
+		if (!campo) return true;
+		if (/^proteccion\.Ic[nus]$/.test(campo)) return false; // Regla de corte valida su magnitud exacta.
+		if (campo.startsWith('proteccion.')) return r.code.startsWith('TS-PROT-') || r.code.startsWith('TS-COORD-') || r.code === 'TS-CABLE-IB-IN-IZ';
+		if (campo === 'bobina.corrienteLlamadaA' || campo === 'plc.corrienteLlamadaMaxA') return r.code.includes('INRUSH');
+		if (campo.startsWith('bobina.') || campo.startsWith('plc.')) return r.category === 'IO';
+		if (campo.startsWith('analogica.')) return r.category === 'ANALOG';
+		if (r.category === 'PE') return r.code === 'TS-PE-SECTION' && campo === 'conductor.seccionMm2';
+		return ['CABLE', 'PROTECTION', 'COORDINATION', 'MOTOR', 'VFD', 'POWER', 'PHASE'].includes(r.category) || r.code === 'TS-EQUIPMENT-SUPPLY';
+	};
+	const resultados = deduplicar(reglas.flatMap((r) => r.evaluate(contexto)).map(r => {
+		if (r.code.startsWith('TS-DATA-') || r.status !== 'PASS') return r;
+		const circuito = circuitos.find(c => c.id === r.circuitId);
+		const implicados = new Set([...r.relatedEntities.map(e => e.id), ...(circuito ? [...circuito.fuentes, ...circuito.cargas, ...circuito.conductores] : [])]);
+		const bloqueos = bloqueados.filter(b => implicados.has(b.id) && depende(r, b.campo));
+		return bloqueos.length ? { ...r, status: 'INDETERMINATE' as const, title: `${r.title} — datos técnicos no resueltos`,
+			missingData: [...r.missingData, ...bloqueos.map(b => b.motivo)] } : r;
+	}));
 	const issues = resultados.filter((r) => ['FAIL', 'WARNING', 'INDETERMINATE'].includes(r.status))
 		.map((r) => ({ ...r, id: firmaResultado(r).replace(/\u0000/g, ':') }));
 	const contar = (status: EstadoValidacionIngenieria) => resultados.filter((r) => r.status === status).length;
