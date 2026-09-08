@@ -9,6 +9,8 @@ import type { CircuitoIngenieria } from './circuitos.js';
 import type { ContextoValidacionIngenieria, EngineeringRule, EstadoValidacionIngenieria, ResultadoReglaIngenieria } from './validacion.js';
 import { resolverCriteriosTecnicos } from '../datos-tecnicos/criterios.js';
 import { resolverProyectoTecnico } from '../datos-tecnicos/resolver.js';
+import { evaluarCondicionesTecnicas } from '../datos-tecnicos/condiciones.js';
+import { contextoNominalProteccion } from './contexto-proteccion.js';
 
 const tol = (a: number, b: number) => 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
 
@@ -112,9 +114,15 @@ function validarCorteTecnico(ctx: ContextoValidacionIngenieria, c: CircuitoIngen
 			valor: `${prospectiva.ensayo.tipo}: ${prospectiva.ensayo.de.dispositivoId}::${prospectiva.ensayo.de.borneId} → ${prospectiva.ensayo.a.dispositivoId}::${prospectiva.ensayo.a.borneId}`, origen: 'CONFIGURADO' });
 	}
 	const capacidades = new Map<string, number>();
+	const contexto = contextoNominalProteccion(ctx.proyecto, d, ctx.fisica);
+	const declaradas = ctx.proyecto.datosTecnicos!.vinculos.find(v => v.entidad === 'DEVICE' && v.entidadId === d.id)?.condiciones;
+	// Solo temperatura/ajuste/contexto no observables permanecen declarados; nunca V/AC/DC/Hz/polos.
+	const actuales = { ...declaradas, sistema: contexto.condiciones.sistema, tensionV: contexto.condiciones.tensionV,
+		frecuenciaHz: contexto.condiciones.frecuenciaHz, polos: contexto.condiciones.polos };
 	for (const [nombre, campo] of [['Icn', 'icnKA'], ['Icu', 'icuKA'], ['Ics', 'icsKA']] as const) {
 		const resuelta = tecnica.resoluciones.find(x => x.entidad === 'DEVICE' && x.entidadId === d.id && x.campo === `proteccion.${nombre}`);
-		const valor = vinculada ? !problema.length && resuelta?.estado === 'RESOLVED' && typeof resuelta.dato?.valor === 'number'
+		const aplicabilidad = evaluarCondicionesTecnicas({ declaradas: resuelta?.dato?.condiciones ?? {}, actuales });
+		const valor = vinculada ? !problema.length && resuelta?.estado === 'RESOLVED' && aplicabilidad.estado === 'RESOLVED' && typeof resuelta.dato?.valor === 'number'
 			? resuelta.dato.valor : undefined : d.fisica?.proteccion?.capacidadCorte?.[campo];
 		if (valor !== undefined && Number.isFinite(valor) && valor > 0) {
 			capacidades.set(nombre, valor);
@@ -123,6 +131,7 @@ function validarCorteTecnico(ctx: ContextoValidacionIngenieria, c: CircuitoIngen
 				: `${nombre} del perfil persistente sin vínculo V8; origen documental no corroborado`, valor, unidad: 'kA', origen: 'CONFIGURADO' });
 		}
 		if (resuelta) {
+			r.evidence.push({ codigo: `${nombre}_NETWORK_CONTEXT`, descripcion: [...contexto.motivos,...aplicabilidad.motivos].join(' '), valor: aplicabilidad.estado, origen: 'CONFIGURADO' });
 			r.evidence.push({ codigo: `${nombre}_RESOLUTION`, descripcion: [...resuelta.pasos, ...resuelta.motivos, ...resuelta.advertencias].join(' '),
 				valor: resuelta.estado, origen: 'CONFIGURADO' });
 			r.evidence.push({ codigo: `${nombre}_REFERENCE`, descripcion: 'Revisión exacta de la resolución; no implica certificación del valor',
