@@ -1,5 +1,18 @@
 # Estado actual V8 — 8 de septiembre
 
+## Estado operativo 01:51 — prioridad sobre registros inferiores
+
+- RamaV8; HEAD8f999b4, remoto4dcb650. Main/originmaina65cc0c; tagV8 ausente. No entregar/main/tag todavía.
+- Producto completo local, BuildC72A570F34 y ambosHTML/hash intactos; artifactCI descargado idéntico. Fullactual1381/1381,0fallos/skips; log unit-final-5 (76,781s).
+- CI34185765365,attempt1,terminado4/6verde. Unit/build,V6,V7,offline verdes. V8timeoute importación48/55 e ingeniería23/47; histórico12/13, mazo falló primera holgura por edición antes de confirmación documental.
+- TimeoutsV8 diagnosticados por tamaño de ventana; QAcompacto50c21be ya committed. Local102/102,4:56 (55import1:48,47ingeniería3:08), límites intactos y capturas amplias. No renderer/producto modificado. Evidencia remota pendiente.
+- Pendientes sincommit: helpersmirar/entorno esperan confirmación pública; mazo finally;2tests QA (verdes82,85ms); docs/handoff. Mazo17checks1:13verde. No descartar.
+- Proceso99564 terminado: full1381verde y fusión19checks2:57verde, log `%TEMP%/tablerostudio-v8-fusion-helper.log`. Ningún proceso de campaña/CIwatch activo.
+- Siguiente: recogerfusion → commithelpers/tests ydocs → fetch/maina65sinavance → pushnormalrama (no main) → CI nuevoSHA todosjobs terminales → documentación final/integración FF main → CI main + Pages200 + artifactHTMLhash → tagV8anotado normal si ausente. No force/reset/clean/rebase ni V9.
+- Toolchain npm/Node24.19.0, CLI `C:/Users/Usuario/AppData/Local/Temp/codex-npm-bootstrap-v7/package/bin/npm-cli.js`. Nunca pnpm. PDF A4 inspeccionado; manualbenchmark excluido del gate.
+
+## Checkpoints anteriores del cierre (no estado operativo actual)
+
 **No entregada aún. No repetir A0 ni recrear gates.** El registro cronológico inferior conserva
 intentos anteriores; este bloque tiene prioridad para reanudar.
 
@@ -8,6 +21,7 @@ intentos anteriores; este bloque tiene prioridad para reanudar.
 - Corrección4dcb650 subida; CI activo34185765365,attempt1,SHA4dcb65077dff2e28c311ca080f86fa2ed7c5c5e6. Seis jobs creados; unit/build verde1:23, resto en curso. Watch46561 a45s, log tablerostudio-v8-ci-candidato.log. Sin navegador local activo. Solo documentación sin commit mientras espera.
 - Actualización: unit/build,V6,V7,offline verdes; artifactHTML descargado idéntico. V8 rojo por dos timeouts (48/55 y23/47); histórico todavía en curso. Diagnóstico área de ventana reduce coste de cuatro clics10,911→5,251s; no cambio de límites/cobertura/producto. Pendientes QAimport/ingeniería compacto800×600, capturas amplias conservadas y herramienta manual. Proceso local **82669** ejecuta ambos focales tras buildQAactual, log tablerostudio-v8-qa-compacto.log. No lanzar segundoChromium. No push hasta focalverde y terminal del CIprevio para conservar evidencia histórica.
 - Focal82669 terminado exit0:102/102,4:56; importación1:48 e ingeniería3:08.0fail/timeout/skip/JS/procesos propios. BuildQACx2U8aN6,HTMLC72A570F34/hash intactos. Confirmar QA y documentación; esperar histórico del CI34185765365 antes de push para no cancelarlo. Solo watch46561 activo.
+- CI34185765365 terminó4/6jobsverdes: histórico12/13, único rojo mazo primera holgura ignorada durante confirmación documental. Helpersmirar/entorno esperan ahora toast público, sin cambiarproducto; mazofinally y2tests rápidos. Focalmazo17checks1:13verde;2tests82,85msverdes. Commits50c21be/8f999b4 locales sinpush, ahora pendiente helper/tests/docs. Watch46561 terminado. Nuevo proceso local ejecuta npmtest→fusion; logs unit-final-5 y fusion-helper. Recoger terminal, confirmar cambios, pushnormalrama, esperar nuevoCI. Maina65sin cambios/tagV8ausente.
 - Gates A–J implementados/revisados; K local verde, pendiente CI/publicación. HTMLs y documentación se confirman como candidato, no como integración parcial a main.
 - Proceso75232 terminado exit0: **9/9,345checks,25:07**, buildCfUfls6e. V8 catálogo15/import55/ingeniería47 verdes. Física2:20, escenarios0:44, validación1:08, multiproyecto1:41, simulación5:45, automatización1:29.
 - Full definitivo **1379/1379**,0fail/cancel/skip,62,552sNode/74,326scomando; log tablerostudio-v8-unit-final-4.log. Incluye posterior48e6885 de demanda compartida y empaquetador6ff50c8.

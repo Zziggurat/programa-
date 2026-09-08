@@ -35,6 +35,10 @@ comparación, adopción confirmada, importación y exportación. El
 - `src/ingenieria/{protecciones,conductores,compatibilidad,validacion,datos-tecnicos}.ts`
   → reglas, dependencias y mismo Issue Center.
 - `src/ingenieria/prospectiva.ts` → ensayo aislado sobre el modelo físico existente.
+- `src/ingenieria/contexto-proteccion.ts` → contexto nominal conectado para no usar capacidad
+  de corte declarada bajo otra tensión, sistema o número de polos.
+- `src/fisica/evidencia-disparo.ts` → evidencia del mismo ensayo despejado entre ticks,
+  separada de la corriente actual; desaparece al retirar o cambiar el fallo.
 - `src/ingenieria/documentacion.ts` → informe V7 ampliado, HTML/JSON/CSV trazables.
 - `app/ui-datos-tecnicos.ts` → interfaz y coordinación de operaciones visibles.
 - `app/gestor-documentos.ts` → identidad de candidato, persistencia y compensación.
@@ -73,5 +77,7 @@ motor para ocultar una falta de contrato. Una rama técnica pendiente se marca N
 Actualización controlada de PostCSS/Nano ID del toolchain; granularidad eléctrica por salida
 de fuentes y por AI de PLC si se amplía ese contrato; datasets documentales verificados por
 el usuario con derecho de uso. No hay catálogo comercial certificado incluido.
+Actualizar wrappers de Actions deprecados en un cambio de toolchain probado. La demanda
+compartida multifase sin reparto inequívoco permanece indeterminada, no se suma como DC.
 No se inició V9, SPICE, selectividad certificada, router industrial, DRC geométrico nuevo
 ni optimización global del render.

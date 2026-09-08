@@ -4,7 +4,7 @@
 
 | Frontera | Evidencia terminal vigente | Duración |
 |---|---|---|
-| npm test (incluye typecheck y compilación) | 1379/1379; 0 fallos, cancelados, skipped o todo | 74,326 s comando |
+| npm test (incluye typecheck y compilación) | 1381/1381; 0 fallos, cancelados, skipped o todo | 76,781 s comando |
 | Build QA / producción | 392 / 394 módulos; ambas correctas | 6,69 / 17,93 s |
 | Catálogo V8 | 15 comprobaciones | 1:18 |
 | Importación/portabilidad V8 | 55 comprobaciones | 3:36 |
@@ -195,3 +195,23 @@ buildQACx2U8aN6,392módulos5,73s, producto idéntico al HTMLC72A570F34 ya entreg
 Captura comparación1440px inspeccionada; inventarioCim sin QA/Chromium propios al cerrar.
 HashHTML nuevamente comprobado, intacto. Pendiente demostrar mejora en CI, no acreditada
 por la sola medición local.
+
+### Histórico remoto y preparación transaccional
+
+CI34185765365 terminó36:45job histórico,12/13suites,261checks; rojo exclusivo mazo-puerta:
+holgura90 no guardada y lazo151→151. Amarres, trenza y entradas posteriores sí pasaron.
+Log tablerostudio-v8-ci-historico-rojo.log. El helper mirar esperaba chip oculto+600ms, pero
+`aplicarEstructura → capturar → sePuedeEditar` rechaza cambios durante operación documental.
+Ocultar el chip ocurre al montar; la confirmación del marcador activo termina después.
+
+Helpers mirar/entorno esperan ahora confirmación pública de copia guardada, no una pausa fija.
+Sin alterar guardas de integridad ni geometría. La suite mazo añade finally para cerrar también
+en error. Focal mazo17checks1:13verde;2tests de contrato82,85ms prueban que chip oculto no
+libera la espera y que ausencia de confirmación rechaza. Se renuevan full y fusión por el helper.
+Run candidato previo concluye **4/6jobsverdes**, dosrojosdocumentados; no se declara aprobado.
+
+Full renovado después de los dos tests del helper: **1381/1381**,0fail/skip/cancel/todo;
+64,532sNode/76,781scomando, log tablerostudio-v8-unit-final-5.log. Ahora199testsnetos sobre1182.
+No cambia bundle ni se invalida entrega/stress por tests y sincronización de preparación QA.
+Fusión renovada tras helper:19checks2:57,exit0,0fallos/timeout/skip; log fusion-helper.
+Incluye las mismas exigencias de selección frontal/semántica y ausencia de fusiones.
