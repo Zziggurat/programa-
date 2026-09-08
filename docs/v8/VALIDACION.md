@@ -1,5 +1,30 @@
 # Evidencia de validación V8
 
+## Resumen local definitivo
+
+| Frontera | Evidencia terminal vigente | Duración |
+|---|---|---|
+| npm test (incluye typecheck y compilación) | 1379/1379; 0 fallos, cancelados, skipped o todo | 74,326 s comando |
+| Build QA / producción | 392 / 394 módulos; ambas correctas | 6,69 / 17,93 s |
+| Catálogo V8 | 15 comprobaciones | 1:18 |
+| Importación/portabilidad V8 | 55 comprobaciones | 3:36 |
+| Ingeniería/revisiones V8 | 47 comprobaciones | 7:08 |
+| Ingeniería V7 | documentación, escenarios y validación verdes | 0:56 / 0:44 / 1:08 |
+| Equipos V6 | accionamientos, motor, red verdes | 1:52 / 2:33 / 0:51 |
+| Física V5 / simulación / automatización | verdes, incluido disparo entre ticks | 2:20 / 5:45 / 1:29 |
+| Fusión / fixture puerta | verdes, sin cambios en picking/routing | 4:13 / 0:17 |
+| Multiproyecto / componentes | verdes | 1:41 / 7:11 |
+| Histórico | 13 fronteras verdes por agregado + focal, no 13/13 del primer intento | 12:42 agregado; focales 0:47 y 2:12 |
+| Stress dirigido | 3 tamaños; 0 fallos | 10,78 s |
+| entrega:check | bytes actuales; LF/CRLF idénticos | 22,24 s compilación |
+| file:// V2–V8 | 66 comprobaciones, 0 JS/HTTP externo | 5:22 |
+
+La campaña renovada de 9 suites terminó 9/9,345 comprobaciones,25:07. No sumar sus
+comprobaciones a las filas anteriores: son evidencia solapada. Se cubrieron 30 suites
+de navegador distintas entre histórico, especializadas, V8 y offline. Los fallos originales,
+intentos invalidados y correcciones permanecen abajo; no se presentan como ejecuciones verdes.
+CI se acredita exclusivamente por run/SHA terminal, no por este resumen local.
+
 ## Entorno inicial
 
 2026-09-07: Windows/PowerShell, Node 24.19.0, npm 11.6.2 localizado en
@@ -132,3 +157,41 @@ en env de job, contexto no disponible allí. Se mueve TMPDIR al env del paso QA,
 permitido; QA_V8_CAPTURAS constante y path de artifact se conservan. No cambia producto,
 bundle ni evidencia local. Fuente: [anotación de Actions](https://github.com/Zziggurat/programa-/actions/runs/34185617560)
 y [contextos admitidos](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability).
+
+Run corregido34185765365,attempt1,4dcb650: jobs independientes, instalación npmci real.
+Unit/build verde1:23; equiposV6 verde9:57; IngenieríaV7 verde12:37 (QA3/3,44checks,11:57).
+Resto pendiente de terminal. Advertencia heredada de wrappers checkout/setup-node@v4 que
+Actions ejecuta con Node24 por deprecaciónNode20: mantenimiento del toolchain, no cambio
+del runtime de producto fijado24.19.0 ni permiso para habilitar Node inseguro.
+
+Entregableoffline del mismo run: verde19:48. Reconstrucción actualC72A570F34; smoke66checks,
+0JS/HTTPexterno; log tablerostudio-v8-ci-offline-candidato.log. Artifact
+`TableroStudio-4dcb65077dff2e28c311ca080f86fa2ed7c5c5e6` descargado mediante gh a temporal
+externo0a3e120ff9a949bdaab21e9c462c40da. **HTML extraído**,3308535B,
+SHA2564b091b41761ab32e6758cf66342a74597e05f929cc8dbcd2e110cbe0d4f7822c idéntico a local.
+No se utilizó hash del ZIP como prueba del HTML.
+
+### Rojo V8 en CI y diagnóstico dirigido
+
+Job101933659824 terminó rojo22:41: catálogo15checks3:50verde; importación48checks agotó
+8min; ingeniería23checks agotó10min.0JS en ambos; los timeouts se conservan como rojos,
+no como cobertura completada. Log tablerostudio-v8-ci-datos-rojo.log y artifactQA-V8 descargado
+en temporal33bb76fbabc441459810064c3de9d553. Importación avanzó hasta reapertura y borrado
+global; ingeniería hasta restaurar instalación/criterios: no hay un único selector atascado.
+
+Diagnóstico local sobre mismos controles del laboratorio, cuatro clics por tamaño:
+1440×1000=10,911s;960×720=6,666s;800×600=5,251s. Primera alternativa ratón→teclado
+solo mejoró~10% y se descartó. El coste es sensible al área de la escena rasterizada;
+no se atribuye a competencia entre jobs de CI alojados por separado.
+`qa/_perf-formularios-v8.mjs` es diagnóstico manual, NO gate ni regresión funcional.
+
+Se ajustan solo importación e ingeniería a800×600 durante formularios. Se conservan todos
+los clics/aserciones/timeouts. Capturas de importación vuelven temporalmente a1440×960;
+las documentales1440×1000. Catálogo mantiene escritorio/estrecha originales y offline
+mantiene su ventana original. No cambian renderer, resolución interna, producto ni HTML.
+Focal local compacto en tablerostudio-v8-qa-compacto.log: **2/2,102/102,4:56,exit0**.
+Importación55/55=1:48 (antes3:36); ingeniería47/47=3:08 (antes7:08).0fail/timeout/skip/JS;
+buildQACx2U8aN6,392módulos5,73s, producto idéntico al HTMLC72A570F34 ya entregado.
+Captura comparación1440px inspeccionada; inventarioCim sin QA/Chromium propios al cerrar.
+HashHTML nuevamente comprobado, intacto. Pendiente demostrar mejora en CI, no acreditada
+por la sola medición local.
