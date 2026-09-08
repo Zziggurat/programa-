@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { abrirNavegador, ejecutableNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
 import { copiarEjemploConfirmado } from './lib/confirmacion-visible.mjs';
+import { presupuestoV8, crearRelojProgreso } from './lib/presupuestos-v8.mjs';
+const progreso = crearRelojProgreso();
 
 const inicio = Date.now();
 const chromeLogAnterior = process.env.CHROME_LOG_FILE;
@@ -24,7 +26,7 @@ const erroresJS = [];
 function comprobar(nombre, condicion, detalle = '') {
 	comprobaciones++;
 	if (!condicion) fallos++;
-	console.log(`${condicion ? 'OK  ' : 'FAIL'} ${nombre}${detalle ? ` → ${detalle}` : ''}`);
+	console.log(`${condicion ? 'OK  ' : 'FAIL'} ${nombre}${detalle ? ` → ${detalle}` : ''} ${progreso(comprobaciones)}`);
 }
 const cerca = (a, b) => typeof a === 'number' && Math.abs(a - b) < 1e-8;
 const modal = () => page.locator('#modal-datos-tecnicos');
@@ -120,12 +122,10 @@ async function magnitudProteccion() {
 const watchdog = setTimeout(() => {
 	timeouts++;
 	fallos++;
-	console.error('TIMEOUT datos-tecnicos-ingenieria: límite total de 10 minutos; cerrando Chromium.');
+	console.error(`TIMEOUT datos-tecnicos-ingenieria: presupuesto total ${presupuestoV8('datos-tecnicos-ingenieria')} ms; ${comprobaciones} checks alcanzados; cerrando Chromium.`);
 	void browser?.close().catch(error => console.error('Error cerrando Chromium:', error));
 	servidor?.closeAllConnections?.();
-// Recorrido ampliado con Undo/Redo medido en 466 s, sin captura de impresión.
-// Diez minutos cubre esa evidencia visual; el supervisor externo mantiene sus doce minutos.
-}, 10 * 60_000);
+}, presupuestoV8('datos-tecnicos-ingenieria'));
 watchdog.unref();
 
 try {
@@ -133,7 +133,7 @@ try {
 	servidor = servicio.servidor;
 	browser = await abrirNavegador(chromium);
 	// Ventana compacta para el recorrido de formularios; capturas documentales amplias abajo.
-	// Mantiene todos los clics/aserciones y el límite original, sin tocar el render del producto.
+	// Mantiene todos los clics/aserciones y sus límites individuales, sin tocar el producto.
 	const contexto = await browser.newContext({ viewport: { width: 800, height: 600 }, acceptDownloads: true });
 	page = await contexto.newPage();
 	page.setDefaultTimeout(30_000);

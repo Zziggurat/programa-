@@ -1,5 +1,42 @@
 # Evidencia de validación V8
 
+## Cierre del presupuesto global de V8
+
+Reanudación verificada: main/origin `054e36b8c0a621bf7d1ca8e042dcbb0e2bb9f5d8`,
+limpio,0/0; V7 intacto, V8 sin tag. [Run34197538052](https://github.com/Zziggurat/programa-/actions/runs/34197538052)
+terminó5/6verde: unit1382/build1:47job; V6 15:26; V7 12:52; histórico13/13,
+263checks38:30QA/39:17job; offline67checks13:23job. No acredita el SHA siguiente.
+
+Único rojo, job101968600584: catálogo15checks7:32 e importación55checks7:47 verdes;
+ingeniería33checks alcanzados a600s,0JS, sin aserción funcional fallida previamente.
+`setTimeout(10*60000)` interno cerró Chromium mientras esperaba Biblioteca; después
+se registró `Target page, context or browser has been closed`. El supervisor externo
+era720s, no el causante. Dos errores registrados son timeout y cierre derivado, no
+dos defectos funcionales. Se conserva el run rojo, no se convierte en117 aprobadas.
+
+Presupuesto **total** de ingeniería18min: proyección indicativa600×47/33≈855s,
+margen≈26%; no es una medición de duración completa ni un SLA. Catálogo/importación
+12min dejan margen sobre452/467s. Política central en `qa/lib/presupuestos-v8.mjs`;
+supervisores de árbol14/14/20min permiten cierre antes del kill. JobV8 50min cubre
+los tres máximos externos y preparación. Otros jobs/gate histórico12min inalterados.
+Los timeouts de cada acción30s/navegación60s y las117 aserciones no cambian.
+Cada check conserva marcador y añade número, segundos acumulados e intervalo;
+el runner transmite stdout V8 en vivo, incluso cuando la suite pasa.
+Tres tests del harness verifican límites específicos, override explícito/invalidación
+y reloj de progreso. No se modifica producto, física, render, fixture ni bytes HTML.
+
+Focal terminal con `QA_V8_CAPTURAS=1 node qa/todas.mjs datos-tecnicos-`:
+**3/3,117comprobaciones,6:36,exit0**,0fallos/timeouts/skipped/JS.
+Catálogo15/59,217s; importación55/87,97s; ingeniería47/246,7s.
+Log `%TEMP%/tablerostudio-v8-presupuesto-final.log`; capturas de catálogo, comparación,
+portable e informe pantalla/impresión conservadas. Typecheckapp/tsc verdes;
+`node --test dist/test/qa-presupuestos-v8.test.js`:3/3,0fail/cancel/skip/todo.
+Los logs distinguen el tramo local lento51s entre checks de una acción atascada;
+ninguna acción individual agotó su plazo. Los HTML conservan SHA-256 del manifiesto.
+
+La aprobación final requiere los seis jobs del SHA señalado por `tablerostudio-v8^{}`.
+Su anotación registra run final, Pages y hash descargado; no mezclar los pases antiguos.
+
 ## Aprobación del candidato y cierre público
 
 **dc5edff269a6b70a57fe57b2b2b72191ba251864**: [Pruebas34193274343](https://github.com/Zziggurat/programa-/actions/runs/34193274343),

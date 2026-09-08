@@ -77,7 +77,8 @@ jobs:
   qa-v8:
     name: QA Datos técnicos V8
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 12 + 12 + 18 min de suites, cierre y preparación. No amplía acciones individuales.
+    timeout-minutes: 50
     env:
       QA_V8_CAPTURAS: '1'
     steps:

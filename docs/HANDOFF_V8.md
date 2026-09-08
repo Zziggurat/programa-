@@ -10,6 +10,12 @@ Si el tag todavía no existe, esa publicación final sigue pendiente; no confund
 candidato aprobado con un tag ya publicado. Su anotación conserva la evidencia de cierre
 sin una autorreferencia imposible de SHA dentro de estos archivos.
 
+El main intermedio054e36b terminó con5/6jobs verdes; V8 agotó su presupuesto global,
+no una aserción funcional. Su correctivo de cierre no cambia producto: presupuestos
+totales medidos, progreso visible y tests del harness. **No usar ese run intermedio
+como aprobación final.** La evidencia definitiva está en la anotación del tag y los
+seis checks del SHA exacto al que apunta; HTML/Build siguen el manifiesto citado abajo.
+
 Baseline V7 preservado: `a65cc0cbb304cb153d5aaa030a39ad7400438a03`.
 [Manifiesto de bytes y Build ID](v8/ENTREGA.md), [estado](v8/ESTADO.md),
 [validación completa, incluidos reintentos](v8/VALIDACION.md) e

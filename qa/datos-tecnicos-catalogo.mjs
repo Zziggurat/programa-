@@ -6,11 +6,13 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
+import { presupuestoV8, crearRelojProgreso } from './lib/presupuestos-v8.mjs';
+const progreso = crearRelojProgreso();
 const inicio = Date.now(), carpeta = mkdtempSync(join(tmpdir(), 'qa-v8-catalogo-'));
 let browser, servidor, page, fallos = 0, checks = 0, timeouts = 0;
 const errores = [], cwd = process.cwd(), logAnterior = process.env.CHROME_LOG_FILE;
 process.env.CHROME_LOG_FILE = join(carpeta, 'chromium.log'); process.chdir(carpeta);
-const ok = (nombre, pasa) => { checks++; if (!pasa) fallos++; console.log(`${pasa ? 'OK  ' : 'FAIL'} ${nombre}`); };
+const ok = (nombre, pasa) => { checks++; if (!pasa) fallos++; console.log(`${pasa ? 'OK  ' : 'FAIL'} ${nombre} ${progreso(checks)}`); };
 const modal = () => page.locator('#modal-datos-tecnicos');
 const b = a => modal().locator(`${a === 'biblioteca' ? 'nav > ' : ''}[data-dt="${a}"]`);
 const input = a => modal().locator(`[data-dt-input="${a}"]`);
@@ -22,7 +24,8 @@ async function exportar() {
     const archivo = await descarga; if (await archivo.failure()) throw new Error('Falló descarga');
     return JSON.parse(readFileSync(await archivo.path(), 'utf8'));
 }
-const reloj = setTimeout(() => { timeouts++; fallos++; console.error('TIMEOUT catálogo V8 (8 min)'); void browser?.close(); servidor?.closeAllConnections?.(); }, 480_000);
+const limite = presupuestoV8('datos-tecnicos-catalogo');
+const reloj = setTimeout(() => { timeouts++; fallos++; console.error(`TIMEOUT catálogo V8 (${limite} ms totales; ${checks} checks alcanzados)`); void browser?.close(); servidor?.closeAllConnections?.(); }, limite);
 reloj.unref();
 try {
     const servicio = await servidorDeQA(); servidor = servicio.servidor;

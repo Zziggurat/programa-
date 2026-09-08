@@ -5,6 +5,14 @@ El cierre público se identifica mediante el tag anotado `tablerostudio-v8`, cuy
 exige además CI del main integrado, Pages y artifact verificados. Sin ese tag no hay
 aprobación final de publicación. No es una release comercial.
 
+El cierre de main incorpora únicamente correcciones de harness tras ese candidato:
+confirmación de descargas y presupuesto total medido V8. El run34197538052 quedó
+5/6, con timeout global V8, y **no es aprobación final**. Los bytes de esta tabla no
+cambian. Para la entrega definitiva, el CI válido es exclusivamente el del commit
+al que resuelve `tablerostudio-v8`; la anotación incluye su URL/run, despliegue Pages
+y comparación del artifact descargado. Esta referencia evita cambiar el SHA probado
+solo para escribir su propio identificador dentro del manifiesto.
+
 | Propiedad | Valor |
 |---|---|
 | Build ID calculado | `C72A570F34` |

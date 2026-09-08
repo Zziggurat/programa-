@@ -2,6 +2,27 @@
 
 ## Estado vigente (prevalece sobre todo el registro histórico inferior)
 
+- **Reanudación de cierre: presupuesto global V8.** Git/GitHub verificados en
+  `054e36b8c0a621bf7d1ca8e042dcbb0e2bb9f5d8`, main limpio, divergencia 0/0.
+  Run34197538052 terminó **5/6 jobs verdes**: histórico13/13,263checks,38:30QA;
+  unit1382/build,V6,V7,offline67 verdes. Único rojo V8: catálogo7:32/importación7:47
+  pasaron; ingeniería llegó a33 comprobaciones sin aserción fallida y su watchdog
+  total600s cerró Chromium (2 errores derivados,1timeout,0JS). No acreditar117 completas.
+  Correctivo exclusivamente harness/tests/CI/documentación: totales12/12/18min,
+  supervisor14/14/20min; acciones Playwright intactas. Progreso numerado/tiempos en vivo.
+  Focal terminado: `node qa/todas.mjs datos-tecnicos-`, capturas activadas,
+  **3/3,117checks,6:36; 0fallos/timeouts/skipped/JS** (catálogo1:00/importación1:28/
+  ingeniería4:07). Typecheck/tsc y3tests del harness verdes. Log
+  `%TEMP%/tablerostudio-v8-presupuesto-final.log`. No producto ni HTML cambiados.
+  Siguiente: commit/push normal main → SEIS jobs del nuevo SHA → artifact/Pages/hash
+  → tag anotado V8. La anotación del tag conserva run y evidencia final sin cambiar el
+  commit ya probado; estos documentos remiten a esa evidencia, no al candidato antiguo.
+  **No crear el tag mientras esa secuencia esté pendiente. No V9.**
+  Tras la publicación, consultar el run **Pruebas** del HEAD exacto; el watcher y log
+  `%TEMP%/tablerostudio-v8-ci-presupuesto-final.log` registran su avance. El tag anotado,
+  cuando exista, acredita el cierre de esta secuencia y contiene la evidencia terminal.
+
+- El bloque siguiente es el correctivo anterior, conservado como historial:
 - **Correctivo de cierre04:03 — tag todavía pendiente.** Main b6867cc fue integrado.
   Run34195775596: offline rojo9:11 por `btn-guardar`:
   clic terminado, espera de navegación espuria30s;0JS. Pages34195773796 verde/HTTP200,

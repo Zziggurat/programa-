@@ -9,15 +9,15 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
+import { presupuestoV8, crearRelojProgreso } from './lib/presupuestos-v8.mjs';
+const progreso = crearRelojProgreso();
 import { canonSeguridad, entradasTecnicasHostiles, enviarJSONTecnico, leerBibliotecaTecnica,
 	paqueteSeguridadTecnica, snapshotProyectoVisible } from './lib/datos-tecnicos-seguridad.mjs';
 
 const inicio = Date.now(); let servidor, navegador, contexto, pagina, url;
 const contextos = new Set(); let fallos = 0, comprobaciones = 0, timeouts = 0;
-// Medido en Windows/SwiftShader: 55 checks, 333 s de recorrido; el trace no muestra
-// polling infinito (55 clics = 173 s). Ocho minutos deja margen y el runner conserva
-// su supervisor de procesos de doce minutos. Se cierra la escena anterior antes de la limpia.
-const limite = Number(process.env.QA_V8_IMPORT_TIMEOUT_MS ?? 480_000);
+// CI llegó a 467 s con las 55 comprobaciones; presupuesto total medido, no por acción.
+const limite = Number(process.env.QA_V8_IMPORT_TIMEOUT_MS ?? presupuestoV8('datos-tecnicos-importacion'));
 if (!Number.isFinite(limite) || limite < 1000) throw new Error('QA_V8_IMPORT_TIMEOUT_MS inválido');
 const conservarCapturas = process.env.QA_V8_CAPTURAS === '1';
 const erroresJS = []; const temporal = mkdtempSync(join(tmpdir(), 'qa-v8-importacion-'));
@@ -26,7 +26,7 @@ process.env.CHROME_LOG_FILE = join(temporal, 'chromium.log'); process.chdir(temp
 let alarma, finRecorrido;
 function comprobar(nombre, condicion, detalle = '') {
 	comprobaciones++; if (!condicion) fallos++;
-	console.log(`${condicion ? 'OK  ' : 'FAIL'}  ${nombre}${detalle ? ` → ${detalle}` : ''}`);
+	console.log(`${condicion ? 'OK  ' : 'FAIL'}  ${nombre}${detalle ? ` → ${detalle}` : ''} ${progreso(comprobaciones)}`);
 }
 function iguales(nombre, a, b) { comprobar(nombre, canonSeguridad(a) === canonSeguridad(b)); }
 const modal = () => pagina.locator('#modal-datos-tecnicos');

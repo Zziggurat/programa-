@@ -26,6 +26,7 @@ import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GATE_OFICIAL } from './lib/gate.mjs';
+import { presupuestoV8, presupuestoSupervisor } from './lib/presupuestos-v8.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const RAIZ = join(AQUI, '..');
@@ -48,10 +49,9 @@ const ARCHIVO_ENTREGA = join(RAIZ, 'dist-final', 'TableroStudio.html');
  *
  *   QA_SUITE_TIMEOUT_MS=900000 node qa/todas.mjs correcciones
  */
-const TIMEOUT_PREDETERMINADO_MS = 12 * 60_000;
-const timeoutMs = Number(process.env.QA_SUITE_TIMEOUT_MS ?? TIMEOUT_PREDETERMINADO_MS);
-if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) {
-	console.error('QA_SUITE_TIMEOUT_MS debe ser un número de milisegundos mayor o igual a 1000.');
+try { presupuestoSupervisor('', process.env.QA_SUITE_TIMEOUT_MS); }
+catch (error) {
+	console.error(error.message);
 	process.exit(2);
 }
 
@@ -153,6 +153,8 @@ process.once('SIGINT', () => { void interrumpir('SIGINT'); });
 process.once('SIGTERM', () => { void interrumpir('SIGTERM'); });
 
 for (const [i, suite] of suites.entries()) {
+	const timeoutMs = presupuestoSupervisor(suite, process.env.QA_SUITE_TIMEOUT_MS);
+	const progresoVisible = presupuestoV8(suite) !== undefined;
 	if (NECESITAN_EMPAQUETADO.has(suite) && !hayEntrega) {
 		saltadas.push(suite);
 		console.log(`[${i + 1}/${suites.length}] ⏭  ${suite} — no está dist-final/TableroStudio.html `
@@ -161,6 +163,7 @@ for (const [i, suite] of suites.entries()) {
 	}
 	const marca = Date.now();
 	process.stdout.write(`[${i + 1}/${suites.length}] ▶  ${suite}… `);
+	if (progresoVisible) console.log(`(supervisor ${mmss(timeoutMs)})`);
 	const resultado = await new Promise((resolve) => {
 		const hijo = spawn(process.execPath, [join(AQUI, `${suite}.mjs`)], {
 			cwd: RAIZ,
@@ -170,7 +173,7 @@ for (const [i, suite] of suites.entries()) {
 		});
 		hijoActivo = hijo;
 		let salida = '';
-		hijo.stdout.on('data', (d) => { salida += d; });
+		hijo.stdout.on('data', (d) => { salida += d; if (progresoVisible) process.stdout.write(d); });
 		hijo.stderr.on('data', (d) => { salida += d; });
 		let resuelto = false;
 		const limite = setTimeout(() => {
