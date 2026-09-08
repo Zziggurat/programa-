@@ -235,6 +235,14 @@ try {
 	await filaIcu().locator('[data-dt-decision]').selectOption('OVERRIDE');
 	await filaIcu().locator('[data-dt-override]').fill('9');
 	await preparar('preview-vinculo');
+	await filaIcu().locator('[data-dt-override]').fill('8');
+	comprobar('Editar después del preview invalida la confirmación anterior', await dt('aplicar-preview').count() === 0);
+	await preparar('preview-vinculo');
+	await filaIcu().locator('[data-dt-quitar-override]').click();
+	comprobar('Quitar override invalida también el candidato ya preparado', await dt('aplicar-preview').count() === 0);
+	await filaIcu().locator('[data-dt-decision]').selectOption('OVERRIDE');
+	await filaIcu().locator('[data-dt-override]').fill('9');
+	await preparar('preview-vinculo');
 	await aplicar();
 	await dt('resueltos').click();
 	const override = JSON.parse(await modal().locator('[data-dt-preview] pre').innerText()).find(r => r.clave === 'proteccion.Icu@');

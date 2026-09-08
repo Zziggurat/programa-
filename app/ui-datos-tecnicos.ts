@@ -54,7 +54,9 @@ export function instalarUIDatosTecnicos(ctx: ContextoDatosTecnicos): PanelDatosT
         datos: PreviewTecnico;
         operacion: Awaited<ReturnType<ContextoDatosTecnicos['prepararAplicacion']>>;
         identidad: string;
+        formulario: string;
     } | undefined;
+    let generacionFormulario = 0;
     let revisionVista: string | undefined, aborto: AbortController | undefined, destruido = false;
     let tablaElegida: string | undefined, criterioElegido: string | undefined, ambitoCriterio = '', generacionImport = 0;
     let overridesCriterio: RevisionCriteriosTecnicos['parametros'] | undefined;
@@ -64,6 +66,16 @@ export function instalarUIDatosTecnicos(ctx: ContextoDatosTecnicos): PanelDatosT
     const numero = (id: string): number | undefined => leer(id).trim() === '' ? undefined : Number(leer(id));
     const seleccionado = () => [...biblioteca, ...(ctx.proyecto().datosTecnicos?.revisiones ?? [])].find(r => r.hash === seleccionHash);
     const mensaje = (m: string, error = false) => { estado.textContent = m; estado.dataset.error = String(error); };
+    const huellaFormulario = () => JSON.stringify([vista, seleccionHash,
+        [...cuerpo.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input,select,textarea')]
+            .map(e => [e.name, e.dataset, e.value, e instanceof HTMLInputElement ? e.checked : undefined])]);
+    function invalidarFormulario() {
+        generacionFormulario++;
+        if (!preview) return;
+        preview = undefined;
+        $<HTMLElement>('[data-dt-preview]')?.replaceChildren();
+        mensaje('El formulario cambió. Previsualiza de nuevo antes de aplicar.');
+    }
     const acciones = (html: string) => `<div class="dt-barra">${html}</div>`;
     const boton = (accion: string, texto: string) => `<button data-dt="${accion}">${esc(texto)}</button>`;
     async function actualizarBiblioteca() {
@@ -193,12 +205,13 @@ export function instalarUIDatosTecnicos(ctx: ContextoDatosTecnicos): PanelDatosT
         return vinculo;
     }
     async function prepararCambio(crear: (p: Proyecto) => Proyecto) {
+        const generacion = ++generacionFormulario, formulario = huellaFormulario();
         const identidad = ctx.identidad(), operacion = await ctx.prepararAplicacion();
         const candidato = crear(operacion.proyecto);
         const datos = prepararPreviewTecnico(operacion.proyecto, candidato);
-        if (ctx.identidad() !== identidad)
-            throw new Error('STALE_RESULT: cambió el documento.');
-        preview = { datos, operacion, identidad };
+        if (ctx.identidad() !== identidad || destruido || raiz.hidden || generacion !== generacionFormulario || formulario !== huellaFormulario())
+            throw new Error('STALE_RESULT: cambió el documento o el formulario.');
+        preview = { datos, operacion, identidad, formulario };
         const a = ejecutarIngenieria({ proyecto: operacion.proyecto, contextoFisico: contextoDisenoIngenieria(operacion.proyecto) }), b = ejecutarIngenieria({ proyecto: candidato, contextoFisico: contextoDisenoIngenieria(candidato) });
         const panel = $<HTMLElement>('[data-dt-preview]') ?? cuerpo;
         const describir = (valor: unknown) => {
@@ -244,7 +257,7 @@ export function instalarUIDatosTecnicos(ctx: ContextoDatosTecnicos): PanelDatosT
     } return out; }
     function pintarFaltantes() { const p = ctx.proyecto(), r = ejecutarIngenieria({ proyecto: p, contextoFisico: contextoDisenoIngenieria(p) }); cuerpo.innerHTML = `<h3>Datos faltantes y cobertura · mismo motor de Ingeniería</h3><p>${r.validacion.resumen.fail} fallos · ${r.validacion.resumen.indeterminate} indeterminadas · ${r.validacion.resumen.notApplicable} no aplicables. Cero errores no implica revisión completa.</p>${r.validacion.issues.map(i => `<article class="dt-issue"><strong>${esc(i.status)} · ${esc(i.title)}</strong><p>${esc(i.description)}</p><p>${esc(i.missingData.join('; '))}</p>${i.relatedEntities.filter(e => e.tipo === 'DEVICE' || e.tipo === 'CONDUCTOR').map(e => `<button data-dt-resolver="${esc(e.id)}">Resolver ${esc(e.id)}</button>`).join('')}</article>`).join('')}`; }
     function pintarEnsayo() { const p = ctx.proyecto(), es = p.dispositivos.filter(d => familiaDispositivo(d) === 'PROTECCION'), bornes = p.dispositivos.flatMap(d => d.bornes.map(b => ({ valor: JSON.stringify([d.id, b.id]), texto: `${d.designacion ?? d.id} / ${b.id}` }))); cuerpo.innerHTML = `<h3>Icc prospectiva en un punto explícito</h3><p>Ensayo estático aislado V5. No activa fallas runtime, no inventa neutro/PE y no calcula selectividad certificada. Se necesita impedancia real de red.</p><div class="dt-form"><label>Protección<select data-dt-input="proteccion">${es.map(d => opt(d.id, d.designacion ?? d.id, entidadId)).join('')}</select></label><label>Punto de falla<select data-dt-input="de">${bornes.map(b => opt(b.valor, b.texto)).join('')}</select></label><label>Retorno real<select data-dt-input="a">${bornes.map(b => opt(b.valor, b.texto)).join('')}</select></label><label>Tipo<select data-dt-input="tipo-falla">${['L_N', 'L_L', 'L_PE', 'TRIFASICA'].map(k => opt(k)).join('')}</select></label></div>${acciones(boton('preview-ensayo', 'Previsualizar ensayo'))}<pre>${esc(JSON.stringify(p.datosTecnicos?.prospectiva ?? [], null, 2))}</pre><section data-dt-preview></section>`; }
-    function pintar() { if (destruido)
+    function pintar() { invalidarFormulario(); if (destruido)
         return; if (vista === 'biblioteca')
         pintarBiblioteca();
     else if (vista === 'editor')
@@ -345,6 +358,10 @@ export function instalarUIDatosTecnicos(ctx: ContextoDatosTecnicos): PanelDatosT
             const actual = preview;
             if (!actual)
                 throw new Error('No hay preview vigente');
+            if (actual.formulario !== huellaFormulario()) {
+                invalidarFormulario();
+                throw new Error('STALE_RESULT: cambió el formulario. Previsualiza de nuevo.');
+            }
             if (ctx.identidad() !== actual.identidad)
                 throw new Error('STALE_RESULT: cambió el proyecto');
             comprobarPreviewTecnico(ctx.proyecto(), actual.datos);
@@ -484,6 +501,7 @@ export function instalarUIDatosTecnicos(ctx: ContextoDatosTecnicos): PanelDatosT
             return;
         }
         if (b.dataset.dtQuitarOverride) {
+            invalidarFormulario();
             const fila = b.closest('tr')!;
             fila.querySelector<HTMLSelectElement>('[data-dt-decision]')!.value = 'CATALOGO';
             fila.querySelector<HTMLInputElement>('[data-dt-override]')!.value = '';
@@ -513,7 +531,9 @@ export function instalarUIDatosTecnicos(ctx: ContextoDatosTecnicos): PanelDatosT
         if (b.dataset.dt)
             void accion(b.dataset.dt).catch(e => { mensaje(String(e), true); ctx.avisar(String(e), 'error'); });
     };
+    raiz.oninput = () => invalidarFormulario();
     raiz.onchange = ev => {
+        invalidarFormulario();
         const e = ev.target as HTMLInputElement;
         if (e.dataset.dtInput === 'entidad') {
             entidadId = e.value;
