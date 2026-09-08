@@ -10,7 +10,7 @@ import { chromium } from 'playwright-core';
 import { existsSync, readFileSync, unlinkSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, ejecutableNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
 import { copiarEjemploConfirmado } from './lib/confirmacion-visible.mjs';
 
 const inicio = Date.now();
@@ -306,7 +306,13 @@ try {
 	if (process.env.QA_V8_CAPTURAS === '1') {
 		const carpeta = mkdtempSync(join(tmpdir(), 'qa-v8-informe-'));
 		writeFileSync(join(carpeta, 'informe.html'), html);
-		const lectura = await page.context().newPage();
+		// El informe es HTML estático. Cerrar el visor WebGL antes de capturarlo y no forzar
+		// SwiftShader evita depender del compositor 3D para leer un documento sin WebGL.
+		await page.close(); page = undefined;
+		await browser.close();
+		const executablePath = ejecutableNavegador();
+		browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}) });
+		const lectura = await browser.newPage();
 		try {
 			await lectura.setViewportSize({ width: 1440, height: 1000 });
 			await lectura.setContent(html);
