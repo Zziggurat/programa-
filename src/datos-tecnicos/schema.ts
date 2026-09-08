@@ -28,7 +28,11 @@ const rango: Validador = (v, p) => { lista(num(-1e12, 1e12), 2, 2)(v, p); if ((v
 const magnitud: Validador = (v, p) => Array.isArray(v) ? rango(v, p) : num(-1e12, 1e12)(v, p);
 const hash: Validador = (v, p) => { if (typeof v !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(v)) fallo(p, 'SHA-256 requerido'); };
 const url: Validador = (v, p) => { texto(v, p); try { const u = new URL(v as string); if (!['https:', 'http:'].includes(u.protocol) || u.username || u.password) fallo(p, 'solo URL HTTP(S) pública sin credenciales'); } catch { fallo(p, 'URL no admitida'); } };
-const documento: Validador = (v, p) => { texto(v, p); if (/^(?:file:|[a-z]:[\\/]|\\\\|\/)/i.test(v as string)) fallo(p, 'no se admiten rutas privadas'); };
+const documento: Validador = (v, p) => {
+	texto(v, p);
+	// Inspeccionar sin espacios no reescribe la referencia: sus bytes forman parte del hash.
+	if (/^(?:file:|[a-z]:[\\/]|\\\\|\/)/i.test((v as string).trim())) fallo(p, 'no se admiten rutas privadas');
+};
 export const validarProcedencia: Validador = forma({ origen: en('USUARIO', 'GENERICO', 'SINTETICO', 'DOCUMENTAL'), referencia: documento }, { documento, revisionDocumento: texto, seccion: texto, fechaConsulta: (v, p) => { if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v) || !Number.isFinite(Date.parse(v))) fallo(p, 'fecha ISO requerida'); }, url });
 const magnitudPositiva: Validador = (v, p) => { magnitud(v, p); for (const x of Array.isArray(v) ? v : [v]) num()(x, p); };
 export const validarCondiciones: Validador = forma({}, { sistema: en('AC', 'DC'), tensionV: magnitudPositiva, frecuenciaHz: magnitudPositiva, polos: num(1, 100, true), temperaturaC: magnitud, ajusteA: magnitudPositiva, contexto: texto, carga: en('RESISTIVA', 'INDUCTIVA') });

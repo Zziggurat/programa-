@@ -164,6 +164,28 @@ test('V8 referencias de documentos rechazan rutas privadas y URLs ejecutables/cr
 	assert.doesNotThrow(() => productoTecnico({ procedencia: { origen: 'DOCUMENTAL', referencia: 'Referencia declarada', url: 'https://example.com/ficha' } }));
 });
 
+test('V8 espacios iniciales no ocultan rutas privadas y validar no altera el contenido firmado', () => {
+	const rutas = ['C:/Usuarios/privado.pdf', 'C:\\Usuarios\\privado.pdf', '\\\\servidor\\privado.pdf', '/home/privado.pdf', 'file:///tmp/privado.pdf'];
+	for (const prefijo of [' ', '\t', '\n', ' \t\r\n']) for (const ruta of rutas) {
+		for (const campo of ['referencia', 'documento'] as const) {
+			const r = productoTecnico(); const valor = `${prefijo}${ruta}`;
+			r.procedencia[campo] = valor;
+			assert.throws(() => publicarRevision(r), /rutas privadas/, `${campo}: ${JSON.stringify(valor)}`);
+			assert.equal(r.procedencia[campo], valor, 'rechazar no normaliza el objeto recibido');
+		}
+	}
+	const referencia = ' \tManual de ensayo, sección 4\n';
+	const documento = '\nFicha pública de ensayo 2026 ';
+	const r = productoTecnico({ procedencia: { origen: 'DOCUMENTAL', referencia, documento } });
+	const original = structuredClone(r);
+	verificarRevision(r);
+	const cargado = leerPaqueteTecnico(JSON.stringify(crearPaqueteTecnico([r]))).revisiones[0];
+	assert.deepEqual(r, original, 'validación no modifica los datos ni su hash');
+	assert.equal(cargado.procedencia.referencia, referencia);
+	assert.equal(cargado.procedencia.documento, documento);
+	assert.equal(cargado.hash, original.hash, 'roundtrip conserva el contenido firmado exacto');
+});
+
 test('V8 input hostil rechaza prototype pollution, objetos no JSON y números no finitos', () => {
 	for (const clave of ['__proto__', 'constructor', 'prototype']) {
 		assert.throws(() => parsearJsonTecnico(`{"contenido":{"${clave}":{"polluted":true}}}`), /clave peligrosa/);
