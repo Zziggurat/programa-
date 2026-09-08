@@ -2,6 +2,44 @@
 
 ## Estado operativo 01:51 — prioridad sobre registros inferiores
 
+- Actualización03:04: focal71420 exit0, **2/2,114checks,7:28** (ingeniería47/2:37,
+ offline67/4:51); helper3/3;0fallos/timeouts/skips/JS/procesosQA. Capturas ivuYET vistas,
+ HTMLhashC72intacto. Commitslocales **08afb65** y **c9b320e** listos; solo documentos
+ pendientes. CI34190593360 todavíahistóricopendiente,2rojosconocidosya corregidoslocal.
+ Confirmardocs→fetch/verificarmaina65yremotodevdaab691→pushnormalrama, esperandoCIanterior
+ terminal para no perder su resultadohistórico. DespuésCIcandidatofinal6/6→artifacthash
+ →documentaciónfinal/integraciónFFmain→CI main/Pages/tag. Ningún paso final aún acreditado.
+
+- Actualización02:56:87790 terminaCPU4rojo162,01s por clicinserción30s; copia/nombre
+  SÍpasaron,0JS. No ampliar render/plazos restantes por estrésartificial. Corrige inferencia:
+ 13DOMno demuestra tableroprevio; `esEjemplo:true` exportado sí prueba ausenciacopia.
+ **Proceso71420** ejecuta AHORA offline normal+ingenieríaV8 con2capturas sinSwiftShader;
+ log offline-informe-final. No segundaQA. CIanterior siguehistóricopendiente; resto4verdes,
+ offline ycapturaV8rojos. Main/tagintactos. PendientestodosloscambiosQA/docsdescritos.
+
+- Actualización02:53: diagnóstico aislado4601 exit0 mide carga33,470s/copia47,065s
+  CPU×4. Se fija60s SOLO copiasoffline (restohelper20/30intacto); preparación espera
+  explicación y exige copia.68289 terminórojo112,98s por20s insuficientes,0JS.
+  CI34190593360 tambiénV8rojo por capturaestáticaSwiftShader,47checksingenieríaverdes;
+  se cierra visor3D antes de lanzarChromium normal para2capturas. Histórico aún activo.
+  **Proceso87790**: offlineCPU4→offline normal+ingenieríaV8 concapturas, secuenciales;
+  logs offline-cpu4-final y offline-informe-final. No nuevoChromiumhasta terminar.
+  PendientesQA/helpers/benchmark/testmock/docs; productoHTMLC72sin cambios. Commit/push
+  ramadespuésdefocalesverdes yCIanterior terminal. Main/tagNOhastaCIíntegroverde.
+
+- Actualización02:43: CI34190593360 offline rojo4:40; el observador no recibió mensaje,
+  por lo que toast expirado NO basta como causa demostrada. Resto CI aún activo (watch2833).
+  Pendientes SOLO QA/diagnóstico: confirmacion-visible historialDOM, empaquetado espera
+  explicación al terminar carga y exige copia/nombre, testmock ajustado. CPU4 diagnóstico
+  proceso60924 aún activo, log offline-cpu4; reprodujo retorno false del helper antes de
+  cargar ejemplo, 13aparatos anteriores y exportación17 con esEjemplo:true. No verde.
+  Esperar final, repetir offline focal corregido, commit y pushrama cuando coherente;
+  maina65/HTMLC72 intactos. No avanzar main ni tag hasta CI íntegro verde.
+
+- Actualización02:26: HEAD/rama remota **daab691ad2611e48bd9d4a0c64735efae0dca4aa**,
+  observador1fe81ec incluido; árbol limpio antes de esta nota. CI **34190593360**,attempt1,
+  activo; log ci-candidato-3. Sin QA local activo. Esperar6jobs y descargarHTMLartifact;
+  luego documentación final/integraciónmain/CI/Pages/tag. No repetirlocalverde sin cambio.
 - Actualización02:25: **todoslos focales locales verdes**.7328terminado2/2,113checks7:43
   (ingeniería2:47,offline4:56). Full1382verde. CI34188581519terminado5/6verde; histórico13/13,
  263checks29:38 yV8 117checksverdes; único rojo toastoffline corregido localmente.

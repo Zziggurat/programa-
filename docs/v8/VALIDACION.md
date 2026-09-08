@@ -8,7 +8,7 @@
 | Build QA / producción | 392 / 394 módulos; ambas correctas | 6,69 / 17,93 s |
 | Catálogo V8 | 15 comprobaciones | 1:18 |
 | Importación/portabilidad V8 | 55 comprobaciones | 1:48 |
-| Ingeniería/revisiones V8 | 47 comprobaciones | 2:47 |
+| Ingeniería/revisiones V8 | 47 comprobaciones, capturas estáticas renovadas | 2:37 |
 | Ingeniería V7 | documentación, escenarios y validación verdes | 0:56 / 0:44 / 1:08 |
 | Equipos V6 | accionamientos, motor, red verdes | 1:52 / 2:33 / 0:51 |
 | Física V5 / simulación / automatización | verdes, incluido disparo entre ticks | 2:20 / 5:45 / 1:29 |
@@ -17,7 +17,7 @@
 | Histórico | 13 fronteras verdes por agregado + focal, no 13/13 del primer intento | 12:42 agregado; focales 0:47 y 2:12 |
 | Stress dirigido | 3 tamaños; 0 fallos | 10,78 s |
 | entrega:check | bytes actuales; LF/CRLF idénticos | 22,24 s compilación |
-| file:// V2–V8 | 66 comprobaciones, 0 JS/HTTP externo | 4:56 |
+| file:// V2–V8 | 67 comprobaciones; copia propia exigida; 0JS/HTTP externo | 4:51 |
 
 La campaña renovada de 9 suites terminó 9/9,345 comprobaciones,25:07. No sumar sus
 comprobaciones a las filas anteriores: son evidencia solapada. Se cubrieron 30 suites
@@ -247,3 +247,50 @@ Run34188581519 terminó5/6jobsverdes: histórico13/13,263checks,29:38QA/30:23job
 Focal final de copiasV8: **2/2,113checks,7:43**, ingeniería47checks2:47 y offline66checks4:56.
 0fail/timeout/skip/JS; log observador-vertical-final. FocalNode3/3,89,28ms; no producto
 modificado después del full1382. InventarioCim sin procesos propios restantes.
+
+### Reapertura del diagnóstico offline (candidato daab691)
+
+Run34190593360 vuelve a fallar offline4:40: el observador previo tampoco recibió la
+confirmación. Por tanto, la explicación anterior de toast expirado **no explica por sí
+sola el fallo remoto**. No acreditar el cierre por los pases locales anteriores.
+Se añade historial acotado del DOM/notificaciones y errores JS al fallo, sin aceptar
+confirmaciones distintas ni alterar el producto.
+
+Diagnóstico local con `QA_CPU_RATE=4 node qa/empaquetado.mjs` reproduce otra carrera:
+el helper opcional devuelve false antes de confirmar la carga; la prueba continúa,
+falla al añadir y exporta luego el ejemplo original de17 aparatos
+con `esEjemplo:true`. No es evidencia de una copia correcta. El recorrido ahora espera la
+explicación (publicada después de finalizar mostrarEjemplo), exige copia y nombre propio;
+la adición espera su resultado DOM en lugar de600ms. Sin aumentar el timeout de copia.
+Este experimento no sustituye ni rebaja el gate normal. Resultado focal pendiente.
+
+La repetición con carga confirmada falló a112,98s de recorrido: copia aún no montada
+tras20s, sin erroresJS. Se aisló la operación con `_perf-copia-offline.mjs` (CPU×4,
+ventana1440×900, mismo HTML), sin ejecutar el resto del smoke: **carga33,470s,
+copia47,065s**, terminó con nombre propio correcto. No loop ni excepción ocultada.
+Se adopta60s únicamente para copias offline, margen sobre medición, sin ampliar el
+timeout global del gate ni debilitar identidad/edición/persistencia. Se repite la
+frontera ralentizada y normal antes de confirmar.
+
+El mismo CI34190593360 terminó V8rojo19:20job: **47 comprobaciones de ingeniería
+pasaron**, pero `Page.captureScreenshot` no pudo capturar `informe-pantalla.png`.
+No fue un timeout ni un fallo de validación eléctrica (117checksdelagregado).
+El informe estático pasa ahora a un Chromium sin SwiftShader después de cerrar
+el visor3D; conserva captura de pantalla e impresión. Es el método ya verificado
+para la inspección A4 local; pendiente su regresión y CI, no se omite la captura.
+
+La repetición CPU×4 con margen60s confirma copia/nombre, pero termina roja162,01s
+por timeout30s del clic de inserción del catálogo,0erroresJS. Es diagnóstico de estrés
+artificial, no un pase ni una condición de rendimiento mínimo prometida. No se modifica
+el renderer ni se amplían otros plazos para ocultarlo. La frontera documental aislada
+sí terminó (47,065s). Se ejecuta a continuación el gate normal offline+ingeniería.
+Corrección de lectura:13 elementos DOM no acreditan un tablero previo; la lista depende
+del espacio visible. La evidencia inequívoca de falta de copia fue `esEjemplo:true`
+en el archivo exportado, no la diferencia13/17 por sí sola.
+
+Focal normal posterior: **2/2,114 comprobaciones,7:28**, ingeniería47checks2:37,
+offline67checks4:51,0fallos/timeouts/skips/JS. Log offline-informe-final; proceso71420
+exit0. Capturas reales `qa-v8-informe-ivuYET/informe-{pantalla,impresion}.png` inspeccionadas,
+legibles; PDF A4 de4páginas previamente acreditado se conserva. Focalhelper3/3,76,45ms.
+InventarioCim sin QA/Chromium propios; ambosHTML conservan el SHA del manifiesto.
+Commits08afb65 (capturaestática) y c9b320e (preparación/copia/diagnóstico). CIrenovado pendiente.

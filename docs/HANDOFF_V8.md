@@ -79,5 +79,8 @@ de fuentes y por AI de PLC si se amplía ese contrato; datasets documentales ver
 el usuario con derecho de uso. No hay catálogo comercial certificado incluido.
 Actualizar wrappers de Actions deprecados en un cambio de toolchain probado. La demanda
 compartida multifase sin reparto inequívoco permanece indeterminada, no se suma como DC.
+El diagnóstico artificial CPU×4 del HTML1440×900 midió carga33,47s/copia47,07s y
+agotó30s en un clic de inserción pesada. No se promete un SLA en ese entorno ni se
+califica ese estrés como verde; revisar rendimiento del visor por separado si se prioriza.
 No se inició V9, SPICE, selectividad certificada, router industrial, DRC geométrico nuevo
 ni optimización global del render.
