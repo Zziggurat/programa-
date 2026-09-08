@@ -11,6 +11,7 @@ export const ALMACENES_PERSISTENCIA = [
 	'snapshots',
 	'metadata',
 	'recovery',
+	'technicalData',
 ] as const;
 
 export type AlmacenPersistencia = typeof ALMACENES_PERSISTENCIA[number];

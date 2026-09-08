@@ -6,6 +6,7 @@
  * altera silenciosamente un proyecto antiguo.
  */
 import { cargarProyecto } from '../modelo/cargar.js';
+import { validarAdopcionTecnica } from '../datos-tecnicos/operaciones.js';
 import {
 	ComportamientoSimulacion, validarComportamiento,
 } from '../modelo/comportamiento.js';
@@ -305,6 +306,7 @@ export function crearPaqueteProyecto(
 }
 
 export function leerPaqueteProyecto(textoJson: string): PaqueteProyectoPortatil {
+	if (textoJson.length > 64 * 1024 * 1024) throw new Error('El paquete supera el límite de 64 MiB de texto.');
 	const bruto: unknown = JSON.parse(textoJson);
 	if (typeof bruto !== 'object' || bruto === null || Array.isArray(bruto)) throw new Error('El paquete no es un objeto.');
 	const p = bruto as Partial<PaqueteProyectoPortatil>;
@@ -312,5 +314,7 @@ export function leerPaqueteProyecto(textoJson: string): PaqueteProyectoPortatil 
 		|| !Array.isArray(p.assets) || !Array.isArray(p.componentes)) {
 		throw new Error('El archivo no es un paquete portable de TableroStudio compatible.');
 	}
-	return crearPaqueteProyecto(p.proyecto, p.assets, p.componentes);
+	const resultado = crearPaqueteProyecto(p.proyecto, p.assets, p.componentes);
+	validarAdopcionTecnica(resultado.proyecto);
+	return resultado;
 }

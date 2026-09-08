@@ -1,4 +1,5 @@
 import { RepositorioProyectosCore } from '../src/persistencia/repositorio.js';
+import { RepositorioDatosTecnicos } from '../src/datos-tecnicos/repositorio.js';
 import type {
 	AlmacenPersistencia,
 	BackendPersistencia,
@@ -10,7 +11,7 @@ import type {
 import { ALMACENES_PERSISTENCIA } from '../src/persistencia/tipos.js';
 
 export const NOMBRE_BASE_PROYECTOS = 'tablerostudio-documentos';
-export const VERSION_BASE_PROYECTOS = 1;
+export const VERSION_BASE_PROYECTOS = 2; // V8: conserva stores V1 y añade technicalData.
 
 function esperarPeticion<T>(peticion: IDBRequest<T>): Promise<T> {
 	return new Promise((resolve, reject) => {
@@ -97,6 +98,7 @@ export function abrirBaseProyectosIndexedDB(
 
 export interface RepositorioIndexedDBAbierto {
 	repositorio: RepositorioProyectos;
+	datosTecnicos: RepositorioDatosTecnicos;
 	cerrar(): void;
 }
 
@@ -108,6 +110,7 @@ export async function abrirRepositorioProyectosIndexedDB(
 	const base = await abrirBaseProyectosIndexedDB(nombreBase, fabrica);
 	return {
 		repositorio: new RepositorioProyectosCore(new BackendPersistenciaIndexedDB(base), opcionesRepositorio),
+		datosTecnicos: new RepositorioDatosTecnicos(new BackendPersistenciaIndexedDB(base)),
 		cerrar: () => base.close(),
 	};
 }

@@ -615,6 +615,8 @@ export interface OpcionesProyecto {
 }
 
 export interface Proyecto {
+	/** V8: vínculos exactos, decisiones y subconjunto técnico portable. Sin resultados runtime. */
+	datosTecnicos?: import('../datos-tecnicos/tipos.js').ConfiguracionTecnicaProyecto;
 	/**
 	 * Este tablero es uno de los EJEMPLOS de la biblioteca: se mira, se energiza y se estudia,
 	 * pero no se modifica.

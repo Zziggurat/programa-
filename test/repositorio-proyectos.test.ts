@@ -75,9 +75,9 @@ async function paquetePortable(): Promise<PaqueteProyectoPortatil> {
 	return repositorio.exportarPaquete(documento.id);
 }
 
-test('el esquema lógico contiene los seis almacenes permanentes', () => {
+test('el esquema V8 conserva los seis almacenes anteriores y añade datos técnicos', () => {
 	assert.deepEqual(ALMACENES_PERSISTENCIA, [
-		'projects', 'assets', 'customComponents', 'snapshots', 'metadata', 'recovery',
+		'projects', 'assets', 'customComponents', 'snapshots', 'metadata', 'recovery', 'technicalData',
 	]);
 });
 
