@@ -70,3 +70,24 @@ La evidencia final de navegador/paquete/CI sigue pendiente. No confundir estos f
 - Gate histórico original11/13,12:42,252checks reportados,9SAqeOQ5. Rojos conservados en tablerostudio-v8-historico-final.log: abrir-atomico (preparación tras Nuevo con espera fija500ms) y se-guarda-solo (nombre durante transición de copia; ancho830sí se aplicó).
 - Se mantiene bloqueo transaccional de producto. QA espera identidad/confirmación pública; abrir-atomico ahora limpia navegador/servidor también en excepción. Focal abrir-atomico verde0:47 (log tablerostudio-v8-historico-focal.log); primer autoguardado diagnóstico rojo1:15, log conserva nombre de copia. Tras esperar confirmación visible, autoguardado7/7,2:12,exit0 (tablerostudio-v8-autoguardado-final.log). Ninguna aserción retirada. Las13fronteras históricas quedan verdes por agregado+focal, no se presenta el agregado original como verde.
 - Build posterior de presentación:392módulos,6,44s,index-46qzRhcg.js. Campaña especializada13suites en curso, log tablerostudio-v8-especializadas-final.log. Este cambio de presentación no invalida picking/cables/identidad ni autoría/imports ya probados; ingeniería documental se ejecuta sobre el bundle nuevo.
+
+## Revisión independiente y correcciones finales
+
+- Revisión ingeniería: reproducción real230→400V conservando vínculo230 producía PASS falso; supresión de rango analógico producía TypeError. Se corrigieron ambas fronteras, no solo las pruebas.
+- Revisión seguridad:40combinaciones de espacios/rutas/campos rechazadas sin cambiar contenido firmado. Formulario alterado después de preview (también durante await) invalida generación/huella y exige recalcular; QA visible ampliado.
+- Contexto de corte y seguridad:51/51,0fail/skip,543,9ms, log tablerostudio-v8-revision-focal.log. Incluye nominal conectado, AC/DC,1P fase-referencia/2P entre fases, orden y preservación.
+- Analogía/runtime/evidencia disparo:44/44,0fail/skip,331,7ms, log tablerostudio-v8-revision-analogica-disparo.log.21casos analógicos retirando únicamente contrato no resoluble, canal vecino continúa; evento despejado sobrevive20ticks sin energizar red y desaparece al retirar/cambiar ensayo.
+- Primer intento de compilar los tests nuevos detectó nombre erróneo `controladorId`; corregido a contrato real `dispositivoId`, sin retirar comparación.
+- Agregación común monofásica: reproducción15A+15A/In25A daba dos PASS. Corrección/regresión de suma única, ausencia, orden y frontera multifase23/23,804,9ms, log tablerostudio-v8-demanda-compartida.log. Trifásica compartida no evaluable se declara indeterminada, no una suma escalar ficticia.
+- Full renovado tras correcciones de analogía/disparo/contexto:1378/1378,0fail/cancel/skip,61421msNode, log tablerostudio-v8-unit-final-3.log. Posterior regla compartida requiere full final adicional. BuildCfUfls6e,392módulos6,69s.
+
+## Campaña especializada e incidente de toolchain
+
+Agregado46qzRhcg terminó8/13,23:09,206checksreportados (tablerostudio-v8-especializadas-final.log):
+
+- automatizacion-plc2:41, cables-fusion4:13, componentes-personalizados7:11, equipos-v6-accionamientos1:52, equipos-v6-motor2:33, equipos-v6-red0:51, fixture-puerta0:17, ingenieria-documentacion: pases terminales.
+- fisica-electrica23/26,154,6s,3fallos del mismo defecto: evidencia Icc/selectividad/despejada perdida al avanzar un tick. No fue tolerancia ni selector. Corrección de resultado runtime y prueba de dos avances visibles del reloj, manteniendo aserciones.
+- ingenieria-escenarios, ingenieria-validacion, multiproyecto y simulacion-industrial no pudieron arrancar por ERR_MODULE_NOT_FOUND. Durante la campaña, un revisor invocó por error `pnpm exec`, cuyo shim inició una instalación y alteró node_modules. No se acredita ejecución de esas suites ni compilación del revisor.
+- package.json/package-lock intactos; se retiraron exclusivamente los dos archivos nuevos pnpm-lock.yaml/pnpm-workspace.yaml tras comprobar Git. Sin reset/clean ni pérdida de código. `npm ci` real restauró49paquetes11s,exit0; log tablerostudio-v8-npm-ci-restauracion.log. Dependencias nuevamente canónicas antes del full1378/buildCfUfls6e. No se usa pnpm para cierre.
+
+Campaña renovadaCfUfls6e (9suites) en tablerostudio-v8-cierre-revisiones-qa.log; no contabilizar como completa hasta exit. Las fronteras de fusión/puerta y componentes sin datos V8 no quedan invalidadas por contexto de capacidad/contrato analógico condicionado.

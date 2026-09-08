@@ -1,4 +1,29 @@
-# Estado durable V8
+# Estado actual V8 — 8 de septiembre
+
+**No entregada aún. No repetir A0 ni recrear gates.** El registro cronológico inferior conserva
+intentos anteriores; este bloque tiene prioridad para reanudar.
+
+- Rama v8/astra-datos-tecnicos, producto48e6885. Backup remotocf6ce24; main/origin/maina65cc0c intactos tras fetch. TagV8 ausente.
+- Gates A–J implementados/revisados; K en campaña final. Sin commit UIformulario/QA ampliado y documentación; no descartar.
+- Proceso **75232**: terminó full1378/1378,0fail/skip/cancel,61421msNode y buildCfUfls6e,392módulos6,69s.
+  Ahora9QA seriales, log `%TEMP%/tablerostudio-v8-cierre-revisiones-qa.log`:
+  `node qa/todas.mjs fisica-electrica datos-tecnicos- ingenieria-escenarios ingenieria-validacion multiproyecto simulacion-industrial automatizacion-plc`.
+  Automatización1:29, catálogo1:18, importación3:36 verdes; ingeniería V8 en curso. No otro Chromium/rebuild hasta exit.
+- CfUfls6e incluye correcciones analógicas/contexto/evidencia; cambio posterior48e6885 solo regla de demanda compartida. Focal23/23verde804,9ms; full final debe renovarse.
+- Histórico13fronteras verdes por agregado+focal; especializadas anteriores8/13 con fusión/puerta/componentes/equipos/documentación verdes. Física roja real corregida; cuatro suites no arrancaron por incidente pnpm y están en repetición. Ver VALIDACION.
+- npmci canónico restaurado49paquetes11s, package-lock/package.json intactos. Dos archivos pnpm generados retirados; no agente activo ni más acciones pnpm.21tests de revisor solo se acreditaron al ejecutar root44focales posteriormente.
+- Capturas reales escritorio/estrecha y PDF A4 de4páginas inspeccionados. Stress existente100/1000/10000y300bindings; renovar después de cambios de resolver.
+
+Siguiente secuencia: recoger75232/corregir rojos → commitUI tras verde → full/stress final →
+empaquetar/check/offlineV2–V8 → HTMLs versionados idénticos+manifest/handoff → pushrama y CI
+terminal del SHA → preflight e integración convencional main → CI main/Pages200/artifactHTML
+descargado/hash → tag anotadoV8 si ausente y pushnormal. No force/reset/clean/rebase; no V9.
+
+Toolchain: Node24.19.0, Playwright-core1.61.1. npmCLI:
+`C:/Users/Usuario/AppData/Local/Temp/codex-npm-bootstrap-v7/package/bin/npm-cli.js`.
+Usar node directo para tsc/vite cuando proceda; nunca shim pnpm.
+
+## Registro cronológico anterior (no estado activo)
 
 Rama / baseline: v8/astra-datos-tecnicos / a65cc0cbb304cb153d5aaa030a39ad7400438a03.
 Checkpoints existentes: a25cfc9 (ingeniería de perfiles/sumas); fb55b57 (candidatos documentales y rollback);5099464 (revisiones/adopción);9f6ad23 (cálculos condicionados);48e23a8 (snapshot runtime). Integración de ingeniería y cobertura cerrada en el siguiente checkpoint semántico.
@@ -31,3 +56,15 @@ Histórico9SAqeOQ5:11/13,12:42,252comprobaciones reportadas. Rojos abrir-atomico
 Autoguardado final7/7,2:12,exit0. Informe A4 real4páginas inspeccionadas sin recortes/solapamientos; comprobador público herramientas/verificar-informe-v8.mjs sin HTTP/JS. Commits be95ed2(presentación/A4) y b8600a6(QA espera documental), todavía locales.
 Proceso actual: node qa/todas.mjs ingenieria- equipos-v6 fisica-electrica simulacion-industrial automatizacion-plc cables-fusion fixture-puerta multiproyecto componentes-personalizados, sesión53337, log tablerostudio-v8-especializadas-final.log. Build46qzRhcg,392módulos,6,44s. Primera suite automatizacion-plc verde2:41. Dos revisores de solo lectura reintentados, no contar revisión hasta respuesta.
 Siguiente acción exacta: terminar campaña especializada sin repetir rutas verdes no afectadas; generar/verificar offline con smoke V8; CI/main/tag solo tras verde. No V9.
+
+Revisión independiente reanudada encontró incremento obligatorio adicional (no cerrado):
+- Referencias privadas con espacios iniciales: schema inspecciona trim sin modificar hash; regresión40variantes.
+- Formulario cambiado tras preview/pending await: token+huella de formulario invalidan el candidato; QA ingeniería ampliado, pendiente navegador.
+- Capacidad230V indebidamente aprobada con red400V: contexto nominal desde polos/conectividad física, sin usar tensión deprimida de falla; regresiones AC/DC,L-N/L-L,orden. Frontera contexto/protecciones/integridad51/51,0fail/skip,543,9ms (log tablerostudio-v8-revision-focal.log).
+- Supresión de rango analógico podía dejar perfil inválido: revision_ingenieria edita resolver/runtime+tests focales, sin rebuild navegador. Retirar solo canal/proyección no modelado, no restaurar legacy.
+Campaña sesión53337 sigue46qzRhcg intacta: primeras6suitesverdes. Es evidencia del bundle anterior a estas correcciones; renovar posteriormente V8 e ingeniería y frontera simulación/PLC afectados. No repetir fusión/puerta no afectadas.
+
+Actualización terminal: campaña53337 terminó8/13,23:09,206checksreportados. Física23/26roja154,6s por evidencia despejada perdida en tick siguiente (defecto real); 4suites no arrancaron por ERR_MODULE_NOT_FOUND tras invocación errónea del shim pnpm por revisor. No ocultar estos rojos. Sin cambios package.json/package-lock; eliminados SOLO pnpm-lock.yaml/pnpm-workspace.yaml recién generados. npmci canónico restauró49paquetes11s,exit0; log tablerostudio-v8-npm-ci-restauracion.log. Ninguna otra acción pnpm autorizada.
+Correcciones actuales: 804f658(privacidad);097855d(contexto red);32cd7ac(ausencia analógica);798b719(evidencia disparo). Frontera analógica/runtime/disparo44/44,331,7ms. Full npm test1378/1378,61421msNode,0fail/skip/cancel. Un incremento posterior de demanda compartida tiene23/23focales,804,9ms: renovar full para candidato final.
+Proceso actual75232: buildCfUfls6e,392módulos6,69s; nueveQA seleccionados seriales con logs tablerostudio-v8-cierre-revisiones-qa.log. Automatización1:29 ycatálogo1:18verdes. UIformulario/QA ampliado sigue sin commit hasta pase navegador. Cambio posterior demanda compartida solo afecta esa regla multirrama; fixtureUI V8 de una carga no cambia.
+Pendiente después de75232: full renovado, empaquetado/offline/check; actualización de evidencia y docs; pushrama candidato/CI; integración main/Pages/artifact/tag solo verde. No V9.

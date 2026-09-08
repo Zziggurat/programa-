@@ -37,6 +37,9 @@ es idempotente; otro contenido con la misma identidad/revisión se rechaza.
 El nombre comercial, imagen o fabricante declarado nunca decide la función eléctrica.
 El vínculo debe corresponder a la familia del perfil persistente y, para PLC, a bornes reales.
 Los canales digitales se identifican por borne, no por posición en un array.
+Si editas valores, decisiones o condiciones después de preparar un preview, la confirmación
+anterior se retira. Debes previsualizar de nuevo: no se aplica una fotografía distinta de
+lo que acabas de editar.
 
 ## Decisiones de un vínculo
 
@@ -64,6 +67,10 @@ como cumplimiento. Desactivar coordinación no rellena datos de instalación aus
 puede resolver su vínculo o instalación y volver a validar. Icn, Icu e Ics son magnitudes
 distintas; el criterio especifica cuál comparar. Una Ics no utilizada no invalida una Icu
 resuelta. La cobertura de cada regla depende de sus datos realmente necesarios.
+Una condición escrita en el vínculo no acredita la tensión real del circuito: la capacidad
+de corte se contrasta también con fuente y polos conectados. Si no puede demostrarse ese
+contexto, se informa como indeterminado. La demanda de una protección común monofásica/DC
+suma sus cargas únicas; no aprueba cada rama aislada ignorando las otras.
 
 ## Icc prospectiva y curvas
 
@@ -111,5 +118,9 @@ fórmulas. Los datos sintéticos siguen identificados en la exportación y reimp
   burden a una AI de un PLC multicanal se rechaza explícitamente; no altera las otras AI.
 - Un rango que el motor necesita como escalar queda pendiente de una decisión puntual;
   no se elige automáticamente media, máximo ni mínimo.
+- Rango/modo/unidad analógicos ausentes retiran el transmisor o AI de la proyección efectiva,
+  sin borrar el diseño ni rescatar una lectura legacy. Los canales vecinos siguen operando.
+- La agregación compartida trifásica requiere reparto de demanda por fase demostrado. No se
+  trata como suma monofásica ni se declara validada por comprobar cada ramal por separado.
 - Las capacidades funcionales V2–V7 se conservan; V8 no añade SPICE, PWM, selectividad
   certificada, un router industrial ni dinámica de proceso nueva.

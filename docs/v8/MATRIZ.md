@@ -14,9 +14,11 @@ VALIDACION.md; «implementado» no equivale a campaña/entrega aprobada.
 | Guardado atómico/rollback/identidad | `app/gestor-documentos.ts`, preparación de candidato en `main.ts` | `gestor-documentos.test.ts`, cuotas, stale, fallo de montaje; QA ingeniería Undo/Redo |
 | Frozen mínimo y assets portables | repositorio/proyecto + `congelarSubconjunto` | `datos-tecnicos-operaciones/repository` tests; QA importación limpia y borrado global |
 | Icc y capacidad de corte independientes | `ingenieria/prospectiva.ts`, `protecciones.ts` | Icc sin Icu y viceversa; Icn/Icu/Ics elegidas; Ics no usada; retorno real; ensayo aislado |
+| Contexto nominal de protección conectado | `ingenieria/contexto-proteccion.ts` | 230→400V y AC→DC no aprobados por vínculo obsoleto; L-N/L-L y orden; demanda común15+15/In25 falla |
 | Curvas condicionadas y runtime común | `curvas.ts`, integración física/runtime | Interpolación aritmética, límites, sin fallback genérico, tiempo simulado, mismo snapshot |
 | PLC y bobina | `ingenieria/compatibilidad.ts`, resolver | Suma sostenida/llamada, grupos por IDs, desconocido distinto de cero, canal fantasma |
 | Analógicas | mismo contrato físico V5 y compatibilidad | Burden/compliance/cable explícitos, dos fuentes ambiguas, AI multicanal no sobrescrita |
+| Contrato analógico incompleto | resolver y guard de lectura runtime | 21 casos rango/unidad/modo; sin TypeError ni fallback de valor bruto; AI vecina y DO operativas |
 | Motor/VFD/fuente/transformador | proyección tipada a perfiles existentes | `datos-tecnicos-runtime.test.ts`; tensiones heterogéneas rechazadas; no duplicar fuentes |
 | Ampacidad | `ampacidad.ts`, instalación por conductor | 30×0,94×0,80=22,56; tuple completo, cero/ausencia, no extrapolación/doble factor |
 | Ib ≤ In ≤ Iz | `ingenieria/conductores.ts` | Ib22/In25/Iz22,56 falla; upstream por trayecto, no array; UI laboratorio Ib10 |
@@ -44,6 +46,9 @@ VALIDACION.md; «implementado» no equivale a campaña/entrega aprobada.
 - Cambio de documento limpia filtros/selecciones técnicas dependientes y previews.
 - Modal usa el gestor central de foco/inercia; no mantiene otra pila de teclado.
 - CSS modular se incluye en HTML offline y CSP manteniendo cascada.
+- Preview no confirma una fotografía anterior a la última edición del formulario.
+- Ruta documental privada con espacios iniciales no evade el rechazo ni altera hashes al validar.
+- Evidencia Icc despejada persiste entre ticks del mismo ensayo, sin volver a energizar la red.
 
 ## Límites, no funciones pendientes encubiertas
 
@@ -52,3 +57,5 @@ Fuentes con tensiones heterogéneas requieren identificación de salida no model
 nominal común. Impedancia AI individual multicanal no se proyecta sobre la común del equipo.
 Icc prospectiva no soportada se declara como tal. Datos técnicos avanzados importables no
 constituyen un editor universal de tablas normativas. No V9 ni física nueva fuera de estos adaptadores.
+La demanda compartida multifase sin reparto inequívoco se declara indeterminada; la suma
+monofásica/DC no se extiende a fases distintas como si fueran el mismo conductor.
