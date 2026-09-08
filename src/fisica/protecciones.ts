@@ -1,4 +1,6 @@
 import type { OrigenDatoFisico, PuntoCurvaProteccionFisica } from '../modelo/fisica.js';
+import type { CondicionesTecnicas, RevisionCurvaTecnica } from '../datos-tecnicos/tipos.js';
+import { evaluarCurvaTecnica } from '../datos-tecnicos/curvas.js';
 
 export interface PerfilCurvaProteccion {
 	id: string;
@@ -6,6 +8,8 @@ export interface PerfilCurvaProteccion {
 	puntos: PuntoCurvaProteccionFisica[];
 	instantaneoDesdeIn?: number;
 	origen: OrigenDatoFisico;
+	/** Metadato de evaluación, nunca se guarda dentro del perfil persistente del aparato. */
+	tecnica?: { revision?: RevisionCurvaTecnica; condiciones: CondicionesTecnicas; motivo?: string };
 }
 
 export interface EvaluacionCurvaProteccion {
@@ -15,6 +19,7 @@ export interface EvaluacionCurvaProteccion {
 	tMaxS?: number;
 	origen: OrigenDatoFisico;
 	explicacion: string;
+	tecnica?: ReturnType<typeof evaluarCurvaTecnica>;
 }
 
 const puntos = (...p: [number, number, number][]): PuntoCurvaProteccionFisica[] =>
@@ -37,6 +42,19 @@ function interpolarLog(a: PuntoCurvaProteccionFisica, b: PuntoCurvaProteccionFis
 }
 
 export function evaluarCurva(perfil: PerfilCurvaProteccion | undefined, corrienteA: number, inA: number): EvaluacionCurvaProteccion {
+	if (perfil?.tecnica) {
+		const multiploIn = Number.isFinite(corrienteA) && Number.isFinite(inA) && inA > 0 ? Math.max(0, corrienteA / inA) : 0;
+		if (!perfil.tecnica.revision) return { region: 'NO_MODELADA', multiploIn, origen: 'NO_MODELADO',
+			explicacion: perfil.tecnica.motivo ?? 'No se encuentra la curva técnica fijada. No se adopta una curva genérica.' };
+		const tecnica = evaluarCurvaTecnica({ curva: perfil.tecnica.revision, corrienteA, inA, condiciones: perfil.tecnica.condiciones });
+		const resuelta = tecnica.estado === 'RESOLVED';
+		return { region: resuelta ? 'TERMICA' : 'NO_MODELADA', multiploIn,
+			...(resuelta ? { tMinS: tecnica.minimoS, tMaxS: tecnica.maximoS } : {}),
+			origen: resuelta ? perfil.origen : 'NO_MODELADO', tecnica,
+			explicacion: `${resuelta ? 'Ventana técnica' : tecnica.estado}: ${perfil.descripcion}. `
+				+ [...tecnica.motivos, ...tecnica.transformaciones, ...tecnica.advertencias].join(' '),
+		};
+	}
 	if (!perfil || !Number.isFinite(corrienteA) || !(inA > 0)) return { region: 'NO_MODELADA', multiploIn: 0,
 		origen: 'NO_MODELADO', explicacion: 'Faltan curva o corriente nominal' };
 	const multiploIn = Math.max(0, corrienteA / inA);

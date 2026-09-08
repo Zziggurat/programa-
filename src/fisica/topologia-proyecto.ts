@@ -1,5 +1,8 @@
 import type { Dispositivo, Proyecto } from '../modelo/tipos.js';
 import { resolverComportamiento } from '../modelo/comportamiento.js';
+import { resolverProyectoTecnico } from '../datos-tecnicos/resolver.js';
+import { claveRevision, referenciaTecnica, type RevisionTecnica } from '../datos-tecnicos/tipos.js';
+import { verificarRevision } from '../datos-tecnicos/hash.js';
 import type { OrigenDatoFisico } from '../modelo/fisica.js';
 import { calcularConductorFisico, resolverLongitudConductor, type ResultadoConductorFisico } from './conductores.js';
 import { complejo, magnitud, polar } from './complejos.js';
@@ -109,7 +112,54 @@ export interface ResultadoFisicaElectrica {
 
 const clave = (dispositivoId: string, borneId: string): string => `${dispositivoId}::${borneId}`;
 
-export function perfilCurvaProteccionDispositivo(dispositivo: Dispositivo): PerfilCurvaProteccion | undefined {
+const curvasTecnicasPorProyecto = new WeakMap<Proyecto, ReadonlyMap<string, PerfilCurvaProteccion>>();
+
+/** Índice del snapshot efectivo; no se cachea nunca un documento de diseño mutable. */
+function curvasTecnicasProyecto(proyecto: Proyecto): ReadonlyMap<string, PerfilCurvaProteccion> {
+	const efectivo = resolverProyectoTecnico(proyecto).proyecto;
+	const existente = curvasTecnicasPorProyecto.get(efectivo); if (existente) return existente;
+	const resultado = new Map<string, PerfilCurvaProteccion>();
+	const revisiones = new Map<string, RevisionTecnica>(); const errores = new Map<string, string>();
+	const declaradas = new Map<string, RevisionTecnica>();
+	for (const r of efectivo.datosTecnicos?.revisiones ?? []) {
+		const k = claveRevision(referenciaTecnica(r));
+		declaradas.set(k, r);
+		try { verificarRevision(r); if (revisiones.has(k) && revisiones.get(k)!.hash !== r.hash) throw new Error('CONFLICT: revisión duplicada'); revisiones.set(k, r); }
+		catch (e) { errores.set(k, String(e)); }
+	}
+	for (const v of efectivo.datosTecnicos?.vinculos ?? []) {
+		if (v.entidad !== 'DEVICE') continue;
+		const productoKey = claveRevision(v.producto);
+		const producto = revisiones.get(productoKey) ?? declaradas.get(productoKey);
+		const errorProducto = errores.get(productoKey) ?? (!producto || producto.hash !== v.producto.hash
+			? 'MISSING: el producto no coincide con la revisión/hash fijados.' : undefined);
+		if (errorProducto) {
+			resultado.set(v.entidadId, { id: `NO_DISPONIBLE:${v.entidadId}`, descripcion: errorProducto,
+				puntos: [], origen: 'NO_MODELADO', tecnica: { condiciones: structuredClone(v.condiciones), motivo: errorProducto } });
+			continue;
+		}
+		if (producto?.tipo !== 'PRODUCTO' || producto.familia !== 'PROTECCION' || !producto.curva) continue;
+		const k = claveRevision(producto.curva); const curva = revisiones.get(k);
+		const motivo = errores.get(claveRevision(v.producto)) ?? errores.get(k)
+			?? (producto.hash !== v.producto.hash || curva?.tipo !== 'CURVA' || curva.hash !== producto.curva.hash
+				? 'MISSING: curva o producto no coinciden con la revisión/hash fijados.' : undefined);
+		resultado.set(v.entidadId, {
+			id: `${producto.curva.catalogoId}:${producto.curva.id}:r${producto.curva.revision}`,
+			descripcion: `${curva?.nombre ?? producto.curva.id} · ${curva?.procedencia.origen ?? 'AUSENTE'}`,
+			puntos: [], origen: curva?.procedencia.origen === 'SINTETICO' || curva?.procedencia.origen === 'GENERICO' ? 'ESTIMADO' : 'CONFIGURADO',
+			tecnica: { condiciones: structuredClone(v.condiciones),
+				...(motivo ? { motivo } : curva?.tipo === 'CURVA' ? { revision: curva } : {}),
+			},
+		});
+	}
+	curvasTecnicasPorProyecto.set(efectivo, resultado); return resultado;
+}
+
+export function perfilCurvaProteccionDispositivo(dispositivo: Dispositivo, proyecto?: Proyecto): PerfilCurvaProteccion | undefined {
+	if (proyecto?.datosTecnicos) {
+		const tecnica = curvasTecnicasProyecto(proyecto).get(dispositivo.id);
+		if (tecnica) return tecnica;
+	}
 	const config = dispositivo.fisica?.proteccion;
 	return config?.puntos?.length ? {
 		id: config.curva ?? `CURVA:${dispositivo.id}`,
@@ -333,6 +383,7 @@ function rutaProtecciones(red: RedFisica, desde: string): string[] {
 }
 
 export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopologiaFisica = {}): ResultadoFisicaElectrica {
+	proyecto = resolverProyectoTecnico(proyecto).proyecto;
 	const activo = proyecto.dispositivos.some((d) => d.fisica) || proyecto.conductores.some((c) => c.fisica);
 	if (!activo) return resultadoFisicaVacio();
 	const diagnosticos: DiagnosticoFisica[] = [];
@@ -463,7 +514,7 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			?? (d.sensibilidadMA !== undefined ? d.sensibilidadMA / 1000 : undefined);
 		const residual = fasorResidual ? magnitud(fasorResidual) : undefined;
 		protecciones.set(d.id, { dispositivoId: d.id, corrienteA, inA,
-			evaluacion: evaluarCurva(perfilCurvaProteccionDispositivo(d), corrienteA, inA ?? 0),
+			evaluacion: evaluarCurva(perfilCurvaProteccionDispositivo(d, proyecto), corrienteA, inA ?? 0),
 			corrienteResidualA: residual, corrienteResidualFasorA: fasorResidual,
 			corrienteResidualNominalA: umbralResidual,
 			retardoResidualS: d.fisica?.diferencial?.retardoS ?? 0,
@@ -569,7 +620,7 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			const p = protecciones.get(id); const d = proyecto.dispositivos.find((x) => x.id === id);
 			if (!p || !d) continue;
 			if (corriente > p.corrienteA) {
-				p.corrienteA = corriente; p.evaluacion = evaluarCurva(perfilCurvaProteccionDispositivo(d), corriente, p.inA ?? 0);
+				p.corrienteA = corriente; p.evaluacion = evaluarCurva(perfilCurvaProteccionDispositivo(d, proyecto), corriente, p.inA ?? 0);
 			}
 			p.fallas.push(falla.id);
 		}
@@ -578,8 +629,8 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 			if (!abajo || !arriba) continue;
 			const da = proyecto.dispositivos.find((d) => d.id === camino[i])!;
 			const ar = proyecto.dispositivos.find((d) => d.id === camino[i + 1])!;
-			const eAbajo = evaluarCurva(perfilCurvaProteccionDispositivo(da), corriente, abajo.inA ?? 0);
-			const eArriba = evaluarCurva(perfilCurvaProteccionDispositivo(ar), corriente, arriba.inA ?? 0);
+			const eAbajo = evaluarCurva(perfilCurvaProteccionDispositivo(da, proyecto), corriente, abajo.inA ?? 0);
+			const eArriba = evaluarCurva(perfilCurvaProteccionDispositivo(ar, proyecto), corriente, arriba.inA ?? 0);
 			selectividad.push({ fallaId: falla.id, aguasAbajoId: da.id, aguasArribaId: ar.id,
 				...analizarSelectividad(eAbajo, eArriba) });
 		}

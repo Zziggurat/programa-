@@ -74,7 +74,9 @@ import {
 } from './logica.js';
 import { compilarProgramaPLC, type IOProgramaPLC, type ProgramaPLCCompilado } from './plc-compilador.js';
 import { actualizarRuntimePLC, configLegacyPLC, crearRuntimePLC, esperasLegacyPLC } from './plc-runtime.js';
-import { simularFisicaProyecto, type ResultadoFisicaElectrica } from '../fisica/topologia-proyecto.js';
+import { simularFisicaProyecto, perfilCurvaProteccionDispositivo, type ResultadoFisicaElectrica } from '../fisica/topologia-proyecto.js';
+import { resolverProyectoTecnico } from '../datos-tecnicos/resolver.js';
+import { evaluarCurva } from '../fisica/protecciones.js';
 import type { FallaFisicaRuntime } from '../fisica/fallas.js';
 import { resistenciaCaminoAnalogico, resolverLazo420, resolverSenal010,
 	type ResultadoLazoAnalogicoFisico } from '../fisica/analogicas.js';
@@ -1923,6 +1925,7 @@ export function simular(
 	activosPrevios?: ReadonlySet<string>,
 	reloj?: { ahora: number; memoria: MemoriaTiempos; logica?: MemoriaLogica },
 ): ResultadoSimulacion {
+	proyecto = resolverProyectoTecnico(proyecto).proyecto;
 	const efectosFallasEquipo = resolverFallasEquipo(Object.values(estadoOriginal).flatMap((s) => s.fallasEquipos ?? []));
 	const estado: EstadoTablero = Object.fromEntries(Object.entries(estadoOriginal).map(([id, valor]) => [id, { ...valor }]));
 	for (const [id, fallos] of efectosFallasEquipo.funcionales) {
@@ -2231,7 +2234,7 @@ export function simular(
 		cargaPorAparato.set(d.id, carga);
 		// Sobrecarga: la protección ve más corriente de la que aguanta y acaba disparando.
 		if (protegeSobrecorriente(d) && nominal && estado[d.id]?.disparado !== true) {
-			const segundos = tiempoDeDisparo(corriente, nominal, d.curvaDisparo);
+			const segundos = tiempoDisparoEnProyecto(proyecto, d, corriente, nominal);
 			if (segundos !== undefined) {
 				disparos.push({
 					dispositivoId: d.id,
@@ -2336,7 +2339,7 @@ export function simular(
 			protecciones.push({
 				designacion: carga.designacion,
 				calibre: carga.nominal,
-				disparaEnS: tiempoDeDisparo(punta, carga.nominal, p.curvaDisparo),
+				disparaEnS: tiempoDisparoEnProyecto(proyecto, p, punta, carga.nominal),
 			});
 		}
 		arranques.push({
@@ -2668,6 +2671,7 @@ export function actualizarProteccionesRuntime(
 	ahora: number,
 	memoria: MemoriaTiempos,
 ): { estado: EstadoTablero; cambio: boolean; eventos: EventoProteccionRuntime[] } {
+	proyecto = resolverProyectoTecnico(proyecto).proyecto;
 	memoria.protecciones ??= {};
 	let siguiente = estado;
 	let cambio = false;
@@ -2698,13 +2702,14 @@ export function actualizarProteccionesRuntime(
 		const sobrecargaInyectada = tieneFallo(estadoActual, 'sobrecarga')
 			|| tieneFallo(estadoActual, 'perdida-fase');
 		const cortoFisico = (porFisica?.fallas.length ?? 0) > 0;
+		const curvaTecnica = perfilCurvaProteccionDispositivo(d, proyecto)?.tecnica;
 		const instantaneo = fuga || (fugaFisica && (porFisica?.retardoResidualS ?? 0) <= 0)
-			|| cortoInyectado || porCircuito?.motivo === 'cortocircuito'
+			|| cortoInyectado || (!curvaTecnica && porCircuito?.motivo === 'cortocircuito')
 			|| (cortoFisico && porFisica?.evaluacion.region === 'INSTANTANEA');
 		const ventanaFisica = porFisica?.evaluacion.tMaxS === undefined ? undefined
 			: ((porFisica.evaluacion.tMinS ?? porFisica.evaluacion.tMaxS) + porFisica.evaluacion.tMaxS) / 2;
 		const segundos = fugaFisica && (porFisica?.retardoResidualS ?? 0) > 0 ? porFisica!.retardoResidualS
-			: ventanaFisica ?? (porCircuito?.motivo === 'sobrecarga' ? porCircuito.segundos
+			: ventanaFisica ?? ((!curvaTecnica || !porFisica) && porCircuito?.motivo === 'sobrecarga' ? porCircuito.segundos
 			: sobrecargaInyectada ? 8 : undefined);
 		let carga = mem.cargaTermica;
 		if (instantaneo) carga = 1;
@@ -3164,6 +3169,14 @@ function proteccionesEnCamino(alcance: Alcance, punto: string, aparatos: Disposi
  * térmico, que tarda tanto más cuanto menos se pasa. No sustituye a la curva del fabricante —para
  * eso está la hoja de datos—, pero da el orden de magnitud correcto, que es de lo que se aprende.
  */
+function tiempoDisparoEnProyecto(proyecto: Proyecto, dispositivo: Dispositivo, corriente: number, nominal: number): number | undefined {
+	const perfil = perfilCurvaProteccionDispositivo(dispositivo, proyecto);
+	if (!perfil?.tecnica) return tiempoDeDisparo(corriente, nominal, dispositivo.curvaDisparo);
+	const evaluacion = evaluarCurva(perfil, corriente, nominal);
+	return evaluacion.tMinS === undefined || evaluacion.tMaxS === undefined ? undefined
+		: (evaluacion.tMinS + evaluacion.tMaxS) / 2;
+}
+
 export function tiempoDeDisparo(corriente: number, nominal: number, curva?: string): number | undefined {
 	if (nominal <= 0) return undefined;
 	const veces = corriente / nominal;

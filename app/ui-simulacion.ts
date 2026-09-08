@@ -28,6 +28,7 @@ import { emisionDeCable } from './animacion-sim.js';
 import { Escenario } from './escena3d.js';
 import { avisar, descargar, escaparHtml } from './dialogos.js';
 import { actualizarAnalisisFisica, actualizarInstrumentosFisica, htmlFisicaV5, type SeleccionInstrumentosFisica } from './panel-fisica.js';
+import { resolverProyectoTecnico } from '../src/datos-tecnicos/resolver.js';
 import type { FallaFisicaRuntime } from '../src/fisica/fallas.js';
 
 declare const __VERSION__: string;
@@ -288,8 +289,22 @@ export function estadoDelMando(
 	return { texto: abierto ? 'abierto' : 'cerrado', boton: abierto ? 'Cerrar' : 'Abrir', encendido: abierto };
 }
 
+/**
+ * Una sesión energizada consume una fotografía efectiva. Los ticks/mandos no vuelven a hashear
+ * catálogos. El editor invalida explícitamente al recalcular por una edición o cambiar proyecto.
+ */
+export class SnapshotProyectoSimulacion {
+	private efectivo?: Proyecto;
+	constructor(private readonly leer: () => Proyecto) {}
+	obtener(): Proyecto {
+		return this.efectivo ??= resolverProyectoTecnico(structuredClone(this.leer())).proyecto;
+	}
+	invalidar(): void { this.efectivo = undefined; }
+}
+
 export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
-	const proyecto = ctx.proyecto;
+	const snapshotProyecto = new SnapshotProyectoSimulacion(ctx.proyecto);
+	const proyecto = () => energizado ? snapshotProyecto.obtener() : ctx.proyecto();
 	const seleccionar = ctx.seleccionar;
 
 	/**
@@ -1197,6 +1212,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 
 	/** Borra exclusivamente runtime; el Proyecto y su diseño no se modifican. */
 	function limpiarRuntime(): void {
+		snapshotProyecto.invalidar();
 		limpiarGestos();
 		estadoSim = {};
 		activosPrevios = new Set();
@@ -1205,6 +1221,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	}
 
 	function aplicarEnergizado(activo: boolean): void {
+		snapshotProyecto.invalidar();
 		energizado = activo;
 		document.body.classList.toggle('modo-simulacion', activo);
 		$('btn-energizar').classList.toggle('activo', activo);
@@ -1256,7 +1273,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	return {
 		energizado: () => energizado,
 		alternar: () => aplicarEnergizado(!energizado),
-		recalcular: recalcularSimulacion,
+		recalcular: () => { snapshotProyecto.invalidar(); recalcularSimulacion(); },
 		accionar: accionarEnSimulacion,
 		presionar: presionarEnSimulacion,
 		soltar: soltarEnSimulacion,
