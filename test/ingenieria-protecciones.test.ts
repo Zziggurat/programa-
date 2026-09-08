@@ -5,6 +5,7 @@ import { datosCoordinacion, REGLA_PROTECCIONES } from '../src/ingenieria/protecc
 import { validarIngenieria } from '../src/ingenieria/validacion.js';
 import { resultadoFisicaVacio } from '../src/fisica/topologia-proyecto.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
+import { validarComportamiento } from '../src/modelo/comportamiento.js';
 import type { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 
 const proteccion = (id: string, inA: number, curva: 'B' | 'C' | 'D', icuKA?: number): Dispositivo => ({
@@ -13,8 +14,8 @@ const proteccion = (id: string, inA: number, curva: 'B' | 'C' | 'D', icuKA?: num
 		rearmable: true, funcion: 'termomagnetico' },
 	fisica: { version: 1, proteccion: { inA, curva, capacidadCorte: icuKA ? { icuKA, icsKA: icuKA / 2 } : undefined } },
 });
-const motor: Dispositivo = { id: 'm1', tipo: 'motor', corrienteNominal: 9, bornes: [{ id: 'U', tipo: 'L' }],
-	comportamiento: { version: 1, clase: 'carga', alimentacion: { fases: ['U'], retornos: [], fasesMinimas: 1 }, efecto: 'giro' },
+const motor: Dispositivo = { id: 'm1', tipo: 'motor', corrienteNominal: 9, bornes: ['U', 'V', 'W'].map((id) => ({ id, tipo: 'L' as const })),
+	comportamiento: { version: 1, clase: 'carga', alimentacion: { fases: ['U', 'V', 'W'], retornos: [], fasesMinimas: 3 }, efecto: 'giro' },
 	fisica: { version: 1, motor: { potenciaMecanicaNominalW: 4000, tensionNominalV: 400, frecuenciaHz: 50,
 		fases: 3, eficiencia: 0.9, factorPotencia: 0.85, corrienteNominalA: 9, corrienteArranqueMultiplo: 6, tiempoArranqueS: 2 } } };
 const proyecto: Proyecto = { formato: 'tablero-studio', version: 1, nombre: 'Protecciones V7', hojas: [],
@@ -75,6 +76,15 @@ test('Gate D superpone arranque de motor sobre la curva sin afirmar coordinació
 	d.curvaDisparo = 'B'; d.fisica!.proteccion!.curva = 'B';
 	const instantanea = validarIngenieria({ proyecto: p, circuitos: [circuito], fisica: fisica(), reglas: [REGLA_PROTECCIONES] });
 	assert.equal(instantanea.resultados.find((x) => x.code === 'TS-PROT-MOTOR-START' && x.relatedEntities.some((e) => e.id === 'q1'))?.status, 'FAIL');
+});
+
+test('V8: arranque y protección de motor importado se evalúan por perfil, no por tipo visual', () => {
+	assert.deepEqual(validarComportamiento(motor), []);
+	const evaluarArranque = (p: Proyecto) => validarIngenieria({ proyecto: p, circuitos: [circuito], fisica: fisica(),
+		reglas: [REGLA_PROTECCIONES] }).resultados.filter((x) => x.code.startsWith('TS-PROT-MOTOR-START'));
+	const esperado = evaluarArranque(proyecto); assert.equal(esperado.length, 2);
+	const importado = structuredClone(proyecto); importado.dispositivos.find((d) => d.id === 'm1')!.tipo = 'otro';
+	assert.deepEqual(evaluarArranque(importado), esperado);
 });
 
 test('Gate D eleva selectividad V5/V6 y entrega datos de curva sin recalcularlos en UI', () => {

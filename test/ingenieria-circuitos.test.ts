@@ -133,3 +133,17 @@ test('Gate A abre proyectos V6 sin metadata y persiste solo decisiones V7', () =
 	assert.deepEqual(resultado.criterios, { maxVoltageDropPercent: 3, maxLossW: 12 });
 	assert.doesNotMatch(JSON.stringify(recargado.ingenieria), /trayectos|conductores|issues|magnitudes/);
 });
+
+test('V8: override parcial ausente no elimina criterios heredados y cero es una decisión explícita', () => {
+	const p = tableroMotor(); const id = descubrirCircuitos(p).circuitos.find((c) => c.cargas[0] === 'm1')!.id;
+	p.ingenieria = { version: 1, criterios: { maxVoltageDropPercent: 3, maxLossW: 20 }, circuitos: {
+		[id]: { version: 1, criterios: { maxVoltageDropPercent: undefined, maxLossW: 0 } },
+	} };
+	const antes = structuredClone(p);
+	assert.deepEqual(descubrirCircuitos(p).circuitos.find((c) => c.id === id)!.criterios,
+		{ maxVoltageDropPercent: 3, maxLossW: 0 });
+	assert.deepEqual(p, antes);
+	const recargado = cargarProyecto(JSON.stringify(p)).proyecto;
+	assert.deepEqual(descubrirCircuitos(recargado).circuitos.find((c) => c.id === id)!.criterios,
+		{ maxVoltageDropPercent: 3, maxLossW: 0 });
+});

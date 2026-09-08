@@ -221,7 +221,10 @@ export function descubrirCircuitos(proyecto: Proyecto): ResultadoDescubrimientoC
 		const equipos = unicoOrdenado([carga.id, ...trayectos.flatMap((t) => t.dispositivos)]);
 		const conductores = unicoOrdenado(trayectos.flatMap((t) => t.conductores));
 		const metadata = proyecto.ingenieria?.circuitos?.[id];
-		const criterios = { ...proyecto.ingenieria?.criterios, ...metadata?.criterios };
+		/* Ausencia no es una decisión de borrar herencia. Cero sí es un criterio explícito. */
+		const criterios = Object.fromEntries([
+			...Object.entries(proyecto.ingenieria?.criterios ?? {}), ...Object.entries(metadata?.criterios ?? {}),
+		].filter(([, valor]) => valor !== undefined)) as CriteriosCircuitoIngenieria;
 		const senalesRelacionadas = unicoOrdenado(proyecto.conductores.flatMap((c: Conductor) => {
 			if (!equipos.includes(c.de.dispositivoId) && !equipos.includes(c.a.dispositivoId)) return [];
 			const borneDe = porId.get(c.de.dispositivoId)?.bornes.find((b) => b.id === c.de.borneId);

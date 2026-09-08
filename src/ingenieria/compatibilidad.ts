@@ -38,8 +38,63 @@ const peor = (estados: readonly Estado[]): Estado => {
 	return orden.find((x) => estados.includes(x)) ?? 'NOT_APPLICABLE';
 };
 
+interface CargaSalidaDigital {
+	dispositivoId: string;
+	entradas: readonly string[];
+	corrienteA?: number;
+}
+
+/** Solo consumos declarados: no se deduce I=P/V ni se cuenta cada cable como otra carga. */
+function cargasSalidasDigitales(proyecto: Proyecto): CargaSalidaDigital[] {
+	return [...proyecto.dispositivos].sort((a, b) => a.id.localeCompare(b.id)).flatMap((d): CargaSalidaDigital[] => {
+		const p = resolverComportamiento(d); let entradas: readonly string[] = [];
+		let corriente = d.corrienteNominal;
+		if (p?.clase === 'contactos-electromagneticos') {
+			entradas = [p.bobina.entrada]; corriente = p.bobina.electrica?.corrienteA;
+		} else if (p?.clase === 'carga') {
+			entradas = p.alimentacion.fases;
+			if (corriente === undefined && d.fisica?.carga?.modelo === 'CONSTANT_I') corriente = d.fisica.carga.corrienteA;
+		} else if (p?.clase === 'sensor' && p.alimentacion) entradas = [p.alimentacion.entrada];
+		else if (p?.clase === 'controlador') entradas = p.alimentacion.entradas;
+		else if (p?.clase === 'fuente' && p.primario) entradas = p.primario.entradas;
+		else if (p?.clase === 'variador') entradas = p.alimentacion.fases;
+		if (!entradas.length) return [];
+		return [{ dispositivoId: d.id, entradas,
+			corrienteA: corriente !== undefined && Number.isFinite(corriente) && corriente >= 0 ? corriente : undefined }];
+	});
+}
+
+function resultadoCargaCanal(plc: Dispositivo, sd: Extract<ComportamientoSimulacion, { clase: 'controlador' }>['salidasDigitales'][number],
+	cargas: readonly CargaSalidaDigital[]): Resultado {
+	const conocidas = cargas.filter((c) => c.corrienteA !== undefined);
+	const corrienteA = conocidas.reduce((total, c) => total + c.corrienteA!, 0);
+	const limite = sd.electrica?.corrienteMaxA;
+	const limiteValido = limite !== undefined && Number.isFinite(limite) && limite >= 0;
+	const faltan = cargas.filter((c) => c.corrienteA === undefined).map((c) => `corriente de carga ${c.dispositivoId}`);
+	if (!limiteValido) faltan.push(`corriente máxima del canal ${plc.id}::${sd.borne}`);
+	/* Una suma parcial ya excesiva demuestra FAIL; una suma parcial baja no demuestra PASS. */
+	const sobrecarga = limiteValido && corrienteA - limite > 1e-9 * Math.max(1, corrienteA, limite);
+	const status: Estado = sobrecarga ? 'FAIL' : faltan.length ? 'INDETERMINATE' : 'PASS';
+	return { code: 'TS-IO-DO-CHANNEL-LOAD', category: 'IO', severity: sobrecarga ? 'ERROR' : 'INFO', status,
+		title: `Carga total de salida ${plc.designacion ?? plc.id} / ${sd.borne}`,
+		description: sobrecarga ? 'La suma de los consumos declarados supera la capacidad del canal.'
+			: faltan.length ? 'Faltan consumos o capacidad: la suma conocida no permite aprobar el canal.'
+				: 'La suma de los consumos declarados no supera el límite del canal, suponiendo todas las cargas simultáneas.',
+		evidence: [{ codigo: 'CHANNEL_I_KNOWN', descripcion: 'Suma de consumos declarados; las cargas desconocidas no se suponen de consumo cero',
+			valor: corrienteA, unidad: 'A', origen: 'CALCULADO' },
+			{ codigo: 'CHANNEL_LOADS', descripcion: 'Cargas explícitas conectadas al canal', valor: cargas.length, origen: 'CALCULADO' },
+			...(limiteValido ? [{ codigo: 'DO_IMAX', descripcion: 'Capacidad nominal del canal', valor: limite, unidad: 'A', origen: 'CONFIGURADO' as const }] : []),
+			...conocidas.map((c) => ({ codigo: `LOAD_I:${c.dispositivoId}`, descripcion: `Consumo declarado de ${c.dispositivoId}`,
+				valor: c.corrienteA, unidad: 'A', origen: 'CONFIGURADO' as const }))],
+		relatedEntities: [...entidades([plc.id, ...cargas.map((c) => c.dispositivoId)]), { tipo: 'TERMINAL', id: nodo(plc.id, sd.borne) }],
+		provenance: 'CALCULADO', criterion: { descripcion: 'Suma nominal simultánea por canal; no modela corriente de llamada ni capacidad de grupo', origen: 'MODELO_V7' },
+		missingData: faltan, remediationHints: sobrecarga ? ['Revisar distribución de cargas o interfaz mediante relé intermedio.']
+			: faltan.length ? ['Completar los consumos declarados y el límite de este canal.'] : [] };
+}
+
 function resultadosDoBobina(proyecto: Proyecto): Resultado[] {
 	const conectado = conectividadPasiva(proyecto); const salida: Resultado[] = [];
+	const cargas = cargasSalidasDigitales(proyecto);
 	const bobinas = proyecto.dispositivos.flatMap((d) => {
 		const p = resolverComportamiento(d);
 		return p?.clase === 'contactos-electromagneticos' ? [{ d, p }] : [];
@@ -47,6 +102,9 @@ function resultadosDoBobina(proyecto: Proyecto): Resultado[] {
 	for (const plc of [...proyecto.dispositivos].sort((a, b) => a.id.localeCompare(b.id))) {
 		const p = resolverComportamiento(plc); if (p?.clase !== 'controlador') continue;
 		for (const sd of [...p.salidasDigitales].sort((a, b) => a.borne.localeCompare(b.borne))) {
+			const conectadas = cargas.filter((c) => c.dispositivoId !== plc.id
+				&& c.entradas.some((b) => conectado(nodo(plc.id, sd.borne), nodo(c.dispositivoId, b))));
+			if (conectadas.length) salida.push(resultadoCargaCanal(plc, sd, conectadas));
 			for (const { d: carga, p: pc } of bobinas) {
 				if (!conectado(nodo(plc.id, sd.borne), nodo(carga.id, pc.bobina.entrada))) continue;
 				const so = sd.electrica; const bo = pc.bobina.electrica; const faltan: string[] = [];
@@ -66,7 +124,7 @@ function resultadosDoBobina(proyecto: Proyecto): Resultado[] {
 					title: 'Salida digital y bobina', description: status === 'FAIL'
 						? 'Los límites eléctricos explícitos de la salida y la bobina no son compatibles.'
 						: status === 'INDETERMINATE' ? 'La conexión existe, pero faltan datos para validar su carga eléctrica.'
-							: 'La salida digital puede alimentar la bobina según los datos explícitos.',
+							: 'Los datos nominales de salida y bobina son compatibles individualmente; revisar también la carga total del canal.',
 					evidence: [
 						...(so ? [{ codigo: 'DO_V', descripcion: `${so.tipoSalida} ${so.sistema}`, valor: so.tensionV, unidad: 'V', origen: 'CONFIGURADO' as const }] : []),
 						...(so?.corrienteMaxA !== undefined ? [{ codigo: 'DO_IMAX', descripcion: 'Corriente máxima de salida', valor: so.corrienteMaxA, unidad: 'A', origen: 'CONFIGURADO' as const }] : []),
@@ -124,7 +182,9 @@ function resultadosTensionFrecuencia(proyecto: Proyecto, circuitos: readonly Cir
 
 function resultadosMotorVfd(proyecto: Proyecto, circuitos: readonly CircuitoIngenieria[], fisica: Parameters<EngineeringRule['evaluate']>[0]['fisica']): Resultado[] {
 	const salida: Resultado[] = [];
-	for (const motor of [...proyecto.dispositivos].filter((d) => d.tipo === 'motor').sort((a, b) => a.id.localeCompare(b.id))) {
+	for (const motor of [...proyecto.dispositivos].filter((d) => {
+		const perfil = resolverComportamiento(d); return perfil?.clase === 'carga' && perfil.efecto === 'giro';
+	}).sort((a, b) => a.id.localeCompare(b.id))) {
 		const config = motor.fisica?.motor; const circuito = circuitos.find((c) => c.cargas.includes(motor.id));
 		if (!config) {
 			salida.push({ code: 'TS-MOTOR-PLATE-MISSING', category: 'MOTOR', severity: 'INFO', status: 'INDETERMINATE',

@@ -46,6 +46,72 @@ test('Gate F: DO compatible, sobrecarga e incógnita se distinguen sin insertar 
 	assert.equal(acEnDc.resultados.find((x) => x.code === 'TS-IO-DO-COIL')?.status, 'FAIL');
 });
 
+function proyectoDosBobinas(corrienteSegunda?: number): Proyecto {
+	const p = proyectoDo({ tensionV: 24, sistema: 'DC', tipoSalida: 'PNP', corrienteMaxA: 0.1 },
+		{ tensionNominalV: 24, sistema: 'DC', corrienteA: 0.08 });
+	const segunda = structuredClone(p.dispositivos[1]); segunda.id = 'km2';
+	if (segunda.comportamiento?.clase !== 'contactos-electromagneticos') throw new Error('Fixture de bobina inválido');
+	if (corrienteSegunda === undefined) delete segunda.comportamiento.bobina.electrica!.corrienteA;
+	else segunda.comportamiento.bobina.electrica!.corrienteA = corrienteSegunda;
+	p.dispositivos.push(segunda); p.conductores.push(cable('w-do2', ['plc', 'DO1'], ['km2', 'A1']));
+	return p;
+}
+
+test('V8: dos bobinas de 80 mA exceden juntas un canal de 100 mA', () => {
+	const r = evaluar(proyectoDosBobinas(0.08));
+	const canal = r.resultados.find((x) => x.code === 'TS-IO-DO-CHANNEL-LOAD')!;
+	assert.equal(canal.status, 'FAIL');
+	assert.equal(canal.evidence.find((x) => x.codigo === 'CHANNEL_I_KNOWN')?.valor, 0.16);
+	assert.ok(canal.relatedEntities.some((x) => x.tipo === 'TERMINAL' && x.id === 'plc::DO1'));
+	assert.ok(canal.relatedEntities.some((x) => x.id === 'km2'));
+});
+
+test('V8: consumo de carga ausente mantiene el canal indeterminado, sin ocultar una sobrecarga demostrada', () => {
+	const p = proyectoDosBobinas();
+	const canal = evaluar(p).resultados.find((x) => x.code === 'TS-IO-DO-CHANNEL-LOAD')!;
+	assert.equal(canal.status, 'INDETERMINATE'); assert.match(canal.missingData.join(' '), /km2/);
+	assert.equal(canal.evidence.find((x) => x.codigo === 'CHANNEL_I_KNOWN')?.valor, 0.08);
+	const km = p.dispositivos[1].comportamiento!;
+	if (km.clase !== 'contactos-electromagneticos') throw new Error('Fixture inválido');
+	km.bobina.electrica!.corrienteA = 0.12;
+	assert.equal(evaluar(p).resultados.find((x) => x.code === 'TS-IO-DO-CHANNEL-LOAD')?.status, 'FAIL');
+});
+
+test('V8: cargas por canal se aíslan, no se duplican por cables y no dependen del orden', () => {
+	const p = proyectoDosBobinas(0.08); const plc = p.dispositivos[0];
+	if (plc.comportamiento?.clase !== 'controlador') throw new Error('Fixture inválido');
+	plc.bornes.push({ id: 'DO2', tipo: 'control' });
+	plc.comportamiento.salidasDigitales.push({ ...structuredClone(plc.comportamiento.salidasDigitales[0]), borne: 'DO2' });
+	p.conductores[1].de.borneId = 'DO2';
+	p.conductores.push(cable('w-duplicado', ['plc', 'DO1'], ['km', 'A1']));
+	const r = evaluar(p); const canales = r.resultados.filter((x) => x.code === 'TS-IO-DO-CHANNEL-LOAD');
+	assert.equal(canales.length, 2); assert.ok(canales.every((x) => x.status === 'PASS'));
+	assert.ok(canales.every((x) => x.evidence.find((e) => e.codigo === 'CHANNEL_I_KNOWN')?.valor === 0.08));
+	const invertido = structuredClone(p); invertido.dispositivos.reverse(); invertido.conductores.reverse();
+	assert.deepEqual(evaluar(invertido), r);
+});
+
+test('V8: una carga explícita sin consumo no desaparece de la comprobación del canal', () => {
+	const p = proyectoDo({ tensionV: 24, sistema: 'DC', tipoSalida: 'PNP', corrienteMaxA: 0.1 },
+		{ tensionNominalV: 24, sistema: 'DC', corrienteA: 0.08 });
+	p.dispositivos.push({ id: 'piloto', tipo: 'otro', bornes: [{ id: '+', tipo: 'control' }, { id: '-', tipo: 'control' }],
+		comportamiento: { version: 1, clase: 'carga', efecto: 'luz',
+			alimentacion: { fases: ['+'], retornos: ['-'], fasesMinimas: 1 } } });
+	p.conductores.push(cable('w-piloto', ['plc', 'DO1'], ['piloto', '+']));
+	const canal = evaluar(p).resultados.find((x) => x.code === 'TS-IO-DO-CHANNEL-LOAD')!;
+	assert.equal(canal.status, 'INDETERMINATE'); assert.match(canal.missingData.join(' '), /piloto/);
+});
+
+test('V8: consumo cero explícito y límite exacto no se confunden con ausencia de dato', () => {
+	const p = proyectoDosBobinas(0); const plc = p.dispositivos[0].comportamiento!;
+	if (plc.clase !== 'controlador') throw new Error('Fixture inválido');
+	plc.salidasDigitales[0].electrica!.corrienteMaxA = 0.08;
+	const canal = evaluar(p).resultados.find((x) => x.code === 'TS-IO-DO-CHANNEL-LOAD')!;
+	assert.equal(canal.status, 'PASS'); assert.deepEqual(canal.missingData, []);
+	delete plc.salidasDigitales[0].electrica!.corrienteMaxA;
+	assert.equal(evaluar(p).resultados.find((x) => x.code === 'TS-IO-DO-CHANNEL-LOAD')?.status, 'INDETERMINATE');
+});
+
 test('Gate F: metadatos eléctricos DO/bobina sobreviven carga y un componente explícito no depende de su tipo o imagen', () => {
 	const p = proyectoDo({ tensionV: 24, sistema: 'DC', tipoSalida: 'RELE', corrienteMaxA: 0.2 },
 		{ tensionNominalV: 24, sistema: 'DC', corrienteA: 0.05 });
@@ -83,6 +149,18 @@ test('Gate F: placa V6 se eleva y VFD/motor compara potencia, corriente, tensió
 	assert.equal(evaluar(malo).resultados.find((x) => x.code === 'TS-VFD-MOTOR-COMPATIBILITY')?.status, 'FAIL');
 	const placa = structuredClone(sano); placa.dispositivos.find((d) => d.id === 'm1')!.fisica!.motor!.rpmNominal = 800;
 	assert.ok(evaluar(placa).resultados.some((x) => x.code === 'TS-MOTOR-RPM_INCOMPATIBLE_CON_FRECUENCIA'));
+});
+
+test('V8: un motor importado conserva diagnóstico de placa y rechazo de VFD insuficiente', () => {
+	const nativo = fixtureVfdMotorV6();
+	nativo.dispositivos.find((d) => d.id === 'vfd')!.fisica!.vfd!.potenciaNominalW = 2000;
+	nativo.dispositivos.find((d) => d.id === 'm1')!.fisica!.motor!.rpmNominal = 800;
+	const importado = structuredClone(nativo); importado.dispositivos.find((d) => d.id === 'm1')!.tipo = 'otro';
+	const reglasMotor = (p: Proyecto) => evaluar(p).resultados.filter((x) => x.category === 'MOTOR' || x.category === 'VFD');
+	const esperado = reglasMotor(nativo);
+	assert.equal(esperado.find((x) => x.code === 'TS-VFD-MOTOR-COMPATIBILITY')?.status, 'FAIL');
+	assert.ok(esperado.some((x) => x.code === 'TS-MOTOR-RPM_INCOMPATIBLE_CON_FRECUENCIA'));
+	assert.deepEqual(reglasMotor(importado), esperado);
 });
 
 function proyectoAnalogico(unidadSalida: 'mA' | 'V', unidadEntrada: 'mA' | 'V', conFisica = true): Proyecto {

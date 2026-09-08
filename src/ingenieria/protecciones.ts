@@ -4,6 +4,7 @@ import {
 	perfilCurvaProteccionDispositivo, type ResultadoFisicaElectrica,
 } from '../fisica/topologia-proyecto.js';
 import type { Dispositivo, Proyecto } from '../modelo/tipos.js';
+import { resolverComportamiento } from '../modelo/comportamiento.js';
 import type { CircuitoIngenieria } from './circuitos.js';
 import type { EngineeringRule, EstadoValidacionIngenieria, ResultadoReglaIngenieria } from './validacion.js';
 
@@ -88,7 +89,11 @@ function validarCorte(fisica: ResultadoFisicaElectrica | undefined, c: CircuitoI
 
 function validarArranque(proyecto: Proyecto, fisica: ResultadoFisicaElectrica | undefined, c: CircuitoIngenieria,
 	d: Dispositivo): ResultadoReglaIngenieria | undefined {
-	const motorId = c.cargas.find((id) => proyecto.dispositivos.find((x) => x.id === id)?.tipo === 'motor');
+	const motorId = c.cargas.find((id) => {
+		const dispositivo = proyecto.dispositivos.find((x) => x.id === id);
+		const perfil = dispositivo && resolverComportamiento(dispositivo);
+		return perfil?.clase === 'carga' && perfil.efecto === 'giro';
+	});
 	if (!motorId) return undefined;
 	const motor = proyecto.dispositivos.find((x) => x.id === motorId)!; const cfg = motor.fisica?.motor;
 	const nominal = fisica?.motores.get(motorId)?.corrienteNominalUsadaA ?? cfg?.corrienteNominalA ?? motor.corrienteNominal;
