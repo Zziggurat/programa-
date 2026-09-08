@@ -22,11 +22,19 @@ test('V8 offline: CSS modular conserva cascada, CSP, Build ID y bytes idénticos
         assert.ok(a.salida.includes(`style-src 'sha256-${createHash('sha256').update(css).digest('base64')}'`));
         assert.ok(!a.salida.includes('href="/assets/'));
         assert.deepEqual(readFileSync(opciones.destino), readFileSync(opciones.desktop));
+        // Vite con base './' emite este prefijo en producción; las tres formas son equivalentes.
+        for (const ruta of ['./assets/a.css', 'assets/a.css']) {
+            writeFileSync(join(distApp, 'index.html'), html.replace('/assets/a.css', ruta));
+            const equivalente = empaquetar(opciones);
+            assert.equal(equivalente.salida, a.salida);
+            assert.equal(equivalente.buildId, a.buildId);
+        }
         writeFileSync(join(distApp, 'assets', 'a.css'), '.x{color:green}');
         const b = empaquetar(opciones); assert.notEqual(b.buildId, a.buildId);
-        writeFileSync(join(distApp, 'index.html'), html.replace('/assets/a.css', '../secreto.css'));
-        assert.throws(() => empaquetar(opciones), /CSS no empaquetable/);
-        writeFileSync(join(distApp, 'index.html'), html.replace('/assets/a.css', 'https://example.com/a.css'));
-        assert.throws(() => empaquetar(opciones), /CSS no empaquetable/);
+        for (const ruta of ['../secreto.css', './assets/../../secreto.css', '//assets/a.css',
+            'https://example.com/a.css', 'assets/sub/a.css', './assets/a.css?externo']) {
+            writeFileSync(join(distApp, 'index.html'), html.replace('/assets/a.css', ruta));
+            assert.throws(() => empaquetar(opciones), /CSS no empaquetable/, ruta);
+        }
     } finally { rmSync(tmp, { recursive: true, force: true }); }
 });

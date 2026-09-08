@@ -36,8 +36,8 @@ export function empaquetar({
 	const hojas = [...html.matchAll(/<style>([\s\S]*?)<\/style>|<link\b(?=[^>]*rel="stylesheet")[^>]*href="([^"]+)"[^>]*>/g)].map(m => {
 		if (m[1] !== undefined) return m[1];
 		const ruta = m[2];
-		if (!/^\/?assets\/[a-zA-Z0-9_.-]+\.css$/.test(ruta)) throw new Error(`Hoja CSS no empaquetable: ${ruta}`);
-		return textoCanonico(readFileSync(join(distApp, ruta.replace(/^\//, '')), 'utf8'));
+		if (!/^(?:\.\/|\/)?assets\/[a-zA-Z0-9_.-]+\.css$/.test(ruta)) throw new Error(`Hoja CSS no empaquetable: ${ruta}`);
+		return textoCanonico(readFileSync(join(distApp, ruta.replace(/^(?:\.\/|\/)/, '')), 'utf8'));
 	});
 	// Conservar orden de cascada exacto entre hojas extraídas y bloques inline.
 	const estilo = hojas.length ? `<style>${hojas.join('\n')}</style>` : '';
