@@ -30,6 +30,7 @@ import { avisar, descargar, escaparHtml } from './dialogos.js';
 import { actualizarAnalisisFisica, actualizarInstrumentosFisica, htmlFisicaV5, type SeleccionInstrumentosFisica } from './panel-fisica.js';
 import { resolverProyectoTecnico } from '../src/datos-tecnicos/resolver.js';
 import type { FallaFisicaRuntime } from '../src/fisica/fallas.js';
+import { conservarEvidenciaDisparo } from '../src/fisica/evidencia-disparo.js';
 
 declare const __VERSION__: string;
 
@@ -384,7 +385,9 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 	function recalcularSimulacion(): void {
 		if (!energizado) return;
 		if (!relojSim) relojSim = { ahora: 0, memoria: memoriaVacia(), logica: memoriaLogicaVacia() };
+		const fisicaAnterior = ultimaSim?.fisica;
 		ultimaSim = simular(proyecto(), estadoSim, activosPrevios, relojSim);
+		conservarEvidenciaDisparo(fisicaAnterior, ultimaSim.fisica);
 		activosPrevios = ultimaSim.activos;
 		/* Pulsos consumidos por este scan; modo, pausa y fuerzas sí permanecen en la sesión. */
 		for (const [id, st] of Object.entries(estadoSim)) if (st.plc) {
@@ -430,15 +433,13 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		}
 		if (!actualizado.cambio) return;
 		// Un disparo/reemplazo cambia la topología; se resuelve inmediatamente con el nuevo estado.
-		const fallasAntesDelDisparo = ultimaSim.fisica.fallas;
-		const selectividadAntesDelDisparo = ultimaSim.fisica.selectividad;
+		const fisicaAntesDelDisparo = ultimaSim.fisica;
 		ultimaSim = simular(proyecto(), estadoSim, activosPrevios, relojSim);
 		activosPrevios = ultimaSim.activos;
 		/* La red posterior debe mostrar corriente cero, pero el analisis prospectivo que provoco el
 		 * disparo sigue siendo evidencia del evento. Se conserva marcado como despejado durante el
 		 * mismo ensayo para que la UI pueda explicar Icc, curva y coordinacion despues de abrir Q. */
-		ultimaSim.fisica.fallas = fallasAntesDelDisparo.map((f) => ({ ...f, despejada: true }));
-		ultimaSim.fisica.selectividad = selectividadAntesDelDisparo;
+		conservarEvidenciaDisparo(fisicaAntesDelDisparo, ultimaSim.fisica, true);
 	}
 
 	/** Arranca o para el reloj según esté el tablero energizado. */

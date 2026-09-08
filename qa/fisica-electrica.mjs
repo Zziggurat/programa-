@@ -226,7 +226,14 @@ try {
 	await abrirEjemplo('Fixture V5: cortocircuito y selectividad', 'Fixture V5 — cortocircuito y selectividad');
 	await energizar(true);
 	await accionarControlVisible('[data-fisica-falla-id="cc:z1:ln"]');
-	fisica = await esperarFisica((f) => f.fallas.some((x) => x.id === 'cc:z1:ln' && x.iccA));
+	fisica = await esperarFisica((f) => f.fallas.some((x) => x.id === 'cc:z1:ln' && x.despejada && x.iccA));
+	// El evento no puede desaparecer en el tick siguiente. Esperar dos avances visibles del
+	// reloj, no capturar únicamente el instante afortunado del disparo.
+	for (let tick = 0; tick < 2; tick++) {
+		const antes = await page.locator('#sim-transcurrido').innerText();
+		await page.waitForFunction(texto => document.getElementById('sim-transcurrido')?.textContent !== texto, antes);
+	}
+	fisica = (await observar()).fisica;
 	const falla = fisica.fallas.find((x) => x.id === 'cc:z1:ln');
 	comprobar('la falla publica Vprefalla, Zth, Zf e Icc', falla.vPrefallaV && falla.zTheveninOhm && falla.zFallaOhm
 		&& Math.hypot(falla.iccA.re, falla.iccA.im) > 100);
