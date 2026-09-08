@@ -1,5 +1,19 @@
 # Evidencia de validación V8
 
+## Aprobación del candidato y cierre público
+
+**dc5edff269a6b70a57fe57b2b2b72191ba251864**: [Pruebas34193274343](https://github.com/Zziggurat/programa-/actions/runs/34193274343),
+attempt1, terminado **success,6/6jobs**. Histórico13/13,263checks,29:51QA/30:39job.
+V8 3/3,117checks,12:55QA/13:37job; V6 32checks/16:19job; V7 44checks/13:32job;
+unit1382/1382 (200más netos que V7), buildQA4,22s; offline67checks/27:00job.
+Cero fallos/timeouts/skipped inesperados/erroresJS en este candidato. ArtifactHTML
+descargado y comparado byte a byte con Git y ambas copias locales.
+
+La publicación final se verifica por `tablerostudio-v8^{}` y la anotación de ese tag:
+incluye el CI del main integrado y evidencia Pages/artifact. **Sin tag no dar por
+terminado ese paso.** Solo documentación cambia después del candidato; no se ocultan
+los cuatro runs previos rechazados ni el diagnóstico adicional CPU×4 rojo descritos abajo.
+
 ## Resumen local definitivo
 
 | Frontera | Evidencia terminal vigente | Duración |
@@ -26,6 +40,10 @@ intentos invalidados y correcciones permanecen abajo; no se presentan como ejecu
 CI se acredita exclusivamente por run/SHA terminal, no por este resumen local.
 
 ## Entorno inicial
+
+El registro que sigue es cronológico: conserva rojos, interrupciones y pendientes de
+checkpoints anteriores, aunque se hayan resuelto después. Para el estado vigente usa el
+resumen superior, el último run/SHA terminal registrado y ESTADO.md; no un pase aislado.
 
 2026-09-07: Windows/PowerShell, Node 24.19.0, npm 11.6.2 localizado en
 bootstrap local existente; playwright-core 1.61.1, package-lock.json canónico.
@@ -294,3 +312,24 @@ exit0. Capturas reales `qa-v8-informe-ivuYET/informe-{pantalla,impresion}.png` i
 legibles; PDF A4 de4páginas previamente acreditado se conserva. Focalhelper3/3,76,45ms.
 InventarioCim sin QA/Chromium propios; ambosHTML conservan el SHA del manifiesto.
 Commits08afb65 (capturaestática) y c9b320e (preparación/copia/diagnóstico). CIrenovado pendiente.
+
+Run34190593360 terminó4/6verde, sin cancelaciones. Histórico13/13,263checks,
+37:37QA/38:18job; V6 16:20,V7 13:27,unit/build1:23. Rojosoffline/capturaarriba.
+Nuevo candidato dc5edff publicado normal: run34193274343,attempt1, pendiente de terminar.
+
+Unit/build de ese candidato: **1382/1382**,0fallos/skipped,54,966sNode; buildQA4,22s,
+job1:26. Log ci-unit-candidato-4. El resto de jobs todavía no se acredita por este pase.
+
+V8 del candidato34193274343: **3/3,117checks,12:55QA/13:37job**;
+catálogo3:21,importación3:31,ingeniería6:04.0fallos/timeouts/skips/JS.
+V7 también verde13:32job. Artifact QA-V8 del SHA exacto descargado en
+`%TEMP%/tablerostudio-v8-ci-evidencia-260d1256d69341bd9dde15d8956d8690`;
+captura remota de informe y ficha estrecha inspeccionadas. Se generaron ambas
+capturas del informe sin SwiftShader; no se saltó evidencia visual para pasar.
+
+Offline de ese candidato: **67 comprobaciones, TODO OK**,27:00job; copia propia
+confirmada,0erroresJS/HTTP externo. Log ci-offline-progreso-4. Artifact HTML del SHA
+dc5edff descargado en `%TEMP%/tablerostudio-v8-html-candidato-936706ad00164495a9f305defac43fab`:
+3308535bytes, SHA-256 `4b091b41761ab32e6758cf66342a74597e05f929cc8dbcd2e110cbe0d4f7822c`,
+idéntico al manifiesto/blobsGit/ambas copias locales. No se aumentó el límite30min
+del job. V6verde16:19 (32checks); V7verde13:32 (44checks). Histórico aún pendiente.

@@ -31,7 +31,7 @@ VALIDACION.md; «implementado» no equivale a campaña/entrega aprobada.
 | Informes únicos V7 ampliados | `ingenieria/documentacion.ts` | Snapshot determinista, HTML/CSV, hash/revisión/procedencia, BOM y fórmulas |
 | Biblioteca grande y cientos de vínculos | índices + frozen compartido | `herramientas/medir-datos-tecnicos.mjs`,100/1000/10000,300bindings,p50/p95 |
 | Offline/CSP/bytes de entrega | `app/empaquetar.mjs` | Test CSS/cascada/CSP; `entrega:check`; smoke file V2–V8 |
-| CI/main/tag | workflows Pruebas/instaladores | Pendiente estados terminales del SHA final, Pages y artifact descargado |
+| CI/main/tag | workflows Pruebas/instaladores | Candidato dc5edff:6/6jobsverdes, artifactHTML idéntico. Cierre público identificado por tag anotado y su evidencia CI/main/Pages |
 
 ## Defectos nuevos detectados y corregidos
 

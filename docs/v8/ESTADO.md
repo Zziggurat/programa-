@@ -1,6 +1,47 @@
-# Estado actual V8 — 8 de septiembre
+# Estado V8 — cierre y publicación
+
+## Estado vigente (prevalece sobre todo el registro histórico inferior)
+
+- Gates A–J implementados, integrados, revisados y probados. No recrear V8 ni repetir A0.
+- Candidato de producto/QA **dc5edff269a6b70a57fe57b2b2b72191ba251864** en la rama
+  `v8/astra-datos-tecnicos`: CI **34193274343**,attempt1, **6/6jobsverdes terminales**.
+  Histórico13/13,263checks; V8 3/3,117checks; unit1382/1382; V6/V7/offline verdes.
+- HTML web/desktop/blobGit/artifact descargado idénticos: Build **C72A570F34**,
+  3308535bytes; SHA-256 completo en ENTREGA.md. Capturas locales/remotas y A4 inspeccionados.
+- Baseline main/V7 **a65cc0cbb304cb153d5aaa030a39ad7400438a03** preservado. El único
+  incremento posterior al candidato es documentación de cierre, no producto ni QA.
+- La publicación final se identifica por **tablerostudio-v8 anotado**. Crear solo tras
+  preflight sin avance remoto inesperado → FFmain/push normal → CI del SHA integrado
+  seis jobs verdes → Pages200 y descarga/artifact con hash correcto. Nunca force ni mover V7.
+- **Si el tag no existe, el cierre público aún está pendiente.** Consultar `gh run list
+  --branch main` y el log `%TEMP%/tablerostudio-v8-ci-main.log` para continuar la
+  verificación tras integración, sin reimplementar ni volver a ejecutar campaña local verde.
+- La anotación del tag registra SHA, run final, Pages y hash; evita un commit adicional
+  que cambiaría el SHA que se acaba de validar. La entrega no se acredita por un run antiguo.
+- Condición final: `HEAD == origin/main == tablerostudio-v8^{}`, árbol limpio. No iniciar V9.
+- Limitaciones físicas, datos sintéticos, dependencias de desarrollo heredadas y diagnóstico
+  CPU×4 rojo de inserción están conservados en HANDOFF/SEGURIDAD/VALIDACION; no son certificación.
+
+## Registro histórico de reanudaciones — no es el estado vigente
 
 ## Estado operativo 01:51 — prioridad sobre registros inferiores
+
+- Actualización03:34: CI34193274343 **5/6jobsverdes**, solo histórico pendiente.
+  Offline67checks/27:00jobverde y artifactHTMLdc5 descargado idénticoSHA/tamaño.
+  V8 117checks/12:55QA/13:37job, V6 32checks/16:19,V7 44checks/13:32,
+  unit1382/1382/1:26job. Watch **9523** activo, log ci-candidato-4. No QA local.
+  Capturas remotas V8 inspeccionadas. Solo docsENTREGA/ESTADO/VALIDACION pendientes;
+  no producto cambiado. Esperarhistórico terminal→docsfinales→FFmain/pushnormal
+  →CI main+Pages+HTMLartifact/hash→taganotadoV8. Maina65,tagV8ausente hasta preflight.
+
+- Actualización03:07: candidato **dc5edff269a6b70a57fe57b2b2b72191ba251864** publicado
+  normal, HEAD==origin/ramaV8, árbol limpio antes de esta nota; maina65sinavance.
+  CI **34193274343**,attempt1, activo; log ci-candidato-4. No QA local activo.
+  CIanterior34190593360 terminó4/6verde: histórico13/13,263checks37:37QA/38:18job;
+ 2rojosconservados (offline/captura) ya corregidosen08afb65/c9b320e. Sin cancelaciones.
+  Esperar6jobs delcandidato→artifactHTMLhash→docsfinales→FFmain→CI/Pages→tagV8.
+  No repetir pruebas localesverdes sin cambio; noV9. Documentosfinalespueden referiraltag
+  ymanifiesto paraevitarautorreferenciaSHA; nuncaacreditarCIincompleto.
 
 - Actualización03:04: focal71420 exit0, **2/2,114checks,7:28** (ingeniería47/2:37,
  offline67/4:51); helper3/3;0fallos/timeouts/skips/JS/procesosQA. Capturas ivuYET vistas,

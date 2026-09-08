@@ -2,9 +2,28 @@
 
 ## Estado de entrega
 
-La campaña de cierre está en curso. No considerar este documento como aprobación del
-artefacto hasta que [ESTADO](v8/ESTADO.md) y [VALIDACION](v8/VALIDACION.md) registren el
-SHA final, checks terminales, Build ID, hashes de HTML y tag. Main conserva V7 mientras tanto.
+V8 está implementada y su candidato `dc5edff269a6b70a57fe57b2b2b72191ba251864` terminó
+con los seis jobs de [Pruebas 34193274343](https://github.com/Zziggurat/programa-/actions/runs/34193274343)
+verdes (attempt1). La entrega pública se identifica por el tag **anotado**
+`tablerostudio-v8`, creado solo después de verificar main, su CI, Pages y el artifact.
+Si el tag todavía no existe, esa publicación final sigue pendiente; no confundir el
+candidato aprobado con un tag ya publicado. Su anotación conserva la evidencia de cierre
+sin una autorreferencia imposible de SHA dentro de estos archivos.
+
+Baseline V7 preservado: `a65cc0cbb304cb153d5aaa030a39ad7400438a03`.
+[Manifiesto de bytes y Build ID](v8/ENTREGA.md), [estado](v8/ESTADO.md),
+[validación completa, incluidos reintentos](v8/VALIDACION.md) e
+[historial completo V7→V8](https://github.com/Zziggurat/programa-/compare/a65cc0cbb304cb153d5aaa030a39ad7400438a03...tablerostudio-v8).
+
+## Aceptación rápida
+
+Abre el HTML → **Datos técnicos** → **Añadir catálogo sintético** → **Abrir laboratorio V8**
+→ **Hacer una copia para trabajar**. En **Instalación / ampacidad**, `w-fase-carga`
+produce22,56A; Ingeniería muestra el fallo deliberado In25A > Iz22,56A.
+Compara la protección r2 (Icu0,1kA), cancela o adopta explícitamente; un override no
+desaparece por actualizar la biblioteca. Exporta el proyecto portable, ábrelo sin biblioteca
+global y prepara su informe: fuentes, revisión, hash y factores deben conservarse.
+Los pasos completos y nombres de controles están en [USO](v8/USO.md).
 
 Historia preservada: [handoff pre-Astra](HANDOFF_ASTRA.md).
 Encargo íntegro: [ENCARGO](v8/ENCARGO.md); decisiones: [DECISIONES](v8/DECISIONES.md).
