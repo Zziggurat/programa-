@@ -40,3 +40,23 @@ La evidencia final de navegador/paquete/CI sigue pendiente. No confundir estos f
 - QA importación anterior:54/55;0JS/timeouts reportados,240s incluyendo limpieza. El caso de identidad observaba montaje antes de publicar el documento: ahora espera éxito visible; misma aserción mantenida, pendiente repetir.
 - Reanudación: `tsc --noEmit -p tsconfig.app.json`, `tsc` verdes. Frontera protecciones+equipos+ValidationEngine47/47,236ms. Ampliación `node --test dist/test/ingenieria-*.test.js dist/test/datos-tecnicos-*.test.js`:213/213;0fail/skip/cancel;6222ms.
 - El respaldo remoto es checkpoint de desarrollo, no V8 terminada. Main/entregable final todavía no se publican.
+
+## Integración UI y candidato actual
+
+- Backup normal confirmado: cf6ce24 en origin/v8/astra-datos-tecnicos; main a65cc0c sin cambios.
+- Revisión de mapeos/equipos/empaquetador:41/41,0fail/skip,456,7ms. Commit e4d981e rechaza fuente heterogénea y burden AI multicanal ambiguos.
+- QA ingeniería inicial41/41,347s,0JS/timeout/skip, bundle BcVoIw83. Se añadió después Undo/Redo al QA y captura de informe: pendiente candidato final.
+- QA catálogo primera ejecución: dos fallos de sincronización/selector del propio QA (apertura asíncrona y dos botones Biblioteca); corregidos sin retirar aserciones. Repetición15/15,89,196s,0JS/timeout/skip, bundle h7a6Ex99.
+- Capturas inspeccionadas realmente: ficha escritorio1440×960 y estrecha640×900 en qa-v8-catalogo-IrnXrz; comparación/tablas legibles en qa-v8-importacion-l8dcpu/02-comparacion.png. No acredita todavía reporte impreso final.
+- QA importación inicial45checks alcanzados,1timeout a240s,0JS (log tablerostudio-v8-qa-importacion-retoma.log).
+- Diagnóstico serial con trace y límite480s:55/55,334,49s (recorrido332,88;limpieza1,61),0JS/timeout/skip. Trace acciones-1/2.zip en qa-v8-importacion-Fagugt.55clics acumulan173s; no polling infinito. La segunda escena permanecía renderizando al crear destino limpio (clics8–9s). Ahora se cierra al terminar reapertura; todas las comparaciones permanecen. Límite8min basado en medición, no ocultación de rojo; supervisor12min conserva limpieza de árbol.
+- `npm ci` real18s,49paquetes. Lock sin cambios; audit completo2dev heredadas, auditproducción0; análisis en SEGURIDAD.md.
+- `npm test` final candidato5cdc6e5:1350/1350,0fail/cancel/skip,67874msNode,85,342scomando. Log tablerostudio-v8-unit-final.log. Incluye typecheckapp y compilación.
+- QA V8 agregado en ejecución; log tablerostudio-v8-qa-final.log. No contabilizar terminado antes de exit terminal.
+- Revisión posterior1bc67fc: conductor con dato pendiente no produce resultado resistivo usando default legacy; diagnóstico/rama NO_MODELADO.52/52 runtime+V5,0fail/skip,2120ms. Invalida el pase completo1350 para ese incremento; se renovará.
+- QA agregado h7a6Ex99: catálogo1:24 e importación4:09 verdes; reducción frente a334s por cierre de escena innecesaria sin reducir cobertura. Ingeniería aún pendiente de exit.
+- Pages baseline: configuraciónmain:/docs, portada HTTP404. Se añadió índice de documentación/descarga; validación remota200 pendiente hasta publicar.
+- Agregado h7a6Ex99 terminó2/3,13:20: catálogo15checks1:24 e importación55checks4:09 verdes. Ingeniería43checks alcanzados,1fallo de API QA `Please use browser.newContext()` al capturar informe,466,3s;0JS/timeouts/skipped. Corregido contexto explícito, límite10min basado en duración ampliada y captura. No se eliminó evidencia de Undo/Redo. Repetición focal pendiente.
+- Renovación tras1bc67fc: npm test1351/1351,0fail/cancel/skip,68955msNode/81,844scomando. BuildQA9SAqeOQ5,392módulos,6,37s.
+- Stress serial final:3/3,0fallos,12,76s. p95import100/1000/10000=21,1/156,9/1654,4ms; resolver300p50/p95=30,4/36,3;40,9/42,5;47,9/52,0ms. Proyecto223357/397177/397177B. Son mediciones locales, no presupuesto de performance garantizado. Informe externo tablerostudio-v8-stress-1788834164338.json.
+- Ejecución actual: `node qa/todas.mjs datos-tecnicos-ingenieria` sobre9SAqeOQ5, log tablerostudio-v8-ingenieria-final-2.log. CI todavía no acredita el candidato.

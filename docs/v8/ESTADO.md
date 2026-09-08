@@ -13,4 +13,18 @@ Proceso activo: ninguno al recuperar. Último typecheck y QA ingeniería no cons
 Build QA V8 realizado:392 módulos, Vite5,99s (comando7,55s). No paquete producción V8 ni Build ID final todavía.
 Run/attempt/job CI: ninguno V8.
 Bloqueos: ninguno.
-Siguiente acción exacta: push normal de respaldo de la rama V8 (main permanece V7); después build actual y QA ingeniería/importación, terminar edición de fichas, offline, campaña y CI. No V9.
+Respaldo realizado: cf6ce24 local == origin/v8/astra-datos-tecnicos. main remoto conserva a65cc0c. Push normal, no integración parcial.
+Último QA ingeniería:41/41,0fallos/timeouts/skipped/JS,347s, build BcVoIw83. Posterior ajuste UI de foco/cambio documento y dos límites de mapeo requiere repetición focal de UI final.
+QA importación con build vA3gR64j:45 comprobaciones alcanzadas,1timeout total a240s,0JS; no completó reapertura. Log tablerostudio-v8-qa-importacion-retoma.log. En diagnóstico serial con trace y límite operacional480s por variable, sin reducir aserciones. No aprobado aún.
+Focal revisión de mapeos+empaquetador:41/41,0fallos/skipped,456,7ms. CSS modular se incorpora al paquete respetando cascada y CSP.
+Checkpoints nuevos: e4d981e (mapeos ambiguos),38297b0 (informes/fixture),f841916 (CSS/CSP offline),5cdc6e5 (UI/adopción).
+Candidato núcleo: npm ci real18s y npm test1350/1350,0fail/skip/cancel,85,342scomando. No cambios posteriores de producto por ahora.
+QA catálogo15/15,89,196s; QA importación instrumentado55/55,334,49s. Se corrigió página WebGL anterior innecesaria y límite medido8min. Ver VALIDACION para el rojo original y diagnóstico.
+Agregado anterior terminó rojo: catálogo/importación verdes, ingeniería43aserciones verdes pero fallo de API Playwright al crear pestaña de captura. Log tablerostudio-v8-qa-final.log,13:20total. No se presenta como gate verde.
+Incremento posterior1bc67fc: PhysicsEngine marca conductor con datos técnicos pendientes como NO_MODELADO, sin rescatar valores genéricos. Frontera runtime+V5 52/52,0fail/skip,2,120s. Renovar npm test/build y frontera ingeniería para este cambio; catálogo/importación usan rutas no afectadas.
+QA catálogo1:24 e importación4:09 verdes sobreh7a6Ex99 (rutas no afectadas por1bc67fc). Ingeniería usa ahora contexto explícito y límite10min basado en466smedidos con Undo/Redo; supervisor12min intacto.
+Pages configurado main:/docs devuelve404 en portada. Añadido docs/index.md de entrega/documentación; comprobar200 tras publicar main.
+Último núcleo renovado:1351/1351,0fail/cancel/skip,68955msNode,81,844scomando. Log tablerostudio-v8-unit-final-2.log. Build9SAqeOQ5,392módulos,6,37s.
+Stress finalserial:3/3tamaños,0fallos,12,76s; informe tablerostudio-v8-stress-1788834164338.json. Proyecto397177B para1000y10000productos; resolver300p95hasta52ms.
+Proceso actual: node qa/todas.mjs datos-tecnicos-ingenieria, sesión34626, log tablerostudio-v8-ingenieria-final-2.log, build9SAqeOQ5. Pendiente exit terminal.
+Siguiente acción exacta: terminar frontera QA ingeniería; campaña histórica/especializada sin repetir catálogo/importación no afectados; generar/verificar offline con smoke V8; CI/main/tag solo tras verde. No V9.
