@@ -4,20 +4,20 @@
 
 | Frontera | Evidencia terminal vigente | Duración |
 |---|---|---|
-| npm test (incluye typecheck y compilación) | 1381/1381; 0 fallos, cancelados, skipped o todo | 76,781 s comando |
+| npm test (incluye typecheck y compilación) | 1382/1382; 0 fallos, cancelados, skipped o todo | 77,897 s comando |
 | Build QA / producción | 392 / 394 módulos; ambas correctas | 6,69 / 17,93 s |
 | Catálogo V8 | 15 comprobaciones | 1:18 |
-| Importación/portabilidad V8 | 55 comprobaciones | 3:36 |
-| Ingeniería/revisiones V8 | 47 comprobaciones | 7:08 |
+| Importación/portabilidad V8 | 55 comprobaciones | 1:48 |
+| Ingeniería/revisiones V8 | 47 comprobaciones | 2:47 |
 | Ingeniería V7 | documentación, escenarios y validación verdes | 0:56 / 0:44 / 1:08 |
 | Equipos V6 | accionamientos, motor, red verdes | 1:52 / 2:33 / 0:51 |
 | Física V5 / simulación / automatización | verdes, incluido disparo entre ticks | 2:20 / 5:45 / 1:29 |
-| Fusión / fixture puerta | verdes, sin cambios en picking/routing | 4:13 / 0:17 |
+| Fusión / fixture puerta | verdes, sin cambios en picking/routing | 2:59 / 0:17 |
 | Multiproyecto / componentes | verdes | 1:41 / 7:11 |
 | Histórico | 13 fronteras verdes por agregado + focal, no 13/13 del primer intento | 12:42 agregado; focales 0:47 y 2:12 |
 | Stress dirigido | 3 tamaños; 0 fallos | 10,78 s |
 | entrega:check | bytes actuales; LF/CRLF idénticos | 22,24 s compilación |
-| file:// V2–V8 | 66 comprobaciones, 0 JS/HTTP externo | 5:22 |
+| file:// V2–V8 | 66 comprobaciones, 0 JS/HTTP externo | 4:56 |
 
 La campaña renovada de 9 suites terminó 9/9,345 comprobaciones,25:07. No sumar sus
 comprobaciones a las filas anteriores: son evidencia solapada. Se cubrieron 30 suites
@@ -215,3 +215,35 @@ Full renovado después de los dos tests del helper: **1381/1381**,0fail/skip/can
 No cambia bundle ni se invalida entrega/stress por tests y sincronización de preparación QA.
 Fusión renovada tras helper:19checks2:57,exit0,0fallos/timeout/skip; log fusion-helper.
 Incluye las mismas exigencias de selección frontal/semántica y ausencia de fusiones.
+
+### Confirmación efímera en Windows/CI
+
+Candidatocfd807a,run34188581519: Unit/build verde1:43; offline rojo4:23 al esperar20s que
+el toast de copia siguiera visible. Log tablerostudio-v8-ci-offline-rojo-2.log. El toast se
+oculta a3200ms (`dialogos.ts`); consultar visibilidad después del montaje es una carrera.
+El HTML sigue reproduciéndose con SHA correcto; no se clasifica este rojo como empaquetado roto.
+
+Se observa DOM público con MutationObserver **antes del clic**, sin alterar producto/modelo
+ni notificaciones. Exige una nueva publicación visible del texto, no acepta una anterior;
+conserva la observación después de ocultarse. Espera mantiene su límite20/30s tras montaje;
+observador/timer/handle se liberan en finally. Helpercompartido único para mirar/entorno.
+Regresión rápida3/3,87,68ms incluyendo mensaje anterior/expirado. Se renuevan full y
+offline/mazo/fusión; no declarar cerrado hasta terminal. No se aumentan límites ni se cambian aserciones físicas.
+
+Full posterior al observador:1382/1382,0fail/skip/cancel/todo,65,845sNode/77,897scomando;
+log unit-final-6.200testsnetos sobreV7. Fusión renovada2:59verde; offline/mazo en curso.
+
+Agregado observador terminó3/3,102checks,9:40: fusión2:59,offline5:29,mazo1:11;0fail/timeout/skip/JS.
+También se aplica observación previa a las copias propias de ingenieríaV8 y smokeV8, conservando
+sus clics reales. Focal final de esas dos llamadas en observador-vertical-final.log, pendiente.
+
+CI34188581519 confirma mejora de tamaño de ventana: **V8 3/3,117checks,20:03QA**,20:56job;
+catálogo5:18,importación5:27,ingeniería9:18.0timeouts/erroresJS/skipped, sin ampliar límites.
+V6verde16:13,V7verde13:11; histórico todavía en curso. Offline rojo conocido de toast,
+no declarar runcompletoverde. Log de V8 tablerostudio-v8-ci-datos-verde-2.log.
+
+Run34188581519 terminó5/6jobsverdes: histórico13/13,263checks,29:38QA/30:23job; mazo2:35.
+Único rojo remanente: toast efímero offline ya corregido en candidato local siguiente.
+Focal final de copiasV8: **2/2,113checks,7:43**, ingeniería47checks2:47 y offline66checks4:56.
+0fail/timeout/skip/JS; log observador-vertical-final. FocalNode3/3,89,28ms; no producto
+modificado después del full1382. InventarioCim sin procesos propios restantes.

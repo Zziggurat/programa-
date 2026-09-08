@@ -2,6 +2,29 @@
 
 ## Estado operativo 01:51 — prioridad sobre registros inferiores
 
+- Actualización02:25: **todoslos focales locales verdes**.7328terminado2/2,113checks7:43
+  (ingeniería2:47,offline4:56). Full1382verde. CI34188581519terminado5/6verde; histórico13/13,
+ 263checks29:38 yV8 117checksverdes; único rojo toastoffline corregido localmente.
+ No procesoactivo; confirmar observador/helpers/QA/tests+docs y pushnormalrama para CI definitivo.
+ No producto modificado, HTML/hashC72 intactos. Maina65/tagV8ausente. Registros inferiores históricos.
+- Actualización02:17: V8 del CI34188581519 **verde3/3,117checks,20:03QA**; offline rojo
+  de toast efímero aún corresponde a códigoQA anterior. V6/V7/unitverdes; histórico pendiente.
+  Local observador: full1382verde +fusion/offline/mazo3/3,102checks9:40. Añadido mismo
+  observador a copias propias V8; **proceso7328** valida ingenieríaV8+offline finales,
+  log observador-vertical-final.78016terminado. No segundoChromium.
+  Pendientecommit: confirmacion-visible.mjs,helpers,QAingeniería/offline,3tests ydocs.
+  Producto/HTMLC72A570F34intactos. Tras focalverde publicar candidato normal y CI; mainno.
+- Actualización02:05: run34188581519 sigue activo (watch55996); offline rojo por toast que
+  expira3200ms antes de consulta. Corrección pendiente SOLO QA: observar nueva publicación
+  DOM antes de clicar, conservar observación y liberar observer/timer/handle. Helpers unificados,
+ 3tests focales verdes. Proceso **78016** ejecuta full→fusion/mazo/offline sobre HTMLintacto;
+ logs unit-final-6 y confirmacion-observada. No segundoChromium, no push hasta focalverde.
+ Fullprevio1381 pasa, nueva prueba eleva esperado1382. No producto/buildinvalidados.
+- Actualización01:54: candidato **cfd807afda5a9152140a1d7ee9d8301aa8fee435** publicado normal,
+  HEAD==origin/ramaV8. Helpers f5b2a96 y QAcompacto50c21be incluidos. CI **34188581519**,attempt1
+  en curso; log `%TEMP%/tablerostudio-v8-ci-candidato-2.log`. Ningún navegador local activo.
+  Esperar todosjobs terminales antes de main; maina65/tagV8ausente. No repetir full1381 ni
+  focales locales verdes salvo nuevo cambio relevante. Registro inferior describe checkpoints previos.
 - RamaV8; HEAD8f999b4, remoto4dcb650. Main/originmaina65cc0c; tagV8 ausente. No entregar/main/tag todavía.
 - Producto completo local, BuildC72A570F34 y ambosHTML/hash intactos; artifactCI descargado idéntico. Fullactual1381/1381,0fallos/skips; log unit-final-5 (76,781s).
 - CI34185765365,attempt1,terminado4/6verde. Unit/build,V6,V7,offline verdes. V8timeoute importación48/55 e ingeniería23/47; histórico12/13, mazo falló primera holgura por edición antes de confirmación documental.
