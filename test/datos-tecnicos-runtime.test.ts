@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { fixtureCaidaTensionV5 } from '../ejemplo/fixtures-fisica-v5.js';
 import { fixtureMotorPlacaV6, fixtureTransformadorV6, fixtureVfdMotorV6 } from '../ejemplo/fixtures-fisica-v6.js';
 import { resolverComportamiento } from '../src/modelo/comportamiento.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
@@ -25,6 +26,19 @@ function vincular(p: Proyecto, id: string, familia: FamiliaTecnica, campos: Dato
 }
 const cerca = (actual: number, esperado: number, error = 1e-8) =>
 	assert.ok(Math.abs(actual - esperado) <= error * Math.max(1, Math.abs(esperado)), `${actual} ≠ ${esperado}`);
+
+test('V8 conductor: dato físico inaplicable no recupera cobre/20 °C como resultado calculado', () => {
+	const p = fixtureCaidaTensionV5(), producto = productoTecnico({ familia: 'CONDUCTOR', campos: [
+		{ ...datoTecnico('conductor.temperaturaC', 40, '°C'), condiciones: { contexto: 'dominio-especifico' } },
+	] });
+	p.datosTecnicos = { version: 1, revisiones: [producto], instalaciones: [], vinculos: [{ entidad: 'CONDUCTOR', entidadId: 'w-fase-carga',
+		producto: referenciaTecnica(producto), condiciones: {}, decisiones: { 'conductor.temperaturaC@': { modo: 'CATALOGO' } } }] };
+	const antes = JSON.stringify(p), r = simularFisicaProyecto(p);
+	assert.equal(r.conductores.has('w-fase-carga'), false);
+	assert.ok(r.diagnosticos.some(d => d.elementos?.includes('w-fase-carga') && /NO_MODELADA/.test(d.mensaje)));
+	assert.equal(r.medicion.ramas.get('conductor:w-fase-carga')?.origen, 'NO_MODELADO');
+	assert.equal(JSON.stringify(p), antes);
+});
 
 function todasFinitas(valor: unknown, camino = 'resultado'): void {
 	if (typeof valor === 'number') assert.ok(Number.isFinite(valor), `${camino}: ${valor}`);

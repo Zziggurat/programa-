@@ -383,7 +383,12 @@ function rutaProtecciones(red: RedFisica, desde: string): string[] {
 }
 
 export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopologiaFisica = {}): ResultadoFisicaElectrica {
-	proyecto = resolverProyectoTecnico(proyecto).proyecto;
+	const tecnica = resolverProyectoTecnico(proyecto);
+	proyecto = tecnica.proyecto;
+	const conductoresTecnicosPendientes = new Set([
+		...tecnica.problemas.filter(p => p.entidad === 'CONDUCTOR').map(p => p.entidadId),
+		...tecnica.resoluciones.filter(r => r.entidad === 'CONDUCTOR' && r.estado !== 'RESOLVED').map(r => r.entidadId),
+	]);
 	const activo = proyecto.dispositivos.some((d) => d.fisica) || proyecto.conductores.some((c) => c.fisica);
 	if (!activo) return resultadoFisicaVacio();
 	const diagnosticos: DiagnosticoFisica[] = [];
@@ -413,8 +418,10 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		const declarada = contexto.longitudesM?.get(c.id);
 		const longitud = declarada ?? resolverLongitudConductor(c.fisica, undefined, estimacionM);
 		const seccionMm2 = contexto.seccionesMm2?.get(c.id) ?? c.seccion;
-		if (!(seccionMm2 && seccionMm2 > 0) || longitud.metros <= 0) {
-			diagnosticos.push({ codigo: 'CONFIGURACION_INVALIDA', mensaje: `Cable ${c.id} sin seccion o longitud fisica fiable`, elementos: [c.id] });
+		if (conductoresTecnicosPendientes.has(c.id) || !(seccionMm2 && seccionMm2 > 0) || longitud.metros <= 0) {
+			diagnosticos.push({ codigo: 'CONFIGURACION_INVALIDA', mensaje: conductoresTecnicosPendientes.has(c.id)
+				? `Cable ${c.id}: datos técnicos no resueltos; impedancia NO_MODELADA, no se recupera material/temperatura legacy.`
+				: `Cable ${c.id} sin seccion o longitud fisica fiable`, elementos: [c.id] });
 			return [{ id: `conductor:${c.id}`, de: clave(c.de.dispositivoId, c.de.borneId), a: clave(c.a.dispositivoId, c.a.borneId),
 				zOhm: Z_CONTACTO_OHM, tipo: 'CONDUCTOR' as const, conductorId: c.id, origen: 'NO_MODELADO' as const }];
 		}
