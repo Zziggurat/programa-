@@ -10,6 +10,7 @@ import type { Proyecto } from '../src/modelo/tipos.js';
 import {
 	bomIngenieriaACsv, conductoresIngenieriaACsv, crearInformeIngenieriaV7,
 	informeIngenieriaV7AHtml, informeIngenieriaV7AJson, terminalesIngenieriaACsv,
+	datosTecnicosIngenieriaACsv,
 	type InformeIngenieriaV7,
 } from '../src/ingenieria/documentacion.js';
 import { ejecutarIngenieria } from '../src/ingenieria/engine.js';
@@ -20,6 +21,7 @@ import {
 import { datosCoordinacion } from '../src/ingenieria/protecciones.js';
 import type { EngineeringIssue } from '../src/ingenieria/validacion.js';
 import { descargar, escaparHtml } from './dialogos.js';
+import { hashSnapshotTecnico } from '../src/datos-tecnicos/hash.js';
 
 declare const __VERSION__: string;
 
@@ -32,8 +34,9 @@ export interface ContextoUIIngenieria {
 	seleccionarConductor(id: string): void;
 	avisar(mensaje: string, tipo?: 'info' | 'ok' | 'error'): void;
 	confirmar(mensaje: string): Promise<boolean>;
-	/** Integra el candidato ya confirmado con historial/autoguardado del editor. */
-	aplicarProyecto(candidato: Proyecto): Promise<boolean> | boolean;
+	identidadActual(): string;
+	prepararAplicacion(): Promise<{ proyecto: Proyecto; aplicar(candidato: Proyecto): Promise<boolean> }>;
+	abrirDatosTecnicos?(entidadId?: string): void;
 	trazabilidad(): Promise<{ projectId: string; revision?: string | number; snapshotId?: string }>;
 	abrirDossierPDF(): void;
 }
@@ -95,6 +98,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	let filtroCircuito = '';
 	let alternativas: ResultadoAlternativaEscenario[] = [];
 	let definicionesAlternativas: DefinicionEscenarioIngenieria[] = [];
+	let baseEscenarios: { identidad: string; hash: string } | undefined;
 	let slotEscenario: 'A' | 'B' = 'A';
 	let tipoEscenario: 'SECCION_CONDUCTOR' | 'PROTECCION' | 'ASIGNACION_FASE' = 'SECCION_CONDUCTOR';
 	let informe: InformeIngenieriaV7 | undefined;
@@ -185,9 +189,9 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	}
 
 	function vistaProtecciones(a: Analisis): string {
-		const p = ctx.proyecto();
+		const p = a.tecnica.proyecto;
 		const tarjetas = [...a.fisica.protecciones].sort(([x], [y]) => x.localeCompare(y)).map(([id, r]) => {
-			const d = p.dispositivos.find((x) => x.id === id)!; const curva = perfilCurvaProteccionDispositivo(d);
+			const d = p.dispositivos.find((x) => x.id === id)!; const curva = perfilCurvaProteccionDispositivo(d, p);
 			const cfg = d.fisica?.proteccion; const arranque = a.validacion.resultados.find((x) => x.code === 'TS-PROT-MOTOR-START' && x.relatedEntities.some((e) => e.id === id));
 			const iDesign = a.validacion.resultados.find((x) => x.code === 'TS-PROT-RATING' && x.relatedEntities.some((e) => e.id === id))?.evidence.find((e) => e.codigo === 'I_DESIGN')?.valor;
 			const icc = a.validacion.resultados.find((x) => x.code.startsWith('TS-PROT-BREAKING') && x.relatedEntities.some((e) => e.id === id))?.evidence.find((e) => e.codigo === 'ICC')?.valor;
@@ -249,7 +253,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 			<div class="botonera"><button class="boton primario" data-ing-doc="prepare">Preparar informe</button>
 			<button class="boton" data-ing-doc="json" ${informe ? '' : 'disabled'}>JSON</button><button class="boton" data-ing-doc="html" ${informe ? '' : 'disabled'}>HTML / imprimir</button>
 			<button class="boton" data-ing-doc="bom" ${informe ? '' : 'disabled'}>BOM CSV</button><button class="boton" data-ing-doc="wiring" ${informe ? '' : 'disabled'}>Wiring CSV</button>
-			<button class="boton" data-ing-doc="terminal" ${informe ? '' : 'disabled'}>Terminales CSV</button><button class="boton" data-ing-doc="pdf">Dossier PDF existente</button></div>
+			<button class="boton" data-ing-doc="terminal" ${informe ? '' : 'disabled'}>Terminales CSV</button><button class="boton" data-ing-doc="technical" ${informe?.datosTecnicos ? '' : 'disabled'}>Datos técnicos CSV</button><button class="boton" data-ing-doc="pdf">Dossier PDF existente</button></div>
 			${informe ? `<article class="ing-doc-preview"><h3>Informe listo</h3><dl class="ing-magnitudes"><dt>Project ID</dt><dd>${esc(informe.proyecto.id)}</dd><dt>Revisión</dt><dd>${esc(informe.proyecto.revision ?? '—')}</dd>
 			<dt>Snapshot</dt><dd>${esc(informe.proyecto.snapshotId ?? '—')}</dd><dt>Build ID</dt><dd>${esc(informe.trazabilidad.buildId)}</dd><dt>Circuitos</dt><dd>${informe.circuitos.length}</dd><dt>BOM</dt><dd>${informe.bom.length} líneas</dd>
 			<dt>Conductores</dt><dd>${informe.conductores.length}</dd><dt>Borneras</dt><dd>${informe.terminales.length}</dd></dl><p class="ing-meta">${esc(informe.leyenda)}</p></article>` : ''}</section>`;
@@ -270,6 +274,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		const issue = analisis?.validacion.issues.find((x) => x.id === id); if (!issue) return;
 		const dispositivo = issue.relatedEntities.find((x) => x.tipo === 'DEVICE');
 		const conductor = issue.relatedEntities.find((x) => x.tipo === 'CONDUCTOR');
+		if (issue.code.startsWith('TS-DATA-') && ctx.abrirDatosTecnicos) { ctx.abrirDatosTecnicos(dispositivo?.id ?? conductor?.id); return; }
 		const circuito = issue.relatedEntities.find((x) => x.tipo === 'CIRCUIT')?.id ?? issue.circuitId;
 		if (circuito && issue.category === 'CIRCUIT') { circuitoId = circuito; vista = 'circuitos'; pintar(); }
 		else if (dispositivo) ctx.seleccionarDispositivo(dispositivo.id);
@@ -278,8 +283,10 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	}
 
 	async function prepararInforme(): Promise<void> {
+		const p = structuredClone(ctx.proyecto()), hash = hashSnapshotTecnico(p), id = ctx.identidadActual();
 		const a = asegurar(); const identidad = await ctx.trazabilidad();
-		informe = crearInformeIngenieriaV7({ proyecto: ctx.proyecto(), analisis: a,
+		if (ctx.identidadActual() !== id || hashSnapshotTecnico(ctx.proyecto()) !== hash) throw new Error('STALE_RESULT: el documento cambió mientras se preparaba el informe.');
+		informe = crearInformeIngenieriaV7({ proyecto: p, analisis: a,
 			trazabilidad: { ...identidad, buildId: buildId(), generadoEn: new Date().toISOString() } });
 		pintar(); ctx.avisar(`Informe V7 preparado · ${informe.trazabilidad.buildId}`, 'ok');
 	}
@@ -297,6 +304,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		if (accion === 'bom') descargar(`${base}-bom.csv`, bomIngenieriaACsv(informe.bom), 'text/csv');
 		if (accion === 'wiring') descargar(`${base}-wiring.csv`, conductoresIngenieriaACsv(informe.conductores), 'text/csv');
 		if (accion === 'terminal') descargar(`${base}-terminales.csv`, terminalesIngenieriaACsv(informe.terminales), 'text/csv');
+		if (accion === 'technical') descargar(`${base}-datos-tecnicos.csv`, datosTecnicosIngenieriaACsv(informe), 'text/csv');
 	}
 
 	$('ingenieria-validar').onclick = () => validar();
@@ -345,21 +353,23 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 				definicion = { id: slotEscenario, nombre: `${conductorId} → ${fase}`, parches: [{ tipo: 'ASIGNACION_FASE', conductorId, fuenteId, fase }] };
 			}
 			definicionesAlternativas = [...definicionesAlternativas.filter((x) => x.id !== slotEscenario), definicion].sort((x,y) => x.id.localeCompare(y.id));
-			try { alternativas = evaluarEscenarios({ proyecto: ctx.proyecto(), alternativas: definicionesAlternativas, contextoFisico: contextoDisenoIngenieria(ctx.proyecto()) }).alternativas; pintar(); }
+			try { baseEscenarios = { identidad: ctx.identidadActual(), hash: hashSnapshotTecnico(ctx.proyecto()) }; alternativas = evaluarEscenarios({ proyecto: ctx.proyecto(), alternativas: definicionesAlternativas, contextoFisico: contextoDisenoIngenieria(ctx.proyecto()) }).alternativas; pintar(); }
 			catch (e) { ctx.avisar(`Escenario inválido: ${(e as Error).message}`, 'error'); }
 		}
 		if (b.dataset.ingScenarioApply) void (async () => {
 			const definicion = definicionesAlternativas.find((x) => x.id === b.dataset.ingScenarioApply); if (!definicion) return;
-			if (!(await ctx.confirmar(`Aplicar ${definicion.nombre} al proyecto? Esta acción sí modifica BASE.`))) return;
 			try {
-				await aplicarEscenarioTransaccional({ proyecto: ctx.proyecto(), escenario: definicion, persistir: async (candidato) => {
-					if (!(await ctx.aplicarProyecto(candidato))) throw new Error('APLICACION_CANCELADA');
+				if (!baseEscenarios || baseEscenarios.identidad !== ctx.identidadActual() || baseEscenarios.hash !== hashSnapshotTecnico(ctx.proyecto())) throw new Error('STALE_RESULT: volver a calcular el escenario.');
+				const operacion = await ctx.prepararAplicacion();
+				if (!(await ctx.confirmar(`Aplicar ${definicion.nombre} al proyecto? Esta acción sí modifica BASE.`))) return;
+				await aplicarEscenarioTransaccional({ proyecto: operacion.proyecto, escenario: definicion, persistir: async (candidato) => {
+					if (!(await operacion.aplicar(candidato))) throw new Error('APLICACION_CANCELADA');
 				} });
 				analisis = undefined; alternativas = []; definicionesAlternativas = []; pintarEstado('Escenario aplicado. Valida el nuevo proyecto.', 'ok'); pintar();
 				ctx.avisar('Escenario aplicado al proyecto y enviado al autoguardado.', 'ok');
 			} catch (e) { ctx.avisar(`No se aplicó el escenario: ${(e as Error).message}`, 'error'); }
 		})();
-		if (b.dataset.ingDoc) void documento(b.dataset.ingDoc);
+		if (b.dataset.ingDoc) void documento(b.dataset.ingDoc).catch(e => ctx.avisar(String(e), 'error'));
 	};
 
 	pintarEstado('Sin snapshot de ingeniería', 'pendiente'); pintar();

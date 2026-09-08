@@ -1,0 +1,18 @@
+#modal-datos-tecnicos { position:fixed;inset:0;z-index:68;background:#0009;display:flex;align-items:center;justify-content:center;padding:16px;color:var(--texto,#e3e8f0); }
+#modal-datos-tecnicos[hidden] { display:none; }
+.dt-ventana { display:flex;flex-direction:column;width:min(1240px,96vw);height:min(880px,94vh);border:1px solid #536475;background:var(--panel,#202831);border-radius:10px;box-shadow:0 18px 80px #0008;overflow:hidden; }
+.dt-ventana header { display:flex;align-items:center;justify-content:space-between;padding:10px 18px;border-bottom:1px solid #536475; }
+.dt-ventana h2 { font-size:19px;margin:0; }.dt-ventana h3 { margin:10px 0; }.dt-ventana p { line-height:1.5; }
+.dt-ventana button { padding:7px 10px;cursor:pointer;border:1px solid #607486;border-radius:5px;background:#344452;color:#f0f6fc;min-height:32px; }
+.dt-ventana button:hover,.dt-ventana button[aria-pressed=true] { background:#355e74;border-color:#80b8d4; }
+.dt-ventana :focus-visible { outline:2px solid #93d7ff;outline-offset:2px; }
+.dt-barra { display:flex;align-items:end;gap:8px;flex-wrap:wrap;padding:8px 0; }.dt-ventana>nav { padding:8px 16px; }
+.dt-cuerpo { padding:0 18px 20px;overflow:auto;min-height:0;flex:1; }
+.dt-columnas { display:grid;grid-template-columns:minmax(190px,26%) minmax(0,1fr);gap:20px;align-items:start; }
+.dt-lista { display:flex;flex-direction:column;gap:6px;max-height:60vh;overflow:auto; }.dt-lista button { text-align:left; }.dt-lista small { opacity:.82; }
+.dt-form { display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:12px 0; }
+.dt-ventana label { display:flex;flex-direction:column;gap:5px;font-size:12px; }.dt-ventana input,.dt-ventana select { background:#151d25;color:#eff5fb;padding:7px;border:1px solid #596d80;border-radius:4px;min-width:0;max-width:100%; }
+.dt-ventana input[type=checkbox] { align-self:start; }.dt-ventana table { width:100%;border-collapse:collapse;font-size:12px;margin:12px 0; }.dt-ventana td,.dt-ventana th { border:1px solid #536475;padding:8px;text-align:left;vertical-align:top;overflow-wrap:anywhere; }.dt-ventana th { background:#2b3a46; }
+.dt-ventana pre { white-space:pre-wrap;overflow-wrap:anywhere;background:#141e26;padding:10px;font-size:11px;max-height:320px;overflow:auto; }.dt-hash { font-family:monospace;font-size:11px;overflow-wrap:anywhere; }.dt-issue { border-left:3px solid #efbf73;padding:8px 14px;background:#29333c;margin:8px 0; }
+[data-dt-estado] { margin:0 16px 8px;font-size:12px;color:#addbc4;min-height:18px; }[data-dt-estado][data-error=true] { color:#ffb8aa; }
+@media(max-width:760px) { .dt-columnas { grid-template-columns:1fr; }.dt-lista { max-height:160px; }.dt-ventana { width:100%;height:100%; }.dt-cuerpo { padding:0 8px 10px; }#modal-datos-tecnicos { padding:4px; }.dt-ventana table { display:block;overflow:auto; } }

@@ -71,6 +71,7 @@ import { instalarInicio } from './ui-inicio.js';
 import { instalarEsquema } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
 import { instalarIngenieria, type PanelIngenieria } from './ui-ingenieria.js';
+import { instalarUIDatosTecnicos, type PanelDatosTecnicos } from './ui-datos-tecnicos.js';
 import { animarSimulacion } from './animacion-sim.js';
 import { dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
 import { idUnico } from '../src/modelo/ids.js';
@@ -228,6 +229,7 @@ function nombreDeError(e: unknown): string {
 const cargaInicial = cargarInicial();
 let proyecto: Proyecto = cargaInicial.proyecto;
 let gestorDocumentos: GestorDocumentos | undefined;
+let panelDatosTecnicos: PanelDatosTecnicos | undefined;
 let repositorioDocumentos: RepositorioProyectos | undefined;
 let cerrarRepositorioDocumentos: (() => void) | undefined;
 let recursosImagenActivos: { liberar(): void } | undefined;
@@ -598,6 +600,10 @@ function capturar(): boolean {
  * puede. Preguntar por algo que no vas a hacer es una forma rara de decir que no.
  */
 function sePuedeEditar(): boolean {
+	if (gestorDocumentos?.estaRealizandoOperacion()) {
+		avisar('Hay una operación documental en curso. Espera a que se confirme.', 'info');
+		return false;
+	}
 	if (persistenciaDocumentalPendiente) {
 		avisar('La biblioteca local todavía se está abriendo.', 'info');
 		return false;
@@ -730,14 +736,14 @@ function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void, guardarAlFina
  * `xLibreCercano` y `buscarHueco` leen el proyecto global, y hacerlos trabajar sobre un borrador
  * sería reescribir media placa—; lo que se guarda es la foto de antes, para poder volver.
  */
-function mutarProyecto(cambiar: () => void): void {
+function mutarProyecto(cambiar: () => void, confirmadoEnRepositorio = false): void {
 	/*
 	 * El veto del ejemplo también aquí, y no por precaución: `mutarProyecto` lleva su propio
 	 * historial y NO pasa por `capturar()`, así que se quedaba fuera del bloqueo. Lo cazó la
 	 * prueba: en un ejemplo, Ctrl+V pegaba. `reemplazarProyecto` sí puede seguir —cambiar el
 	 * tablero entero es justo lo que hace abrir un ejemplo—.
 	 */
-	if (!sePuedeEditar()) return;
+	if (!confirmadoEnRepositorio) { if (!sePuedeEditar()) return; }
 	const instantanea = JSON.stringify(proyecto);
 	const pilaAntes = [...pila];
 	const rehacerAntes = [...rehacerPila];
@@ -762,7 +768,22 @@ function mutarProyecto(cambiar: () => void): void {
 	if (pila.length > 60) pila.shift();
 	rehacerPila.length = 0;
 	actualizarBotonesHistorial();
-	autoguardar();
+	if (!confirmadoEnRepositorio) autoguardar();
+}
+
+/** Prepara una operación ligada a la sesión actual; el callback no puede aplicarse a otro tablero. */
+async function prepararAplicacionTecnica() {
+	if (!sePuedeEditar() || !gestorDocumentos) throw new Error('No hay un documento editable disponible.');
+	const gestor = gestorDocumentos; const vistaBase = JSON.stringify(proyecto);
+	const base = await gestor.prepararCandidato();
+	if (JSON.stringify(proyecto) !== vistaBase) throw new Error('STALE_RESULT: el proyecto cambió durante la preparación.');
+	return { proyecto: structuredClone(proyecto), aplicar: async (candidato: Proyecto): Promise<boolean> => {
+		if (JSON.stringify(proyecto) !== vistaBase) throw new Error('STALE_RESULT: el proyecto cambió desde el preview.');
+		await gestor.confirmarCandidato({ base: base.token, proyecto: candidato,
+			aplicar: confirmado => { mutarProyecto(() => { proyecto = structuredClone(confirmado); }, true); },
+		});
+		return true;
+	} };
 }
 
 /**
@@ -2420,6 +2441,7 @@ function ajustarSombras(): void {
 
 /** Recalcula, reconstruye y repinta todo (tras un cambio estructural). */
 function actualizarTodo(): void {
+	panelDatosTecnicos?.invalidar();
 	pintarChipEjemplo();   // el aviso de «esto es un ejemplo» sigue al tablero que haya abierto
 	recalcular();
 	montarEscenario();
@@ -6979,6 +7001,7 @@ function huecoParaImagen(ancho: number, alto: number, id: string): { x: number; 
 
 ($('btn-abrir') as HTMLButtonElement).onclick = () => ($('archivo-abrir') as HTMLInputElement).click();
 async function importarArchivoProyecto(archivo: File): Promise<void> {
+	if (archivo.size > 64 * 1024 * 1024) { avisar('El archivo supera el límite de importación de 64 MiB.', 'error'); return; }
 	const textoArchivo = await archivo.text();
 	let abierto: Proyecto;
 	let arreglos: string[] = [];
@@ -7128,16 +7151,13 @@ const panelDossier = instalarDossier({
 
 panelIngenieria = instalarIngenieria({
 	proyecto: () => proyecto,
+	identidadActual: () => gestorDocumentos?.estaMostrandoEjemplo() ? 'EJEMPLO' : gestorDocumentos?.documentoActivo()?.id ?? 'SIN_REPOSITORIO',
+	prepararAplicacion: prepararAplicacionTecnica,
+	abrirDatosTecnicos: id => { void panelDatosTecnicos?.abrir(id).catch(e => avisar(String(e), 'error')); },
 	seleccionarDispositivo: seleccionar,
 	seleccionarConductor: (id) => aplicarSeleccion({ tipo: 'cable', id }),
 	avisar,
 	confirmar: (mensaje) => confirmar(mensaje, { ok: 'Aplicar al proyecto' }),
-	aplicarProyecto: async (candidato) => {
-		if (!sePuedeEditar()) return false;
-		mutarProyecto(() => { proyecto = structuredClone(candidato); });
-		await gestorDocumentos?.flush();
-		return true;
-	},
 	trazabilidad: async () => {
 		if (!gestorDocumentos || gestorDocumentos.estaMostrandoEjemplo()) {
 			return { projectId: proyecto.esEjemplo ? 'EJEMPLO_EFIMERO' : 'SIN_REPOSITORIO' };
@@ -8258,6 +8278,21 @@ async function iniciarPersistenciaDocumental(): Promise<void> {
 		repositorioDocumentos = abierto.repositorio;
 		cerrarRepositorioDocumentos = abierto.cerrar;
 		gestorDocumentos = gestor;
+		panelDatosTecnicos?.destruir();
+		panelDatosTecnicos = instalarUIDatosTecnicos({
+			repositorio: abierto.datosTecnicos,
+			proyecto: () => proyecto,
+			identidad: () => gestor.estaMostrandoEjemplo() ? 'EJEMPLO' : gestor.documentoActivo()?.id ?? 'SIN_DOCUMENTO',
+			prepararAplicacion: prepararAplicacionTecnica,
+			confirmar: mensaje => confirmar(mensaje, { ok: 'Confirmar' }),
+			abrirEjemplo: async p => { await gestor.mostrarEjemplo(p); },
+			exportarProyecto: exportarProyectoActual,
+			validar: () => { panelIngenieria?.validar(); },
+			avisar,
+		});
+		const botonDatosTecnicos = $('btn-datos-tecnicos') as HTMLButtonElement;
+		botonDatosTecnicos.disabled = false;
+		botonDatosTecnicos.onclick = () => { void panelDatosTecnicos!.abrir().catch(e => avisar(String(e), 'error')); };
 		guardadoCongelado = false;
 		usarFallbackLegacy = false;
 		// Desde aquí la fuente de verdad ya es IndexedDB. Un fallo de una integración secundaria no
