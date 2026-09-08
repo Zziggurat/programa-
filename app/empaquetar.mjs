@@ -31,7 +31,16 @@ export function empaquetar({
 	const jsFile = readdirSync(join(distApp, 'assets')).filter((f) => f.endsWith('.js')).sort()[0];
 	if (!jsFile) throw new Error('No se encontró el bundle JS. Ejecuta primero: npm run editor:build');
 	const js = textoCanonico(readFileSync(join(distApp, 'assets', jsFile), 'utf8'));
-	const estilo = html.match(/<style>[\s\S]*?<\/style>/)?.[0] ?? '';
+	// Vite extrae CSS importado por módulos. También pertenece al artefacto offline,
+	// a su Build ID y a la política CSP; no debe quedar como URL ausente en file://.
+	const hojas = [...html.matchAll(/<style>([\s\S]*?)<\/style>|<link\b(?=[^>]*rel="stylesheet")[^>]*href="([^"]+)"[^>]*>/g)].map(m => {
+		if (m[1] !== undefined) return m[1];
+		const ruta = m[2];
+		if (!/^\/?assets\/[a-zA-Z0-9_.-]+\.css$/.test(ruta)) throw new Error(`Hoja CSS no empaquetable: ${ruta}`);
+		return textoCanonico(readFileSync(join(distApp, ruta.replace(/^\//, '')), 'utf8'));
+	});
+	// Conservar orden de cascada exacto entre hojas extraídas y bloques inline.
+	const estilo = hojas.length ? `<style>${hojas.join('\n')}</style>` : '';
 	const cuerpo = html.match(/<body>([\s\S]*?)<\/body>/)?.[1]
 		.replace(/<script[^>]*><\/script>/g, '')
 		.trim() ?? '';

@@ -29,7 +29,7 @@ try {
 	const distCrLf = join(temporal, 'app-dist-crlf');
 	cpSync(distTemporal, distCrLf, { recursive: true });
 	const textosCompilados = [join(distCrLf, 'index.html'),
-		...readdirSync(join(distCrLf, 'assets')).filter((x) => x.endsWith('.js')).map((x) => join(distCrLf, 'assets', x))];
+		...readdirSync(join(distCrLf, 'assets')).filter((x) => /\.(js|css)$/.test(x)).map((x) => join(distCrLf, 'assets', x))];
 	for (const archivo of textosCompilados) {
 		const texto = readFileSync(archivo, 'utf8').replace(/\r\n?|\n/g, '\r\n');
 		writeFileSync(archivo, texto);
