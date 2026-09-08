@@ -14,6 +14,7 @@ import http from 'node:http';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { trabajarSobreCopia } from './entorno.mjs';
 
 export const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SALIDA = join(RAIZ, 'qa', 'capturas');
@@ -78,13 +79,7 @@ export async function abrirEjemplo(p, puerto, n) {
 	// lo que haría el usuario, pulsar «Hacer una copia para trabajar». Sin esto, cambiar la medida
 	// de la caja no hace nada y la prueba mira un armario que no es el que cree.
 	if (await p.evaluate(() => document.getElementById('chip-ejemplo')?.hidden === false)) {
-		await p.evaluate(() => document.getElementById('btn-copiar-ejemplo')?.click());
-		await p.waitForFunction(() => document.getElementById('chip-ejemplo')?.hidden !== false,
-			null, { timeout: 30_000 });
-		// El montaje oculta el chip antes de confirmar el marcador activo en IndexedDB.
-		// Esperar la confirmación pública, no editar durante el bloqueo transaccional.
-		await p.getByText('La copia es un tablero nuevo, independiente y guardado localmente.', { exact: true })
-			.waitFor({ state: 'visible', timeout: 30_000 });
+		await trabajarSobreCopia(p, { timeout: 30_000 });
 	}
 	await p.evaluate(() => document.getElementById('modo-trabajo')?.click());
 	await p.waitForTimeout(700);

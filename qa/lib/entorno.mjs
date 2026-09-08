@@ -16,6 +16,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { observarConfirmacion } from './confirmacion-visible.mjs';
 
 /** La raíz del repositorio, subiendo desde este archivo. Nunca una ruta absoluta escrita a mano. */
 export const RAIZ = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -95,13 +96,16 @@ export async function trabajarSobreCopia(page, { timeout = 20_000 } = {}) {
 	const esperar = (fn) => page.waitForFunction(fn, null, { timeout }).then(() => true, () => false);
 	const hayEjemplo = await esperar(() => document.getElementById('chip-ejemplo')?.hidden === false);
 	if (!hayEjemplo) return false;
+	const confirmacion = await observarConfirmacion(page,
+		'La copia es un tablero nuevo, independiente y guardado localmente.', timeout);
+	try {
 	await page.evaluate(() => document.getElementById('btn-copiar-ejemplo')?.click());
 	if (!(await esperar(() => document.getElementById('chip-ejemplo')?.hidden !== false))) {
 		throw new Error('se pulsó «Hacer una copia para trabajar» y el tablero siguió siendo un ejemplo');
 	}
-	await page.getByText('La copia es un tablero nuevo, independiente y guardado localmente.', { exact: true })
-		.waitFor({ state: 'visible', timeout });
+	await confirmacion.esperar();
 	return true;
+	} finally { await confirmacion.cerrar(); }
 }
 
 /**

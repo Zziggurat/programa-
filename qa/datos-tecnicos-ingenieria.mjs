@@ -11,6 +11,7 @@ import { existsSync, readFileSync, unlinkSync, mkdtempSync, writeFileSync } from
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
+import { copiarEjemploConfirmado } from './lib/confirmacion-visible.mjs';
 
 const inicio = Date.now();
 const chromeLogAnterior = process.env.CHROME_LOG_FILE;
@@ -154,9 +155,10 @@ try {
 	await cerrarDatos();
 	await page.locator('#chip-ejemplo').waitFor({ state: 'visible' });
 	comprobar('Laboratorio abre como ejemplo, no como proyecto editable', await page.locator('#btn-copiar-ejemplo').isVisible());
-	await page.locator('#btn-copiar-ejemplo').click();
-	await page.locator('#chip-ejemplo').waitFor({ state: 'hidden' });
-	await page.getByText('La copia es un tablero nuevo, independiente y guardado localmente.', { exact: true }).waitFor();
+	await copiarEjemploConfirmado(page, async () => {
+		await page.locator('#btn-copiar-ejemplo').click();
+		await page.locator('#chip-ejemplo').waitFor({ state: 'hidden' });
+	});
 	comprobar('Copia del laboratorio conserva un nombre reconocible', /Laboratorio V8/.test(await page.locator('#nombre-proyecto').inputValue()));
 	await abrirDatos();
 	await dt('sintetico').click();

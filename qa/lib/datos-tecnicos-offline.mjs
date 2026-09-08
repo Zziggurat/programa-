@@ -1,5 +1,6 @@
 /** Recorrido V8 compacto sobre file://, sin window.qa ni escrituras privadas. */
 import { readFileSync } from 'node:fs';
+import { copiarEjemploConfirmado } from './confirmacion-visible.mjs';
 export async function comprobarDatosTecnicosOffline(page, must, buildId) {
     const m = page.locator('#modal-datos-tecnicos');
     const b = a => m.locator(`[data-dt="${a}"]`);
@@ -8,9 +9,11 @@ export async function comprobarDatosTecnicosOffline(page, must, buildId) {
     must('V8 offline carga biblioteca local y su CSS modular', await m.locator('[data-dt-select]').count() >= 5
         && await m.evaluate(e => getComputedStyle(e).position === 'fixed'));
     await b('ejemplo').click(); await m.locator('[data-dt-estado]').filter({ hasText: 'Ejemplo de solo lectura' }).waitFor();
-    await b('cerrar').click(); await page.locator('#btn-copiar-ejemplo').click();
-    await page.locator('#chip-ejemplo').waitFor({ state: 'hidden' });
-    await page.getByText('La copia es un tablero nuevo, independiente y guardado localmente.', { exact: true }).waitFor();
+    await b('cerrar').click();
+    await copiarEjemploConfirmado(page, async () => {
+        await page.locator('#btn-copiar-ejemplo').click();
+        await page.locator('#chip-ejemplo').waitFor({ state: 'hidden' });
+    });
     await page.locator('#btn-datos-tecnicos').click(); await b('instalacion').click();
     await m.locator('[data-dt-input="conductor"]').selectOption('w-fase-carga');
     const amp = JSON.parse(await m.locator('.dt-cuerpo > pre').innerText());
