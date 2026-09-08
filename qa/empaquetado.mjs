@@ -20,6 +20,7 @@ import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { abrirNavegador, trabajarSobreCopia } from './lib/entorno.mjs';
+import { comprobarDatosTecnicosOffline } from './lib/datos-tecnicos-offline.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARCHIVO = join(AQUI, '..', 'dist-final', 'TableroStudio.html');
@@ -386,6 +387,9 @@ await page.locator('.ing-doc-preview').waitFor({ state: 'visible' });
 const documentacionV7 = await page.locator('.ing-doc-preview').innerText();
 must('Documentación V7 prepara informe, BOM, wiring y terminales offline',
 	/Build ID.*BOM.*Conductores.*Borneras/s.test(documentacionV7), documentacionV7);
+
+console.log('\n--- 10. Datos técnicos V8 dentro del HTML entregado ---');
+await comprobarDatosTecnicosOffline(page, must, buildId);
 
 must('no hizo ninguna petición HTTP externa obligatoria', peticionesExternas.length === 0,
 	peticionesExternas.slice(0, 3).join(' | '));

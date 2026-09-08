@@ -3,7 +3,7 @@ name: Pruebas
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'v8/**']
 
 # Un commit nuevo vuelve obsoleto el workflow anterior. GitHub lo mostrará como cancelado por
 # concurrencia, distinto de un job que alcance su timeout propio.
@@ -73,6 +73,32 @@ jobs:
       - run: npx playwright-core install --with-deps chromium
       # Gate V7 separado: validación, escenarios y documentación profesional.
       - run: node qa/todas.mjs ingenieria-
+
+  qa-v8:
+    name: QA Datos técnicos V8
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TMPDIR: ${{ runner.temp }}
+      QA_V8_CAPTURAS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run editor:build -- --mode qa
+      - run: npx playwright-core install --with-deps chromium
+      # Independiente del gate histórico y sin ocultar rechazos de datos hostiles.
+      - run: npm run qa:datos-tecnicos:run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: QA-V8-${{ github.sha }}
+          path: ${{ runner.temp }}/qa-v8-*
+          if-no-files-found: warn
+          retention-days: 14
 
   entrega:
     name: Entregable offline
