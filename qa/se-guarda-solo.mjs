@@ -39,6 +39,9 @@ async function abrirEjemploDesdeLaInterfaz() {
 	await cerrarSiVisible('#dialogo-ok');
 	await cerrarSiVisible('#btn-cerrar-explicacion');
 	if (!(await trabajarSobreCopia(pagina))) throw new Error('el ejemplo no ofreció una copia editable');
+	// El chip cambia durante el montaje; la confirmación pública llega después del commit
+	// documental. Renombrar antes puede ser rechazado por el bloqueo transaccional V8.
+	await pagina.waitForFunction(() => /La copia es un tablero nuevo/.test(document.getElementById('toast')?.textContent ?? ''));
 }
 
 async function estadoPersistente() {
@@ -72,7 +75,10 @@ try {
 	await pagina.waitForFunction(([nombre, ancho]) => {
 		const proyecto = window.qa.proyecto();
 		return proyecto.nombre === nombre && proyecto.gabinete?.ancho === ancho;
-	}, [NOMBRE, ANCHO_CM * 10]);
+	}, [NOMBRE, ANCHO_CM * 10]).catch(async error => {
+		console.error('Estado al fallar la edición:', await estadoPersistente(), await pagina.locator('#toast').textContent());
+		throw error;
+	});
 
 	const antes = await estadoPersistente();
 	comprobar('la UI aplicó el nombre', antes.nombre === NOMBRE, antes.nombre);

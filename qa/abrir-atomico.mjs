@@ -46,6 +46,7 @@ async function esperarOperacionSinDialogo(completada, timeout = 20_000) {
 	return false;
 }
 
+try {
 await p.goto(`http://127.0.0.1:${servidor.address().port}/?qa=1&inicio=0`);
 await p.waitForTimeout(1500);
 await p.evaluate(() => document.getElementById('btn-cerrar-ayuda')?.click());
@@ -203,12 +204,20 @@ must('queda guardado como documento activo en IndexedDB',
  * escrita en el navegador, porque `recalcular()` autoguarda antes de montar la escena.
  */
 console.log('\n--- pegar con el montaje roto ---');
-await p.evaluate(() => document.getElementById('btn-nuevo')?.click());
-await p.waitForTimeout(300);
-if (await p.isVisible('#modal-dialogo')) await p.evaluate(() => document.getElementById('dialogo-ok')?.click());
-await p.waitForTimeout(500);
+if (!await p.locator('#btn-nuevo').isVisible()) await p.locator('#btn-archivo').click();
+await p.locator('#btn-nuevo').click();
+await p.locator('#modal-dialogo').waitFor({ state: 'visible' });
+await p.locator('#dialogo-ok').click();
+// Crear incluye commit y montaje. Los antiguos 500 ms permitían pulsar Añadir durante
+// la transición: V8 la bloquea para no mezclar documentos. Esperar el hecho, no un reloj.
+await p.waitForFunction(id => window.qa.documentoActivo()?.id !== id
+	&& window.qa.proyecto().dispositivos.length === 0, documentoBueno.id);
+await qa('esperarPersistencia');
 await p.locator('#hta-anadir').click();
-for (let i = 0; i < 2; i++) { await catalogo.nth(i).click(); await p.waitForTimeout(300); }
+for (let i = 0; i < 2; i++) {
+	await catalogo.nth(i).click();
+	await p.waitForFunction(n => window.qa.proyecto().dispositivos.length === n, i + 1);
+}
 /*
  * Se copia el primero y se pega una vez, para saber que copiar/pegar funciona antes de romperlo.
  * Se selecciona pulsando su fila en el panel de la izquierda, que es como se hace: Ctrl+C solo
@@ -249,5 +258,9 @@ must('ni deja lo pegado a medias guardado en IndexedDB',
 	trasRomper.guardado === antesDeRomper.guardado);
 
 console.log(fallos === 0 ? '\n=== TODO OK ✔ ===' : `\n=== ${fallos} FALLOS ===`);
-await b.close(); servidor.close();
+} finally {
+	await b.close();
+	servidor.closeAllConnections?.();
+	await new Promise((ok, no) => servidor.close(error => error ? no(error) : ok()));
+}
 process.exit(fallos === 0 ? 0 : 1);
