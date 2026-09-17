@@ -120,6 +120,9 @@ jobs:
       - run: npm run editor:build -- --mode qa
       - run: npx playwright-core install --with-deps chromium
       - run: npm run qa:diseno:run
+        env:
+          # os.tmpdir() usa esta raíz, para que el uploader recoja las capturas reales.
+          TMPDIR: ${{ runner.temp }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
