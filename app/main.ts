@@ -92,6 +92,7 @@ import {
 	type DefinicionComponentePersonalizado,
 } from '../src/componentes/personalizados.js';
 import type { RepositorioProyectos } from '../src/persistencia/tipos.js';
+import type { RevisionTecnica } from '../src/datos-tecnicos/tipos.js';
 
 /** Bandera que inyecta el empaquetador: true solo en el build para las pruebas (QA=1). */
 declare const __QA__: boolean;
@@ -235,6 +236,7 @@ let cerrarRepositorioDocumentos: (() => void) | undefined;
 let recursosImagenActivos: { liberar(): void } | undefined;
 let panelComponentesPersonalizados: PanelComponentesPersonalizados | undefined;
 let panelIngenieria: PanelIngenieria | undefined;
+let listarRevisionesTecnicas = async (): Promise<RevisionTecnica[]> => structuredClone(proyecto.datosTecnicos?.revisiones ?? []);
 /** Hasta que la migración termine no se toca la clave legacy que constituye su fuente segura. */
 let persistenciaDocumentalPendiente = true;
 // El editor ya está renderizado mientras IndexedDB abre. Dejarlo interactivo aquí crearía una
@@ -7153,6 +7155,7 @@ panelIngenieria = instalarIngenieria({
 	proyecto: () => proyecto,
 	identidadActual: () => gestorDocumentos?.estaMostrandoEjemplo() ? 'EJEMPLO' : gestorDocumentos?.documentoActivo()?.id ?? 'SIN_REPOSITORIO',
 	prepararAplicacion: prepararAplicacionTecnica,
+	revisionesTecnicas: () => listarRevisionesTecnicas(),
 	abrirDatosTecnicos: id => { void panelDatosTecnicos?.abrir(id).catch(e => avisar(String(e), 'error')); },
 	seleccionarDispositivo: seleccionar,
 	seleccionarConductor: (id) => aplicarSeleccion({ tipo: 'cable', id }),
@@ -8279,6 +8282,7 @@ async function iniciarPersistenciaDocumental(): Promise<void> {
 		cerrarRepositorioDocumentos = abierto.cerrar;
 		gestorDocumentos = gestor;
 		panelDatosTecnicos?.destruir();
+		listarRevisionesTecnicas = () => abierto.datosTecnicos.listar();
 		panelDatosTecnicos = instalarUIDatosTecnicos({
 			repositorio: abierto.datosTecnicos,
 			proyecto: () => proyecto,

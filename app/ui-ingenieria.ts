@@ -22,11 +22,19 @@ import { datosCoordinacion } from '../src/ingenieria/protecciones.js';
 import type { EngineeringIssue } from '../src/ingenieria/validacion.js';
 import { descargar, escaparHtml } from './dialogos.js';
 import { hashSnapshotTecnico } from '../src/datos-tecnicos/hash.js';
+import type { ReferenciaTecnica, RevisionTecnica } from '../src/datos-tecnicos/tipos.js';
+import { referenciaTecnica } from '../src/datos-tecnicos/tipos.js';
+import {
+	comprobarAplicacionDiseno, crearSnapshotDisenoAsistido, prepararAplicacionDiseno,
+} from '../src/diseno-asistido/core.js';
+import { ejecutarSesionDisenoAsistido } from '../src/diseno-asistido/sesion.js';
+import { informeDisenoCsv, informeDisenoHtml, informeDisenoJson } from '../src/diseno-asistido/documentacion.js';
+import type { ResultadoDisenoAsistido, SnapshotDisenoAsistido, SolicitudDisenoAsistido } from '../src/diseno-asistido/tipos.js';
 
 declare const __VERSION__: string;
 
 type Analisis = ReturnType<typeof ejecutarIngenieria>;
-type Vista = 'circuitos' | 'validacion' | 'protecciones' | 'potencia' | 'escenarios' | 'documentacion';
+type Vista = 'circuitos' | 'validacion' | 'protecciones' | 'potencia' | 'escenarios' | 'diseno' | 'documentacion';
 
 export interface ContextoUIIngenieria {
 	proyecto(): Proyecto;
@@ -36,6 +44,7 @@ export interface ContextoUIIngenieria {
 	confirmar(mensaje: string): Promise<boolean>;
 	identidadActual(): string;
 	prepararAplicacion(): Promise<{ proyecto: Proyecto; aplicar(candidato: Proyecto): Promise<boolean> }>;
+	revisionesTecnicas?(): Promise<RevisionTecnica[]>;
 	abrirDatosTecnicos?(entidadId?: string): void;
 	trazabilidad(): Promise<{ projectId: string; revision?: string | number; snapshotId?: string }>;
 	abrirDossierPDF(): void;
@@ -78,9 +87,11 @@ function botonEntidad(issue: EngineeringIssue): string {
 		?? issue.relatedEntities.find((x) => x.tipo === 'DEVICE')
 		?? issue.relatedEntities.find((x) => x.tipo === 'CONDUCTOR')
 		?? issue.relatedEntities.find((x) => x.tipo === 'CIRCUIT');
-	if (!e) return '';
+	const diseno = issue.circuitId && (issue.category === 'CABLE' || issue.category === 'PROTECTION' || issue.category === 'COORDINATION')
+		? `<button class="ing-enlace" data-ing-design-issue="${esc(issue.circuitId)}">Explorar solución V9</button>` : '';
+	if (!e) return diseno;
 	const atributo = e.tipo === 'DEVICE' ? 'device' : e.tipo === 'CONDUCTOR' ? 'conductor' : 'circuit';
-	return `<button class="ing-enlace" data-ing-${atributo}="${esc(e.id)}">Localizar ${esc(e.tipo.toLowerCase())}</button>`;
+	return `<button class="ing-enlace" data-ing-${atributo}="${esc(e.id)}">Localizar ${esc(e.tipo.toLowerCase())}</button>${diseno}`;
 }
 
 function tabla(cabeceras: string[], filas: (string | number | undefined)[][]): string {
@@ -102,6 +113,13 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	let slotEscenario: 'A' | 'B' = 'A';
 	let tipoEscenario: 'SECCION_CONDUCTOR' | 'PROTECCION' | 'ASIGNACION_FASE' = 'SECCION_CONDUCTOR';
 	let informe: InformeIngenieriaV7 | undefined;
+	let snapshotDiseno: SnapshotDisenoAsistido | undefined;
+	let resultadoDiseno: ResultadoDisenoAsistido | undefined;
+	let revisionesDiseno: RevisionTecnica[] = [];
+	let abortoDiseno: AbortController | undefined;
+	let progresoDiseno = '';
+	let conductoresDiseno: string[] = [];
+	let proteccionDiseno = '';
 
 	const pintarEstado = (texto: string, clase = '') => {
 		const e = $('ingenieria-estado'); e.textContent = texto; e.className = clase;
@@ -115,7 +133,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		const inicio = performance.now(); const p = ctx.proyecto();
 		analisis = ejecutarIngenieria({ proyecto: p, contextoFisico: contextoDisenoIngenieria(p) });
 		circuitoId = analisis.circuitos.some((x) => x.id === circuitoId) ? circuitoId : analisis.circuitos[0]?.id;
-		alternativas = []; definicionesAlternativas = []; informe = undefined;
+		alternativas = []; definicionesAlternativas = []; informe = undefined; snapshotDiseno = undefined; resultadoDiseno = undefined;
 		pintarEstado(`Snapshot derivado en ${(performance.now() - inicio).toFixed(1)} ms · no persistido`, 'ok');
 		pintar();
 		ctx.avisar(`Ingeniería V7: ${analisis.validacion.resumen.fail} fallos, ${analisis.validacion.resumen.warning} advertencias y ${analisis.validacion.resumen.indeterminate} indeterminadas.`,
@@ -125,7 +143,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 
 	function invalidar(): void {
 		if (!analisis) return;
-		analisis = undefined; alternativas = []; definicionesAlternativas = []; informe = undefined;
+		analisis = undefined; alternativas = []; definicionesAlternativas = []; informe = undefined; snapshotDiseno = undefined; resultadoDiseno = undefined; abortoDiseno?.abort();
 		filtroSeveridad = ''; filtroCategoria = ''; filtroCircuito = '';
 		pintarEstado('El proyecto cambió. Ejecuta Validar proyecto para crear un snapshot nuevo.', 'pendiente');
 		pintar();
@@ -248,6 +266,35 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 			${resultados || '<p class="ing-vacio">Configura A o B y compárala. BASE permanece intacta.</p>'}</section>`;
 	}
 
+	function refsProteccionDisponibles(p: Proyecto): { revision: RevisionTecnica & { tipo: 'PRODUCTO' }; ref: ReferenciaTecnica }[] {
+		const todas = [...(p.datosTecnicos?.revisiones ?? []), ...revisionesDiseno];
+		return [...new Map(todas.filter((r): r is RevisionTecnica & { tipo: 'PRODUCTO' } => r.tipo === 'PRODUCTO' && r.familia === 'PROTECCION')
+			.map(r => [r.hash, { revision: r, ref: referenciaTecnica(r) }])).values()].sort((a,b)=>a.revision.nombre.localeCompare(b.revision.nombre)||a.revision.revision-b.revision.revision);
+	}
+
+	function vistaDiseno(a: Analisis): string {
+		const p=ctx.proyecto(),circuito=a.circuitos.find(c=>c.id===circuitoId)??a.circuitos[0];
+		if(!circuito)return'<p class="ing-vacio">No hay un circuito evaluable para dimensionar.</p>';
+		conductoresDiseno=conductoresDiseno.filter(id=>circuito.conductores.includes(id));if(!conductoresDiseno.length)conductoresDiseno=[...circuito.conductores];
+		proteccionDiseno=circuito.protecciones.includes(proteccionDiseno)?proteccionDiseno:circuito.protecciones[0]??'';
+		const productos=refsProteccionDisponibles(p);
+		const resultados=resultadoDiseno?.resultados.map(r=>`<article class="ing-resultado-diseno ${r.estado.toLowerCase()}" data-ing-design-result="${esc(r.plan.id)}"><header><b>#${r.orden} · ${esc(r.plan.tipo)}</b><span>${esc(r.estado)}${r.pareto?' · PARETO':''}</span></header>
+			<dl class="ing-magnitudes"><dt>Cambios</dt><dd>${r.metricas.cambios}</dd><dt>Σ sección</dt><dd>${numero(r.metricas.seccionTotalMm2,'mm²')}</dd><dt>In</dt><dd>${numero(r.metricas.proteccionInA,'A')}</dd><dt>Pérdidas</dt><dd>${numero(r.metricas.perdidaW,'W')}</dd><dt>Icc punto</dt><dd>${numero(r.metricas.iccProspectivaA,'A')}</dd></dl>
+			<p class="ing-meta">${esc(r.razonOrden)}</p><details><summary>Explicación, deltas y evidencia</summary><pre>${esc(JSON.stringify(r.deltaBase,null,2))}</pre>${r.obligaciones.map(o=>`<p><b>${esc(o.estado)}</b> ${esc(o.descripcion)}<br><small>${esc(o.evidencia.join(' · '))}</small></p>`).join('')}${r.limitaciones.map(x=>`<p class="ing-alerta">${esc(x)}</p>`).join('')}${r.error?`<p class="ing-alerta">${esc(r.error)}</p>`:''}</details>
+			<button class="boton primario" data-ing-design-apply="${esc(r.plan.id)}" ${r.estado!=='FACTIBLE'||r.plan.tipo==='BASE'||p.esEjemplo?'disabled':''}>${r.plan.tipo==='BASE'?'Mantener diseño':'Previsualizar y aplicar'}</button></article>`).join('')??'';
+		return`<section data-ing-design><h3>Diseño asistido V9</h3><p class="ing-meta">Explora cambios acotados sobre el circuito existente. No cambia topología, carga, geometría, criterios ni condiciones de instalación.</p>
+			<p class="ing-meta">Ib es la corriente de diseño, In el calibre de la protección, Iz la ampacidad corregida e Icc la corriente de cortocircuito prospectiva. <b>FACTIBLE</b> significa que cumple los criterios evaluados del alcance; no certifica montaje, normativa ni un óptimo global.</p>
+			<div class="ing-scenario-form"><label>Circuito<select data-ing-design-circuit>${a.circuitos.map(c=>`<option value="${esc(c.id)}" ${c.id===circuito.id?'selected':''}>${esc(c.nombre)}</option>`).join('')}</select></label>
+			<fieldset><legend>Conductores modificables</legend>${circuito.conductores.map(id=>`<label class="ing-check"><input type="checkbox" data-ing-design-conductor="${esc(id)}" ${conductoresDiseno.includes(id)?'checked':''}>${esc(id)}</label>`).join('')}</fieldset>
+			<label>Secciones permitidas (mm²)<input data-ing-design-sections value="2.5, 4, 6, 10"></label>
+			<label>Protección<select data-ing-design-protection><option value="">Sin cambio de protección</option>${circuito.protecciones.map(id=>`<option value="${esc(id)}" ${id===proteccionDiseno?'selected':''}>${esc(etiquetaDispositivo(p,id))}</option>`).join('')}</select></label>
+			<fieldset><legend>Revisiones exactas permitidas</legend>${productos.map(({revision,ref})=>`<label class="ing-check"><input type="checkbox" data-ing-design-product="${esc(ref.hash)}" checked>${esc(revision.nombre)} · r${ref.revision}<small>${esc(revision.procedencia.origen)}</small></label>`).join('')||'<p>No hay revisiones de protección en el proyecto/catálogo local.</p>'}</fieldset>
+			<label>Máximo de candidatos<input data-ing-design-max type="number" min="1" max="2000" value="250"></label>
+			<div class="botonera"><button class="boton primario" data-ing-design-run>Buscar alternativas</button><button class="boton" data-ing-design-cancel ${abortoDiseno?'':'disabled'}>Cancelar</button></div></div>
+			${progresoDiseno?`<p class="ing-alerta" data-ing-design-progress>${esc(progresoDiseno)}</p>`:''}
+			${resultadoDiseno?`<div class="ing-kpis"><span><b>${resultadoDiseno.evaluados}/${resultadoDiseno.totalEstimado}</b> evaluados</span><span><b>${esc(resultadoDiseno.cobertura)}</b> cobertura</span><span><b>${numero(resultadoDiseno.duracionMs,'ms')}</b> duración</span></div><p>${esc(resultadoDiseno.motivoCobertura)}</p><div class="botonera"><button class="boton" data-ing-design-export="json">JSON</button><button class="boton" data-ing-design-export="csv">CSV</button><button class="boton" data-ing-design-export="html">HTML</button></div>${resultadoDiseno.excluidas.map(x=>`<p class="ing-meta">Excluida ${esc(x.identidad)}: ${esc(x.motivo)}</p>`).join('')}${resultados}`:''}</section>`;
+	}
+
 	function vistaDocumentacion(): string {
 		return `<section data-ing-documentation><p>Los entregables consumen el mismo snapshot de Ingeniería; la UI no reconstruye BOM, cableado ni borneras.</p>
 			<div class="botonera"><button class="boton primario" data-ing-doc="prepare">Preparar informe</button>
@@ -267,7 +314,12 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		}
 		contenido.innerHTML = vista === 'circuitos' ? vistaCircuitos(analisis) : vista === 'validacion' ? vistaValidacion(analisis)
 			: vista === 'protecciones' ? vistaProtecciones(analisis) : vista === 'potencia' ? vistaPotencia(analisis)
-				: vista === 'escenarios' ? vistaEscenarios(analisis) : vistaDocumentacion();
+			: vista === 'escenarios' ? vistaEscenarios(analisis) : vista === 'diseno' ? vistaDiseno(analisis) : vistaDocumentacion();
+	}
+
+	function actualizarProgresoDiseno(): void {
+		const e=contenido.querySelector<HTMLElement>('[data-ing-design-progress]');
+		if(e)e.textContent=progresoDiseno;
 	}
 
 	function navegarIssue(id: string): void {
@@ -307,6 +359,19 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		if (accion === 'technical') descargar(`${base}-datos-tecnicos.csv`, datosTecnicosIngenieriaACsv(informe), 'text/csv');
 	}
 
+	async function exportarDiseno(formato: string): Promise<void> {
+		if(!snapshotDiseno||!resultadoDiseno)return;
+		const identidad=await ctx.trazabilidad();
+		const contexto={...identidad,buildId:buildId(),generadoEn:new Date().toISOString(),aplicacion:{estado:'NO_APLICADA' as const}};
+		const base=`${ctx.proyecto().nombre} - diseno-v9`;
+		if(formato==='json')descargar(`${base}.json`,informeDisenoJson(snapshotDiseno,resultadoDiseno,contexto),'application/json');
+		if(formato==='csv')descargar(`${base}.csv`,informeDisenoCsv(resultadoDiseno),'text/csv');
+		if(formato==='html'){
+			const html=informeDisenoHtml(snapshotDiseno,resultadoDiseno,contexto);descargar(`${base}.html`,html,'text/html');
+			const w=window.open('','_blank');if(w){w.opener=null;w.document.open();w.document.write(html);w.document.close();}
+		}
+	}
+
 	$('ingenieria-validar').onclick = () => validar();
 	for (const b of document.querySelectorAll<HTMLButtonElement>('[data-ing-view]')) b.onclick = () => {
 		vista = b.dataset.ingView as Vista; if (vista !== 'documentacion') informe = undefined; pintar();
@@ -317,6 +382,8 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		if (f === 'category') filtroCategoria = e.value;
 		if (f === 'circuit') filtroCircuito = e.value;
 		if (f) pintar();
+		if (e.dataset.ingDesignCircuit !== undefined) { circuitoId=e.value; conductoresDiseno=[]; proteccionDiseno=''; resultadoDiseno=undefined; pintar(); }
+		if (e.dataset.ingDesignProtection !== undefined) proteccionDiseno=e.value;
 		if (e.dataset.ingScenarioSlot !== undefined) { slotEscenario = e.value as 'A' | 'B'; pintar(); }
 		if (e.dataset.ingScenarioType !== undefined) { tipoEscenario = e.value as typeof tipoEscenario; pintar(); }
 	};
@@ -332,6 +399,26 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		if (b.dataset.ingConductor) ctx.seleccionarConductor(b.dataset.ingConductor);
 		if (b.dataset.ingCircuit) { circuitoId = b.dataset.ingCircuit; vista = 'circuitos'; pintar(); }
 		if (b.dataset.ingIssue) navegarIssue(b.dataset.ingIssue);
+		if (b.dataset.ingDesignIssue !== undefined) { if(b.dataset.ingDesignIssue)circuitoId=b.dataset.ingDesignIssue; vista='diseno'; pintar(); }
+		if (b.dataset.ingDesignRun !== undefined) void (async()=>{
+			try{
+				abortoDiseno?.abort();abortoDiseno=new AbortController();resultadoDiseno=undefined;progresoDiseno='Preparando snapshot…';pintar();
+				revisionesDiseno=ctx.revisionesTecnicas?await ctx.revisionesTecnicas():[];
+				const p=ctx.proyecto(),a=asegurar(),c=a.circuitos.find(x=>x.id===circuitoId);const conductores=[...contenido.querySelectorAll<HTMLInputElement>('[data-ing-design-conductor]:checked')].map(x=>x.dataset.ingDesignConductor!);if(!c||!conductores.length)throw new Error('Selecciona un circuito y al menos un conductor.');conductoresDiseno=conductores;
+				const secciones=(contenido.querySelector<HTMLInputElement>('[data-ing-design-sections]')?.value??'').split(/[;,\s]+/).map(Number).filter(Number.isFinite);
+				const hashes=[...contenido.querySelectorAll<HTMLInputElement>('[data-ing-design-product]:checked')].map(x=>x.dataset.ingDesignProduct!);
+				const refs=refsProteccionDisponibles(p).filter(x=>hashes.includes(x.ref.hash)).map(x=>x.ref);
+				const maxCandidatos=Number(contenido.querySelector<HTMLInputElement>('[data-ing-design-max]')?.value)||250;
+				const vinculo=p.datosTecnicos?.vinculos.find(v=>v.entidad==='DEVICE'&&v.entidadId===proteccionDiseno);
+				const solicitud:SolicitudDisenoAsistido={version:1,id:`ui:${c.id}`,nombre:`Diseño ${c.nombre}`,circuitoId:c.id,conductores,proteccionId:proteccionDiseno||undefined,cambiosPermitidos:[...(secciones.length?['SECCION' as const]:[]),...(proteccionDiseno&&refs.length?['PROTECCION' as const]:[])],seccionesPermitidasMm2:secciones,proteccionesPermitidas:refs,condicionesProteccion:vinculo?.condiciones,preferencias:['MENOS_CAMBIOS','MENOR_SECCION_TOTAL','MENOR_IN','MENOR_PERDIDA'],presupuesto:{maxCandidatos,maxMs:30_000,lote:3}};
+				snapshotDiseno=crearSnapshotDisenoAsistido({proyecto:p,solicitud,revisionesDisponibles:revisionesDiseno,contextoFisico:contextoDisenoIngenieria(p)});
+				resultadoDiseno=await ejecutarSesionDisenoAsistido(snapshotDiseno,{signal:abortoDiseno.signal,progreso:x=>{progresoDiseno=`${x.fase}: ${x.generados} generados · ${x.evaluados} evaluados · ${Math.max(0,x.totalEstimado-x.generados)} pendientes · ${x.transcurridoMs.toFixed(0)} ms`;actualizarProgresoDiseno();}});
+				progresoDiseno='';abortoDiseno=undefined;pintar();ctx.avisar(`Diseño V9: ${resultadoDiseno.evaluados} alternativas · ${resultadoDiseno.cobertura}.`,'ok');
+			}catch(e){progresoDiseno='';abortoDiseno=undefined;pintar();ctx.avisar(`Diseño asistido: ${(e as Error).message}`,'error');}
+		})();
+		if(b.dataset.ingDesignCancel!==undefined){abortoDiseno?.abort();}
+		if(b.dataset.ingDesignApply)void(async()=>{try{if(!snapshotDiseno||!resultadoDiseno)throw new Error('Calcula nuevamente las alternativas.');const r=resultadoDiseno.resultados.find(x=>x.plan.id===b.dataset.ingDesignApply);if(!r)throw new Error('Resultado no encontrado.');const preview=prepararAplicacionDiseno(snapshotDiseno,r);const resumen=preview.cambios.map(c=>c.tipo==='SECCION'?`${c.conductorId}: ${c.seccionMm2} mm²`:`${c.dispositivoId}: ${c.referencia.id} r${c.referencia.revision}`).join('\n');if(!(await ctx.confirmar(`Aplicar este plan V9?\n${resumen}\n\nSe revalidará BASE y se guardará como una sola operación.`)))return;const operacion=await ctx.prepararAplicacion();comprobarAplicacionDiseno(operacion.proyecto,preview);if(!(await operacion.aplicar(preview.candidato)))throw new Error('APLICACION_CANCELADA');analisis=undefined;snapshotDiseno=undefined;resultadoDiseno=undefined;pintarEstado('Plan V9 aplicado. Valida el nuevo proyecto.','ok');pintar();ctx.avisar('Plan V9 aplicado de forma transaccional. Ctrl+Z permite deshacerlo.','ok');}catch(e){ctx.avisar(`No se aplicó el plan: ${(e as Error).message}`,'error');}})();
+		if(b.dataset.ingDesignExport)void exportarDiseno(b.dataset.ingDesignExport).catch(e=>ctx.avisar(`No se pudo exportar: ${(e as Error).message}`,'error'));
 		if (b.dataset.ingScenarioRun !== undefined) {
 			let definicion: DefinicionEscenarioIngenieria;
 			if (tipoEscenario === 'SECCION_CONDUCTOR') {

@@ -31,3 +31,11 @@ La aplicación revalidará identidad/hash y datos exactos justo antes de mutar. 
 ## D08 — Resultado dinámico no persistente
 
 Se persisten solicitud/decisión aplicada y trazabilidad mínima. El análisis calculado se recompone y no se incorpora como segunda verdad del proyecto.
+
+## D09 — Conservaciones y no-op no son opciones
+
+Una revisión que intentaría dominar un campo `OVERRIDE`, `CONSERVAR` o `SIN_HERENCIA` se excluye antes de buscar y explica qué autorización falta. También se excluyen la sección/revisión ya efectivas: BASE representa explícitamente «mantener diseño» y no se fabrican candidatos distintos con el mismo efecto.
+
+## D10 — Un informe importado es evidencia, no un comando
+
+JSON V9 aplica esquema, límites, allowlist y hashes de plan. Para reutilizar su intención exige revisiones exactas disponibles, crea un snapshot nuevo y ejecuta de nuevo el motor sobre la BASE actual. Nunca aplica un candidato ni confía en la clasificación exportada.

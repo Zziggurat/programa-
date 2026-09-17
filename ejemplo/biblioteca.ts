@@ -20,6 +20,7 @@ import {
 	fixtureProyectoSanoV7, fixtureSelectividadParcialV7, fixtureTopologiaAmbiguaV7,
 } from './fixtures-ingenieria-v7.js';
 import { tableroEjemplo } from './tablero-ejemplo.js';
+import { fixtureDisenoAsistidoV9 } from './fixtures-diseno-v9.js';
 
 export interface EjemploTablero {
 	id: string;
@@ -942,6 +943,25 @@ function rotular(p: Proyecto, rotulos: Record<string, string>): Proyecto {
 /* --------------------------------- La biblioteca --------------------------------- */
 
 export const EJEMPLOS: EjemploTablero[] = [
+	{
+		id: 'diseno-asistido-v9',
+		titulo: 'Diseño asistido V9 — conductor y protección',
+		resumen: 'Laboratorio sintético pequeño para comparar sección, protección y alternativas combinadas.',
+		queHace: 'Ejecuta el mismo motor de Ingeniería sobre un circuito monofásico con ampacidad e Icc prospectiva explícitas. '
+			+ 'Los datos son sintéticos y sirven como oráculo reproducible, no como selección comercial.',
+		comoFunciona: [
+			'Abre Ingeniería, valida el proyecto y entra en Diseño V9.',
+			'Elige el conductor de carga, permite 4 y 6 mm² y compara las revisiones exactas de protección.',
+			'BASE, cambios individuales y combinados se evalúan sin modificar el tablero.',
+			'Para aplicar una alternativa debes hacer primero una copia editable del ejemplo.',
+		],
+		aprender: [
+			'Una sección sin fila aplicable queda excluida con motivo visible.',
+			'La Icc se calcula en el punto prospectivo declarado; no se toma de una falla genérica.',
+			'La etiqueta SINTÉTICO significa que ninguna ficha acredita un producto comercial o norma.',
+		],
+		crear: () => fixtureDisenoAsistidoV9().proyecto,
+	},
 	{
 		id: 'arranque-directo',
 		titulo: 'Arranque directo de motor (380 V)',

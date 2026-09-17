@@ -12,11 +12,11 @@ Rama de trabajo: `v9/astra-diseno-asistido`.
 - [x] C — Ranking: dominancia de Pareto y preferencias lexicográficas visibles, sin puntuación opaca.
 - [x] D — Sesión local: lotes cooperativos, progreso, cancelación, presupuesto y trazas reproducibles.
 - [x] E — Aplicación: previsualización, validación de vigencia, operación transaccional, undo/redo y persistencia portable.
-- [ ] F — Interfaz: flujo visible desde Ingeniería/incidencias, selección de objetivo, restricciones, resultados, comparación y aplicación.
-- [ ] G — Fixture y datos: laboratorio pequeño `Diseño asistido V9 — conductor y protección`, sin inventar catálogo certificado.
-- [ ] H — Informes e importación segura: HTML/JSON/CSV, evidencia, límites y rechazo de datos manipulados.
-- [ ] I — QA y compatibilidad: pruebas rápidas, integración, navegador, offline y regresión V5–V8.
-- [ ] J — Documentación, empaquetado y CI.
+- [x] F — Interfaz: flujo visible desde Ingeniería/incidencias, selección de objetivo, restricciones, resultados, comparación y aplicación.
+- [x] G — Fixture y datos: laboratorio pequeño `Diseño asistido V9 — conductor y protección`, sin inventar catálogo certificado.
+- [x] H — Informes e importación segura: HTML/JSON/CSV, evidencia, límites y rechazo de datos manipulados.
+- [x] I — QA focal: pruebas rápidas, integración y navegador con apply/undo/redo/reapertura.
+- [ ] J — Revisión adversarial/rendimiento, documentación, empaquetado y CI.
 - [ ] K — Integración final, publicación y tag anotado `tablerostudio-v9`.
 
 ## Matriz de impacto
