@@ -37,6 +37,24 @@ export interface ConfiguracionIngenieriaProyecto {
 	version: 1;
 	criterios?: CriteriosCircuitoIngenieria;
 	circuitos?: Record<string, MetadatosCircuitoIngenieria>;
+	/** V9: intención aplicada. El resultado calculado se recompone y nunca se persiste aquí. */
+	disenoAsistido?: {
+		version: 1;
+		decisiones: DecisionDisenoAsistidoPersistida[];
+	};
+}
+
+export interface DecisionDisenoAsistidoPersistida {
+	version: 1;
+	id: string;
+	solicitudId: string;
+	planId: string;
+	hashBase: string;
+	circuitoId: string;
+	cambios: (
+		| { tipo: 'SECCION'; conductorId: string; seccionMm2: number }
+		| { tipo: 'PROTECCION'; dispositivoId: string; referencia: { tipo: 'PRODUCTO'; catalogoId: string; id: string; revision: number; hash: string } }
+	)[];
 }
 
 const TIPOS = new Set<TipoCircuitoIngenieria>([
@@ -90,7 +108,36 @@ export function leerConfiguracionIngenieria(v: unknown): ConfiguracionIngenieria
 		}
 	}
 	const criterios = leerCriterios(v.criterios);
-	return criterios || Object.keys(circuitos).length
-		? { version: 1, criterios, circuitos: Object.keys(circuitos).length ? circuitos : undefined }
+	let disenoAsistido: ConfiguracionIngenieriaProyecto['disenoAsistido'];
+	if (objeto(v.disenoAsistido) && v.disenoAsistido.version === 1 && Array.isArray(v.disenoAsistido.decisiones)) {
+		const decisiones: DecisionDisenoAsistidoPersistida[] = [];
+		for (const item of v.disenoAsistido.decisiones.slice(-200)) {
+			if (!objeto(item) || item.version !== 1 || typeof item.id !== 'string' || typeof item.solicitudId !== 'string'
+				|| typeof item.planId !== 'string' || typeof item.hashBase !== 'string' || typeof item.circuitoId !== 'string'
+				|| !Array.isArray(item.cambios) || item.cambios.length > 100) continue;
+			const cambios: DecisionDisenoAsistidoPersistida['cambios'] = [];
+			for (const cambio of item.cambios) {
+				if (!objeto(cambio)) continue;
+				if (cambio.tipo === 'SECCION' && typeof cambio.conductorId === 'string'
+					&& typeof cambio.seccionMm2 === 'number' && Number.isFinite(cambio.seccionMm2) && cambio.seccionMm2 > 0) {
+					cambios.push({ tipo: 'SECCION', conductorId: cambio.conductorId.slice(0, 200), seccionMm2: cambio.seccionMm2 });
+				} else if (cambio.tipo === 'PROTECCION' && typeof cambio.dispositivoId === 'string' && objeto(cambio.referencia)
+					&& cambio.referencia.tipo === 'PRODUCTO' && typeof cambio.referencia.catalogoId === 'string'
+					&& typeof cambio.referencia.id === 'string' && Number.isInteger(cambio.referencia.revision)
+					&& typeof cambio.referencia.hash === 'string') {
+					cambios.push({ tipo: 'PROTECCION', dispositivoId: cambio.dispositivoId.slice(0, 200), referencia: {
+						tipo: 'PRODUCTO', catalogoId: cambio.referencia.catalogoId.slice(0, 200), id: cambio.referencia.id.slice(0, 200),
+						revision: cambio.referencia.revision as number, hash: cambio.referencia.hash.slice(0, 80),
+					} });
+				}
+			}
+			if (cambios.length === item.cambios.length) decisiones.push({ version: 1, id: item.id.slice(0, 200),
+				solicitudId: item.solicitudId.slice(0, 200), planId: item.planId.slice(0, 200), hashBase: item.hashBase.slice(0, 100),
+				circuitoId: item.circuitoId.slice(0, 300), cambios });
+		}
+		disenoAsistido = { version: 1, decisiones };
+	}
+	return criterios || Object.keys(circuitos).length || disenoAsistido
+		? { version: 1, criterios, circuitos: Object.keys(circuitos).length ? circuitos : undefined, disenoAsistido }
 		: { version: 1 };
 }
