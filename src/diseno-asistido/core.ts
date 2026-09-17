@@ -29,6 +29,7 @@ function normalizarSolicitud(s: SolicitudDisenoAsistido): SolicitudDisenoAsistid
 	const cambiosPermitidos = [...new Set(s.cambiosPermitidos)].filter(x => x === 'SECCION' || x === 'PROTECCION').sort();
 	if (!cambiosPermitidos.length) throw new Error('SOLICITUD_SIN_CAMBIOS_PERMITIDOS');
 	const conductores = unicoTexto(s.conductores);
+	if(conductores.length>100)throw new Error('SOLICITUD_DEMASIADOS_CONDUCTORES');
 	if (cambiosPermitidos.includes('SECCION') && !conductores.length) throw new Error('SOLICITUD_SIN_CONDUCTORES');
 	if (cambiosPermitidos.includes('PROTECCION') && !s.proteccionId?.trim()) throw new Error('SOLICITUD_SIN_PROTECCION');
 	const preferencias = [...new Set(s.preferencias ?? ['MENOS_CAMBIOS','MENOR_SECCION_TOTAL','MENOR_IN','MENOR_PERDIDA'])]
@@ -38,10 +39,21 @@ function normalizarSolicitud(s: SolicitudDisenoAsistido): SolicitudDisenoAsistid
 	const lote = Math.min(50, Math.max(1, Math.floor(s.presupuesto?.lote ?? 5)));
 	return { version: 1, id: s.id.trim().slice(0,200), nombre: s.nombre.trim().slice(0,300), circuitoId: s.circuitoId.trim(),
 		conductores, proteccionId: s.proteccionId?.trim(), cambiosPermitidos,
-		seccionesPermitidasMm2: s.seccionesPermitidasMm2 ? unicoNumero(s.seccionesPermitidasMm2) : undefined,
-		proteccionesPermitidas: s.proteccionesPermitidas ? [...new Map(s.proteccionesPermitidas.map(r=>[refKey(r), structuredClone(r)])).values()].sort((a,b)=>cmp(refKey(a),refKey(b))) : undefined,
+		seccionesPermitidasMm2: s.seccionesPermitidasMm2 ? unicoNumero(s.seccionesPermitidasMm2).slice(0,500) : undefined,
+		proteccionesPermitidas: s.proteccionesPermitidas ? [...new Map(s.proteccionesPermitidas.map(r=>[refKey(r), structuredClone(r)])).values()].sort((a,b)=>cmp(refKey(a),refKey(b))).slice(0,10_000) : undefined,
 		condicionesProteccion: s.condicionesProteccion ? structuredClone(s.condicionesProteccion) : undefined,
 		preferencias, presupuesto: { maxCandidatos, maxMs, lote } };
+}
+
+const rango = (v: number | readonly number[] | undefined): readonly [number, number] | undefined => typeof v === 'number' ? [v,v] : Array.isArray(v) && v.length===2 ? [v[0],v[1]] : undefined;
+function condicionesCompatibles(solicitadas:CondicionesTecnicas|undefined,revision:RevisionProductoTecnico):string|undefined{
+	if(!solicitadas)return undefined;
+	for(const dato of revision.campos){const c=dato.condiciones;if(!c)continue;
+		if(solicitadas.sistema&&c.sistema&&solicitadas.sistema!==c.sistema)return`Sistema ${c.sistema} incompatible con ${solicitadas.sistema}.`;
+		for(const [campo,nombre] of [['tensionV','tensión'],['frecuenciaHz','frecuencia']] as const){const a=rango(solicitadas[campo]),b=rango(c[campo]);if(a&&b&&(a[1]<b[0]||b[1]<a[0]))return`${nombre} de la revisión fuera de las condiciones solicitadas.`;}
+		if(solicitadas.polos!==undefined&&c.polos!==undefined&&solicitadas.polos!==c.polos)return`Polos ${c.polos} incompatibles con ${solicitadas.polos}.`;
+	}
+	return undefined;
 }
 
 export function crearSnapshotDisenoAsistido(entrada: { proyecto: Proyecto; solicitud: SolicitudDisenoAsistido;
@@ -64,19 +76,26 @@ export function construirEspacioOpciones(snapshot: SnapshotDisenoAsistido): Espa
 	let secciones = solicitud.cambiosPermitidos.includes('SECCION') ? (solicitud.seccionesPermitidasMm2 ?? []) : [];
 	if (secciones.length) for (const conductorId of solicitud.conductores) {
 		const inst = proyecto.datosTecnicos?.instalaciones.filter(i=>i.conductorId===conductorId) ?? [];
-		if (!inst.length) continue;
+		if (!inst.length) { for (const s of secciones) excluidas.push({tipo:'SECCION',identidad:`${conductorId}:${s}`,motivo:'No existe instalación técnica fijada para resolver ampacidad.'}); secciones=[]; break; }
 		if (inst.length !== 1) { for (const s of secciones) excluidas.push({tipo:'SECCION',identidad:`${conductorId}:${s}`,motivo:'Instalación técnica ambigua.'}); secciones=[]; break; }
 		const tabla = snapshot.revisiones.find(r=>r.tipo==='AMPACIDAD' && claveRevision(referenciaTecnica(r))===claveRevision(inst[0].tabla) && r.hash===inst[0].tabla.hash);
 		if (!tabla || tabla.tipo !== 'AMPACIDAD') { for (const s of secciones) excluidas.push({tipo:'SECCION',identidad:`${conductorId}:${s}`,motivo:'Tabla exacta de ampacidad ausente.'}); secciones=[]; break; }
 		secciones = secciones.filter(s => { const a=evaluarAmpacidad({tabla,instalacion:inst[0],seccionMm2:s});
 			if (a.estado==='RESOLVED') return true; excluidas.push({tipo:'SECCION',identidad:`${conductorId}:${s}`,motivo:`Ampacidad ${a.estado}: ${a.motivos.join(' ')}`}); return false; });
 	}
+	secciones=secciones.filter(s=>{const cambia=solicitud.conductores.some(id=>proyecto.conductores.find(c=>c.id===id)?.seccion!==s);if(!cambia)excluidas.push({tipo:'SECCION',identidad:`grupo:${s}`,motivo:'La opción no cambia la sección efectiva de ningún conductor seleccionado.'});return cambia;});
 	const indice = indexarRevisiones(snapshot.revisiones);
 	const protecciones: ReferenciaTecnica[] = [];
 	if (solicitud.cambiosPermitidos.includes('PROTECCION')) for (const ref of solicitud.proteccionesPermitidas ?? []) {
 		const r=indice.get(claveRevision(ref));
-		if (!r || r.hash!==ref.hash || r.tipo!=='PRODUCTO' || r.familia!=='PROTECCION') excluidas.push({tipo:'PROTECCION',identidad:refKey(ref),motivo:'Revisión exacta ausente, corrupta o de familia incompatible.'});
-		else protecciones.push(structuredClone(ref));
+		if (!r || r.hash!==ref.hash || r.tipo!=='PRODUCTO' || r.familia!=='PROTECCION') { excluidas.push({tipo:'PROTECCION',identidad:refKey(ref),motivo:'Revisión exacta ausente, corrupta o de familia incompatible.'}); continue; }
+		if(r.estado!=='ACTIVA'){excluidas.push({tipo:'PROTECCION',identidad:refKey(ref),motivo:'La revisión no está activa y no puede seleccionarse automáticamente.'});continue;}
+		const incompatibilidad=condicionesCompatibles(solicitud.condicionesProteccion,r);if(incompatibilidad){excluidas.push({tipo:'PROTECCION',identidad:refKey(ref),motivo:incompatibilidad});continue;}
+		const vinculo=proyecto.datosTecnicos?.vinculos.find(v=>v.entidad==='DEVICE'&&v.entidadId===solicitud.proteccionId);
+		if(vinculo&&refKey(vinculo.producto)===refKey(ref)){excluidas.push({tipo:'PROTECCION',identidad:refKey(ref),motivo:'La revisión ya es la protección efectiva de BASE.'});continue;}
+		const bloqueada=r.campos.map(claveDato).find(k=>{const d=vinculo?.decisiones[k];return d&&d.modo!=='CATALOGO';});
+		if(bloqueada){excluidas.push({tipo:'PROTECCION',identidad:refKey(ref),motivo:`El campo ${bloqueada} conserva una decisión protegida; autoriza su edición antes de buscar.`});continue;}
+		protecciones.push(structuredClone(ref));
 	}
 	return { seccionesMm2: unicoNumero(secciones), protecciones: [...new Map(protecciones.map(r=>[refKey(r),r])).values()].sort((a,b)=>cmp(refKey(a),refKey(b))), excluidas };
 }
@@ -117,7 +136,7 @@ export function proyectarPlanDiseno(snapshot: SnapshotDisenoAsistido, planEntrad
 			const revision=snapshot.revisiones.find(r=>r.tipo==='PRODUCTO'&&claveRevision(referenciaTecnica(r))===claveRevision(cambio.referencia)&&r.hash===cambio.referencia.hash);
 			if(!revision||revision.tipo!=='PRODUCTO'||revision.familia!=='PROTECCION') throw new Error('PROTECCION_EXACTA_NO_DISPONIBLE');
 			const anterior=proyecto.datosTecnicos?.vinculos.find(v=>v.entidad==='DEVICE'&&v.entidadId===cambio.dispositivoId);
-			proyecto=cambiarConfiguracionTecnica(proyecto,cfg=>{cfg.vinculos=cfg.vinculos.filter(v=>!(v.entidad==='DEVICE'&&v.entidadId===cambio.dispositivoId));cfg.vinculos.push({entidad:'DEVICE',entidadId:cambio.dispositivoId,producto:structuredClone(cambio.referencia),condiciones:condicionesProducto(revision,snapshot.solicitud,anterior),decisiones:Object.fromEntries(revision.campos.map(d=>[claveDato(d),{modo:'CATALOGO' as const}]))});},snapshot.revisiones);
+			proyecto=cambiarConfiguracionTecnica(proyecto,cfg=>{const protegidas=Object.fromEntries(Object.entries(anterior?.decisiones??{}).filter(([,d])=>d.modo!=='CATALOGO'));cfg.vinculos=cfg.vinculos.filter(v=>!(v.entidad==='DEVICE'&&v.entidadId===cambio.dispositivoId));cfg.vinculos.push({entidad:'DEVICE',entidadId:cambio.dispositivoId,producto:structuredClone(cambio.referencia),condiciones:condicionesProducto(revision,snapshot.solicitud,anterior),decisiones:{...Object.fromEntries(revision.campos.map(d=>[claveDato(d),{modo:'CATALOGO' as const}])),...protegidas}});},snapshot.revisiones);
 		}
 	}
 	if(ejemplo) proyecto.esEjemplo=true; validarAdopcionTecnica(proyecto); return proyecto;
@@ -129,11 +148,6 @@ function resultadosObjetivo(snapshot:SnapshotDisenoAsistido,analisis:ReturnType<
 }
 function obligaciones(snapshot:SnapshotDisenoAsistido,analisis:ReturnType<typeof ejecutarIngenieria>,planEntrada:PlanDisenoAsistido):ObligacionDiseno[]{
 	const out:ObligacionDiseno[]=resultadosObjetivo(snapshot,analisis).map(r=>({id:`${r.code}:${r.circuitId??''}:${r.relatedEntities.map(e=>e.id).join(',')}`,estado:r.status==='FAIL'?'INCUMPLE':r.status==='INDETERMINATE'?'INDETERMINADA':'CUMPLE',descripcion:`${r.title}: ${r.description}`,evidencia:r.evidence.map(e=>`${e.codigo}: ${e.valor??e.descripcion}${e.unidad?` ${e.unidad}`:''}`)}));
-	for(const c of planEntrada.cambios) if(c.tipo==='SECCION'){
-		const amp=analisis.tecnica?.proyecto.datosTecnicos?.instalaciones.some(i=>i.conductorId===c.conductorId)
-			? analisis.validacion.resultados.filter(r=>r.relatedEntities.some(e=>e.id===c.conductorId)&&r.code.includes('AMPACITY')):[];
-		if(amp.length===0&&analisis.tecnica?.proyecto.datosTecnicos?.instalaciones.some(i=>i.conductorId===c.conductorId)) out.push({id:`AMPACIDAD:${c.conductorId}`,estado:'INDETERMINADA',descripcion:'No se encontró una comprobación de ampacidad aplicable.',evidencia:[]});
-	}
 	if(!out.length) out.push({id:'COBERTURA_OBJETIVO',estado:'INDETERMINADA',descripcion:'El motor común no produjo obligaciones relacionadas con el objetivo.',evidencia:[]});
 	return out;
 }
@@ -152,22 +166,27 @@ export function evaluarPlanDiseno(snapshot:SnapshotDisenoAsistido,planEntrada:Pl
 		const obs=obligaciones(snapshot,analisis,planEntrada),estado=obs.some(o=>o.estado==='INCUMPLE')?'INVIABLE':obs.some(o=>o.estado==='INDETERMINADA')?'INDETERMINADO':'FACTIBLE';
 		const limitaciones:string[]=[]; if(planEntrada.cambios.some(c=>c.tipo==='PROTECCION')) limitaciones.push('Compatibilidad dimensional/mecánica del producto no modelada: requiere verificación humana.');
 		const pros=snapshot.solicitud.proteccionId?analisis.prospectiva?.get(snapshot.solicitud.proteccionId):undefined; if(pros&&pros.estado!=='RESUELTO') limitaciones.push(`Prospectiva ${pros.estado}: ${pros.motivos.join(' ')}`);
-		return {plan:structuredClone(planEntrada),hashPlan:hashPlanDiseno(planEntrada),estado,analisis,proyecto,obligaciones:obs,metricas:metricas(snapshot,proyecto,analisis,planEntrada),limitaciones,pareto:false,orden:0};
-	}catch(e){return {plan:structuredClone(planEntrada),hashPlan:hashPlanDiseno(planEntrada),estado:'ERROR',obligaciones:[],metricas:{cambios:planEntrada.cambios.length,fallos:0,indeterminados:0},limitaciones:[],error:e instanceof Error?e.message:String(e),pareto:false,orden:0};}
+		return {plan:structuredClone(planEntrada),hashPlan:hashPlanDiseno(planEntrada),estado,analisis,proyecto,obligaciones:obs,metricas:metricas(snapshot,proyecto,analisis,planEntrada),deltaBase:{},limitaciones,pareto:false,orden:0,razonOrden:''};
+	}catch(e){return {plan:structuredClone(planEntrada),hashPlan:hashPlanDiseno(planEntrada),estado:'ERROR',obligaciones:[],metricas:{cambios:planEntrada.cambios.length,fallos:0,indeterminados:0},deltaBase:{},limitaciones:[],error:e instanceof Error?e.message:String(e),pareto:false,orden:0,razonOrden:''};}
 }
 
 const estadoOrden:Record<ResultadoCandidatoDiseno['estado'],number>={FACTIBLE:0,INDETERMINADO:1,INVIABLE:2,ERROR:3};
 function valorPreferencia(r:ResultadoCandidatoDiseno,p:PreferenciaDiseno):number|undefined{if(p==='MENOS_CAMBIOS')return r.metricas.cambios;if(p==='MENOR_SECCION_TOTAL')return r.metricas.seccionTotalMm2;if(p==='MENOR_IN')return r.metricas.proteccionInA;return r.metricas.perdidaW;}
 function domina(a:ResultadoCandidatoDiseno,b:ResultadoCandidatoDiseno):boolean{const ks:(keyof MetricasDiseno)[]=['cambios','seccionTotalMm2','proteccionInA','perdidaW','fallos','indeterminados'];let mejor=false;for(const k of ks){const x=a.metricas[k],y=b.metricas[k];if(typeof x!=='number'||typeof y!=='number')continue;if(x>y)return false;if(x<y)mejor=true;}return mejor;}
 export function ordenarResultadosDiseno(resultados:ResultadoCandidatoDiseno[],preferencias:readonly PreferenciaDiseno[]):ResultadoCandidatoDiseno[]{
+	const base=resultados.find(r=>r.plan.tipo==='BASE');
+	if(base)for(const r of resultados)for(const k of ['cambios','seccionTotalMm2','proteccionInA','perdidaW','iccProspectivaA','fallos','indeterminados'] as const){const x=r.metricas[k],b=base.metricas[k];if(typeof x==='number'&&typeof b==='number')r.deltaBase[k]=x-b;}
 	for(const r of resultados) r.pareto=r.estado!=='ERROR'&&!resultados.some(o=>o!==r&&o.estado===r.estado&&domina(o,r));
-	return resultados.sort((a,b)=>estadoOrden[a.estado]-estadoOrden[b.estado]||Number(b.pareto)-Number(a.pareto)||preferencias.reduce((v,p)=>{if(v)return v;const x=valorPreferencia(a,p),y=valorPreferencia(b,p);return x===undefined?y===undefined?0:1:y===undefined?-1:x-y;},0)||cmp(a.plan.id,b.plan.id)).map((r,i)=>({...r,orden:i+1}));
+	return resultados.sort((a,b)=>estadoOrden[a.estado]-estadoOrden[b.estado]||Number(b.pareto)-Number(a.pareto)||preferencias.reduce((v,p)=>{if(v)return v;const x=valorPreferencia(a,p),y=valorPreferencia(b,p);return x===undefined?y===undefined?0:1:y===undefined?-1:x-y;},0)||cmp(a.plan.id,b.plan.id)).map((r,i)=>({...r,orden:i+1,razonOrden:`${r.estado}; ${r.pareto?'no dominada':'dominada'}; desempate ${preferencias.join(' → ')}.`}));
 }
 
+function totalPlanes(espacio:EspacioOpcionesDiseno):number{return 1+espacio.seccionesMm2.length+espacio.protecciones.length+espacio.seccionesMm2.length*espacio.protecciones.length;}
+
 export function evaluarDisenoAsistido(snapshot:SnapshotDisenoAsistido):ResultadoDisenoAsistido{
-	const inicio=performance.now(),espacio=construirEspacioOpciones(snapshot),todos=[...generarPlanesDiseno(snapshot,espacio)],max=snapshot.solicitud.presupuesto!.maxCandidatos!;
-	const elegidos=todos.slice(0,max),resultados=ordenarResultadosDiseno(elegidos.map(p=>evaluarPlanDiseno(snapshot,p)),snapshot.solicitud.preferencias!);
-	return {version:1,snapshotHash:snapshot.hash,cobertura:elegidos.length===todos.length?'EXHAUSTIVA':'LIMITADA',motivoCobertura:elegidos.length===todos.length?'Se evaluó todo el espacio canónico permitido.':`Presupuesto de ${max} candidatos alcanzado.`,generados:todos.length,evaluados:elegidos.length,totalEstimado:todos.length,duracionMs:performance.now()-inicio,excluidas:espacio.excluidas,resultados};
+	const inicio=performance.now(),espacio=construirEspacioOpciones(snapshot),total=totalPlanes(espacio),max=snapshot.solicitud.presupuesto!.maxCandidatos!,resultadosBrutos:ResultadoCandidatoDiseno[]=[];
+	let generados=0;for(const p of generarPlanesDiseno(snapshot,espacio)){if(generados>=max)break;generados++;resultadosBrutos.push(evaluarPlanDiseno(snapshot,p));}
+	const resultados=ordenarResultadosDiseno(resultadosBrutos,snapshot.solicitud.preferencias!);
+	return {version:1,snapshotHash:snapshot.hash,cobertura:generados===total?'EXHAUSTIVA':'LIMITADA',motivoCobertura:generados===total?'Se evaluó todo el espacio canónico permitido.':`Presupuesto de ${max} candidatos alcanzado.`,generados,evaluados:resultados.length,totalEstimado:total,duracionMs:performance.now()-inicio,excluidas:espacio.excluidas,resultados};
 }
 
 function registrarDecision(proyecto:Proyecto,snapshot:SnapshotDisenoAsistido,planEntrada:PlanDisenoAsistido):void{

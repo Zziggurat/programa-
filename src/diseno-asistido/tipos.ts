@@ -81,10 +81,12 @@ export interface ResultadoCandidatoDiseno {
 	proyecto?: Proyecto;
 	obligaciones: ObligacionDiseno[];
 	metricas: MetricasDiseno;
+	deltaBase: Partial<MetricasDiseno>;
 	limitaciones: string[];
 	error?: string;
 	pareto: boolean;
 	orden: number;
+	razonOrden: string;
 }
 
 export interface ResultadoDisenoAsistido {
@@ -116,4 +118,14 @@ export interface PreviewAplicacionDiseno {
 	plan: PlanDisenoAsistido;
 	candidato: Proyecto;
 	cambios: CambioPlanDiseno[];
+}
+
+/** Contexto explícito de una exportación; no se deriva de un reloj oculto dentro del core. */
+export interface ContextoInformeDiseno {
+	projectId: string;
+	revision?: string | number;
+	snapshotId?: string;
+	buildId: string;
+	generadoEn: string;
+	aplicacion: { estado: 'NO_APLICADA' | 'APLICADA'; planId?: string; decisionId?: string };
 }
