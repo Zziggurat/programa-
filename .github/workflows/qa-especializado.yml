@@ -14,6 +14,7 @@ on:
           - multiproyecto
           - fixture-puerta
           - equipos-v6
+          - diseno-v9
 
 concurrency:
   group: qa-especializado-${{ github.ref }}-${{ inputs.suite }}
@@ -43,4 +44,5 @@ jobs:
             multiproyecto) node qa/todas.mjs multiproyecto ;;
             fixture-puerta) node qa/fixture-puerta.mjs ;;
             equipos-v6) node qa/todas.mjs equipos-v6 ;;
+            diseno-v9) node qa/todas.mjs diseno-asistido-v9 ;;
           esac

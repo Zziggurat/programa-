@@ -3,7 +3,7 @@ name: Pruebas
 on:
   pull_request:
   push:
-    branches: [main, 'v8/**']
+    branches: [main, 'v8/**', 'v9/**']
 
 # Un commit nuevo vuelve obsoleto el workflow anterior. GitHub lo mostrará como cancelado por
 # concurrencia, distinto de un job que alcance su timeout propio.
@@ -99,6 +99,32 @@ jobs:
         with:
           name: QA-V8-${{ github.sha }}
           path: ${{ runner.temp }}/qa-v8-*
+          if-no-files-found: warn
+          retention-days: 14
+
+  qa-v9:
+    name: QA Diseño asistido V9
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      QA_V9_CAPTURAS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.19.0
+          cache: npm
+      - run: npm ci
+      # Stress headless acotado: catálogo de 10.000 revisiones, solo 25 evaluaciones.
+      - run: npm run qa:diseno:stress
+      - run: npm run editor:build -- --mode qa
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run qa:diseno:run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: QA-V9-${{ github.sha }}
+          path: ${{ runner.temp }}/tablerostudio-v9-capturas
           if-no-files-found: warn
           retention-days: 14
 

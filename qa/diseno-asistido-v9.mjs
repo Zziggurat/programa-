@@ -1,11 +1,13 @@
 /** V9: flujo humano visible desde Ingeniería, aplicación y persistencia. */
 import { chromium } from 'playwright-core';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { abrirNavegador, esperarEditorListo, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const inicio=Date.now();let servidor,browser,page,fallos=0,comprobaciones=0;const erroresJS=[];
 const debugLog=join(process.cwd(),'debug.log'),debugLogExistia=existsSync(debugLog),chromeLogAnterior=process.env.CHROME_LOG_FILE;
+const capturas=process.env.QA_V9_CAPTURAS?join(tmpdir(),'tablerostudio-v9-capturas'):undefined;if(capturas)mkdirSync(capturas,{recursive:true});
 process.env.CHROME_LOG_FILE=process.platform==='win32'?'NUL':'/dev/null';
 function comprobar(nombre,ok,detalle=''){comprobaciones++;if(!ok)fallos++;console.log(`${ok?'OK  ':'FAIL'}  ${nombre}${detalle?` → ${detalle}`:''}`);}
 async function click(id){const x=page.locator(`#${id}`);await x.waitFor({state:'visible'});await x.click();}
@@ -37,8 +39,10 @@ try{
 		String(await page.locator('[data-ing-design-result]').count()));
 	comprobar('cobertura explícita y completa',/EXHAUSTIVA/.test(texto)&&/evaluados/.test(texto));
 	comprobar('ranking muestra frontera Pareto',/PARETO/.test(texto));
+	if(capturas)await page.screenshot({path:join(capturas,'diseno-v9-ancho.png'),fullPage:true});
 	const descarga=page.waitForEvent('download');await page.locator('[data-ing-design-export="json"]').click();const d=await descarga;const ruta=await d.path();const informe=JSON.parse(readFileSync(ruta,'utf8'));
 	comprobar('informe portable fija snapshot y revisiones exactas',informe.formato==='tablerostudio-diseno-asistido'&&/^sha256:/.test(informe.snapshot.hash)&&informe.snapshot.revisiones.length>=1);
+	if(capturas){const descargaHtml=page.waitForEvent('download');await page.locator('[data-ing-design-export="html"]').click();const dh=await descargaHtml,rh=await dh.path(),hoja=await contexto.newPage();await hoja.setContent(readFileSync(rh,'utf8'),{waitUntil:'domcontentloaded'});await hoja.screenshot({path:join(capturas,'diseno-v9-informe.png'),fullPage:true});await hoja.close();}
 	const botones=page.locator('.ing-resultado-diseno',{hasText:'COMBINADO'}).locator('[data-ing-design-apply]:not([disabled])');comprobar('existe una alternativa combinada aplicable',await botones.count()>0);
 	await botones.first().click();await page.locator('#modal-dialogo').waitFor({state:'visible'});
 	comprobar('preview exige confirmación y enumera cambios',/Aplicar este plan V9.*Se revalidará BASE/s.test(await page.locator('#dialogo-msg').innerText()));await click('dialogo-ok');
@@ -52,6 +56,7 @@ try{
 	await click('hta-ingenieria');await click('ingenieria-validar');await page.locator('[data-ing-view="diseno"]').click();
 	await page.setViewportSize({width:760,height:700});
 	const ancho=await page.locator('#panel-izq').evaluate(e=>({scroll:e.scrollWidth,client:e.clientWidth}));comprobar('panel estrecho no desborda horizontalmente',ancho.scroll<=ancho.client+2,JSON.stringify(ancho));
+	if(capturas){await page.screenshot({path:join(capturas,'diseno-v9-estrecho.png'),fullPage:true});console.log(`CAPTURAS ${capturas}`);}
 	comprobar('no hubo errores JavaScript',erroresJS.length===0,erroresJS.slice(0,4).join(' | '));
 }catch(error){fallos++;console.error(`ERROR NO CONTROLADO: ${error?.stack??error}`);}finally{
 	try{await page?.close();}catch(e){fallos++;console.error(e);}try{await browser?.close();}catch(e){fallos++;console.error(e);}

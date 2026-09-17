@@ -39,3 +39,11 @@ Una revisión que intentaría dominar un campo `OVERRIDE`, `CONSERVAR` o `SIN_HE
 ## D10 — Un informe importado es evidencia, no un comando
 
 JSON V9 aplica esquema, límites, allowlist y hashes de plan. Para reutilizar su intención exige revisiones exactas disponibles, crea un snapshot nuevo y ejecuta de nuevo el motor sobre la BASE actual. Nunca aplica un candidato ni confía en la clasificación exportada.
+
+## D11 — Datos sintéticos requieren consentimiento explícito
+
+Una ficha `SINTETICO` no participa por defecto en una búsqueda real. La solicitud debe autorizarla expresamente y esa política forma parte del snapshot, el hash, la decisión persistida y los informes. La autorización no convierte el dato en documental ni elimina sus advertencias.
+
+## D12 — Intención durable, resultados recalculables
+
+El proyecto conserva nombre de solicitud, objetivo, restricciones, snapshot/Build ID y plan aplicado. No conserva como verdad las métricas ni el dictamen dinámico. Al compartir o importar se exige el manifiesto exacto y se vuelve a ejecutar el motor común.

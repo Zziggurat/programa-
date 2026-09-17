@@ -42,7 +42,7 @@ bundle lo modifica.
 
 ## Checks de GitHub Actions
 
-El workflow obligatorio `Pruebas` separa seis señales:
+El workflow obligatorio `Pruebas` separa siete señales:
 
 - **Unit / TypeScript / Build** (20 min): typecheck, tests rápidos y build QA.
 - **QA Gate navegador** (60 min): Chromium fijado por lockfile y gate histórico estable. El límite
@@ -50,9 +50,10 @@ El workflow obligatorio `Pruebas` separa seis señales:
 - **QA equipos y diagnóstico V6** (30 min): equipos, motor y red.
 - **QA Ingeniería V7** (30 min): validación, escenarios y documentación.
 - **QA Datos técnicos V8** (30 min): catálogo, imports/portabilidad y revisión/ingeniería;
+- **QA Diseño asistido V9** (30 min): stress acotado de 10.000 revisiones y recorrido visible de búsqueda/aplicación;
   conserva capturas como evidencia, sin incorporarlas al gate histórico.
 - **Entregable offline** (30 min, Windows/Node canónicos): frescura de ambos HTML, apertura real con `file://`, IndexedDB,
-  Mis Tableros, Energizar, V2–V8 y ausencia de dependencias HTTP. Publica el HTML de ese commit
+  Mis Tableros, Energizar, V2–V9 y ausencia de dependencias HTTP. Publica el HTML de ese commit
   como artifact durante 14 días.
 
 La concurrencia cancela un workflow viejo cuando llega otro commit a la misma rama; un timeout

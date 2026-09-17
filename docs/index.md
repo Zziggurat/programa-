@@ -15,6 +15,12 @@ Guarda el archivo con extensión `.html` y ábrelo en un navegador compatible. N
 servidor para trabajar. Conserva copias portables de tus proyectos fuera del almacenamiento
 local del navegador. El Build ID visible en la aplicación identifica el contenido entregado.
 
+## Diseño asistido V9
+
+- [Recorrido de uso](https://github.com/Zziggurat/programa-/blob/main/docs/v9/USO.md)
+- [Matriz de implementación y aceptación](https://github.com/Zziggurat/programa-/blob/main/docs/v9/MATRIZ.md)
+- [Estado y evidencia de validación](https://github.com/Zziggurat/programa-/blob/main/docs/v9/VALIDACION.md)
+
 ## Datos técnicos V8
 
 - [Recorrido de uso](https://github.com/Zziggurat/programa-/blob/main/docs/v8/USO.md)

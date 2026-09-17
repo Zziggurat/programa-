@@ -61,6 +61,8 @@ Otros comandos útiles:
 ```bash
 npm test        # tests de los motores y de la geometría de cables
 npm run qa      # pruebas automáticas sobre el editor 3D real (ver abajo)
+npm run qa:diseno # recorrido visible de Diseño asistido V9
+npm run qa:diseno:stress # catálogo sintético grande con evaluación acotada
 npm run ejemplo # genera la documentación de un tablero real en ejemplo/salida/
 npm run empaquetar    # regenera los dos HTML offline desde la fuente
 npm run entrega:check # falla si alguno de esos HTML quedó obsoleto
@@ -107,6 +109,7 @@ puede ajustar expresamente con `QA_SUITE_TIMEOUT_MS`. Se puede filtrar por nombr
 | `npm run qa:planta-trabajo` | La planta **como herramienta de trabajo**: buscar entre las 134 máquinas, filtrar, colorear, **medir una tirada** (30 y 40 m: recta 50, recorrido 70, a pedir 85) y el puente entero **del plano al tablero** — elegir tres UMAs, revisar su lista de señales y comprobar que el tablero llega al editor con sus borneras rotuladas y **sin un error de DRC** |
 | `npm run qa:empaquetado` | **El archivo que se entrega**: abre `dist-final/TableroStudio.html` con `file://`, sin servidor, y comprueba que arranca en la ventana de inicio, que se puede trabajar y que salen el dossier y el proyecto guardado |
 | `npm run qa:automatizacion` | Vertical slice PLC V4 fuera del gate histórico: secuencia física START/STOP, alarma y ACK/reset, pausa/scan único, fuerzas visibles, PID y AO hacia una válvula |
+| `npm run qa:diseno` | Diseño asistido V9: laboratorio sintético, búsqueda combinada, evidencia, apply, undo/redo y reapertura |
 
 Se apoyan en una sonda que solo existe abriendo la página con `?qa=1`; en el uso normal
 del programa no se define nada. La única que no la usa es `qa:empaquetado`: el build que se

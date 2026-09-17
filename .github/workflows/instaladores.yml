@@ -49,6 +49,7 @@ jobs:
       - run: npm run qa:equipos
       - run: npm run qa:ingenieria
       - run: npm run qa:datos-tecnicos
+      - run: npm run qa:diseno:run
       - run: npm run empaquetar
       - run: node qa/entrega.mjs
       - run: node qa/empaquetado.mjs

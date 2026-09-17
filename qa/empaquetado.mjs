@@ -21,6 +21,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { abrirNavegador, trabajarSobreCopia } from './lib/entorno.mjs';
 import { comprobarDatosTecnicosOffline } from './lib/datos-tecnicos-offline.mjs';
+import { comprobarDisenoAsistidoOffline } from './lib/diseno-asistido-offline.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const ARCHIVO = join(AQUI, '..', 'dist-final', 'TableroStudio.html');
@@ -408,6 +409,9 @@ must('Documentación V7 prepara informe, BOM, wiring y terminales offline',
 
 console.log('\n--- 10. Datos técnicos V8 dentro del HTML entregado ---');
 await comprobarDatosTecnicosOffline(page, must, buildId);
+
+console.log('\n--- 11. Diseño asistido V9 dentro del HTML entregado ---');
+await comprobarDisenoAsistidoOffline(page, must, buildId);
 
 must('no hizo ninguna petición HTTP externa obligatoria', peticionesExternas.length === 0,
 	peticionesExternas.slice(0, 3).join(' | '));
