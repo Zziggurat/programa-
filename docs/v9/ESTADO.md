@@ -48,6 +48,9 @@ vertical slice desde el HTML entregado sin API ni red.
   obtuvo 29/29 en 209,49 s.
 - V7/V8: 6/6 suites, 161 comprobaciones; 1390,09 s.
 - Empaquetado offline: V2–V9, sin errores JS ni solicitudes HTTP; 459,49 s.
+- El recorrido offline se repitió tras aislar las aperturas de la biblioteca de una
+  navegación residual de los downloads; V2–V9 volvió a quedar verde, sin cambiar los
+  bytes del entregable.
 - 0 fallos, 0 skipped inesperados, 0 timeouts y 0 procesos propios huérfanos.
 
 La medición sintética de V9 usó 10.000 productos, universo estimado de 30.003 y 25

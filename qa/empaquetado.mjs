@@ -246,7 +246,7 @@ must('guarda el proyecto en un archivo', proyecto.ok && proyecto.bytes > 500,
 /* ---------- 5. El vertical slice V3 existe también en el artefacto offline ---------- */
 console.log('\n--- 5. Instrumentación V3 dentro del HTML entregado ---');
 await page.click('#btn-aprender');
-await page.click('#btn-ejemplos');
+await page.locator('#btn-ejemplos').click({ noWaitAfter: true });
 await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
 await page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V3: temperatura, PLC y válvula' })
 	.getByRole('button', { name: /Abrir y estudiar/i }).click();
@@ -271,7 +271,7 @@ console.log('\n--- 6. Automatización PLC V4 dentro del HTML entregado ---');
 // La escena V3 sigue energizada: se detiene por el mismo botón visible antes de cambiar de ejemplo.
 await energizarVisible(false);
 await page.click('#btn-aprender');
-await page.click('#btn-ejemplos');
+await page.locator('#btn-ejemplos').click({ noWaitAfter: true });
 await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
 await page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V4: PLC y proceso secuencial' })
 	.getByRole('button', { name: /Abrir y estudiar/i }).click();
@@ -310,7 +310,7 @@ must('el monitor offline publica secuencia, TON y CTU V4',
 console.log('\n--- 7. Física eléctrica V5 dentro del HTML entregado ---');
 await energizarVisible(false);
 await page.click('#btn-aprender');
-await page.click('#btn-ejemplos');
+await page.locator('#btn-ejemplos').click({ noWaitAfter: true });
 await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
 await page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V5: caída de tensión' })
 	.getByRole('button', { name: /Abrir y estudiar/i }).click();
@@ -337,7 +337,7 @@ must('el smoke V5 conserva controles humanos de longitud y sección',
 console.log('\n--- 8. Equipos y diagnóstico V6 dentro del HTML entregado ---');
 await energizarVisible(false);
 await page.click('#btn-aprender');
-await page.click('#btn-ejemplos');
+await page.locator('#btn-ejemplos').click({ noWaitAfter: true });
 await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
 await page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V6: transformador bajo carga' })
 	.getByRole('button', { name: /Abrir y estudiar/i }).click();
@@ -372,7 +372,7 @@ must('el informe V6 offline lleva Build ID, trazabilidad, provenance y limitacio
 console.log('\n--- 9. Ingeniería V7 dentro del HTML entregado ---');
 await energizarVisible(false);
 await page.click('#btn-aprender');
-await page.click('#btn-ejemplos');
+await page.locator('#btn-ejemplos').click({ noWaitAfter: true });
 await page.locator('#modal-ejemplos').waitFor({ state: 'visible' });
 await page.locator('.tarjeta-ejemplo', { hasText: 'Fixture V7: proyecto sano' })
 	.getByRole('button', { name: /Abrir y estudiar/i }).click();

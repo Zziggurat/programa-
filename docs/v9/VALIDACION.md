@@ -59,6 +59,10 @@ timeout, error JS ni skipped inesperado quedó silenciado.
   escenario con pulsaciones y relojes sin verificar el documento copiado. El fixture ahora
   se abre por título, exige identidad nueva y contenido real, y cualquier aparato o riel
   ausente falla explícitamente en vez de convertir cobertura en un skip.
+- En el primer candidato posterior, el HTML offline superó bytes, arranque, persistencia,
+  trabajo y descargas; después Playwright esperó una navegación residual al abrir la
+  biblioteca V3. Las aperturas V3–V7 ahora separan `click` y estado visible con
+  `noWaitAfter`; el recorrido offline V2–V9 completo volvió a pasar localmente.
 
 No se relajó una aserción de producto para obtener verde.
 
