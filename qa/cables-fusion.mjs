@@ -34,20 +34,34 @@ const enZona = (p) => p && p.x > LIBRE.x0 && p.x < LIBRE.x1 && p.y > LIBRE.y0 &&
 await page.goto(url);
 await page.waitForTimeout(900);
 
-/** Abre un tablero de la biblioteca (índice de la tarjeta) y lo deja en modo Trabajo. */
-async function abrirEjemplo(indice) {
+/** Abre un tablero por identidad visible y lo deja en modo Trabajo con rutas ya montadas. */
+async function abrirEjemplo(titulo) {
 	await jsClick('btn-nuevo'); await page.waitForTimeout(250);
 	if (await page.isVisible('#modal-dialogo')) { await jsClick('dialogo-ok'); await page.waitForTimeout(350); }
-	await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
-	if (await page.isVisible('#modal-ejemplos')) {
-		await page.locator('.tarjeta-ejemplo button').nth(indice).click(); await page.waitForTimeout(650);
-if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-		await jsClick('btn-cerrar-explicacion'); await trabajarSobreCopia(page);
+	await jsClick('btn-empezar-ejemplo');
+	await page.locator('#modal-ejemplos').waitFor({ state: 'visible', timeout: 60_000 });
+	const tarjeta = page.locator('.tarjeta-ejemplo', { hasText: titulo }).first();
+	await tarjeta.getByRole('button', { name: /Abrir y estudiar/i }).click({ timeout: 60_000 });
+	// Un ejemplo grande puede mostrar su confirmación después del retorno del click. Esperar el
+	// chip evita continuar sobre el tablero nuevo vacío; atender el diálogo dentro del sondeo evita
+	// convertir la velocidad de montaje en un requisito de la regresión.
+	await page.waitForFunction(() => {
+		const dialogo = document.getElementById('modal-dialogo');
+		return document.getElementById('chip-ejemplo')?.hidden === false
+			|| !!dialogo && !dialogo.hidden && getComputedStyle(dialogo).display !== 'none';
+	}, null, { timeout: 60_000 });
+	if (await page.isVisible('#modal-dialogo')) {
+		await page.evaluate(() => document.getElementById('dialogo-ok')?.click());
+		await page.waitForFunction(() => document.getElementById('chip-ejemplo')?.hidden === false,
+			null, { timeout: 60_000 });
 	}
+	if (await page.isVisible('#modal-explicacion')) await jsClick('btn-cerrar-explicacion');
+	if (!(await trabajarSobreCopia(page, { timeout: 60_000 }))) throw new Error(`No se pudo copiar el ejemplo ${titulo}`);
 	// La guía de primera visita se queda por delante del lienzo: se cierra, como haría cualquiera.
 	if (await page.isVisible('#modal-ayuda')) { await jsClick('btn-cerrar-ayuda'); await page.waitForTimeout(200); }
 	await jsClick('modo-trabajo'); await page.waitForTimeout(300);
 	await jsClick('btn-centrar'); await page.waitForTimeout(400);
+	await page.waitForFunction(() => window.qa.rutas().length > 0, null, { timeout: 60_000 });
 }
 
 /** Comprueba que nada tapa el lienzo antes de pinchar (un modal abierto se comería el clic). */
@@ -76,9 +90,13 @@ function puntaDe(puntos, dist, desdeElFinal) {
 	return lista[lista.length - 1];
 }
 
-for (const [indice, nombre] of [[0, 'Arranque directo'], [1, 'Bomba con boya'], [2, 'Arranque estrella-triángulo']]) {
+for (const [titulo, nombre] of [
+	['Arranque directo de motor', 'Arranque directo'],
+	['Bomba de agua con boya', 'Bomba con boya'],
+	['Arranque estrella-triángulo', 'Arranque estrella-triángulo'],
+]) {
 	console.log(`\n--- 1. ${nombre}: cables que comparten borne ---`);
-	await abrirEjemplo(indice);
+	await abrirEjemplo(titulo);
 	const proyecto = await qa('proyecto');
 	const rutas = await qa('rutas');
 	const porId = new Map(rutas.map((r) => [r.id, r]));
@@ -136,7 +154,7 @@ for (const [indice, nombre] of [[0, 'Arranque directo'], [1, 'Bomba con boya'], 
 /* ============ 2. La selección tiene que caer en el cable que se está señalando ============ */
 
 console.log('\n--- 2. Apuntar y seleccionar: el clic cae en el cable señalado ---');
-await abrirEjemplo(2);
+await abrirEjemplo('Arranque estrella-triángulo');
 /*
  * Todas las muestras se calculan dentro de la página. Antes se hacían 170 viajes secuenciales
  * Playwright ↔ navegador y cada uno volvía a proyectar todas las rutas. La afirmación no cambia:
