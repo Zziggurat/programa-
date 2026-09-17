@@ -36,7 +36,7 @@ Estado: implementación cerrada funcionalmente; la campaña final/CI/publicació
 | Portable a perfil limpio | revisiones usadas congeladas con la decisión | adversarial V9 | Cubierto |
 | Resultado antiguo/otro proyecto | UI invalida; informe crea snapshot nuevo | stale/import test | Cubierto |
 | Seguridad import/HTML/CSV | límites, allowlist, prototype/hash, escape y CSV seguro | tests V9 | Cubierto |
-| Sin red / `file://` | helper offline V9 sobre el HTML entregado | `qa:empaquetado` | Implementado; pendiente de campaña final |
+| Sin red / `file://` | helper offline V9 sobre el HTML entregado | `qa:empaquetado` | Cubierto; V2–V9, 0 HTTP externo y 0 errores JS |
 
 ## Fronteras deliberadas
 

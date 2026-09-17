@@ -20,6 +20,8 @@ local del navegador. El Build ID visible en la aplicación identifica el conteni
 - [Recorrido de uso](https://github.com/Zziggurat/programa-/blob/main/docs/v9/USO.md)
 - [Matriz de implementación y aceptación](https://github.com/Zziggurat/programa-/blob/main/docs/v9/MATRIZ.md)
 - [Estado y evidencia de validación](https://github.com/Zziggurat/programa-/blob/main/docs/v9/VALIDACION.md)
+- [Manifiesto del HTML offline](https://github.com/Zziggurat/programa-/blob/main/docs/v9/ENTREGA.md)
+- [Handoff y arquitectura](https://github.com/Zziggurat/programa-/blob/main/docs/HANDOFF_V9.md)
 
 ## Datos técnicos V8
 

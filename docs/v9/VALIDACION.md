@@ -5,41 +5,69 @@
 | Comprobación | Resultado |
 |---|---|
 | Rama de partida | `main` limpio |
-| HEAD local/remoto | `4a0025f327c07d40bc104f614220a5e863a69165` |
-| Tag V8 | resuelve al baseline |
-| Rama V9 | `v9/astra-diseno-asistido` creada desde V8 |
+| Baseline local/remoto | `4a0025f327c07d40bc104f614220a5e863a69165` |
+| Tag V8 | resolvía exactamente al baseline |
+| Rama V9 | `v9/astra-diseno-asistido`, creada desde V8 |
 | Divergencia inicial | 0/0 |
 | Trabajo V9 previo | ninguno |
 
-## Evidencia por gate
+## Evidencia de desarrollo
 
-### Checkpoint núcleo V9
+Los 23 tests V9 rápidos cubren cambio efectivo tras resolver V8, revisión exacta sin
+campos Frankenstein, prospectiva por punto, ampacidad, determinismo por orden, cambio
+combinado, Pareto, presupuesto/cancelación, transacción, stale/tamper, roundtrip e
+informes seguros. El navegador usa interacción visible; los hooks QA observan únicamente
+proyecto y persistencia.
 
-| Comando | Resultado | Duración |
-|---|---|---:|
-| `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.app.json` | verde | incluida en 18,9 s con `tsc --noEmit` |
-| `node node_modules/typescript/bin/tsc` | verde | 7,8 s |
-| `node --test dist/test/diseno-asistido-v9.test.js` | 12/12; 0 fallos; 0 skipped | 0,668 s |
+El fixture V9 se añadió al final de la biblioteca para no convertir el índice de un
+ejemplo en contrato. Cuatro QA históricos que dependían accidentalmente del índice se
+volvieron a ejecutar: cámara, mazo, picking y piloto, 4/4 suites y 63 comprobaciones.
 
-Las pruebas cubren cambio efectivo tras resolver V8, revisión exacta sin Frankenstein, prospectiva por punto, ampacidad, determinismo por orden, combinados obligatorios, Pareto, presupuesto/cancelación, transacción, stale/tamper, roundtrip e informes seguros.
+## Campaña final local sobre el candidato
 
-### Checkpoint integración visible y adversarial
+| Frontera | Comando | Resultado | Duración |
+|---|---|---|---:|
+| Tipos + unitarias | `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.app.json`, `node node_modules/typescript/bin/tsc`, `node --test 'dist/test/*.test.js'` | 1412/1412; 0 fail; 0 skipped | 102,77 s total; tests 77,919 s |
+| Build QA | `node node_modules/vite/bin/vite.js build app --mode qa` | 398 módulos | 7,73 s |
+| Diseño asistido V9 | `node qa/todas.mjs diseno-asistido-v9` | 1/1 suite; 16 comprobaciones; 0 JS errors | 142,22 s |
+| Histórico | `node qa/todas.mjs --gate` | 13/13 suites; 263 comprobaciones | 1084,93 s |
+| Fusión/picking | `node qa/cables-fusion.mjs` | 0 fusiones; 59/59 frontal; 186/186 semántico; 61/61 sin fantasmas | 474,93 s |
+| Fixture puerta | `node qa/fixture-puerta.mjs` | 21 comprobaciones | 39,84 s |
+| Componentes + multiproyecto | `node qa/todas.mjs componentes-personalizados multiproyecto` | 2/2 suites; 86 comprobaciones | 788,01 s |
+| V7 + V8 | `node qa/todas.mjs ingenieria- datos-tecnicos-` | 6/6 suites; 161 comprobaciones | 1390,09 s |
+| Entrega reproducible | `node herramientas/verificar-entrega.mjs` | ambas copias frescas e idénticas LF/CRLF | 8,59 s |
+| HTML offline | `node qa/empaquetado.mjs` | V2–V9 verde; 0 JS errors; 0 HTTP externo | 459,49 s |
 
-| Comando | Resultado | Duración |
-|---|---|---:|
-| `node node_modules/typescript/bin/tsc` + tests focales V9 | 23/23; 0 fallos; 0 skipped | 1,056 s de tests |
-| `node node_modules/vite/bin/vite.js build app --mode qa` | verde; 398 módulos | 8,02 s |
-| `node qa/diseno-asistido-v9.mjs` | 16/16; 0 errores JS; apply/undo/redo/reapertura | 292,8 s |
-| `node herramientas/medir-diseno-v9.mjs` | 10.000 productos; 30.003 planes estimados; 25 evaluados | generación 0,94 ms; evaluación 598 ms |
+Suites V6/simulación/física también quedaron verdes: accionamientos 1:05, motor 3:29,
+red 0:43, física eléctrica 4:53 y simulación industrial 11:02. Automatización se
+repitió después de corregir una comparación QA no atómica y terminó 29/29 en 209,49 s.
 
-El navegador utilizó la interacción visible. Los hooks QA solo observaron proyecto/persistencia. Se probaron viewport ancho y panel estrecho sin desborde horizontal. El informe imprimible fue inspeccionado con columnas completas, contexto, cambios exactos, métricas, límites y trazabilidad visibles.
+Desglose V7/V8: catálogo 15/15 en 4:33; importación 55/55 en 4:30; ingeniería técnica
+47/47 en 8:06; documentación 2:09; escenarios 1:34; validación 2:17. Ninguna aserción,
+timeout, error JS ni skipped inesperado quedó silenciado.
 
-La medición de rendimiento es deliberadamente separada por fases: catálogo 952 ms, snapshot 1.073 ms, filtro/índice 803 ms, generación perezosa 0,94 ms, evaluación acotada 598 ms, ranking 0,71 ms y serialización 84,78 ms. El JSON generado ocupó aproximadamente 3,52 MB y el HTML 85 kB; heap final aproximado 105 MiB. No constituye un SLA ni representa un catálogo certificado.
+## Hallazgos del propio harness
 
-## Campaña final prevista
+- Dos unitarias dependían del orden/tamaño incidental de fixtures; ahora buscan la
+  precondición eléctrica o el contrato lazy exacto.
+- `qa:cables-fusion` podía terminar 0/0 si no reabría un ejemplo. Ahora abre por título,
+  espera el montaje y exige rutas antes de medir.
+- La QA de automatización leía PLC y actuador en ticks diferentes mientras el PID seguía
+  integrando. Ahora compara una instantánea atómica del mismo resultado.
 
-1. unitarias/TypeScript y build QA;
-2. QA V9 focal y offline;
-3. gates V8/V7/V6;
-4. histórico, fusión, puerta, multiproyecto y componentes;
-5. artifact, Pages, hash/bytes y tag anotado sobre el SHA final.
+No se relajó una aserción de producto para obtener verde.
+
+## Rendimiento observado
+
+`node herramientas/medir-diseno-v9.mjs`: 10.000 productos, 30.003 planes estimados y
+25 evaluados. Catálogo 944,50 ms; snapshot 1049,10 ms; filtro/índice 785,64 ms;
+generación perezosa 0,91 ms; evaluación 336,58 ms; ranking 0,48 ms; serialización
+73,69 ms. JSON 3.524.779 bytes, HTML 85.091 bytes y heap final aproximado 125,7 MiB.
+Son mediciones de desarrollo, no un SLA ni un catálogo certificado.
+
+## Aprobación remota
+
+La publicación se aprueba solo si el commit al que resuelve `tablerostudio-v9` coincide
+con `main`, sus siete jobs de **Pruebas** están verdes y el artifact HTML extraído
+coincide con `ENTREGA.md`. La anotación del tag conserva run/attempt, Pages y SHA final;
+así no se crea un commit posterior solo para escribir su propio identificador.

@@ -16,7 +16,7 @@ Rama de trabajo: `v9/astra-diseno-asistido`.
 - [x] G — Fixture y datos: laboratorio pequeño `Diseño asistido V9 — conductor y protección`, sin inventar catálogo certificado.
 - [x] H — Informes e importación segura: HTML/JSON/CSV, evidencia, límites y rechazo de datos manipulados.
 - [x] I — QA focal: pruebas rápidas, integración y navegador con apply/undo/redo/reapertura.
-- [ ] J — Revisión adversarial/rendimiento, documentación, empaquetado y CI.
+- [x] J — Revisión adversarial/rendimiento, documentación, empaquetado y CI preparado.
 - [ ] K — Integración final, publicación y tag anotado `tablerostudio-v9`.
 
 ## Matriz de impacto
@@ -32,4 +32,7 @@ Rama de trabajo: `v9/astra-diseno-asistido`.
 
 ## Estrategia de validación
 
-Durante desarrollo se ejecutarán `tsc` y pruebas focales. El gate completo se ejecutará al cerrar los bloques grandes y una sola campaña final cubrirá V9, V8, V7, V6, histórico, fusión, puerta, multiproyecto, componentes y offline.
+Durante desarrollo se ejecutaron `tsc` y pruebas focales. La campaña local final cubrió V9,
+V8, V7, V6, histórico, fusión, puerta, multiproyecto, componentes y offline. Gate K exige
+además los siete jobs remotos sobre el mismo SHA, artifact/Pages y tag; no reutiliza checks
+de revisiones anteriores.

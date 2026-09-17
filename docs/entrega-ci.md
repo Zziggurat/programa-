@@ -49,7 +49,7 @@ El workflow obligatorio `Pruebas` separa siete señales:
   deja margen sobre los tiempos locales medidos, pero sigue detectando un proceso bloqueado.
 - **QA equipos y diagnóstico V6** (30 min): equipos, motor y red.
 - **QA Ingeniería V7** (30 min): validación, escenarios y documentación.
-- **QA Datos técnicos V8** (30 min): catálogo, imports/portabilidad y revisión/ingeniería;
+- **QA Datos técnicos V8** (50 min): catálogo, imports/portabilidad y revisión/ingeniería;
 - **QA Diseño asistido V9** (30 min): stress acotado de 10.000 revisiones y recorrido visible de búsqueda/aplicación;
   conserva capturas como evidencia, sin incorporarlas al gate histórico.
 - **Entregable offline** (30 min, Windows/Node canónicos): frescura de ambos HTML, apertura real con `file://`, IndexedDB,
