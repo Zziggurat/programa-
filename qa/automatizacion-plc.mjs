@@ -256,12 +256,14 @@ try {
 	plc = await esperarPLC((x) => Math.abs((x.sondas.PV ?? -999) - 40) < 0.1
 		&& (x.salidasAnalogicas.AO1 ?? 0) > 0);
 	const fotoPID = await observar();
+	const plcPID = fotoPID.controladores.find((c) => c.dispositivoId === 'plc');
 	const valvula = fotoPID.actuadores.find((a) => a.dispositivoId === 'yv');
 	comprobar('la imagen AI escala 12 mA a PV=40 % con calidad normal',
-		Math.abs(plc.sondas.PV - 40) < 0.1 && plc.entradasAnalogicas[0]?.senal.calidad === 'normal');
+		Math.abs((plcPID?.sondas.PV ?? -999) - 40) < 0.1 && plcPID?.entradasAnalogicas[0]?.senal.calidad === 'normal');
 	comprobar('PID publica AO y la válvula consume ese resultado sin estado visual paralelo',
-		plc.salidasAnalogicas.AO1 > 0 && Math.abs(valvula.posicionObjetivo - plc.salidasAnalogicas.AO1) < 0.1,
-		`AO=${plc.salidasAnalogicas.AO1.toFixed(1)} %, objetivo=${valvula?.posicionObjetivo?.toFixed(1)} %`);
+		(plcPID?.salidasAnalogicas.AO1 ?? 0) > 0
+			&& Math.abs((valvula?.posicionObjetivo ?? Number.NaN) - plcPID.salidasAnalogicas.AO1) < 0.1,
+		`AO=${plcPID?.salidasAnalogicas.AO1?.toFixed(1) ?? '—'} %, objetivo=${valvula?.posicionObjetivo?.toFixed(1) ?? '—'} %`);
 	await clickControlVisible('#sim-controladores button[data-plc-action="modo"]');
 	plc = await esperarPLC((x) => x.estado === 'STOP');
 	comprobar('STOP visible lleva AO al valor seguro', plc.salidasAnalogicas.AO1 === 0);
