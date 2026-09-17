@@ -48,6 +48,10 @@ export interface DecisionDisenoAsistidoPersistida {
 	version: 1;
 	id: string;
 	solicitudId: string;
+	nombreSolicitud?: string;
+	objetivo?: 'CORREGIR_INCUMPLIMIENTOS' | 'COMPARAR_MEJORAS';
+	snapshotHash?: string;
+	algoritmoBuildId?: string;
 	planId: string;
 	hashBase: string;
 	circuitoId: string;
@@ -133,7 +137,11 @@ export function leerConfiguracionIngenieria(v: unknown): ConfiguracionIngenieria
 			}
 			if (cambios.length === item.cambios.length) decisiones.push({ version: 1, id: item.id.slice(0, 200),
 				solicitudId: item.solicitudId.slice(0, 200), planId: item.planId.slice(0, 200), hashBase: item.hashBase.slice(0, 100),
-				circuitoId: item.circuitoId.slice(0, 300), cambios });
+				circuitoId: item.circuitoId.slice(0, 300),
+				...(typeof item.nombreSolicitud==='string'?{nombreSolicitud:item.nombreSolicitud.slice(0,300)}:{}),
+				...(['CORREGIR_INCUMPLIMIENTOS','COMPARAR_MEJORAS'].includes(String(item.objetivo))?{objetivo:item.objetivo as DecisionDisenoAsistidoPersistida['objetivo']}:{}),
+				...(typeof item.snapshotHash==='string'?{snapshotHash:item.snapshotHash.slice(0,100)}:{}),
+				...(typeof item.algoritmoBuildId==='string'?{algoritmoBuildId:item.algoritmoBuildId.slice(0,200)}:{}),cambios });
 		}
 		disenoAsistido = { version: 1, decisiones };
 	}

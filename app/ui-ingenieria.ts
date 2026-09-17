@@ -120,6 +120,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	let progresoDiseno = '';
 	let conductoresDiseno: string[] = [];
 	let proteccionDiseno = '';
+	let aplicandoDiseno = false;
 
 	const pintarEstado = (texto: string, clase = '') => {
 		const e = $('ingenieria-estado'); e.textContent = texto; e.className = clase;
@@ -280,6 +281,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		const productos=refsProteccionDisponibles(p);
 		const resultados=resultadoDiseno?.resultados.map(r=>`<article class="ing-resultado-diseno ${r.estado.toLowerCase()}" data-ing-design-result="${esc(r.plan.id)}"><header><b>#${r.orden} · ${esc(r.plan.tipo)}</b><span>${esc(r.estado)}${r.pareto?' · PARETO':''}</span></header>
 			<dl class="ing-magnitudes"><dt>Cambios</dt><dd>${r.metricas.cambios}</dd><dt>Σ sección</dt><dd>${numero(r.metricas.seccionTotalMm2,'mm²')}</dd><dt>In</dt><dd>${numero(r.metricas.proteccionInA,'A')}</dd><dt>Pérdidas</dt><dd>${numero(r.metricas.perdidaW,'W')}</dd><dt>Icc punto</dt><dd>${numero(r.metricas.iccProspectivaA,'A')}</dd></dl>
+			<p>${r.plan.cambios.map(c=>c.tipo==='SECCION'?`${esc(c.conductorId)} → ${numero(c.seccionMm2,'mm²')}`:`${esc(c.dispositivoId)} → ${esc(c.referencia.id)} r${c.referencia.revision}`).join('<br>')||'Sin cambios: mantener BASE.'}</p>
 			<p class="ing-meta">${esc(r.razonOrden)}</p><details><summary>Explicación, deltas y evidencia</summary><pre>${esc(JSON.stringify(r.deltaBase,null,2))}</pre>${r.obligaciones.map(o=>`<p><b>${esc(o.estado)}</b> ${esc(o.descripcion)}<br><small>${esc(o.evidencia.join(' · '))}</small></p>`).join('')}${r.limitaciones.map(x=>`<p class="ing-alerta">${esc(x)}</p>`).join('')}${r.error?`<p class="ing-alerta">${esc(r.error)}</p>`:''}</details>
 			<button class="boton primario" data-ing-design-apply="${esc(r.plan.id)}" ${r.estado!=='FACTIBLE'||r.plan.tipo==='BASE'||p.esEjemplo?'disabled':''}>${r.plan.tipo==='BASE'?'Mantener diseño':'Previsualizar y aplicar'}</button></article>`).join('')??'';
 		return`<section data-ing-design><h3>Diseño asistido V9</h3><p class="ing-meta">Explora cambios acotados sobre el circuito existente. No cambia topología, carga, geometría, criterios ni condiciones de instalación.</p>
@@ -289,6 +291,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 			<label>Secciones permitidas (mm²)<input data-ing-design-sections value="2.5, 4, 6, 10"></label>
 			<label>Protección<select data-ing-design-protection><option value="">Sin cambio de protección</option>${circuito.protecciones.map(id=>`<option value="${esc(id)}" ${id===proteccionDiseno?'selected':''}>${esc(etiquetaDispositivo(p,id))}</option>`).join('')}</select></label>
 			<fieldset><legend>Revisiones exactas permitidas</legend>${productos.map(({revision,ref})=>`<label class="ing-check"><input type="checkbox" data-ing-design-product="${esc(ref.hash)}" checked>${esc(revision.nombre)} · r${ref.revision}<small>${esc(revision.procedencia.origen)}</small></label>`).join('')||'<p>No hay revisiones de protección en el proyecto/catálogo local.</p>'}</fieldset>
+			<label class="ing-check"><input type="checkbox" data-ing-design-synthetic checked>Permitir datos SINTETICO claramente identificados</label>
 			<label>Máximo de candidatos<input data-ing-design-max type="number" min="1" max="2000" value="250"></label>
 			<div class="botonera"><button class="boton primario" data-ing-design-run>Buscar alternativas</button><button class="boton" data-ing-design-cancel ${abortoDiseno?'':'disabled'}>Cancelar</button></div></div>
 			${progresoDiseno?`<p class="ing-alerta" data-ing-design-progress>${esc(progresoDiseno)}</p>`:''}
@@ -362,7 +365,8 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	async function exportarDiseno(formato: string): Promise<void> {
 		if(!snapshotDiseno||!resultadoDiseno)return;
 		const identidad=await ctx.trazabilidad();
-		const contexto={...identidad,buildId:buildId(),generadoEn:new Date().toISOString(),aplicacion:{estado:'NO_APLICADA' as const}};
+		const recomendado=resultadoDiseno.resultados.find(r=>r.estado==='FACTIBLE');
+		const contexto={...identidad,buildId:buildId(),generadoEn:new Date().toISOString(),aplicacion:{estado:'NO_APLICADA' as const,...(recomendado?{planId:recomendado.plan.id}:{})}};
 		const base=`${ctx.proyecto().nombre} - diseno-v9`;
 		if(formato==='json')descargar(`${base}.json`,informeDisenoJson(snapshotDiseno,resultadoDiseno,contexto),'application/json');
 		if(formato==='csv')descargar(`${base}.csv`,informeDisenoCsv(resultadoDiseno),'text/csv');
@@ -410,14 +414,14 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 				const refs=refsProteccionDisponibles(p).filter(x=>hashes.includes(x.ref.hash)).map(x=>x.ref);
 				const maxCandidatos=Number(contenido.querySelector<HTMLInputElement>('[data-ing-design-max]')?.value)||250;
 				const vinculo=p.datosTecnicos?.vinculos.find(v=>v.entidad==='DEVICE'&&v.entidadId===proteccionDiseno);
-				const solicitud:SolicitudDisenoAsistido={version:1,id:`ui:${c.id}`,nombre:`Diseño ${c.nombre}`,circuitoId:c.id,conductores,proteccionId:proteccionDiseno||undefined,cambiosPermitidos:[...(secciones.length?['SECCION' as const]:[]),...(proteccionDiseno&&refs.length?['PROTECCION' as const]:[])],seccionesPermitidasMm2:secciones,proteccionesPermitidas:refs,condicionesProteccion:vinculo?.condiciones,preferencias:['MENOS_CAMBIOS','MENOR_SECCION_TOTAL','MENOR_IN','MENOR_PERDIDA'],presupuesto:{maxCandidatos,maxMs:30_000,lote:3}};
-				snapshotDiseno=crearSnapshotDisenoAsistido({proyecto:p,solicitud,revisionesDisponibles:revisionesDiseno,contextoFisico:contextoDisenoIngenieria(p)});
+				const solicitud:SolicitudDisenoAsistido={version:1,id:`ui:${c.id}`,nombre:`Diseño ${c.nombre}`,objetivo:'CORREGIR_INCUMPLIMIENTOS',permitirDatosSinteticos:contenido.querySelector<HTMLInputElement>('[data-ing-design-synthetic]')?.checked===true,circuitoId:c.id,conductores,proteccionId:proteccionDiseno||undefined,cambiosPermitidos:[...(secciones.length?['SECCION' as const]:[]),...(proteccionDiseno&&refs.length?['PROTECCION' as const]:[])],seccionesPermitidasMm2:secciones,proteccionesPermitidas:refs,condicionesProteccion:vinculo?.condiciones,preferencias:['MENOS_CAMBIOS','MENOR_SECCION_TOTAL','MENOR_IN','MENOR_PERDIDA'],presupuesto:{maxCandidatos,maxMs:30_000,lote:3}};
+				snapshotDiseno=crearSnapshotDisenoAsistido({proyecto:p,solicitud,revisionesDisponibles:revisionesDiseno,contextoFisico:contextoDisenoIngenieria(p),buildId:buildId()});
 				resultadoDiseno=await ejecutarSesionDisenoAsistido(snapshotDiseno,{signal:abortoDiseno.signal,progreso:x=>{progresoDiseno=`${x.fase}: ${x.generados} generados · ${x.evaluados} evaluados · ${Math.max(0,x.totalEstimado-x.generados)} pendientes · ${x.transcurridoMs.toFixed(0)} ms`;actualizarProgresoDiseno();}});
 				progresoDiseno='';abortoDiseno=undefined;pintar();ctx.avisar(`Diseño V9: ${resultadoDiseno.evaluados} alternativas · ${resultadoDiseno.cobertura}.`,'ok');
 			}catch(e){progresoDiseno='';abortoDiseno=undefined;pintar();ctx.avisar(`Diseño asistido: ${(e as Error).message}`,'error');}
 		})();
 		if(b.dataset.ingDesignCancel!==undefined){abortoDiseno?.abort();}
-		if(b.dataset.ingDesignApply)void(async()=>{try{if(!snapshotDiseno||!resultadoDiseno)throw new Error('Calcula nuevamente las alternativas.');const r=resultadoDiseno.resultados.find(x=>x.plan.id===b.dataset.ingDesignApply);if(!r)throw new Error('Resultado no encontrado.');const preview=prepararAplicacionDiseno(snapshotDiseno,r);const resumen=preview.cambios.map(c=>c.tipo==='SECCION'?`${c.conductorId}: ${c.seccionMm2} mm²`:`${c.dispositivoId}: ${c.referencia.id} r${c.referencia.revision}`).join('\n');if(!(await ctx.confirmar(`Aplicar este plan V9?\n${resumen}\n\nSe revalidará BASE y se guardará como una sola operación.`)))return;const operacion=await ctx.prepararAplicacion();comprobarAplicacionDiseno(operacion.proyecto,preview);if(!(await operacion.aplicar(preview.candidato)))throw new Error('APLICACION_CANCELADA');analisis=undefined;snapshotDiseno=undefined;resultadoDiseno=undefined;pintarEstado('Plan V9 aplicado. Valida el nuevo proyecto.','ok');pintar();ctx.avisar('Plan V9 aplicado de forma transaccional. Ctrl+Z permite deshacerlo.','ok');}catch(e){ctx.avisar(`No se aplicó el plan: ${(e as Error).message}`,'error');}})();
+		if(b.dataset.ingDesignApply&&!aplicandoDiseno)void(async()=>{aplicandoDiseno=true;b.disabled=true;try{if(!snapshotDiseno||!resultadoDiseno)throw new Error('Calcula nuevamente las alternativas.');const r=resultadoDiseno.resultados.find(x=>x.plan.id===b.dataset.ingDesignApply);if(!r)throw new Error('Resultado no encontrado.');const preview=prepararAplicacionDiseno(snapshotDiseno,r);const resumen=preview.cambios.map(c=>c.tipo==='SECCION'?`${c.conductorId}: ${c.seccionMm2} mm²`:`${c.dispositivoId}: ${c.referencia.id} r${c.referencia.revision}`).join('\n');if(!(await ctx.confirmar(`Aplicar este plan V9?\n${resumen}\n\nSe revalidará BASE y se guardará como una sola operación.`)))return;const operacion=await ctx.prepararAplicacion();comprobarAplicacionDiseno(operacion.proyecto,preview);if(!(await operacion.aplicar(preview.candidato)))throw new Error('APLICACION_CANCELADA');analisis=undefined;snapshotDiseno=undefined;resultadoDiseno=undefined;pintarEstado('Plan V9 aplicado. Valida el nuevo proyecto.','ok');pintar();ctx.avisar('Plan V9 aplicado de forma transaccional. Ctrl+Z permite deshacerlo.','ok');}catch(e){ctx.avisar(`No se aplicó el plan: ${(e as Error).message}`,'error');}finally{aplicandoDiseno=false;if(b.isConnected)b.disabled=false;}})();
 		if(b.dataset.ingDesignExport)void exportarDiseno(b.dataset.ingDesignExport).catch(e=>ctx.avisar(`No se pudo exportar: ${(e as Error).message}`,'error'));
 		if (b.dataset.ingScenarioRun !== undefined) {
 			let definicion: DefinicionEscenarioIngenieria;

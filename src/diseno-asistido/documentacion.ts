@@ -3,7 +3,7 @@ import { hashSnapshotTecnico, jsonCanonico } from '../datos-tecnicos/hash.js';
 import { referenciaTecnica, type RevisionTecnica } from '../datos-tecnicos/tipos.js';
 import { aCSV } from '../modelo/csv.js';
 import type { Proyecto } from '../modelo/tipos.js';
-import { crearSnapshotDisenoAsistido, evaluarDisenoAsistido, hashPlanDiseno } from './core.js';
+import { BLOQUEOS_POR_DEFECTO, crearSnapshotDisenoAsistido, evaluarDisenoAsistido, hashPlanDiseno } from './core.js';
 import type { ContextoInformeDiseno, ResultadoDisenoAsistido, SnapshotDisenoAsistido } from './tipos.js';
 
 const LIMITE_INFORME = 5_000_000;
@@ -30,6 +30,8 @@ export interface InformeDisenoV9 {
 	version: 1;
 	contexto?: ContextoInformeDiseno;
 	snapshot: {
+		algoritmo: SnapshotDisenoAsistido['algoritmo'];
+		bloqueosPorDefecto: SnapshotDisenoAsistido['bloqueosPorDefecto'];
 		hash: string;
 		hashBase: string;
 		solicitud: SnapshotDisenoAsistido['solicitud'];
@@ -46,7 +48,7 @@ function informe(snapshot: SnapshotDisenoAsistido, resultado: ResultadoDisenoAsi
 		formato: 'tablerostudio-diseno-asistido', version: 1,
 		...(contexto ? { contexto: structuredClone(contexto) } : {}),
 		snapshot: {
-			hash: snapshot.hash, hashBase: snapshot.hashBase, solicitud: structuredClone(snapshot.solicitud),
+			algoritmo: structuredClone(snapshot.algoritmo), bloqueosPorDefecto:structuredClone(snapshot.bloqueosPorDefecto), hash: snapshot.hash, hashBase: snapshot.hashBase, solicitud: structuredClone(snapshot.solicitud),
 			revisiones: snapshot.revisiones.map(referenciaTecnica),
 		},
 		resultado: {
@@ -82,7 +84,19 @@ export function leerInformeDisenoJson(textoJson: string): InformeDisenoV9 {
 			for (const k of ['planId', 'decisionId']) if (a[k] !== undefined) texto(a[k], `$.contexto.aplicacion.${k}`);
 		}
 	}
-	const s = objeto(raiz.snapshot, '$.snapshot'); allowlist(s, ['hash', 'hashBase', 'solicitud', 'revisiones'], '$.snapshot'); hash(s.hash, '$.snapshot.hash'); hash(s.hashBase, '$.snapshot.hashBase');
+	const s = objeto(raiz.snapshot, '$.snapshot');
+	allowlist(s, ['algoritmo', 'bloqueosPorDefecto', 'hash', 'hashBase', 'solicitud', 'revisiones'], '$.snapshot');
+	hash(s.hash, '$.snapshot.hash'); hash(s.hashBase, '$.snapshot.hashBase');
+	const algoritmo = objeto(s.algoritmo, '$.snapshot.algoritmo');
+	allowlist(algoritmo, ['id', 'version', 'buildId'], '$.snapshot.algoritmo');
+	if (algoritmo.id !== 'DISENO_ASISTIDO_V9' || algoritmo.version !== 1) throw new Error('$.snapshot.algoritmo: versión no soportada');
+	texto(algoritmo.buildId, '$.snapshot.algoritmo.buildId', 200);
+	const bloqueos = s.bloqueosPorDefecto;
+	if (!Array.isArray(bloqueos)
+		|| bloqueos.length !== BLOQUEOS_POR_DEFECTO.length
+		|| BLOQUEOS_POR_DEFECTO.some((bloqueo, i) => bloqueos[i] !== bloqueo)) {
+		throw new Error('$.snapshot.bloqueosPorDefecto: frontera inválida');
+	}
 	if (!Array.isArray(s.revisiones) || s.revisiones.length > 12_000) throw new Error('$.snapshot.revisiones: colección inválida');
 	for (const [i, r] of s.revisiones.entries()) validarReferencia(r, `$.snapshot.revisiones[${i}]`);
 	const resultado = objeto(raiz.resultado, '$.resultado');
@@ -133,7 +147,7 @@ export function reevaluarInformeDisenoImportado(entrada: {
 	for (const ref of antiguo.snapshot.revisiones) {
 		const r = indice.get(refKey(ref)); if (!r) throw new Error(`REVISION_FIJADA_NO_DISPONIBLE:${refKey(ref)}`); revisiones.push(r);
 	}
-	const snapshot = crearSnapshotDisenoAsistido({ proyecto: entrada.proyecto, solicitud: antiguo.snapshot.solicitud, revisionesDisponibles: revisiones, contextoFisico: entrada.contextoFisico });
+	const snapshot = crearSnapshotDisenoAsistido({ proyecto: entrada.proyecto, solicitud: antiguo.snapshot.solicitud, revisionesDisponibles: revisiones, contextoFisico: entrada.contextoFisico, buildId: antiguo.snapshot.algoritmo.buildId });
 	const baseOriginalCoincide = hashSnapshotTecnico(entrada.proyecto) === antiguo.snapshot.hashBase;
 	return {
 		snapshot, resultado: evaluarDisenoAsistido(snapshot), baseOriginalCoincide,
@@ -151,14 +165,16 @@ export function informeDisenoCsv(resultado: ResultadoDisenoAsistido): string {
 }
 
 export function informeDisenoHtml(snapshot: SnapshotDisenoAsistido, resultado: ResultadoDisenoAsistido, contexto?: ContextoInformeDiseno): string {
-	const refs = snapshot.revisiones.map(r => `<tr><td>${esc(r.tipo)}</td><td>${esc(r.catalogo.nombre)}</td><td>${esc(r.nombre)}</td><td>${r.revision}</td><td><code>${esc(r.hash)}</code></td><td>${esc(r.procedencia.origen)}</td></tr>`).join('');
-	const filas = resultado.resultados.map(r => `<tr><td>${r.orden}</td><td>${esc(r.plan.tipo)}<br><small><code>${esc(r.plan.id)}</code></small></td><td>${esc(r.estado)}</td><td>${r.pareto ? 'sí' : 'no'}</td><td><pre>${esc(JSON.stringify(r.metricas, null, 2))}</pre></td><td>${esc(r.razonOrden)}</td><td>${esc([...r.limitaciones, ...r.obligaciones.filter(o => o.estado !== 'CUMPLE').map(o => `${o.estado}: ${o.descripcion}`)].join('; '))}</td></tr>`).join('');
-	return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Diseño asistido V9</title><style>body{font:14px system-ui;margin:2rem;color:#17202a;line-height:1.4}table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{border:1px solid #ccd;padding:.45rem;text-align:left;vertical-align:top}small{color:#566}code{overflow-wrap:anywhere}pre{white-space:pre-wrap;margin:0}.aviso{padding:.7rem;background:#fff5d6;border-left:4px solid #ba7a00}@media print{body{margin:12mm}.no-print{display:none}table{font-size:9pt;break-inside:auto}tr{break-inside:avoid}}</style></head><body><h1>Diseño asistido V9</h1>
+	const limiteRefs=200,omitidas=Math.max(0,snapshot.revisiones.length-limiteRefs);
+	const refs = snapshot.revisiones.slice(0,limiteRefs).map(r => `<tr><td>${esc(r.tipo)}</td><td>${esc(r.catalogo.nombre)}</td><td>${esc(r.nombre)}</td><td>${r.revision}</td><td><code>${esc(r.hash)}</code></td><td>${esc(r.procedencia.origen)}</td></tr>`).join('');
+	const n=(v:number|undefined,u='')=>v===undefined?'NO DISPONIBLE':`${new Intl.NumberFormat('es-ES',{maximumFractionDigits:3}).format(v)}${u}`;
+	const filas = resultado.resultados.map(r => {const cambios=r.plan.cambios.map(c=>c.tipo==='SECCION'?`${c.conductorId} → ${c.seccionMm2} mm²`:`${c.dispositivoId} → ${c.referencia.id} r${c.referencia.revision}`).join('; ')||'Mantener BASE';const avisos=[...new Set([...r.limitaciones,...r.obligaciones.filter(o=>!['PASS','NOT_APPLICABLE'].includes(o.estado)).map(o=>`${o.estado} ${o.descripcion}${o.datosFaltantes.length?` · falta ${o.datosFaltantes.join(', ')}`:''}`)])];return`<tr><td>${r.orden}</td><td><b>${esc(r.plan.tipo)}</b><br><small><code>${esc(r.plan.id)}</code></small></td><td>${esc(cambios)}</td><td><b>${esc(r.estado)}</b><br>${r.pareto?'Pareto':''}</td><td>ΣS ${n(r.metricas.seccionTotalMm2,' mm²')}<br>In ${n(r.metricas.proteccionInA,' A')}<br>Pérd. ${n(r.metricas.perdidaW,' W')}<br>Icc ${n(r.metricas.iccProspectivaA,' A')}</td><td>${esc(r.razonOrden)}${avisos.length?`<ul>${avisos.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:''}</td></tr>`;}).join('');
+	return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Diseño asistido V9</title><style>@page{size:A4 landscape;margin:10mm}body{font:13px system-ui;margin:2rem;color:#17202a;line-height:1.35}table{border-collapse:collapse;width:100%;margin:1rem 0;table-layout:fixed}th,td{border:1px solid #ccd;padding:.42rem;text-align:left;vertical-align:top;overflow-wrap:anywhere}th:nth-child(1){width:2%}th:nth-child(2){width:15%}th:nth-child(3){width:17%}th:nth-child(4){width:9%}th:nth-child(5){width:14%}small{color:#566}code{overflow-wrap:anywhere}ul{margin:.35rem 0;padding-left:1rem}.aviso{padding:.7rem;background:#fff5d6;border-left:4px solid #ba7a00}@media print{body{margin:0;font-size:9pt}h1{margin-top:0}table{font-size:7.5pt;break-inside:auto}tr{break-inside:avoid}}</style></head><body><h1>Diseño asistido V9</h1>
 		<p><b>${esc(snapshot.solicitud.nombre)}</b> · cobertura ${esc(resultado.cobertura)} · ${resultado.evaluados}/${resultado.totalEstimado}</p>
 		<p class="aviso">Mejor alternativa según las preferencias declaradas entre las evaluadas; no es certificación ni óptimo global. ${esc(resultado.motivoCobertura)}</p>
-		<h2>Contexto e intención</h2><dl><dt>Proyecto</dt><dd>${esc(contexto?.projectId ?? 'NO DECLARADO')}</dd><dt>Revisión documental</dt><dd>${esc(contexto?.revision ?? 'NO DECLARADA')}</dd><dt>Fecha explícita</dt><dd>${esc(contexto?.generadoEn ?? 'NO DECLARADA')}</dd><dt>Build ID</dt><dd>${esc(contexto?.buildId ?? 'NO DECLARADO')}</dd><dt>Aplicación</dt><dd>${esc(contexto?.aplicacion?.estado ?? 'NO DECLARADA')}</dd><dt>Circuito</dt><dd>${esc(snapshot.solicitud.circuitoId)}</dd><dt>Conductores autorizados</dt><dd>${esc(snapshot.solicitud.conductores.join(', '))}</dd><dt>Protección autorizada</dt><dd>${esc(snapshot.solicitud.proteccionId ?? 'ninguna')}</dd></dl>
+		<h2>Contexto e intención</h2><dl><dt>Proyecto</dt><dd>${esc(contexto?.projectId ?? 'NO DECLARADO')}</dd><dt>Revisión documental</dt><dd>${esc(contexto?.revision ?? 'NO DECLARADA')}</dd><dt>Fecha explícita</dt><dd>${esc(contexto?.generadoEn ?? 'NO DECLARADA')}</dd><dt>Build ID</dt><dd>${esc(contexto?.buildId ?? 'NO DECLARADO')}</dd><dt>Aplicación</dt><dd>${esc(contexto?.aplicacion?.estado ?? 'NO DECLARADA')}</dd><dt>Objetivo</dt><dd>${esc(snapshot.solicitud.objetivo)}</dd><dt>Circuito</dt><dd>${esc(snapshot.solicitud.circuitoId)}</dd><dt>Conductores autorizados</dt><dd>${esc(snapshot.solicitud.conductores.join(', '))}</dd><dt>Protección autorizada</dt><dd>${esc(snapshot.solicitud.proteccionId ?? 'ninguna')}</dd><dt>Bloqueado</dt><dd>${esc(snapshot.bloqueosPorDefecto.join(', '))}</dd></dl>
 		<h2>Método y terminación</h2><p>Cambios permitidos: ${esc(snapshot.solicitud.cambiosPermitidos.join(', '))}. Preferencias: ${esc(snapshot.solicitud.preferencias?.join(' → '))}. Presupuesto: ${esc(JSON.stringify(snapshot.solicitud.presupuesto))}. Generados/evaluados: ${resultado.generados}/${resultado.evaluados}. Duración registrada: ${resultado.duracionMs.toFixed(1)} ms.</p>
-		<h2>Alternativas</h2><table><thead><tr><th>#</th><th>Plan</th><th>Estado</th><th>Pareto</th><th>Métricas</th><th>Orden</th><th>Datos faltantes / límites</th></tr></thead><tbody>${filas}</tbody></table>
-		<h2>Revisiones fijadas</h2><table><thead><tr><th>Tipo</th><th>Catálogo</th><th>Revisión</th><th>r</th><th>Hash</th><th>Procedencia</th></tr></thead><tbody>${refs}</tbody></table>
-		<h2>Trazabilidad</h2><p>BASE <code>${esc(snapshot.hashBase)}</code><br>Snapshot <code>${esc(snapshot.hash)}</code></p><p>Las cifras sintéticas permanecen identificadas como SINTETICO. La compatibilidad mecánica no demostrada requiere revisión humana.</p></body></html>`;
+		<h2>Alternativas</h2><table><thead><tr><th>#</th><th>Plan</th><th>Cambios exactos</th><th>Estado</th><th>Métricas</th><th>Orden, datos faltantes y límites</th></tr></thead><tbody>${filas}</tbody></table>
+		<h2>Revisiones fijadas</h2><p>${snapshot.revisiones.length} revisiones forman el manifiesto exacto.${omitidas?` La vista imprimible muestra las primeras ${limiteRefs}; el JSON conserva las ${snapshot.revisiones.length}.`:''}</p><table><thead><tr><th>Tipo</th><th>Catálogo</th><th>Revisión</th><th>r</th><th>Hash</th><th>Procedencia</th></tr></thead><tbody>${refs}</tbody></table>
+		<h2>Trazabilidad</h2><p>Algoritmo ${esc(snapshot.algoritmo.id)} v${snapshot.algoritmo.version} · build ${esc(snapshot.algoritmo.buildId)}<br>BASE <code>${esc(snapshot.hashBase)}</code><br>Snapshot <code>${esc(snapshot.hash)}</code></p><p>Las cifras sintéticas permanecen identificadas como SINTETICO. La compatibilidad mecánica no demostrada requiere revisión humana.</p></body></html>`;
 }

@@ -1,5 +1,6 @@
 import type { ContextoTopologiaFisica } from '../fisica/topologia-proyecto.js';
 import type { ejecutarIngenieria } from '../ingenieria/engine.js';
+import type { EstadoValidacionIngenieria, ProcedenciaIngenieria } from '../ingenieria/validacion.js';
 import type { CondicionesTecnicas, ReferenciaTecnica, RevisionTecnica } from '../datos-tecnicos/tipos.js';
 import type { Proyecto } from '../modelo/tipos.js';
 
@@ -12,6 +13,8 @@ export interface SolicitudDisenoAsistido {
 	version: 1;
 	id: string;
 	nombre: string;
+	objetivo: 'CORREGIR_INCUMPLIMIENTOS' | 'COMPARAR_MEJORAS';
+	permitirDatosSinteticos: boolean;
 	circuitoId: string;
 	conductores: string[];
 	proteccionId?: string;
@@ -36,6 +39,8 @@ export interface PlanDisenoAsistido {
 
 export interface SnapshotDisenoAsistido {
 	version: 1;
+	algoritmo: { id: 'DISENO_ASISTIDO_V9'; version: 1; buildId: string };
+	bloqueosPorDefecto: readonly ['TOPOLOGIA','FUENTES','TENSION_FRECUENCIA','CARGAS','GEOMETRIA_RUTAS','INSTALACION','CRITERIOS','PE_BONDING'];
 	hash: string;
 	hashBase: string;
 	proyecto: Proyecto;
@@ -58,9 +63,12 @@ export interface EspacioOpcionesDiseno {
 
 export interface ObligacionDiseno {
 	id: string;
-	estado: 'CUMPLE' | 'INCUMPLE' | 'INDETERMINADA';
+	estado: EstadoValidacionIngenieria;
 	descripcion: string;
 	evidencia: string[];
+	datosFaltantes: string[];
+	procedencia: ProcedenciaIngenieria;
+	criterio?: string;
 }
 
 export interface MetricasDiseno {

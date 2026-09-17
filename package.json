@@ -33,6 +33,7 @@
 	"qa:datos-tecnicos:stress": "tsc && node herramientas/medir-datos-tecnicos.mjs",
 	"qa:diseno": "vite build app --mode qa && node qa/todas.mjs diseno-asistido-v9",
 	"qa:diseno:run": "node qa/todas.mjs diseno-asistido-v9",
+	"qa:diseno:stress": "tsc && node herramientas/medir-diseno-v9.mjs",
     "qa:agarre": "node qa/agarre.mjs",
     "qa:general": "node qa/general.mjs",
     "qa:tablero": "node qa/tablero-desde-cero.mjs",

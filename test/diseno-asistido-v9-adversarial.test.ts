@@ -4,6 +4,7 @@ import { fixtureDisenoAsistidoV9 } from '../ejemplo/fixtures-diseno-v9.js';
 import { crearPaqueteProyecto, leerPaqueteProyecto } from '../src/componentes/personalizados.js';
 import { referenciaTecnica, type DatoTecnico } from '../src/datos-tecnicos/tipos.js';
 import { descubrirCircuitos } from '../src/ingenieria/circuitos.js';
+import { cargarProyecto } from '../src/modelo/cargar.js';
 import {
 	aplicarDisenoTransaccional, construirEspacioOpciones, crearSnapshotDisenoAsistido, evaluarDisenoAsistido,
 	generarPlanesDiseno, hashPlanDiseno, ordenarResultadosDiseno, prepararAplicacionDiseno,
@@ -16,7 +17,7 @@ import type { PlanDisenoAsistido, ResultadoCandidatoDiseno, SolicitudDisenoAsist
 const contexto={conexionesCerradas:new Map([['q1',[['1','2']] as const]])};
 function prepararTodo(maxCandidatos=50){
 	const f=fixtureDisenoAsistidoV9(),c=descubrirCircuitos(f.proyecto).circuitos.find(x=>x.id===f.circuitoId)!;
-	const solicitud:SolicitudDisenoAsistido={version:1,id:'adversarial-v9',nombre:'Laboratorio combinado',circuitoId:c.id,conductores:[...c.conductores],proteccionId:'q1',cambiosPermitidos:['SECCION','PROTECCION'],seccionesPermitidasMm2:[2.5,3,4,6],proteccionesPermitidas:[...f.protecciones].reverse().map(referenciaTecnica),condicionesProteccion:{sistema:'AC',tensionV:230,frecuenciaHz:50,polos:1},preferencias:['MENOS_CAMBIOS','MENOR_SECCION_TOTAL','MENOR_IN','MENOR_PERDIDA'],presupuesto:{maxCandidatos,maxMs:20_000,lote:2}};
+	const solicitud:SolicitudDisenoAsistido={version:1,id:'adversarial-v9',nombre:'Laboratorio combinado',objetivo:'CORREGIR_INCUMPLIMIENTOS',permitirDatosSinteticos:true,circuitoId:c.id,conductores:[...c.conductores],proteccionId:'q1',cambiosPermitidos:['SECCION','PROTECCION'],seccionesPermitidasMm2:[2.5,3,4,6],proteccionesPermitidas:[...f.protecciones].reverse().map(referenciaTecnica),condicionesProteccion:{sistema:'AC',tensionV:230,frecuenciaHz:50,polos:1},preferencias:['MENOS_CAMBIOS','MENOR_SECCION_TOTAL','MENOR_IN','MENOR_PERDIDA'],presupuesto:{maxCandidatos,maxMs:20_000,lote:2}};
 	return{...f,solicitud,snapshot:crearSnapshotDisenoAsistido({proyecto:f.proyecto,solicitud,revisionesDisponibles:f.disponibles,contextoFisico:contexto})};
 }
 
@@ -42,6 +43,7 @@ test('V9 excluye no-op, sección sin tabla y condiciones eléctricas incompatibl
 	x.solicitud.condicionesProteccion={sistema:'AC',tensionV:400,frecuenciaHz:50,polos:1};
 	const s400=crearSnapshotDisenoAsistido({proyecto:x.proyecto,solicitud:x.solicitud,revisionesDisponibles:x.disponibles,contextoFisico:contexto}),o400=construirEspacioOpciones(s400);
 	assert.equal(o400.protecciones.length,0);assert.ok(o400.excluidas.some(e=>/tensión/.test(e.motivo)));
+	x.solicitud.condicionesProteccion={sistema:'AC',tensionV:230,frecuenciaHz:50,polos:1};x.solicitud.permitirDatosSinteticos=false;const politica=construirEspacioOpciones(crearSnapshotDisenoAsistido({proyecto:x.proyecto,solicitud:x.solicitud,revisionesDisponibles:x.disponibles,contextoFisico:contexto}));assert.equal(politica.protecciones.length,0);assert.ok(politica.excluidas.some(e=>/no permite datos sintéticos/.test(e.motivo)));
 	const sin=structuredClone(x.proyecto);sin.datosTecnicos!.instalaciones=sin.datosTecnicos!.instalaciones.filter(i=>i.conductorId!==x.solicitud.conductores[0]);
 	const ss=crearSnapshotDisenoAsistido({proyecto:sin,solicitud:x.solicitud,revisionesDisponibles:x.disponibles,contextoFisico:contexto});assert.equal(construirEspacioOpciones(ss).seccionesMm2.length,0);
 });
@@ -91,10 +93,16 @@ test('V9 informe importado se valida y reevalúa; nunca aplica resultados antigu
 	assert.equal(rr.baseOriginalCoincide,false);assert.ok(rr.advertencias.some(a=>/BASE cambió/.test(a)));assert.equal(cambiada.ingenieria?.disenoAsistido?.decisiones.length??0,0);
 	const hostil=JSON.parse(json);hostil.version=2;assert.throws(()=>leerInformeDisenoJson(JSON.stringify(hostil)),/SCHEMA/);
 	const manipulado=JSON.parse(json);manipulado.resultado.resultados[0].plan.cambios.push({tipo:'SECCION',conductorId:'x',seccionMm2:999});assert.throws(()=>leerInformeDisenoJson(JSON.stringify(manipulado)),/manipulada/);
+	const fronteraFalsa=JSON.parse(json);fronteraFalsa.snapshot.bloqueosPorDefecto[0]='CAMPO_ARBITRARIO';assert.throws(()=>leerInformeDisenoJson(JSON.stringify(fronteraFalsa)),/frontera inválida/);
 });
 
 test('V9 reordenar arrays no semánticos conserva clasificación, métricas y ranking',()=>{
 	const a=prepararTodo(),b=prepararTodo();b.proyecto.dispositivos.reverse();b.proyecto.conductores.reverse();b.proyecto.datosTecnicos!.revisiones.reverse();b.disponibles.reverse();
 	const sb=crearSnapshotDisenoAsistido({proyecto:b.proyecto,solicitud:b.solicitud,revisionesDisponibles:b.disponibles,contextoFisico:contexto}),ra=evaluarDisenoAsistido(a.snapshot),rb=evaluarDisenoAsistido(sb);
 	const resumir=(r:typeof ra)=>r.resultados.map(x=>({id:x.plan.id,estado:x.estado,metricas:x.metricas,pareto:x.pareto,orden:x.orden}));assert.deepEqual(resumir(ra),resumir(rb));
+});
+
+test('V9 un proyecto V8 sin bloque de diseño abre sin migración destructiva',()=>{
+	const p=fixtureDisenoAsistidoV9().proyecto;delete p.ingenieria?.disenoAsistido;const cargado=cargarProyecto(JSON.stringify(p)).proyecto;
+	assert.equal(cargado.ingenieria?.disenoAsistido,undefined);assert.equal(cargado.dispositivos.length,p.dispositivos.length);assert.equal(cargado.conductores.length,p.conductores.length);
 });
