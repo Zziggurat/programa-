@@ -136,7 +136,20 @@ test('la fusión 3D distingue una línea compartida de un cruce puntual', () => 
 });
 
 test('los cables de un mismo borne comparten el tornillo y se separan después', () => {
-	const proyecto = EJEMPLOS[0].crear();
+	// La biblioteca crece y su primer elemento no tiene por qué contener una derivación. Elegir
+	// por la precondición eléctrica mantiene la regresión independiente del orden del catálogo.
+	const proyecto = EJEMPLOS.map((ejemplo) => ejemplo.crear()).find((candidato) => {
+		const bornes = new Set<string>();
+		for (const conductor of candidato.conductores) {
+			for (const ref of [conductor.de, conductor.a]) {
+				const clave = `${ref.dispositivoId}:${ref.borneId}`;
+				if (bornes.has(clave)) return true;
+				bornes.add(clave);
+			}
+		}
+		return false;
+	});
+	assert.ok(proyecto, 'la biblioteca debe contener al menos un fixture con borne compartido');
 	const rutas = new Map(rutasDeCables(proyecto).map((r) => [r.conductorId, r]));
 	const porBorne = new Map<string, { id: string; final: boolean }[]>();
 	for (const c of proyecto.conductores) {

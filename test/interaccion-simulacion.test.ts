@@ -130,7 +130,7 @@ test('la UI reinicia el runtime y convierte teclado/click sintético en un pulso
 		/seccion-simulacion[\s\S]{0,180}hidden\s*=\s*!activo[\s\S]{0,180}ctx\.refrescarPanel\?\.\(\)/,
 		'Energizar cambia `hidden` pero deja el cajón con el `display: none` anterior');
 	assert.match(fuente,
-		/panelesPLCAbiertos[\s\S]{0,260}details\[open\]\[data-plc-panel\][\s\S]{0,20000}panelesPLCAbiertos\.has/,
+		/panelesPLCAbiertos[\s\S]{0,260}details\[open\]\[data-plc-panel\][\s\S]*?detalle\.open\s*=\s*panelesPLCAbiertos\.has/,
 		'el repintado periódico vuelve a cerrar Tags/Fuerzas mientras el usuario intenta operarlos');
 	assert.match(fuente,
 		/hayControladorV4[\s\S]{0,180}conRango\.length\s*\?\s*conRango\s*:\s*hayControladorV4\s*\?\s*\[\]/,
