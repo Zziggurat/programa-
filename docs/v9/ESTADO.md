@@ -38,7 +38,9 @@ vertical slice desde el HTML entregado sin API ni red.
 - TypeScript + unitarias: 1412/1412, 0 fallos, 0 skipped; 102,77 s total.
 - Build QA: 398 módulos; 7,73 s.
 - QA V9 visible: 1/1 suites, 16 comprobaciones, 0 errores JS; 142,22 s.
-- Gate histórico: 13/13 suites, 263 comprobaciones; 1084,93 s.
+- Gate histórico: 13/13 suites, 267 comprobaciones; 715 s. La preparación de
+  `texto-hostil` exige el ejemplo nominal, su copia persistente independiente y un
+  fixture no vacío; pasó además dos veces de forma focal (27,12 s y 28,02 s).
 - Fusión/picking: 59/59 frontal, 186/186 semántico, 61/61 sin fantasmas; 474,93 s.
 - Puerta: 21 comprobaciones; 39,84 s.
 - Componentes + multiproyecto: 2/2 suites, 86 comprobaciones; 788,01 s.

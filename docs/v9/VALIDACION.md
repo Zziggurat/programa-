@@ -30,7 +30,8 @@ volvieron a ejecutar: cámara, mazo, picking y piloto, 4/4 suites y 63 comprobac
 | Tipos + unitarias | `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.app.json`, `node node_modules/typescript/bin/tsc`, `node --test 'dist/test/*.test.js'` | 1412/1412; 0 fail; 0 skipped | 102,77 s total; tests 77,919 s |
 | Build QA | `node node_modules/vite/bin/vite.js build app --mode qa` | 398 módulos | 7,73 s |
 | Diseño asistido V9 | `node qa/todas.mjs diseno-asistido-v9` | 1/1 suite; 16 comprobaciones; 0 JS errors | 142,22 s |
-| Histórico | `node qa/todas.mjs --gate` | 13/13 suites; 263 comprobaciones | 1084,93 s |
+| Texto hostil focal | `node qa/texto-hostil.mjs` (dos ejecuciones) | 21/21 comprobaciones por ejecución; 0 skips | 27,12 s; 28,02 s |
+| Histórico | `node qa/todas.mjs --gate` | 13/13 suites; 267 comprobaciones | 715 s |
 | Fusión/picking | `node qa/cables-fusion.mjs` | 0 fusiones; 59/59 frontal; 186/186 semántico; 61/61 sin fantasmas | 474,93 s |
 | Fixture puerta | `node qa/fixture-puerta.mjs` | 21 comprobaciones | 39,84 s |
 | Componentes + multiproyecto | `node qa/todas.mjs componentes-personalizados multiproyecto` | 2/2 suites; 86 comprobaciones | 788,01 s |
@@ -54,6 +55,10 @@ timeout, error JS ni skipped inesperado quedó silenciado.
   espera el montaje y exige rutas antes de medir.
 - La QA de automatización leía PLC y actuador en ticks diferentes mientras el PID seguía
   integrando. Ahora compara una instantánea atómica del mismo resultado.
+- El candidato remoto `e9e264f` dejó seis jobs verdes, pero `texto-hostil` preparaba el
+  escenario con pulsaciones y relojes sin verificar el documento copiado. El fixture ahora
+  se abre por título, exige identidad nueva y contenido real, y cualquier aparato o riel
+  ausente falla explícitamente en vez de convertir cobertura en un skip.
 
 No se relajó una aserción de producto para obtener verde.
 
