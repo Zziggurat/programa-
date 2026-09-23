@@ -79,7 +79,7 @@ export interface Borne {
 	lado?: LadoFuente;
 	/** Si es true, el DRC marca error cuando queda sin conductor. */
 	obligatorio?: boolean;
-	/** Máximo de conductores admitidos en este punto (por defecto 2). */
+	/** Máximo de conductores admitidos en este punto. Ausente: capacidad no declarada. */
 	maxConductores?: number;
 	/**
 	 * Sección máxima (mm²) que admite el tornillo de este borne, de la ficha del aparato.

@@ -71,6 +71,14 @@ test('R5: más conductores de los que admite el borne', () => {
 	const errores = verificar(p).filter((h) => h.regla === 'R5-exceso-conductores');
 	assert.equal(errores.length, 1);
 	assert.match(errores[0].mensaje, /3 conductores/);
+	delete p.dispositivos[0].bornes[0].maxConductores;
+	const sinDato = verificar(p);
+	assert.equal(sinDato.filter((h) => h.regla === 'R5-exceso-conductores').length, 0,
+		'un límite ausente no demuestra exceso físico');
+	const noEvaluable = sinDato.filter((h) => h.regla === 'R5-capacidad-no-declarada');
+	assert.equal(noEvaluable.length, 1);
+	assert.equal(noEvaluable[0].severidad, 'aviso');
+	assert.match(noEvaluable[0].mensaje, /no se puede verificar/);
 });
 
 test('R6: dispositivos con tensiones distintas en el mismo potencial', () => {

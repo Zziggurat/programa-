@@ -167,12 +167,19 @@ export function verificarProyecto(
 	for (const d of aparatos) {
 		for (const b of d.bornes) {
 			const n = conductoresEn(proyecto, { dispositivoId: d.id, borneId: b.id }).length;
-			const max = b.maxConductores ?? 2;
-			if (n > max) {
+			const max = b.maxConductores;
+			if (max !== undefined && n > max) {
 				hallazgos.push({
 					regla: 'R5-exceso-conductores',
 					severidad: 'error',
 					mensaje: `${etiqueta(d.id)}:${b.id} tiene ${n} conductores (máximo ${max})`,
+					dispositivoId: d.id,
+				});
+			} else if (max === undefined && n > 2) {
+				hallazgos.push({
+					regla: 'R5-capacidad-no-declarada',
+					severidad: 'aviso',
+					mensaje: `${etiqueta(d.id)}:${b.id} tiene ${n} conductores, pero no se declaró capacidad; no se puede verificar el ajuste físico`,
 					dispositivoId: d.id,
 				});
 			}
