@@ -15,6 +15,8 @@
  *  - un ejemplo es una vista efímera y nunca se manda a la cola de guardado.
  */
 import type { Proyecto } from '../src/modelo/tipos.js';
+import { calcularPotenciales } from '../src/motores/potenciales.js';
+import { numerarConductores } from '../src/motores/numeracion.js';
 import type {
 	DocumentoProyecto,
 	RepositorioProyectos,
@@ -898,6 +900,10 @@ export class GestorDocumentos {
 			const copia = clonar(this.ejemplo);
 			delete copia.esEjemplo;
 			copia.nombre = nombre?.trim() || `Copia de ${copia.nombre}`;
+			// La revisión del editor asigna números de hilo al montar. Al copiar un ejemplo, se
+			// calculan antes de crear el sobre: la primera vista y la primera revisión durable deben
+			// contener los mismos rótulos, sin esperar una edición posterior ni guardar en la carga.
+			numerarConductores(copia, calcularPotenciales(copia));
 			const documento = await this.repositorio.crear({ proyecto: copia, nombre: copia.nombre });
 			return this.publicarDocumento(documento, 'copiar-ejemplo');
 		});

@@ -466,6 +466,22 @@ test('un ejemplo es efímero: no guarda ni pisa el activo, permite volver o copi
 	assert.equal((await repositorio.abrir(a.id)).proyecto.nombre, 'Mi tablero');
 });
 
+test('copiar ejemplo publica los números de conductor en la primera revisión, no solo en la vista', async () => {
+	const { gestor, repositorio, pantalla } = entorno();
+	await gestor.inicializar();
+	const ejemplo = proyectoValido('Ejemplo numerado');
+	ejemplo.dispositivos.push({ id: 'q2', tipo: 'disyuntor', designacion: '-Q2', bornes: [{ id: '1', tipo: 'L' }] });
+	ejemplo.gabinete!.colocaciones.push({ dispositivoId: 'q2', x: 80, y: 20, ancho: 18, alto: 85 });
+	ejemplo.conductores = [{ id: 'w1', de: { dispositivoId: 'q1', borneId: '1' },
+		a: { dispositivoId: 'q2', borneId: '1' } }];
+	await gestor.mostrarEjemplo(ejemplo);
+	const copia = await gestor.copiarEjemplo();
+	const numeroGuardado = copia.proyecto.conductores[0].numero;
+	assert.match(numeroGuardado ?? '', /^\d+$/, 'la primera revisión quedó sin número de hilo');
+	assert.equal(pantalla()?.conductores[0].numero, numeroGuardado);
+	assert.equal((await repositorio.abrir(copia.id)).proyecto.conductores[0].numero, numeroGuardado);
+});
+
 test('los snapshots se crean en eventos moderados, no en cada cambio, y restaurar conserva recuperación', async () => {
 	const { gestor, repositorio, pantalla } = entorno({ intervaloSnapshotMs: 60_000 });
 	const a = (await gestor.inicializar()).documento;
