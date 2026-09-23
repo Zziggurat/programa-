@@ -24,6 +24,8 @@
 	"qa:componentes-teclado": "vite build app --mode qa && node qa/componentes-teclado.mjs",
 	"qa:revisiones-componentes": "vite build app --mode qa && node qa/revisiones-componentes-idb.mjs",
 	"qa:adopcion-componentes-m1": "vite build app --mode qa && node qa/adopcion-componentes-m1.mjs",
+	"qa:ficha-componente-m1": "vite build app --mode qa && node qa/ficha-componente-m1.mjs",
+	"qa:esquema-desconexion-m2": "vite build app --mode qa && node qa/esquema-desconexion-m2.mjs",
     "qa:simulacion": "vite build app --mode qa && node qa/todas.mjs simulacion-industrial",
 	"qa:automatizacion": "vite build app --mode qa && node qa/todas.mjs automatizacion-plc",
 	"qa:fisica": "vite build app --mode qa && node qa/todas.mjs fisica-electrica",
