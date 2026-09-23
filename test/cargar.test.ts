@@ -53,6 +53,27 @@ test('límites declarados de borne sobreviven al proyecto sin topes de catálogo
 	assert.equal(reparado.seccionMaxMm2, undefined);
 });
 
+test('rótulo visible se recarga sin sustituir el ID; proyecto legacy permanece compatible', () => {
+	const p = bueno();
+	p.dispositivos[0].bornes[0].rotulo = 'Entrada 1';
+	p.dispositivos[0].bornes.push({ id: '2', rotulo: 'Salida 2', tipo: 'L' });
+	p.dispositivos[0].terminales = [{ lado: 'arriba', desde: 0.1, hasta: .9, bornes: ['2', '1'] }];
+	p.conductores = [{ id: 'w1', de: { dispositivoId: 'q1', borneId: '1' },
+		a: { dispositivoId: 'q1', borneId: '2' } }];
+	const cargado = abrir(p).proyecto;
+	const b = cargado.dispositivos[0].bornes[0];
+	assert.equal(b.id, '1');
+	assert.equal(b.rotulo, 'Entrada 1');
+	assert.deepEqual(cargado.dispositivos[0].terminales?.[0].bornes, ['2', '1'],
+		'el orden físico declarado se conserva al reabrir');
+	assert.equal(cargado.conductores[0]?.de.borneId, '1',
+		'un conductor sigue unido al ID aunque cambie el rótulo visible');
+	assert.equal(abrir(bueno()).proyecto.dispositivos[0].bornes[0].rotulo, undefined);
+	const hostil = structuredClone(p);
+	(hostil.dispositivos[0].bornes[0] as unknown as Record<string, unknown>).rotulo = { html: '<script>' };
+	assert.equal(abrir(hostil).proyecto.dispositivos[0].bornes[0].rotulo, undefined);
+});
+
 test('un JSON roto da un motivo, no una excepción cualquiera', () => {
 	assert.throws(() => cargarProyecto('{"formato":"tablero-'), (e: Error) => {
 		assert.ok(e instanceof ArchivoInvalido);

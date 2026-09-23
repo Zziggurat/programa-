@@ -65,7 +65,7 @@ function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePer
 	if (version === 2) {
 		exigirClaves(bruto, ['formato', 'version', 'id', 'revision', 'nombre', 'fabricante', 'referencia',
 			'descripcion', 'creadoEn', 'modificadoEn', 'tipoDispositivo', 'dimensiones', 'montaje', 'assetId',
-			'terminales', 'comportamiento', 'parametros', 'fichaTecnica'], 'Definición V2');
+			'terminales', 'bloquesTerminales', 'comportamiento', 'parametros', 'fichaTecnica'], 'Definición V2');
 		exigirClaves(bruto.dimensiones, ['anchoMm', 'altoMm', 'fondoMm'], 'Dimensiones V2');
 		if (esObjeto(bruto.montaje)) {
 			exigirClaves(bruto.montaje, ['metodo', 'anclajes'], 'Montaje V2');
@@ -83,7 +83,7 @@ function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePer
 		if (!esObjeto(t) || typeof t.id !== 'string' || typeof t.u !== 'number' || typeof t.v !== 'number') {
 			throw new Error(`Terminal ${i + 1} no válido.`);
 		}
-		if (version === 2) exigirClaves(t, ['id', 'tipo', 'u', 'v', 'lado', 'obligatorio',
+		if (version === 2) exigirClaves(t, ['id', 'rotulo', 'tipo', 'u', 'v', 'lado', 'obligatorio',
 			'maxConductores', 'seccionMaxMm2'], `Terminal ${t.id}`);
 		if (t.tipo !== undefined && !TIPOS_BORNE.has(t.tipo as TipoBorne)) throw new Error(`Terminal ${t.id}: naturaleza eléctrica no reconocida.`);
 		const errores = [...validarLimitesTerminales([{ id: t.id, maxConductores: t.maxConductores,
@@ -91,6 +91,7 @@ function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePer
 			...validarSemanticaTerminales([{ id: t.id, lado: t.lado, obligatorio: t.obligatorio }])];
 		if (errores.length) throw new Error(errores.join('; '));
 		return { id: t.id, u: t.u, v: t.v,
+			...(t.rotulo !== undefined ? { rotulo: t.rotulo as string } : {}),
 			...(t.tipo !== undefined ? { tipo: t.tipo as TipoBorne } : {}),
 			...(t.lado !== undefined ? { lado: t.lado as TerminalComponentePersonalizado['lado'] } : {}),
 			...(t.obligatorio !== undefined ? { obligatorio: t.obligatorio as boolean } : {}),
@@ -144,6 +145,9 @@ function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePer
 		...(opcional(bruto.descripcion) ? { descripcion: opcional(bruto.descripcion) } : {}), tipoDispositivo: tipo,
 		dimensiones, ...(montaje ? { montaje } : {}),
 		assetId: requerido(bruto.assetId, 'el asset'), terminales, comportamiento,
+		...(bruto.bloquesTerminales !== undefined
+			? { bloquesTerminales: structuredClone(bruto.bloquesTerminales) as DefinicionComponentePersonalizado['bloquesTerminales'] }
+			: {}),
 		...(parametros ? { parametros } : {}),
 		...(version === 2 ? { fichaTecnica: structuredClone(bruto.fichaTecnica) as DefinicionComponentePersonalizado['fichaTecnica'] } : {}),
 	};

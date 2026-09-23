@@ -64,13 +64,15 @@ export type TipoBorne = 'L' | 'N' | 'PE' | 'control' | 'senal' | 'otro';
  * rotuladas las fuentes de 24 V CC de verdad—, así que su secundario no existía para la
  * simulación: el PLC, los borneros y las máquinas quedaban sin tensión.
  *
- * Un id es un rótulo; esto es una declaración eléctrica.
+ * Ni el ID estable ni el rótulo visible son una declaración eléctrica.
  */
 export type LadoFuente = 'primario' | 'secundario+' | 'secundario-';
 
 /** Punto de conexión de un dispositivo (pin/borne). En un bornero, cada borna es un Borne. */
 export interface Borne {
-	id: string;              // único dentro del dispositivo, p. ej. "L1", "A1", "13"
+	id: string;              // identidad estable dentro del dispositivo; cables/perfiles siempre usan este valor
+	/** Texto serigrafiado visible, si difiere del ID. No participa en las conexiones. */
+	rotulo?: string;
 	tipo?: TipoBorne;
 	/**
 	 * Solo en fuentes y transformadores: de qué lado está este borne. Si no se declara, la

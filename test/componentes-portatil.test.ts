@@ -23,8 +23,13 @@ const definicion = async (conFicha: boolean): Promise<DefinicionComponentePerson
 		modificadoEn: '2026-08-23T10:00:00.000Z', tipoDispositivo: 'disyuntor',
 		dimensiones: { anchoMm: 18, altoMm: 80, fondoMm: 65 }, assetId: asset.id,
 		terminales: [
-			{ id: 'L1', tipo: 'L', u: .5, v: .1, lado: 'primario', obligatorio: true, maxConductores: 2, seccionMaxMm2: 6 },
+			{ id: 'L1', rotulo: 'Entrada de línea', tipo: 'L', u: .5, v: .1, lado: 'primario', obligatorio: true,
+				maxConductores: 2, seccionMaxMm2: 6 },
 			{ id: 'T1', tipo: 'L', u: .5, v: .9, lado: 'secundario+', obligatorio: true },
+		],
+		bloquesTerminales: [
+			{ rotulo: 'Entrada', lado: 'arriba', bornes: ['L1'] },
+			{ rotulo: 'Salida', lado: 'abajo', bornes: ['T1'] },
 		],
 		comportamiento: { version: 1, clase: 'proteccion', funcion: 'termomagnetico', rearmable: true,
 			polos: [{ entrada: 'L1', salida: 'T1' }], contactos: [] },
@@ -49,7 +54,9 @@ test('.tscomp V1/V2 hace roundtrip sin perder terminales; V2 conserva el cierre 
 		assert.deepEqual(d, original, 'exportar no muta la definición');
 		assert.equal(restaurado.asset.id, asset.id);
 		assert.equal(restaurado.definicion.terminales[0].lado, 'primario');
+		assert.equal(restaurado.definicion.terminales[0].rotulo, 'Entrada de línea');
 		assert.equal(restaurado.definicion.terminales[0].obligatorio, true);
+		assert.deepEqual(restaurado.definicion.bloquesTerminales?.map((b) => b.bornes), [['L1'], ['T1']]);
 		if (conFicha) assert.equal(restaurado.definicion.fichaTecnica?.revisiones.length, 2);
 	}
 });

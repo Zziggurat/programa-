@@ -37,6 +37,7 @@
 import * as THREE from 'three';
 
 import { Colocacion, Dispositivo, RotuloFrontal } from '../src/modelo/tipos.js';
+import { rotuloVisibleBorne } from '../src/modelo/bornes.js';
 import { cajaCanto, M } from './dispositivos3d.js';
 import { marca } from './marcas3d.js';
 
@@ -555,7 +556,7 @@ export function construirPilotoPuerta(d: Dispositivo, col: Colocacion): THREE.Gr
 		tornillo.position.set(x, 0, zBorne - 3.4);
 		tornillo.rotation.x = Math.PI / 2;
 		g.add(tornillo);
-		const rot = marca(b.id, 2.6);
+		const rot = marca(rotuloVisibleBorne(b), 2.6);
 		if (rot) {
 			rot.position.set(x, -6.6, zBorne - 3.2);
 			rot.rotation.y = Math.PI;   // se lee desde dentro del armario, que es de donde se cablea
@@ -726,7 +727,7 @@ function construirPuntoPePuerta(d: Dispositivo): THREE.Group {
 	terminal.userData.borneId = d.bornes[0]?.id ?? 'PE';
 	terminal.userData.pieza = 'terminal-pe';
 	g.add(terminal);
-	const rotulo = marca(d.bornes[0]?.id ?? 'PE', 2.8);
+	const rotulo = marca(d.bornes[0] ? rotuloVisibleBorne(d.bornes[0]) : 'PE', 2.8);
 	if (rotulo) {
 		rotulo.position.set(0, -9, zBase - 18.6);
 		rotulo.rotation.y = Math.PI;

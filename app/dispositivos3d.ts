@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { marca } from './marcas3d.js';
 import { BloqueTerminales, Colocacion, Dispositivo } from '../src/modelo/tipos.js';
+import { rotuloVisibleBorne } from '../src/modelo/bornes.js';
 import { MARGEN_BORNERA, pasoDelBloque, PosicionTerminal, posicionesDeTerminales } from '../src/motores/terminales.js';
 
 /**
@@ -330,6 +331,7 @@ export function bornesGenericos(d: Dispositivo, w: number, h: number): PuntoBorn
 function dibujarBornesReales(g: THREE.Group, d: Dispositivo, w: number, h: number, tintaClara = false): void {
 	const puntos = bornesGenericos(d, w, h);
 	if (puntos.length === 0) return;
+	const rotulos = new Map(d.bornes.map((b) => [b.id, rotuloVisibleBorne(b)]));
 	// El ancho de cada alojamiento sale del hueco disponible entre bornes vecinos de la misma fila.
 	const porFila = new Map<number, PuntoBorne[]>();
 	for (const p of puntos) {
@@ -359,7 +361,7 @@ function dibujarBornesReales(g: THREE.Group, d: Dispositivo, w: number, h: numbe
 			 * conectado no la tape.
 			 */
 			const alto = Math.min(2.4, Math.max(1.5, ancho * 0.3));
-			const rot = marca(p.id, alto, tintaClara);
+			const rot = marca(rotulos.get(p.id) ?? p.id, alto, tintaClara);
 			if (rot) {
 				rot.position.set(x, y + (arriba ? -1 : 1) * alto * 1.6, Z_BORNE + 0.12);
 				/*

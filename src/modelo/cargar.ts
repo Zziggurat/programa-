@@ -1029,6 +1029,8 @@ function leerBornes(bruto: unknown): Borne[] {
 		// cualquiera de los dos no da un aviso: da un cálculo que sale mal y parece bueno.
 		salida.push({
 			id,
+			rotulo: typeof b.rotulo === 'string' && b.rotulo.trim() && b.rotulo.length <= 120
+				&& !/[\u0000-\u001f\u007f]/u.test(b.rotulo) ? b.rotulo : undefined,
 			tipo: unoDe(b.tipo, ['L', 'N', 'PE', 'control', 'senal', 'otro'] as const),
 			lado: unoDe(b.lado, ['primario', 'secundario+', 'secundario-'] as const),
 			obligatorio: bool(b.obligatorio),

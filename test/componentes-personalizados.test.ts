@@ -6,6 +6,7 @@ import {
 	actualizarDefinicionComponente,
 	crearPaqueteProyecto,
 	instanciarComponentePersonalizado,
+	evaluarBloquesTerminales,
 	leerPaqueteProyecto,
 	sugerirRolesIEC,
 	validarDefinicionComponente,
@@ -15,6 +16,8 @@ import { curvaTecnica, productoTecnico } from './helpers/datos-tecnicos.js';
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { generarFichaTablero } from '../src/motores/ficha-tablero.js';
+import { posicionesDeTerminales } from '../src/motores/terminales.js';
+import { simboloDe } from '../src/motores/esquema.js';
 
 const definicionContactor = (): DefinicionComponentePersonalizado => ({
 	formato: 'tablero-studio-componente',
@@ -70,6 +73,52 @@ const definicionProteccionConFicha = (): DefinicionComponentePersonalizado => {
 	d.fichaTecnica = { producto: referenciaTecnica(producto), revisiones: [producto, curva] };
 	return d;
 };
+
+test('bloques físicos congelan IDs y orden declarado; el rótulo visible no cambia conexiones', () => {
+	const d = definicionContactor();
+	d.terminales.find((b) => b.id === 'L1')!.rotulo = '1/L1';
+	d.bloquesTerminales = [
+		{ rotulo: 'Potencia', lado: 'arriba', desde: 0, hasta: .5, bornes: ['L3', 'L1', 'L2'] },
+		{ rotulo: 'Mando', lado: 'arriba', desde: .5, hasta: 1, bornes: ['A2', 'A1'] },
+	];
+	assert.deepEqual(validarDefinicionComponente(d), []);
+	const colocado = instanciarComponentePersonalizado(d, 'k-bloques');
+	const posiciones = posicionesDeTerminales(colocado, 45, 85);
+	assert.deepEqual([...posiciones.keys()], ['L3', 'L1', 'L2', 'A2', 'A1']);
+	assert.ok(posiciones.get('L3')!.dx < posiciones.get('L1')!.dx);
+	const simbolo = simboloDe(colocado);
+	assert.ok(simbolo.pines.has('L1'));
+	assert.ok(simbolo.trazos.some((t) => t.tipo === 'texto' && t.texto === '1/L1'));
+	assert.equal(simbolo.pines.has('1/L1'), false, 'el rótulo no se convierte en identidad eléctrica');
+	d.terminales.reverse();
+	const reordenado = instanciarComponentePersonalizado(d, 'k-bloques');
+	assert.deepEqual([...posicionesDeTerminales(reordenado, 45, 85).keys()], [...posiciones.keys()]);
+	assert.deepEqual(colocado.terminales, d.bloquesTerminales,
+		'la instancia conserva la declaración sin depender del orden de terminales');
+	d.bloquesTerminales[0].bornes[0] = 'A1';
+	assert.equal(colocado.terminales![0].bornes[0], 'L3', 'la instancia no comparte memoria con la biblioteca');
+});
+
+test('bloques rechazan bornes inventados, duplicados, lados/tramos imposibles y solape declarado', () => {
+	const d = definicionContactor();
+	const base = { lado: 'arriba' as const, bornes: ['A1'], desde: 0, hasta: .5 };
+	for (const bloques of [
+		[{ ...base, bornes: ['NO_EXISTE'] }],
+		[base, { ...base, lado: 'abajo' as const }],
+		[{ ...base, lado: 'diagonal' as 'arriba' }],
+		[{ ...base, desde: .8, hasta: .2 }],
+		[base, { ...base, bornes: ['A2'], desde: .4, hasta: 1 }],
+	]) {
+		d.bloquesTerminales = bloques;
+		assert.notDeepEqual(validarDefinicionComponente(d), []);
+	}
+	const legacy = evaluarBloquesTerminales([
+		{ lado: 'arriba', bornes: ['A1'] }, { lado: 'arriba', bornes: ['A2'] },
+	], d.terminales, d.dimensiones);
+	assert.deepEqual(legacy.errores, [], 'un rango ausente antiguo no se inventa ni invalida');
+	assert.equal(legacy.estado, 'NO_EVALUABLE');
+	assert.match(legacy.motivos.join(' '), /rangos explícitos/);
+});
 
 test('ficha V8 de componente: producto y curva exactos, sin atribuir autenticidad al hash', () => {
 	const d = definicionProteccionConFicha();

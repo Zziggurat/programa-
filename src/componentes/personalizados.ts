@@ -14,8 +14,9 @@ import { claveRevision, type ReferenciaTecnica, type RevisionTecnica } from '../
 import {
 	ComportamientoSimulacion, validarComportamiento,
 } from '../modelo/comportamiento.js';
-import type { Borne, Dispositivo, MontajeComponente, Proyecto, TipoBorne, TipoDispositivo } from '../modelo/tipos.js';
+import type { BloqueTerminales, Borne, Dispositivo, MontajeComponente, Proyecto, TipoBorne, TipoDispositivo } from '../modelo/tipos.js';
 import { leerMontajeDeclarado, validarMontajeDeclarado } from './montaje.js';
+import { MAX_TERMINALES_BLOQUE } from '../motores/terminales.js';
 
 export const FORMATO_COMPONENTE_PERSONALIZADO = 'tablero-studio-componente' as const;
 export const VERSION_COMPONENTE_PERSONALIZADO = 1 as const;
@@ -56,6 +57,8 @@ export interface DefinicionComponentePersonalizado {
 	montaje?: MontajeComponente;
 	assetId: string;
 	terminales: TerminalComponentePersonalizado[];
+	/** Borneras físicas declaradas: IDs existentes, orden dentro de cada bloque y borde del aparato. */
+	bloquesTerminales?: BloqueTerminales[];
 	comportamiento: ComportamientoSimulacion;
 	parametros?: ParametrosNominalesComponente;
 	/** Ficha exacta y su cierre V8 inmutable. Hash = integridad, nunca autenticidad. */
@@ -98,6 +101,7 @@ export interface PaqueteProyectoPortatil {
 
 const TIPOS_BORNE = new Set<TipoBorne>(['L', 'N', 'PE', 'control', 'senal', 'otro']);
 const LADOS_FUENTE = new Set(['primario', 'secundario+', 'secundario-']);
+const LADOS_APARATO = new Set(['arriba', 'abajo', 'izquierda', 'derecha']);
 const MIME_PORTATIL = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 const clonar = <T>(valor: T): T => structuredClone(valor);
@@ -138,6 +142,74 @@ export function validarSemanticaTerminales(terminales: readonly {
 		}
 	}
 	return errores;
+}
+
+export interface EvaluacionBloquesTerminales {
+	estado: 'SIN_DECLARAR' | 'GEOMETRIA_DECLARADA' | 'NO_EVALUABLE';
+	errores: string[];
+	motivos: string[];
+}
+
+/** Validación sin reordenar ni generar bornes. Un rango ausente entre bloques vecinos no prueba encaje. */
+export function evaluarBloquesTerminales(
+	bloques: unknown, terminales: readonly Pick<Borne, 'id'>[],
+	dimensiones: Pick<DefinicionComponentePersonalizado['dimensiones'], 'anchoMm' | 'altoMm'>,
+): EvaluacionBloquesTerminales {
+	if (bloques === undefined) return { estado: 'SIN_DECLARAR', errores: [], motivos: [] };
+	if (!Array.isArray(bloques) || bloques.length > 128) return { estado: 'NO_EVALUABLE',
+		errores: ['Los bloques de terminales deben ser una lista de hasta 128.'], motivos: [] };
+	if (bloques.length === 0) return { estado: 'SIN_DECLARAR', errores: [], motivos: [] };
+	const errores: string[] = [];
+	const motivos: string[] = [];
+	const disponibles = new Set(terminales.map((t) => t.id));
+	const usados = new Set<string>();
+	const tramos = new Map<string, { desde: number; hasta: number; explicitado: boolean; indice: number }[]>();
+	for (const [indice, dato] of bloques.entries()) {
+		const n = indice + 1;
+		if (!dato || typeof dato !== 'object' || Array.isArray(dato)) {
+			errores.push(`Bloque ${n}: se requiere un objeto.`); continue;
+		}
+		const b = dato as Record<string, unknown>;
+		if (Object.keys(b).some((k) => !['rotulo', 'lado', 'bornes', 'margen', 'desde', 'hasta', 'color', 'extraible'].includes(k))) {
+			errores.push(`Bloque ${n}: campo desconocido.`);
+		}
+		if (!LADOS_APARATO.has(b.lado as string)) errores.push(`Bloque ${n}: lado físico no reconocido.`);
+		if (!Array.isArray(b.bornes) || !b.bornes.length || b.bornes.length > MAX_TERMINALES_BLOQUE) {
+			errores.push(`Bloque ${n}: declare de 1 a ${MAX_TERMINALES_BLOQUE} IDs de borne.`);
+		} else for (const id of b.bornes) {
+			if (typeof id !== 'string' || !disponibles.has(id)) errores.push(`Bloque ${n}: borne «${String(id)}» inexistente.`);
+			else if (usados.has(id)) errores.push(`Bloque ${n}: borne «${id}» repetido en los bloques.`);
+			else usados.add(id);
+		}
+		if (b.rotulo !== undefined && (typeof b.rotulo !== 'string' || !b.rotulo.trim()
+			|| b.rotulo.length > 120 || /[\u0000-\u001f\u007f]/u.test(b.rotulo))) errores.push(`Bloque ${n}: rótulo inválido.`);
+		if (b.color !== undefined && (typeof b.color !== 'string' || !/^#[a-f\d]{6}$/iu.test(b.color))) {
+			errores.push(`Bloque ${n}: color debe ser #rrggbb.`);
+		}
+		if (b.extraible !== undefined && typeof b.extraible !== 'boolean') errores.push(`Bloque ${n}: extraíble debe ser sí o no.`);
+		const perpendicular = b.lado === 'arriba' || b.lado === 'abajo' ? dimensiones.altoMm : dimensiones.anchoMm;
+		if (b.margen !== undefined && (typeof b.margen !== 'number' || !Number.isFinite(b.margen)
+			|| b.margen < 0 || b.margen > perpendicular)) errores.push(`Bloque ${n}: margen fuera de la envolvente.`);
+		const desde = b.desde ?? 0; const hasta = b.hasta ?? 1;
+		if (typeof desde !== 'number' || !Number.isFinite(desde) || desde < 0 || desde > 1
+			|| typeof hasta !== 'number' || !Number.isFinite(hasta) || hasta < 0 || hasta > 1 || desde >= hasta) {
+			errores.push(`Bloque ${n}: el tramo debe cumplir 0 ≤ desde < hasta ≤ 1.`);
+		} else if (LADOS_APARATO.has(b.lado as string)) {
+			const lado = b.lado as string;
+			const delLado = tramos.get(lado) ?? [];
+			for (const anterior of delLado) if (desde < anterior.hasta && hasta > anterior.desde) {
+				if (b.desde !== undefined && b.hasta !== undefined && anterior.explicitado) {
+					errores.push(`Bloques ${anterior.indice} y ${n}: tramos superpuestos en ${lado}.`);
+				} else motivos.push(`Bloques ${anterior.indice} y ${n}: ubicación en ${lado} NO EVALUABLE sin rangos explícitos.`);
+			}
+			delLado.push({ desde, hasta, explicitado: b.desde !== undefined && b.hasta !== undefined, indice: n });
+			tramos.set(lado, delLado);
+		}
+	}
+	for (const terminal of terminales) if (!usados.has(terminal.id)) {
+		motivos.push(`Terminal «${terminal.id}» sin bloque físico: posición de bloque NO EVALUABLE.`);
+	}
+	return { estado: errores.length || motivos.length ? 'NO_EVALUABLE' : 'GEOMETRIA_DECLARADA', errores, motivos };
 }
 
 /** Una definición usa la misma familia funcional que V8 evaluará al colocar la instancia. */
@@ -208,7 +280,7 @@ export function validarDefinicionComponente(d: DefinicionComponentePersonalizado
 	const ids = new Set<string>();
 	for (const [i, terminal] of d.terminales.entries()) {
 		const id = texto(terminal.id);
-		if (!id) errores.push(`terminal ${i + 1}: falta el rótulo`);
+		if (!id) errores.push(`terminal ${i + 1}: falta el ID estable`);
 		else if (ids.has(id)) errores.push(`el terminal «${id}» está repetido`);
 		else ids.add(id);
 		if (!Number.isFinite(terminal.u) || terminal.u < 0 || terminal.u > 1
@@ -221,6 +293,12 @@ export function validarDefinicionComponente(d: DefinicionComponentePersonalizado
 	}
 	errores.push(...validarLimitesTerminales(d.terminales));
 	errores.push(...validarSemanticaTerminales(d.terminales));
+	for (const terminal of d.terminales) if (terminal.rotulo !== undefined
+		&& (typeof terminal.rotulo !== 'string' || !terminal.rotulo.trim() || terminal.rotulo.length > 120
+			|| /[\u0000-\u001f\u007f]/u.test(terminal.rotulo))) {
+		errores.push(`terminal «${terminal.id}»: rótulo visible inválido`);
+	}
+	errores.push(...evaluarBloquesTerminales(d.bloquesTerminales, d.terminales, d.dimensiones).errores);
 	errores.push(...validarFichaTecnicaComponente(d));
 
 	errores.push(...validarComportamiento({ bornes: d.terminales, comportamiento: d.comportamiento }));
@@ -323,6 +401,7 @@ export function instanciarComponentePersonalizado(
 		rangoSalidaAnalogica: p?.rangoSalidaAnalogica ? clonar(p.rangoSalidaAnalogica) : undefined,
 		campo: opciones.campo ?? false,
 		bornes: clonar(definicion.terminales),
+		...(definicion.bloquesTerminales ? { terminales: clonar(definicion.bloquesTerminales) } : {}),
 		comportamiento: clonar(definicion.comportamiento),
 		assetId: definicion.assetId,
 		componentePersonalizado: { definicionId: definicion.id, revision: definicion.revision },

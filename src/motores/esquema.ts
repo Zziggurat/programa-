@@ -15,6 +15,7 @@
  *  - Los contactos de un aparato llevan la referencia cruzada de dónde está su bobina.
  */
 import { Dispositivo, Proyecto } from '../modelo/tipos.js';
+import { rotuloVisibleBorne } from '../modelo/bornes.js';
 import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { ResultadoPotenciales } from './potenciales.js';
 
@@ -161,12 +162,18 @@ function bloqueFuncional(d: Dispositivo): { ancho: number; alto: number; trazos:
 	let izquierda: string[];
 	let derecha: string[];
 	if (d.terminales?.length) {
-		const aIzquierda = new Set<string>();
-		for (const b of d.terminales) {
-			if (b.lado === 'arriba' || b.lado === 'izquierda') for (const id of b.bornes) aIzquierda.add(id);
-		}
-		izquierda = d.bornes.filter((b) => aIzquierda.has(b.id)).map((b) => b.id);
-		derecha = d.bornes.filter((b) => !aIzquierda.has(b.id)).map((b) => b.id);
+		const disponibles = new Set(d.bornes.map((b) => b.id));
+		const ya = new Set<string>();
+		const delLado = (arribaOIzquierda: boolean): string[] => d.terminales!
+			.filter((b) => (b.lado === 'arriba' || b.lado === 'izquierda') === arribaOIzquierda)
+			.flatMap((b) => b.bornes).filter((id) => {
+				if (!disponibles.has(id) || ya.has(id)) return false;
+				ya.add(id); return true;
+			});
+		izquierda = delLado(true);
+		derecha = delLado(false);
+		// Un borne no declarado en bloques conserva su identidad y queda visible en el esquema.
+		for (const b of d.bornes) if (!ya.has(b.id)) derecha.push(b.id);
 	} else {
 		const mitad = Math.ceil(d.bornes.length / 2);
 		izquierda = d.bornes.slice(0, mitad).map((b) => b.id);
@@ -177,7 +184,8 @@ function bloqueFuncional(d: Dispositivo): { ancho: number; alto: number; trazos:
 	const paso = Math.min(4.5, (ALTO_MAX_BLOQUE - 8) / porLado);
 	// El bloque se ensancha lo que pidan sus rótulos (2,2 mm de cuerpo ≈ 1,3 mm por letra),
 	// para que los de un costado no se metan en los del otro. Nunca más que una columna.
-	const masLargo = (ids: string[]) => Math.max(0, ...ids.map((id) => id.length)) * 1.3;
+	const rotulos = new Map(d.bornes.map((b) => [b.id, rotuloVisibleBorne(b)]));
+	const masLargo = (ids: string[]) => Math.max(0, ...ids.map((id) => (rotulos.get(id) ?? id).length)) * 1.3;
 	const ancho = Math.min(ANCHO_MAX_SIMBOLO, Math.max(18, masLargo(izquierda) + masLargo(derecha) + 5));
 	const alto = Math.max(20, porLado * paso + 8);
 
@@ -201,7 +209,7 @@ function bloqueFuncional(d: Dispositivo): { ancho: number; alto: number; trazos:
 			trazos.push({ tipo: 'linea', a: { x, y }, b: { x: x + lado * 4, y } });
 			trazos.push({
 				tipo: 'texto', p: { x: x - lado * 1.6, y: y + 0.9 },
-				texto: id, tam: 2.2, anclaje: lado < 0 ? 'izq' : 'der',
+				texto: rotulos.get(id) ?? id, tam: 2.2, anclaje: lado < 0 ? 'izq' : 'der',
 			});
 		});
 	};
@@ -244,7 +252,7 @@ export function simboloDe(d: Dispositivo): { ancho: number; alto: number; trazos
 			// en el terminal correcto (1/2, A1/A2, 13/14…).
 			trazos.push({
 				tipo: 'texto', p: { x: x + 1, y: arriba ? y - 1.2 : y + 3 },
-				texto: b.id, tam: 2.2, anclaje: 'izq',
+				texto: rotuloVisibleBorne(b), tam: 2.2, anclaje: 'izq',
 			});
 		});
 	};
