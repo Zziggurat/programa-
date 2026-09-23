@@ -48,14 +48,16 @@ async function seleccionarInstancia() {
 	await pagina.locator('#hta-seleccionar').click();
 	await pagina.locator('#lista-dispositivos li').filter({ hasText: NOMBRE }).first().click();
 }
-async function subirImagen(bytes) {
-	const previa = await pagina.locator('[data-cp="preview"] img').getAttribute('src').catch(() => null);
+async function subirImagen(bytes, paso = 'bornes') {
+	const selector = paso === 'apariencia' ? '[data-cp="preview-apariencia"] img' : '[data-cp="preview"] img';
+	const entrada = paso === 'apariencia' ? '[data-cp="imagen-apariencia"]' : '[data-cp="imagen"]';
+	const previa = await pagina.locator(selector).getAttribute('src').catch(() => null);
 	const chooser = pagina.waitForEvent('filechooser');
-	await pagina.locator('[data-cp="imagen"]').click();
+	await pagina.locator(entrada).click();
 	await (await chooser).setFiles({ name: 'piloto-adopcion.png', mimeType: 'image/png', buffer: bytes });
-	await pagina.locator('[data-cp="preview"] img').waitFor({ state: 'visible' });
+	await pagina.locator(selector).waitFor({ state: 'visible' });
 	if (previa) await pagina.waitForFunction((antes) =>
-		document.querySelector('[data-cp="preview"] img')?.getAttribute('src') !== antes, previa);
+		document.querySelector(antes.selector)?.getAttribute('src') !== antes.src, { selector, src: previa });
 }
 
 try {
@@ -76,11 +78,11 @@ try {
 	console.log('\n--- Componente r1 colocado y conectado por la UI ---');
 	await abrirBiblioteca();
 	await pagina.locator('[data-cp="nuevo"]').click();
-	await pagina.locator('[data-cp-campo="tipo"]').selectOption('piloto');
 	await pagina.locator('[data-cp-campo="nombre"]').fill(NOMBRE);
 	await pagina.locator('[data-cp-campo="descripcion"]').fill(NOMBRE);
-	await pagina.locator('[data-cp-campo="ancho"]').fill('35');
-	await pagina.locator('[data-cp-campo="alto"]').fill('45');
+	await pagina.locator('[data-cp="siguiente"]').click();
+	await pagina.locator('[data-cp-campo="tipo"]').selectOption('piloto');
+	await pagina.locator('[data-cp="siguiente"]').click();
 	await subirImagen(PNG1);
 	await pagina.locator('[data-cp="preview"] img').click({ position: { x: 38, y: 45 } });
 	await pagina.locator('[data-cp="preview"] img').click({ position: { x: 185, y: 125 } });
@@ -91,6 +93,11 @@ try {
 		await fila.locator('select').nth(0).selectOption(tipo);
 		await fila.locator('select').nth(1).selectOption(rol);
 	}
+	await pagina.locator('[data-cp="siguiente"]').click();
+	await pagina.locator('[data-cp-campo="ancho"]').fill('35');
+	await pagina.locator('[data-cp-campo="alto"]').fill('45');
+	await pagina.locator('[data-cp="siguiente"]').click();
+	await pagina.locator('[data-cp="siguiente"]').click();
 	await pagina.locator('[data-cp="validar"]').click();
 	await pagina.locator('[data-cp="errores"].cp-ok').waitFor();
 	await pagina.locator('[data-cp="guardar"]').click();
@@ -135,7 +142,9 @@ try {
 	console.log('\n--- Revisión r2 cambia SOLO la foto; A/B permanecen en r1 ---');
 	await abrirBiblioteca();
 	await tarjeta().getByRole('button', { name: 'Editar', exact: true }).click();
-	await subirImagen(PNG2);
+	await pagina.locator('[data-cp-ir="apariencia"]').click();
+	await subirImagen(PNG2, 'apariencia');
+	await pagina.locator('[data-cp="siguiente"]').click();
 	await pagina.locator('[data-cp="validar"]').click();
 	await pagina.locator('[data-cp="errores"].cp-ok').waitFor();
 	await pagina.locator('[data-cp="guardar"]').click();
@@ -180,7 +189,9 @@ try {
 	console.log('\n--- Revisión r3 cambia ID de borne; adopción exige mapeo explícito ---');
 	await abrirBiblioteca();
 	await tarjeta().getByRole('button', { name: 'Editar', exact: true }).click();
+	await pagina.locator('[data-cp-ir="bornes"]').click();
 	await pagina.locator('[data-cp="terminales"] tr').first().locator('input').first().fill('L2');
+	await pagina.locator('[data-cp-ir="revision"]').click();
 	await pagina.locator('[data-cp="validar"]').click();
 	await pagina.locator('[data-cp="errores"].cp-ok').waitFor();
 	await pagina.locator('[data-cp="guardar"]').click();

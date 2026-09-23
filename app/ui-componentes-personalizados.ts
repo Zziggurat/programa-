@@ -12,11 +12,12 @@ import {
 	type TerminalComponentePersonalizado,
 } from '../src/componentes/personalizados.js';
 import { base64ABytes, bytesABase64 } from '../src/componentes/assets.js';
+import { leerMontajeDeclarado, validarMontajeDeclarado } from '../src/componentes/montaje.js';
 import {
 	LISTA_PERFILES_BASE, PERFILES_BASE, construirComportamientoPerfil, rolesDesdeComportamiento,
 	type ParametrosConstruccionPerfil, type RolTerminalPerfil, type TerminalPerfilComponente,
 } from '../src/componentes/perfiles-base.js';
-import type { TipoBorne, TipoDispositivo } from '../src/modelo/tipos.js';
+import type { MontajeComponente, TipoBorne, TipoDispositivo } from '../src/modelo/tipos.js';
 import { leerComportamientoSimulacion } from '../src/modelo/comportamiento.js';
 import { ComponentePersonalizadoDuplicado, type ContenidoComponentePersonalizado,
 	type RepositorioProyectos } from '../src/persistencia/tipos.js';
@@ -34,6 +35,22 @@ const ROLES: readonly RolTerminalPerfil[] = [
 	'mando-run', 'mando-enable', 'salida-u', 'salida-v', 'salida-w', 'carga-fase', 'carga-retorno',
 	'senal-digital', 'pasivo-a', 'pasivo-b', 'proteccion',
 ];
+
+/** Pasos de la misma edición, no seis formularios con copias divergentes de los datos. */
+export const PASOS_ASISTENTE_COMPONENTE = [
+	{ id: 'identidad', nombre: 'Identidad' },
+	{ id: 'funcion', nombre: 'Función' },
+	{ id: 'bornes', nombre: 'Bornes' },
+	{ id: 'dimensiones', nombre: 'Dimensiones' },
+	{ id: 'apariencia', nombre: 'Apariencia y datos' },
+	{ id: 'revision', nombre: 'Revisión' },
+] as const;
+type PasoAsistenteComponente = typeof PASOS_ASISTENTE_COMPONENTE[number]['id'];
+
+export function pasoAdyacenteComponente(actual: PasoAsistenteComponente, direccion: -1 | 1): PasoAsistenteComponente {
+	const indice = PASOS_ASISTENTE_COMPONENTE.findIndex((p) => p.id === actual);
+	return PASOS_ASISTENTE_COMPONENTE[Math.max(0, Math.min(PASOS_ASISTENTE_COMPONENTE.length - 1, indice + direccion))].id;
+}
 
 export interface ContextoUIComponentesPersonalizados {
 	repositorio: RepositorioProyectos;
@@ -59,6 +76,8 @@ interface ArchivoComponentePortatil {
 
 interface EstadoEditor {
 	original?: DefinicionComponentePersonalizado;
+	/** Estado de navegación del asistente; nunca entra a una definición persistida. */
+	paso?: PasoAsistenteComponente;
 	tipo: TipoDispositivo;
 	datos: {
 		nombre: string; fabricante: string; referencia: string; descripcion: string;
@@ -66,6 +85,9 @@ interface EstadoEditor {
 	};
 	terminales: TerminalEditor[];
 	parametros: ParametrosConstruccionPerfil;
+	montaje?: MontajeComponente;
+	/** Los anclajes se conservan si se compara temporalmente DIN y placa en el asistente. */
+	anclajesPlacaBorrador?: NonNullable<MontajeComponente['anclajes']>;
 	assetId?: string;
 	assetBytes?: Uint8Array;
 	assetMime?: string;
@@ -210,15 +232,20 @@ export function leerArchivoComponentePortatil(bruto: unknown): ArchivoComponente
 			&& typeof v[0] === 'number' && typeof v[1] === 'number' ? [v[0], v[1]] : undefined;
 		parametros.rangoSonda = rango(p.rangoSonda); parametros.rangoSalidaAnalogica = rango(p.rangoSalidaAnalogica);
 	}
+	const dimensiones = {
+		anchoMm: Number(d.dimensiones.anchoMm), altoMm: Number(d.dimensiones.altoMm), fondoMm: Number(d.dimensiones.fondoMm),
+	};
+	const erroresMontaje = validarMontajeDeclarado(d.montaje, dimensiones);
+	if (erroresMontaje.length) throw new Error(erroresMontaje.join('; '));
+	const montaje = leerMontajeDeclarado(d.montaje, dimensiones);
 	const definicion: DefinicionComponentePersonalizado = {
 		formato: FORMATO_COMPONENTE_PERSONALIZADO, version: VERSION_COMPONENTE_PERSONALIZADO,
 		id: requerido(d.id, 'la identidad'), revision: d.revision as number,
 		nombre: requerido(d.nombre, 'el nombre'), fabricante: opcional(d.fabricante), referencia: opcional(d.referencia),
 		descripcion: opcional(d.descripcion), creadoEn: requerido(d.creadoEn, 'la fecha de creación'),
 		modificadoEn: requerido(d.modificadoEn, 'la fecha de modificación'), tipoDispositivo: tipo,
-		dimensiones: {
-			anchoMm: Number(d.dimensiones.anchoMm), altoMm: Number(d.dimensiones.altoMm), fondoMm: Number(d.dimensiones.fondoMm),
-		}, assetId: requerido(d.assetId, 'el asset'), terminales, comportamiento, ...(parametros ? { parametros } : {}),
+		dimensiones, ...(montaje ? { montaje } : {}),
+		assetId: requerido(d.assetId, 'el asset'), terminales, comportamiento, ...(parametros ? { parametros } : {}),
 	};
 	const mime = requerido(a.mime, 'el MIME');
 	if (!MIME_IMAGEN.has(mime)) throw new Error(`MIME no admitido: ${mime}.`);
@@ -296,7 +323,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	let pintado = 0;
 	const huellaEditor = (e: EstadoEditor): string => JSON.stringify({
 		original: e.original && [e.original.id, e.original.revision], tipo: e.tipo,
-		datos: e.datos, terminales: e.terminales, parametros: e.parametros,
+		datos: e.datos, terminales: e.terminales, parametros: e.parametros, montaje: e.montaje,
 		assetId: e.assetId, assetNuevo: e.assetBytes && [e.assetBytes.byteLength, e.assetMime, e.previewUrl],
 	});
 	const editorModificado = (): boolean => !!editor && (editor === imagenPendiente || huellaEditor(editor) !== huellaInicial);
@@ -419,6 +446,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	function abrirNuevo(): void {
 		if (urlTemporal) { URL.revokeObjectURL(urlTemporal); urlTemporal = undefined; }
 		editor = {
+			paso: 'identidad',
 			tipo: 'contactor', datos: { nombre: '', fabricante: '', referencia: '', descripcion: '', anchoMm: 45, altoMm: 80, fondoMm: 60 },
 			terminales: [], parametros: {},
 		}; huellaInicial = huellaEditor(editor); pintarEditor();
@@ -436,11 +464,13 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		await prepararEditorVigente(() => urlAsset(d.assetId), () => turno === navegacionEditor, (previewUrl) => {
 			// Nada que pueda fallar antes de aquí debe descartar el borrador anterior.
 			const siguiente: EstadoEditor = {
+				paso: 'identidad',
 				original: clonar(d), tipo: d.tipoDispositivo, datos: {
 					nombre: d.nombre, fabricante: d.fabricante ?? '', referencia: d.referencia ?? '', descripcion: d.descripcion ?? '',
 					anchoMm: d.dimensiones.anchoMm, altoMm: d.dimensiones.altoMm, fondoMm: d.dimensiones.fondoMm,
 				},
-				terminales: terminalesParaEditor(d), parametros: parametrosDesde(d),
+				terminales: terminalesParaEditor(d), parametros: parametrosDesde(d), montaje: d.montaje && clonar(d.montaje),
+				anclajesPlacaBorrador: d.montaje?.metodo === 'atornillado-placa' ? clonar(d.montaje.anclajes ?? []) : undefined,
 				assetId: d.assetId, previewUrl,
 			};
 			if (urlTemporal) { URL.revokeObjectURL(urlTemporal); urlTemporal = undefined; }
@@ -455,18 +485,63 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		if (!editor) return; ++pintado;
 		cuerpo.innerHTML = '<div class="cp-barra"><button data-cp="volver">← Biblioteca</button>'
 			+ `<strong>${editor.original ? 'Editar componente' : 'Nuevo componente'}</strong><span class="estado" data-cp-estado role="status" aria-live="polite"></span></div>`
-			+ '<div class="cp-editor"><div><section class="cp-panel"><h3>Identidad e imagen</h3><div class="cp-campos">'
-			+ '<label>Nombre<input data-cp-campo="nombre"></label><label>Perfil<select data-cp-campo="tipo"></select></label>'
-			+ '<label>Fabricante<input data-cp-campo="fabricante"></label><label>Referencia<input data-cp-campo="referencia"></label>'
-			+ '<label>Ancho (mm)<input type="number" min="1" data-cp-campo="ancho"></label><label>Alto (mm)<input type="number" min="1" data-cp-campo="alto"></label>'
-			+ '<label>Fondo (mm)<input type="number" min="1" data-cp-campo="fondo"></label><label>Imagen PNG/JPEG/WebP<input type="file" accept="image/png,image/jpeg,image/webp" data-cp="imagen"></label></div>'
-			+ '<label>Descripción<textarea data-cp-campo="descripcion"></textarea></label><div class="cp-fidelidad" data-cp="fidelidad"></div>'
-			+ '<div class="cp-preview" data-cp="preview"><span style="position:absolute;inset:45% 10%;text-align:center;color:#516577">Carga una imagen y haz clic para marcar bornes</span></div></section></div>'
-			+ '<div><section class="cp-panel"><h3>Terminales confirmados</h3><p>Haz clic en la imagen para agregar un terminal. Las sugerencias IEC no se aplican solas.</p>'
+			+ '<nav class="cp-pasos" data-cp="pasos" aria-label="Pasos del asistente de componentes"></nav>'
+			+ '<div class="cp-asistente"><section class="cp-panel cp-paso" data-cp-paso="identidad"><h3 tabindex="-1">1. Identidad</h3>'
+			+ '<p>Nombre, referencia y procedencia visibles en la biblioteca y en el tablero. No certifican la ficha del fabricante.</p>'
+			+ '<div class="cp-campos"><label>Nombre<input data-cp-campo="nombre"></label><label>Fabricante<input data-cp-campo="fabricante"></label>'
+			+ '<label>Referencia<input data-cp-campo="referencia"></label></div><label>Descripción<textarea data-cp-campo="descripcion"></textarea></label></section>'
+			+ '<section class="cp-panel cp-paso" data-cp-paso="funcion" hidden><h3 tabindex="-1">2. Familia y comportamiento</h3>'
+			+ '<p>El perfil explícito, no la imagen ni los rótulos, determina la simulación eléctrica.</p>'
+			+ '<div class="cp-campos"><label>Perfil<select data-cp-campo="tipo"></select></label></div>'
+			+ '<div class="cp-fidelidad" data-cp="fidelidad"></div><div class="cp-campos" data-cp="parametros"></div></section>'
+			+ '<section class="cp-panel cp-paso" data-cp-paso="bornes" hidden><h3 tabindex="-1">3. Bornes y ubicación sobre la imagen</h3>'
+			+ '<p>Carga una imagen para marcar físicamente los bornes. Cada clic añade un terminal; confirma naturaleza, rol y límites abajo. Las sugerencias IEC no se aplican solas.</p>'
+			+ '<label class="cp-carga-imagen">Imagen PNG/JPEG/WebP<input type="file" accept="image/png,image/jpeg,image/webp" data-cp="imagen"></label>'
+			+ '<div class="cp-preview" data-cp="preview"><span style="position:absolute;inset:45% 10%;text-align:center;color:#516577">Carga una imagen y haz clic para marcar bornes</span></div>'
 			+ '<div class="cp-scroll"><table><thead><tr><th>ID</th><th>Naturaleza</th><th>Rol</th><th>Grupo</th><th>Lado fuente</th><th>Conexión requerida</th><th>Máx. hilos</th><th>Sección máx. mm²</th><th></th></tr></thead><tbody data-cp="terminales"></tbody></table></div>'
-			+ '<div class="cp-sugerencias" data-cp="sugerencias"></div></section><section class="cp-panel" style="margin-top:12px"><h3>Parámetros del perfil</h3><div class="cp-campos" data-cp="parametros"></div>'
-			+ '<div class="cp-errores" data-cp="errores">Valida antes de guardar.</div><div class="cp-pie"><button data-cp="validar">Validar</button><button class="primario" data-cp="guardar">Guardar revisión</button></div></section></div></div>';
+			+ '<div class="cp-sugerencias" data-cp="sugerencias"></div></section>'
+			+ '<section class="cp-panel cp-paso" data-cp-paso="dimensiones" hidden><h3 tabindex="-1">4. Dimensiones y montaje</h3>'
+			+ '<p>Estas medidas definen la envolvente física que se colocará en el tablero.</p>'
+			+ '<div class="cp-campos"><label>Ancho (mm)<input type="number" min="1" data-cp-campo="ancho"></label>'
+			+ '<label>Alto (mm)<input type="number" min="1" data-cp-campo="alto"></label>'
+			+ '<label>Fondo (mm)<input type="number" min="1" data-cp-campo="fondo"></label></div>'
+			+ '<label class="cp-montaje-metodo">Método de montaje declarado<select data-cp-campo="montaje-metodo"><option value="">No declarado</option><option value="riel-din">Riel DIN</option><option value="atornillado-placa">Placa atornillada</option></select></label>'
+			+ '<div class="cp-sugerencias" data-cp="montaje-extension"></div></section>'
+			+ '<section class="cp-panel cp-paso" data-cp-paso="apariencia" hidden><h3 tabindex="-1">5. Apariencia y datos técnicos</h3>'
+			+ '<p>La imagen representa el componente; nunca define por sí sola su comportamiento. Si la reemplazas, revisa las posiciones de los bornes antes de guardar.</p>'
+			+ '<label class="cp-carga-imagen">Reemplazar imagen<input type="file" accept="image/png,image/jpeg,image/webp" data-cp="imagen-apariencia"></label>'
+			+ '<div class="cp-preview-apariencia" data-cp="preview-apariencia"></div>'
+			+ '<p class="cp-sugerencias">Datos técnicos externos: este asistente todavía no vincula una hoja de fabricante ni una revisión de catálogo. Los parámetros declarados en «Función» son datos aportados por ti; no los marques como verificados solo por guardar el componente.</p></section>'
+			+ '<section class="cp-panel cp-paso" data-cp-paso="revision" hidden><h3 tabindex="-1">6. Revisión antes de guardar</h3>'
+			+ '<p>Confirma identidad, perfil, bornes, dimensiones y asset. Guardar crea una revisión de biblioteca; no actualiza automáticamente los aparatos colocados.</p>'
+			+ '<dl class="cp-resumen" data-cp="resumen"></dl>'
+			+ '<div class="cp-errores" data-cp="errores">Valida antes de guardar.</div></section></div>'
+			+ '<div class="cp-navegacion"><button data-cp="anterior" type="button">← Anterior</button><span data-cp="progreso" role="status" aria-live="polite"></span>'
+			+ '<div class="cp-pie" data-cp="acciones-revision" hidden><button data-cp="validar">Validar</button><button class="primario" data-cp="guardar">Guardar revisión</button></div>'
+			+ '<button class="primario" data-cp="siguiente" type="button">Siguiente →</button></div>';
 		el<HTMLButtonElement>(cuerpo, '[data-cp="volver"]').onclick = () => { void pintarBiblioteca(); };
+		const pasos = el<HTMLElement>(cuerpo, '[data-cp="pasos"]');
+		for (const [indice, paso] of PASOS_ASISTENTE_COMPONENTE.entries()) {
+			const boton = document.createElement('button'); boton.type = 'button'; boton.dataset.cpIr = paso.id;
+			boton.textContent = `${indice + 1}. ${paso.nombre}`;
+			boton.onclick = () => mostrarPasoEditor(paso.id);
+			pasos.appendChild(boton);
+		}
+		pasos.onkeydown = (evento) => {
+			if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(evento.key)) return;
+			const actual = (document.activeElement as HTMLElement | null)?.dataset.cpIr as PasoAsistenteComponente | undefined;
+			if (!actual) return;
+			evento.preventDefault();
+			const destino = evento.key === 'Home' ? PASOS_ASISTENTE_COMPONENTE[0].id
+				: evento.key === 'End' ? PASOS_ASISTENTE_COMPONENTE.at(-1)!.id
+					: pasoAdyacenteComponente(actual, evento.key === 'ArrowRight' ? 1 : -1);
+			mostrarPasoEditor(destino, false);
+			pasos.querySelector<HTMLButtonElement>(`[data-cp-ir="${destino}"]`)?.focus();
+		};
+		el<HTMLButtonElement>(cuerpo, '[data-cp="anterior"]').onclick = () => mostrarPasoEditor(
+			pasoAdyacenteComponente(editor!.paso ?? 'identidad', -1), true);
+		el<HTMLButtonElement>(cuerpo, '[data-cp="siguiente"]').onclick = () => mostrarPasoEditor(
+			pasoAdyacenteComponente(editor!.paso ?? 'identidad', 1), true);
 		const tipo = el<HTMLSelectElement>(cuerpo, '[data-cp-campo="tipo"]');
 		for (const p of LISTA_PERFILES_BASE) tipo.appendChild(opcion(p.id, p.nombre)); tipo.value = editor.tipo;
 		tipo.onchange = () => { if (!editor) return; capturarFormulario(); editor.tipo = tipo.value as TipoDispositivo; pintarEditor(); };
@@ -478,9 +553,159 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		el<HTMLInputElement>(cuerpo, '[data-cp-campo="alto"]').value = String(editor.datos.altoMm);
 		el<HTMLInputElement>(cuerpo, '[data-cp-campo="fondo"]').value = String(editor.datos.fondoMm);
 		el<HTMLInputElement>(cuerpo, '[data-cp="imagen"]').onchange = (evento) => { void cargarImagen((evento.currentTarget as HTMLInputElement).files?.[0]); };
-		pintarFidelidad(); pintarPreview(); pintarTerminales(); pintarParametros();
+		el<HTMLInputElement>(cuerpo, '[data-cp="imagen-apariencia"]').onchange = (evento) => { void cargarImagen((evento.currentTarget as HTMLInputElement).files?.[0]); };
+		pintarFidelidad(); pintarPreview(); pintarTerminales(); pintarParametros(); pintarMontaje(); pintarApariencia();
 		el<HTMLButtonElement>(cuerpo, '[data-cp="validar"]').onclick = () => { validarDesdeFormulario(false); };
 		el<HTMLButtonElement>(cuerpo, '[data-cp="guardar"]').onclick = () => { void guardarDesdeFormulario(); };
+		mostrarPasoEditor(editor.paso ?? 'identidad', false);
+	}
+
+	function mostrarPasoEditor(paso: PasoAsistenteComponente, enfocar = true): void {
+		if (!editor) return;
+		editor.paso = paso;
+		for (const seccion of cuerpo.querySelectorAll<HTMLElement>('[data-cp-paso]')) {
+			seccion.hidden = seccion.dataset.cpPaso !== paso;
+		}
+		for (const boton of cuerpo.querySelectorAll<HTMLButtonElement>('[data-cp-ir]')) {
+			if (boton.dataset.cpIr === paso) boton.setAttribute('aria-current', 'step');
+			else boton.removeAttribute('aria-current');
+		}
+		const indice = PASOS_ASISTENTE_COMPONENTE.findIndex((p) => p.id === paso);
+		el<HTMLButtonElement>(cuerpo, '[data-cp="anterior"]').disabled = indice === 0;
+		el<HTMLButtonElement>(cuerpo, '[data-cp="siguiente"]').hidden = indice === PASOS_ASISTENTE_COMPONENTE.length - 1;
+		el<HTMLElement>(cuerpo, '[data-cp="acciones-revision"]').hidden = paso !== 'revision';
+		el<HTMLElement>(cuerpo, '[data-cp="progreso"]').textContent = `Paso ${indice + 1} de ${PASOS_ASISTENTE_COMPONENTE.length}`;
+		cuerpo.scrollTop = 0;
+		if (paso === 'revision') {
+			pintarResumenEditor();
+			const errores = el<HTMLElement>(cuerpo, '[data-cp="errores"]');
+			errores.classList.remove('cp-ok');
+			errores.textContent = 'Valida antes de guardar.';
+		}
+		if (enfocar) {
+			const encabezado = cuerpo.querySelector<HTMLElement>(`[data-cp-paso="${paso}"] h3`);
+			encabezado?.focus({ preventScroll: true });
+		}
+	}
+
+	function pintarResumenEditor(): void {
+		if (!editor) return;
+		capturarFormulario();
+		const resumen = el<HTMLElement>(cuerpo, '[data-cp="resumen"]'); resumen.replaceChildren();
+		const fila = (etiqueta: string, valor: string): void => {
+			const dt = document.createElement('dt'); dt.textContent = etiqueta;
+			const dd = document.createElement('dd'); dd.textContent = valor;
+			resumen.append(dt, dd);
+		};
+		fila('Nombre / referencia', `${editor.datos.nombre.trim() || 'Sin nombre'} · ${editor.datos.referencia.trim() || 'sin referencia'}`);
+		fila('Familia', PERFILES_BASE[editor.tipo].nombre);
+		const parametros = PERFILES_BASE[editor.tipo].parametros.map((campo) => {
+			const valor = editor!.parametros[campo.clave] ?? campo.valorInicial;
+			return valor === undefined ? undefined : `${campo.etiqueta}: ${String(valor)}`;
+		}).filter((valor): valor is string => valor !== undefined);
+		fila('Parámetros del perfil', parametros.length ? parametros.join(' · ') : 'Sin parámetros adicionales');
+		fila('Bornes', editor.terminales.length ? editor.terminales.map((t) =>
+			`${t.id || 'sin ID'} (${t.tipo ?? 'sin naturaleza'}; ${t.rol})`).join(', ') : 'Sin bornes confirmados');
+		fila('Envolvente', `${editor.datos.anchoMm} × ${editor.datos.altoMm} × ${editor.datos.fondoMm} mm`);
+		fila('Imagen', editor.assetBytes ? 'Nueva imagen pendiente de guardar' : editor.assetId ? 'Asset ya guardado' : 'Falta imagen');
+		fila('Montaje', editor.montaje?.metodo === 'riel-din' ? 'Riel DIN declarado; ajuste físico pendiente de evaluar'
+			: editor.montaje?.metodo === 'atornillado-placa'
+				? editor.montaje.anclajes?.length
+					? `Placa atornillada; ${editor.montaje.anclajes.length} ${editor.montaje.anclajes.length === 1 ? 'anclaje declarado' : 'anclajes declarados'}; ajuste físico pendiente de evaluar`
+					: 'Placa atornillada sin anclajes: fijación NO EVALUABLE'
+				: 'No declarado: ajuste NO EVALUABLE');
+		fila('Datos técnicos', 'Sin vínculo a ficha de fabricante');
+		fila('Publicación', editor.original ? `Nueva revisión después de r${editor.original.revision}` : 'Definición nueva r1');
+	}
+
+	function pintarApariencia(): void {
+		if (!editor) return;
+		const caja = el<HTMLElement>(cuerpo, '[data-cp="preview-apariencia"]'); caja.replaceChildren();
+		if (!editor.previewUrl) { caja.textContent = 'Todavía no hay imagen. Cárgala aquí o en el paso Bornes.'; return; }
+		const img = document.createElement('img'); img.src = editor.previewUrl; img.alt = 'Imagen actual del componente';
+		caja.appendChild(img);
+	}
+
+	function leerAnclajesFormulario(): NonNullable<MontajeComponente['anclajes']> {
+		const numero = (fila: HTMLElement, campo: string): number => {
+			const valor = el<HTMLInputElement>(fila, `[data-cp-anclaje-campo="${campo}"]`).value.trim();
+			return valor ? Number(valor) : NaN;
+		};
+		return [...cuerpo.querySelectorAll<HTMLElement>('[data-cp-anclaje]')].map((fila) => {
+			const diametro = el<HTMLInputElement>(fila, '[data-cp-anclaje-campo="diametro"]').value.trim();
+			return { xMm: numero(fila, 'x'), yMm: numero(fila, 'y'),
+				...(diametro ? { diametroMm: Number(diametro) } : {}) };
+		});
+	}
+
+	function capturarMontaje(): void {
+		if (!editor) return;
+		const metodo = el<HTMLSelectElement>(cuerpo, '[data-cp-campo="montaje-metodo"]').value;
+		editor.montaje = metodo === 'riel-din' ? { metodo: 'riel-din' }
+			: metodo === 'atornillado-placa' ? { metodo: 'atornillado-placa', anclajes: leerAnclajesFormulario() }
+				: undefined;
+		if (editor.montaje?.metodo === 'atornillado-placa') {
+			editor.anclajesPlacaBorrador = clonar(editor.montaje.anclajes ?? []);
+		}
+	}
+
+	function pintarMontaje(): void {
+		if (!editor) return;
+		const metodo = el<HTMLSelectElement>(cuerpo, '[data-cp-campo="montaje-metodo"]');
+		metodo.value = editor.montaje?.metodo ?? '';
+		const zona = el<HTMLElement>(cuerpo, '[data-cp="montaje-extension"]'); zona.replaceChildren();
+		metodo.onchange = () => {
+			if (editor?.montaje?.metodo === 'atornillado-placa') {
+				editor.anclajesPlacaBorrador = leerAnclajesFormulario();
+			}
+			editor!.montaje = metodo.value === 'riel-din' ? { metodo: 'riel-din' }
+				: metodo.value === 'atornillado-placa' ? { metodo: 'atornillado-placa',
+					anclajes: clonar(editor!.anclajesPlacaBorrador ?? []) } : undefined;
+			pintarMontaje();
+		};
+		const ayuda = document.createElement('p');
+		if (!editor.montaje) {
+			ayuda.textContent = 'Sin método declarado, la compatibilidad mecánica queda NO EVALUABLE. Las dimensiones por sí solas no prueban el montaje.';
+			zona.appendChild(ayuda); return;
+		}
+		if (editor.montaje.metodo === 'riel-din') {
+			ayuda.textContent = 'Declaración del autor: montaje en riel DIN. El ajuste real debe evaluarse contra el riel y el espacio del tablero; guardar no certifica el componente.';
+			zona.appendChild(ayuda); return;
+		}
+		ayuda.textContent = 'Anclajes locales en mm desde la esquina superior izquierda. Sin centros declarados no se comprueba la fijación a la placa.';
+		zona.appendChild(ayuda);
+		const lista = document.createElement('div'); lista.className = 'cp-anclajes';
+		for (const [indice, anclaje] of (editor.montaje.anclajes ?? []).entries()) {
+			const fila = document.createElement('div'); fila.className = 'cp-anclaje'; fila.dataset.cpAnclaje = String(indice);
+			const campo = (nombre: string, valor: number | undefined, obligatorio: boolean): void => {
+				const label = document.createElement('label'); label.textContent = nombre;
+				const input = document.createElement('input'); input.type = 'number'; input.min = obligatorio ? '0' : '0.001'; input.step = 'any';
+				input.dataset.cpAnclajeCampo = nombre === 'X (mm)' ? 'x' : nombre === 'Y (mm)' ? 'y' : 'diametro';
+				input.value = valor !== undefined && Number.isFinite(valor) ? String(valor) : '';
+				input.oninput = () => capturarMontaje(); label.appendChild(input); fila.appendChild(label);
+			};
+			campo('X (mm)', anclaje.xMm, true); campo('Y (mm)', anclaje.yMm, true);
+			campo('Ø (mm, opcional)', anclaje.diametroMm, false);
+			const quitar = document.createElement('button'); quitar.type = 'button'; quitar.textContent = 'Quitar';
+			quitar.setAttribute('aria-label', `Quitar anclaje ${indice + 1}`);
+			quitar.onclick = () => {
+				if (!editor?.montaje || editor.montaje.metodo !== 'atornillado-placa') return;
+				const restantes = leerAnclajesFormulario(); restantes.splice(indice, 1);
+				editor.montaje.anclajes = restantes; editor.anclajesPlacaBorrador = clonar(restantes); pintarMontaje();
+			};
+			fila.appendChild(quitar); lista.appendChild(fila);
+		}
+		zona.appendChild(lista);
+		const agregar = document.createElement('button'); agregar.type = 'button'; agregar.textContent = 'Añadir anclaje';
+		agregar.disabled = (editor.montaje.anclajes?.length ?? 0) >= 64;
+		if (agregar.disabled) agregar.title = 'Máximo de 64 anclajes por componente.';
+		agregar.onclick = () => {
+			if (!editor?.montaje || editor.montaje.metodo !== 'atornillado-placa') return;
+			editor.montaje.anclajes = [...leerAnclajesFormulario(), { xMm: NaN, yMm: NaN }];
+			editor.anclajesPlacaBorrador = clonar(editor.montaje.anclajes);
+			pintarMontaje();
+		};
+		zona.appendChild(agregar);
 	}
 
 	function pintarFidelidad(): void {
@@ -593,7 +818,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	}
 
 	function capturarFormulario(): void {
-		capturarParametros(); if (!editor) return;
+		capturarParametros(); capturarMontaje(); if (!editor) return;
 		const valor = (selector: string) => cuerpo.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)?.value;
 		const numero = (selector: string) => Number(cuerpo.querySelector<HTMLInputElement>(selector)?.value);
 		const nombre = valor('[data-cp-campo="nombre"]');
@@ -621,6 +846,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			referencia: editor.datos.referencia.trim() || undefined, descripcion: editor.datos.descripcion.trim() || undefined,
 			tipoDispositivo: editor.tipo, dimensiones: { anchoMm: editor.datos.anchoMm, altoMm: editor.datos.altoMm, fondoMm: editor.datos.fondoMm },
 			assetId, terminales: terminalesDesdeEditor(editor.terminales),
+			...(editor.montaje ? { montaje: clonar(editor.montaje) } : {}),
 			comportamiento: perfil.comportamiento ?? { version: 1, clase: 'sin-comportamiento', motivo: 'perfil incompleto' }, parametros: p,
 		};
 		return { definicion, errores: [...perfil.errores, ...validarDefinicionComponente(definicion)] };
@@ -650,7 +876,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			if (urlTemporal) URL.revokeObjectURL(urlTemporal);
 			urlTemporal = preview; destino.assetBytes = bytes; destino.assetMime = archivo.type;
 			destino.previewUrl = preview;
-			if (editor === destino) pintarPreview();
+			if (editor === destino) { pintarPreview(); pintarApariencia(); }
 		} catch (error) {
 			if (turno === cargaImagen && (editor === destino || borrador === destino)) {
 				mensaje(`No se pudo leer la imagen: ${(error as Error).message}`, true);

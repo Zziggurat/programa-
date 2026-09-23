@@ -94,6 +94,7 @@ try {
 	await pagina.getByRole('button', { name: 'Descartar borrador' }).click();
 	await pagina.locator('#dialogo-ok').click();
 	await pagina.locator('[data-cp="nuevo"]').click();
+	await pagina.locator('[data-cp-ir="bornes"]').click();
 	await pagina.evaluate(() => {
 		const original = File.prototype.arrayBuffer;
 		window.__qaRestaurarLectura = () => { File.prototype.arrayBuffer = original; };

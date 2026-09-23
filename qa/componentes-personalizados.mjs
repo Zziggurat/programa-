@@ -108,7 +108,6 @@ const tarjeta = () => pagina.locator('#ui-componentes-personalizados .cp-tarjeta
 async function crearDesdeFormulario() {
 	await abrirComponentes();
 	await pagina.locator('[data-cp="nuevo"]').click();
-	await pagina.locator('[data-cp-campo="tipo"]').selectOption('contactor');
 
 	await pagina.locator('[data-cp-campo="nombre"]').fill(NOMBRE);
 	await pagina.locator('[data-cp-campo="fabricante"]').fill('QA TableroStudio');
@@ -123,11 +122,11 @@ async function crearDesdeFormulario() {
 		&& (await pagina.locator('[data-cp-campo="fabricante"]').inputValue()) === 'QA TableroStudio'
 		&& (await pagina.locator('[data-cp-campo="referencia"]').inputValue()) === 'QA-KM3-220');
 	await pagina.locator('[data-cp-campo="descripcion"]').fill('Contactor 3P con bobina 220 V y auxiliar conmutado, creado por QA.');
-	await pagina.locator('[data-cp-campo="ancho"]').fill('75');
-	await pagina.locator('[data-cp-campo="alto"]').fill('110');
-	await pagina.locator('[data-cp-campo="fondo"]').fill('60');
+	await pagina.locator('[data-cp="siguiente"]').click();
+	await pagina.locator('[data-cp-campo="tipo"]').selectOption('contactor');
 	await pagina.locator('[data-parametro="tensionV"]').fill('220');
 	await pagina.locator('[data-parametro="corrienteA"]').fill('9');
+	await pagina.locator('[data-cp="siguiente"]').click();
 
 	const selectorArchivo = pagina.waitForEvent('filechooser');
 	await pagina.locator('[data-cp="imagen"]').click();
@@ -152,6 +151,12 @@ async function crearDesdeFormulario() {
 		if (grupo) await fila.locator('input').nth(1).fill(grupo);
 	};
 	for (const [indice, terminal] of TERMINALES.entries()) await configurarTerminal(indice, terminal);
+	await pagina.locator('[data-cp="siguiente"]').click();
+	await pagina.locator('[data-cp-campo="ancho"]').fill('75');
+	await pagina.locator('[data-cp-campo="alto"]').fill('110');
+	await pagina.locator('[data-cp-campo="fondo"]').fill('60');
+	await pagina.locator('[data-cp="siguiente"]').click();
+	await pagina.locator('[data-cp="siguiente"]').click();
 
 	await pagina.locator('[data-cp="validar"]').click();
 	await pagina.locator('[data-cp="errores"].cp-ok').waitFor();
