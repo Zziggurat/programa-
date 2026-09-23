@@ -82,6 +82,7 @@ import {
 import { longitudCoincidente3D } from './colisiones-cables.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
 import { GestorDocumentos, EstadoGuardadoDocumento } from './gestor-documentos.js';
+import { presentarEstadoDocumento, type FaseGuardado } from './estado-documento.js';
 import { instalarUIProyectos } from './ui-proyectos.js';
 import {
 	instalarUIComponentesPersonalizados, type PanelComponentesPersonalizados,
@@ -276,10 +277,10 @@ function recalcular(): void {
  * Estado del guardado. Antes el fallo se tragaba en silencio: si `localStorage` se llenaba
  * —un tablero grande más las plantillas propias caben de sobra en los ~5 MB de cupo— el
  * usuario seguía trabajando convencido de que estaba a salvo, y al cerrar lo perdía todo.
- * Ahora se dice, y además queda constancia de si hay cambios sin volcar a un archivo.
+ * Ahora se dice. La copia portátil se sigue por separado de la confirmación del guardado local.
  */
-type EstadoGuardado = 'guardando' | 'guardado' | 'sucio' | 'fallo';
-let estadoGuardado: EstadoGuardado = 'guardado';
+let estadoGuardado: FaseGuardado = 'guardado';
+let ultimoMotivoGuardado: string | undefined;
 /** True desde el primer cambio hasta que se descarga el proyecto como archivo. */
 let hayCambiosSinExportar = false;
 
@@ -292,9 +293,11 @@ let hayCambiosSinExportar = false;
 function pintarChipEjemplo(): void {
 	const chip = $('chip-ejemplo');
 	chip.hidden = !proyecto.esEjemplo;
+	($('nombre-proyecto') as HTMLInputElement).readOnly = !!proyecto.esEjemplo;
 	// En un ejemplo el estado del guardado no significa nada: no se guarda, y decir «Guardado»
 	// haría creer que el tablero de uno está a salvo cuando lo que está en pantalla es otro.
 	($('estado-guardado') as HTMLElement).hidden = !!proyecto.esEjemplo;
+	if (proyecto.esEjemplo) $('aviso-estado-documento').hidden = true;
 }
 
 /**
@@ -323,30 +326,69 @@ async function copiarEjemploParaTrabajar(): Promise<void> {
 }
 
 function pintarEstadoGuardado(motivo?: string): void {
+	if (estadoGuardado === 'fallo' && motivo) ultimoMotivoGuardado = motivo;
+	if (estadoGuardado !== 'fallo') ultimoMotivoGuardado = undefined;
+	const documento = gestorDocumentos?.documentoActivo();
+	const estado = presentarEstadoDocumento({
+		nombre: proyecto.nombre, id: documento?.id, revision: documento?.revision,
+		ejemplo: !!proyecto.esEjemplo,
+		// Con gestor, su estado de recuperación es la verdad. Sin él se conserva la protección
+		// del autosave legacy ilegible; `guardadoCongelado` solo no basta durante un montaje.
+		recuperacion: gestorDocumentos
+			? gestorDocumentos.estaEsperandoRecuperacion()
+			: guardadoCongelado && !!cargaInicial.problema?.crudo,
+		fase: estadoGuardado, motivo: ultimoMotivoGuardado,
+		puedeReintentar: !!gestorDocumentos,
+	});
 	const e = $('estado-guardado');
-	e.classList.toggle('sucio', estadoGuardado === 'sucio');
-	e.classList.toggle('fallo', estadoGuardado === 'fallo');
-	// Textos cortos y de largo parecido: este chip vive en la barra de herramientas y si crece
-	// al cambiar de estado empuja a los botones fuera de la pantalla. El detalle va en el tooltip.
-	e.textContent = estadoGuardado === 'fallo' ? 'Error al guardar'
-		: estadoGuardado === 'guardando' || estadoGuardado === 'sucio' ? 'Guardando…'
-			: 'Guardado localmente';
+	e.classList.toggle('sucio', estado.tono === 'pendiente');
+	e.classList.toggle('fallo', estado.tono === 'error');
+	// Texto compacto: la revisión confirmada queda visible y el detalle largo va en el tooltip.
+	e.textContent = estado.chip;
+	e.title = estado.detalle;
+	e.setAttribute('aria-label', estado.detalle);
+	const nombre = $('nombre-proyecto') as HTMLInputElement;
+	nombre.title = estado.detalle;
+	nombre.readOnly = !!proyecto.esEjemplo || !!(gestorDocumentos?.estaEsperandoRecuperacion());
+	nombre.setAttribute('aria-label', `${nombre.readOnly ? 'Nombre de tablero de solo lectura' : 'Nombre del tablero editable'}: ${proyecto.nombre}`);
+	const aviso = $('aviso-estado-documento');
+	aviso.hidden = !estado.aviso || !!proyecto.esEjemplo;
+	aviso.classList.toggle('recuperacion', estado.accion === 'recuperar');
+	$('aviso-estado-documento-texto').textContent = estado.aviso ?? '';
+	const boton = $('btn-accion-estado-documento') as HTMLButtonElement;
+	boton.hidden = !estado.accion || (estado.accion === 'recuperar' && !gestorDocumentos);
+	boton.textContent = estado.accion === 'recuperar' ? 'Abrir recuperación' : 'Reintentar guardado';
 	// El texto del chip cambia de ancho, así que puede ser justo lo que haga que los rótulos de
 	// los botones dejen de caber.
 	ajustarRotulosBarra();
-	e.title = estadoGuardado === 'fallo'
-		? `No se pudo guardar en el navegador${motivo ? ` (${motivo})` : ''}. `
-			+ 'Descarga el proyecto con Archivo → Guardar para no perderlo.'
-		: estadoGuardado === 'guardando' || estadoGuardado === 'sucio'
-			? 'Se está escribiendo una revisión local del tablero.'
-			: 'El trabajo está guardado localmente. Exportar crea una copia portátil aparte.';
 }
 
 function reflejarEstadoDocumental(estado: EstadoGuardadoDocumento): void {
+	// `inicializar` emite antes de que se publique el gestor. El repintado posterior cubre ese caso;
+	// un evento antiguo jamás debe rotular como guardado al documento nuevo o a un ejemplo.
+	if (!gestorDocumentos || estado.documentoId !== gestorDocumentos.documentoActivo()?.id) return;
 	estadoGuardado = estado.estado === 'guardando' ? 'guardando'
 		: estado.estado === 'guardado' ? 'guardado' : 'fallo';
 	pintarEstadoGuardado(estado.estado === 'error' ? nombreDeError(estado.error) : undefined);
 }
+
+($('btn-accion-estado-documento') as HTMLButtonElement).onclick = async () => {
+	const gestor = gestorDocumentos;
+	if (!gestor) return;
+	if (gestor.estaEsperandoRecuperacion()) {
+		($('btn-mis-tableros') as HTMLButtonElement).click();
+		return;
+	}
+	if (estadoGuardado !== 'fallo') return;
+	const boton = $('btn-accion-estado-documento') as HTMLButtonElement;
+	boton.disabled = true;
+	try { await gestor.reintentarGuardado(); }
+	catch (error) {
+		estadoGuardado = 'fallo';
+		pintarEstadoGuardado(nombreDeError(error));
+		avisar(`El guardado sigue fallando: ${nombreDeError(error)}`, 'error');
+	} finally { boton.disabled = false; }
+};
 
 function autoguardar(): void {
 	// Hay un proyecto guardado que no se ha podido leer. Hasta que el usuario diga qué hacer con
@@ -383,7 +425,9 @@ function autoguardar(): void {
 	try {
 		localStorage.setItem(CLAVE_AUTOSAVE, JSON.stringify(proyecto));
 		if (estadoGuardado === 'fallo') avisar('El guardado automático volvió a funcionar.', 'ok');
-		estadoGuardado = hayCambiosSinExportar ? 'sucio' : 'guardado';
+		// `hayCambiosSinExportar` no equivale a «sin guardar»: setItem acaba de confirmar
+		// el autoguardado local. La copia portátil tiene una condición separada.
+		estadoGuardado = 'guardado';
 		pintarEstadoGuardado();
 	} catch (e) {
 		const yaAvisado = estadoGuardado === 'fallo';
@@ -8281,6 +8325,8 @@ async function iniciarPersistenciaDocumental(): Promise<void> {
 		repositorioDocumentos = abierto.repositorio;
 		cerrarRepositorioDocumentos = abierto.cerrar;
 		gestorDocumentos = gestor;
+		estadoGuardado = 'guardado';
+		pintarEstadoGuardado();
 		panelDatosTecnicos?.destruir();
 		listarRevisionesTecnicas = () => abierto.datosTecnicos.listar();
 		panelDatosTecnicos = instalarUIDatosTecnicos({

@@ -17,7 +17,9 @@ import {
 } from '../src/componentes/perfiles-base.js';
 import type { TipoBorne, TipoDispositivo } from '../src/modelo/tipos.js';
 import { leerComportamientoSimulacion } from '../src/modelo/comportamiento.js';
-import type { ContenidoComponentePersonalizado, RepositorioProyectos } from '../src/persistencia/tipos.js';
+import { ComponentePersonalizadoDuplicado, type ContenidoComponentePersonalizado,
+	type RepositorioProyectos } from '../src/persistencia/tipos.js';
+import { abrirVentana, cerrarVentana, ventanaDeArriba } from './ventanas.js';
 
 const ID_RAIZ = 'ui-componentes-personalizados';
 const MIME_IMAGEN = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -69,6 +71,39 @@ interface EstadoEditor {
 }
 
 const clonar = <T>(valor: T): T => structuredClone(valor);
+const normalizarBusqueda = (valor: string): string => valor.normalize('NFD')
+	.replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').trim();
+
+export function filtrarComponentesBiblioteca(
+	componentes: readonly DefinicionComponentePersonalizado[], texto: string, perfil = '',
+): DefinicionComponentePersonalizado[] {
+	const palabras = normalizarBusqueda(texto).split(/\s+/).filter(Boolean);
+	return componentes.filter((d) => {
+		if (perfil && d.tipoDispositivo !== perfil) return false;
+		if (!palabras.length) return true;
+		const campos = [d.nombre, d.fabricante, d.referencia, d.descripcion, d.id,
+			d.tipoDispositivo, PERFILES_BASE[d.tipoDispositivo]?.nombre]
+			.filter((campo): campo is string => !!campo).map(normalizarBusqueda);
+		return palabras.every((palabra) => campos.some((campo) => campo.includes(palabra)));
+	});
+}
+
+/** Publica una carga asíncrona únicamente si la navegación que la solicitó sigue vigente. */
+export async function prepararEditorVigente<T>(
+	preparar: () => Promise<T>, vigente: () => boolean, publicar: (valor: T) => void,
+): Promise<boolean> {
+	const valor = await preparar();
+	if (!vigente()) return false;
+	publicar(valor);
+	return true;
+}
+
+export function mensajeErrorGuardado(error: unknown, persistido: boolean): string {
+	const detalle = error instanceof Error ? error.message : String(error);
+	return persistido
+		? `El componente se guardó, pero no se pudo actualizar la biblioteca: ${detalle}`
+		: `No se pudo guardar: ${detalle}`;
+}
 const esObjeto = (valor: unknown): valor is Record<string, unknown> =>
 	typeof valor === 'object' && valor !== null && !Array.isArray(valor);
 const el = <T extends HTMLElement>(raiz: ParentNode, selector: string): T => {
@@ -183,15 +218,37 @@ function parametrosDesde(d: DefinicionComponentePersonalizado): ParametrosConstr
 export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPersonalizados): PanelComponentesPersonalizados {
 	if (document.getElementById(ID_RAIZ)) throw new Error('La UI de Mis Componentes ya está instalada.');
 	const raiz = document.createElement('div'); raiz.id = ID_RAIZ; raiz.hidden = true;
-	raiz.innerHTML = '<section class="cp-ventana" role="dialog" aria-modal="true" aria-labelledby="cp-titulo">'
+	raiz.setAttribute('aria-labelledby', 'cp-titulo');
+	raiz.innerHTML = '<section class="cp-ventana">'
 		+ '<header><h2 id="cp-titulo">Mis Componentes</h2><button type="button" data-cp="cerrar" aria-label="Cerrar">✕</button></header>'
 		+ '<div class="cp-cuerpo"></div></section>';
 	document.body.appendChild(raiz);
 	const cuerpo = el<HTMLDivElement>(raiz, '.cp-cuerpo');
 	const urls = new Map<string, string>();
 	let editor: EstadoEditor | undefined;
+	let borrador: EstadoEditor | undefined;
+	let huellaInicial = '';
+	let busquedaBiblioteca = '';
+	let filtroPerfil = '';
+	let filtroTurno = 0;
+	let cargaImagen = 0;
+	let imagenPendiente: EstadoEditor | undefined;
+	let navegacionEditor = 0;
+	let guardando = false;
 	let urlTemporal: string | undefined;
 	let pintado = 0;
+	const huellaEditor = (e: EstadoEditor): string => JSON.stringify({
+		original: e.original && [e.original.id, e.original.revision], tipo: e.tipo,
+		datos: e.datos, terminales: e.terminales, parametros: e.parametros,
+		assetId: e.assetId, assetNuevo: e.assetBytes && [e.assetBytes.byteLength, e.assetMime, e.previewUrl],
+	});
+	const editorModificado = (): boolean => !!editor && (editor === imagenPendiente || huellaEditor(editor) !== huellaInicial);
+	const confirmarReemplazo = async (): Promise<boolean> => {
+		if (guardando) return false;
+		if (editor) capturarFormulario();
+		if (!borrador && !editorModificado()) return true;
+		return confirmar('Hay un componente sin guardar. ¿Descartar ese borrador para abrir otro?');
+	};
 
 	const mensaje = (texto: string, error = false) => {
 		const n = cuerpo.querySelector<HTMLElement>('[data-cp-estado]');
@@ -207,24 +264,76 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		urls.set(id, url); return url;
 	};
 
-	async function pintarBiblioteca(): Promise<void> {
-		editor = undefined; const turno = ++pintado;
+	async function pintarBiblioteca(desdeGuardado = false): Promise<void> {
+		if (guardando) return;
+		++navegacionEditor;
+		if (editor) {
+			capturarFormulario();
+			if (editorModificado()) borrador = editor;
+			editor = undefined;
+		}
+		const turno = ++pintado;
 		cuerpo.innerHTML = '<div class="cp-barra"><button class="primario" data-cp="nuevo">Nuevo componente</button>'
 			+ '<button data-cp="importar">Importar</button><input data-cp="archivo-importar" type="file" accept=".json,.tscomp" hidden>'
-			+ '<span class="estado" data-cp-estado>Cargando…</span></div><div class="cp-lista"></div>';
-		el<HTMLButtonElement>(cuerpo, '[data-cp="nuevo"]').onclick = () => abrirNuevo();
+			+ '<span class="estado" data-cp-estado role="status" aria-live="polite">Cargando…</span></div>'
+			+ '<div class="cp-filtros"><label>Buscar componente<input type="search" data-cp="buscar" placeholder="Nombre, referencia o familia" autocomplete="off"></label>'
+			+ '<label>Familia<select data-cp="perfil"></select></label></div>'
+			+ '<div data-cp="borrador"></div><div class="cp-lista"></div>';
+		el<HTMLButtonElement>(cuerpo, '[data-cp="nuevo"]').onclick = () => { void iniciarNuevo(); };
 		el<HTMLButtonElement>(cuerpo, '[data-cp="importar"]').onclick = () => el<HTMLInputElement>(cuerpo, '[data-cp="archivo-importar"]').click();
 		el<HTMLInputElement>(cuerpo, '[data-cp="archivo-importar"]').onchange = async (evento) => {
 			const input = evento.currentTarget as HTMLInputElement; const archivo = input.files?.[0]; input.value = '';
 			if (archivo) await importarComponente(archivo);
 		};
+		const buscar = el<HTMLInputElement>(cuerpo, '[data-cp="buscar"]'); buscar.value = busquedaBiblioteca;
+		const perfil = el<HTMLSelectElement>(cuerpo, '[data-cp="perfil"]');
+		perfil.appendChild(opcion('', 'Todas las familias'));
+		for (const p of LISTA_PERFILES_BASE) perfil.appendChild(opcion(p.id, p.nombre));
+		perfil.value = filtroPerfil;
+		const zonaBorrador = el<HTMLDivElement>(cuerpo, '[data-cp="borrador"]');
+		if (borrador) {
+			const aviso = document.createElement('div'); aviso.className = 'cp-borrador';
+			const nombre = document.createElement('span'); nombre.textContent = `Borrador sin guardar: ${borrador.datos.nombre.trim() || 'Componente nuevo'}`;
+			const continuar = document.createElement('button'); continuar.textContent = 'Continuar edición';
+			continuar.onclick = () => { ++navegacionEditor; editor = borrador; borrador = undefined; pintarEditor(); };
+			const descartar = document.createElement('button'); descartar.textContent = 'Descartar borrador'; descartar.className = 'peligro';
+			descartar.onclick = async () => {
+				if (!await confirmar('¿Descartar el componente sin guardar?')) return;
+				if (borrador?.previewUrl === urlTemporal && urlTemporal) {
+					URL.revokeObjectURL(urlTemporal); urlTemporal = undefined;
+				}
+				borrador = undefined; zonaBorrador.replaceChildren();
+			};
+			aviso.append(nombre, continuar, descartar); zonaBorrador.appendChild(aviso);
+		}
 		try {
 			const componentes = await ctx.repositorio.listarComponentes(); if (turno !== pintado) return;
-			const lista = el<HTMLDivElement>(cuerpo, '.cp-lista'); lista.innerHTML = '';
-			if (!componentes.length) { lista.innerHTML = '<p class="cp-vacio">Aún no hay componentes personales.</p>'; mensaje('0 componentes'); return; }
-			for (const d of componentes) lista.appendChild(await tarjetaComponente(d));
-			mensaje(`${componentes.length} componente${componentes.length === 1 ? '' : 's'}`);
-		} catch (e) { mensaje(`No se pudo abrir la biblioteca: ${(e as Error).message}`, true); }
+			const lista = el<HTMLDivElement>(cuerpo, '.cp-lista');
+			const filtrar = async () => {
+				const filtroActual = ++filtroTurno;
+				const visibles = filtrarComponentesBiblioteca(componentes, busquedaBiblioteca, filtroPerfil);
+				lista.replaceChildren();
+				if (!visibles.length) {
+					const vacio = document.createElement('p'); vacio.className = 'cp-vacio';
+					vacio.textContent = componentes.length ? 'No hay componentes que coincidan con la búsqueda.' : 'Aún no hay componentes personales.';
+					lista.appendChild(vacio);
+				}
+				for (const d of visibles) {
+					const tarjeta = await tarjetaComponente(d);
+					if (turno !== pintado || filtroActual !== filtroTurno) return;
+					lista.appendChild(tarjeta);
+				}
+				mensaje(busquedaBiblioteca.trim() || filtroPerfil
+					? `${visibles.length} de ${componentes.length} componentes`
+					: `${componentes.length} componente${componentes.length === 1 ? '' : 's'}`);
+			};
+			buscar.oninput = () => { busquedaBiblioteca = buscar.value; void filtrar(); };
+			perfil.onchange = () => { filtroPerfil = perfil.value; void filtrar(); };
+			await filtrar();
+		} catch (e) {
+			mensaje(desdeGuardado ? mensajeErrorGuardado(e, true)
+				: `No se pudo abrir la biblioteca: ${(e as Error).message}`, true);
+		}
 	}
 
 	async function tarjetaComponente(d: DefinicionComponentePersonalizado): Promise<HTMLElement> {
@@ -255,25 +364,40 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		editor = {
 			tipo: 'contactor', datos: { nombre: '', fabricante: '', referencia: '', descripcion: '', anchoMm: 45, altoMm: 80, fondoMm: 60 },
 			terminales: [], parametros: {},
-		}; pintarEditor();
+		}; huellaInicial = huellaEditor(editor); pintarEditor();
+	}
+
+	async function iniciarNuevo(): Promise<void> {
+		const turno = ++navegacionEditor;
+		if (!await confirmarReemplazo() || turno !== navegacionEditor) return;
+		borrador = undefined; abrirNuevo();
 	}
 
 	async function abrirEdicion(d: DefinicionComponentePersonalizado): Promise<void> {
-		editor = {
-			original: clonar(d), tipo: d.tipoDispositivo, datos: {
-				nombre: d.nombre, fabricante: d.fabricante ?? '', referencia: d.referencia ?? '', descripcion: d.descripcion ?? '',
-				anchoMm: d.dimensiones.anchoMm, altoMm: d.dimensiones.altoMm, fondoMm: d.dimensiones.fondoMm,
-			},
-			terminales: rolesDesdeComportamiento(d.terminales, d.comportamiento), parametros: parametrosDesde(d),
-			assetId: d.assetId, previewUrl: await urlAsset(d.assetId),
-		};
-		pintarEditor();
+		const turno = ++navegacionEditor;
+		if (!await confirmarReemplazo() || turno !== navegacionEditor) return;
+		await prepararEditorVigente(() => urlAsset(d.assetId), () => turno === navegacionEditor, (previewUrl) => {
+			// Nada que pueda fallar antes de aquí debe descartar el borrador anterior.
+			const siguiente: EstadoEditor = {
+				original: clonar(d), tipo: d.tipoDispositivo, datos: {
+					nombre: d.nombre, fabricante: d.fabricante ?? '', referencia: d.referencia ?? '', descripcion: d.descripcion ?? '',
+					anchoMm: d.dimensiones.anchoMm, altoMm: d.dimensiones.altoMm, fondoMm: d.dimensiones.fondoMm,
+				},
+				terminales: rolesDesdeComportamiento(d.terminales, d.comportamiento), parametros: parametrosDesde(d),
+				assetId: d.assetId, previewUrl,
+			};
+			if (urlTemporal) { URL.revokeObjectURL(urlTemporal); urlTemporal = undefined; }
+			borrador = undefined;
+			editor = siguiente;
+			huellaInicial = huellaEditor(siguiente);
+			pintarEditor();
+		});
 	}
 
 	function pintarEditor(): void {
 		if (!editor) return; ++pintado;
 		cuerpo.innerHTML = '<div class="cp-barra"><button data-cp="volver">← Biblioteca</button>'
-			+ `<strong>${editor.original ? 'Editar componente' : 'Nuevo componente'}</strong><span class="estado" data-cp-estado></span></div>`
+			+ `<strong>${editor.original ? 'Editar componente' : 'Nuevo componente'}</strong><span class="estado" data-cp-estado role="status" aria-live="polite"></span></div>`
 			+ '<div class="cp-editor"><div><section class="cp-panel"><h3>Identidad e imagen</h3><div class="cp-campos">'
 			+ '<label>Nombre<input data-cp-campo="nombre"></label><label>Perfil<select data-cp-campo="tipo"></select></label>'
 			+ '<label>Fabricante<input data-cp-campo="fabricante"></label><label>Referencia<input data-cp-campo="referencia"></label>'
@@ -430,30 +554,63 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	}
 
 	async function cargarImagen(archivo: File | undefined): Promise<void> {
-		if (!editor || !archivo) return;
+		if (!editor || !archivo || guardando) return;
 		if (!MIME_IMAGEN.has(archivo.type)) { mensaje('Solo se admiten PNG, JPEG y WebP.', true); return; }
 		if (archivo.size === 0) { mensaje('La imagen está vacía.', true); return; }
-		if (urlTemporal) URL.revokeObjectURL(urlTemporal);
-		editor.assetBytes = new Uint8Array(await archivo.arrayBuffer()); editor.assetMime = archivo.type;
-		urlTemporal = URL.createObjectURL(archivo); editor.previewUrl = urlTemporal; pintarPreview();
+		const destino = editor; const turno = ++cargaImagen;
+		imagenPendiente = destino;
+		try {
+			const bytes = new Uint8Array(await archivo.arrayBuffer());
+			// Volver a la biblioteca conserva el mismo objeto como borrador. La lectura pendiente no
+			// debe perderse ni publicarse sobre otra edición abierta mientras tanto.
+			if (turno !== cargaImagen || (editor !== destino && borrador !== destino)) return;
+			const preview = URL.createObjectURL(archivo);
+			if (urlTemporal) URL.revokeObjectURL(urlTemporal);
+			urlTemporal = preview; destino.assetBytes = bytes; destino.assetMime = archivo.type;
+			destino.previewUrl = preview;
+			if (editor === destino) pintarPreview();
+		} catch (error) {
+			if (turno === cargaImagen && (editor === destino || borrador === destino)) {
+				mensaje(`No se pudo leer la imagen: ${(error as Error).message}`, true);
+			}
+		} finally {
+			if (turno === cargaImagen && imagenPendiente === destino) imagenPendiente = undefined;
+		}
 	}
 
 	async function guardarDesdeFormulario(): Promise<void> {
-		if (!editor) return; const preliminar = validarDesdeFormulario(true); if (!preliminar) return;
-		const boton = el<HTMLButtonElement>(cuerpo, '[data-cp="guardar"]'); boton.disabled = true;
+		if (!editor || guardando) return; const preliminar = validarDesdeFormulario(true); if (!preliminar) return;
+		const destino = editor;
+		let persistido = false;
+		const controles = [...cuerpo.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>('input,select,textarea,button')]
+			.map((control) => ({ control, disabled: control.disabled }));
+		guardando = true;
+		for (const { control } of controles) control.disabled = true;
 		try {
 			let assetId = editor.assetId;
 			if (editor.assetBytes && editor.assetMime) assetId = (await ctx.repositorio.guardarAsset(editor.assetMime, editor.assetBytes)).id;
+			if (editor !== destino) throw new Error('La edición cambió durante el guardado. Vuelve a intentarlo.');
 			if (!assetId) throw new Error('Falta cargar una imagen.');
 			const { definicion, errores } = datosFormulario(assetId); if (errores.length) throw new Error(errores.join('; '));
-			const guardado = editor.original
-				? await ctx.repositorio.actualizarComponente(editor.original.id, { revisionEsperada: editor.original.revision, definicion: contenidoDe(definicion) })
-				: await ctx.repositorio.crearComponente({ definicion: contenidoDe(definicion) });
-			editor.original = clonar(guardado); editor.assetId = guardado.assetId; editor.assetBytes = undefined; editor.assetMime = undefined;
-			await pintarBiblioteca();
+			if (editor.original) {
+				await ctx.repositorio.actualizarComponente(editor.original.id, {
+					revisionEsperada: editor.original.revision, definicion: contenidoDe(definicion),
+				});
+			} else await ctx.repositorio.crearComponente({ definicion: contenidoDe(definicion) });
+			persistido = true;
+			editor = undefined; borrador = undefined;
+			if (urlTemporal) { URL.revokeObjectURL(urlTemporal); urlTemporal = undefined; }
+			guardando = false;
+			await pintarBiblioteca(true);
 		} catch (e) {
-			const caja = el<HTMLElement>(cuerpo, '[data-cp="errores"]'); caja.classList.remove('cp-ok'); caja.textContent = `No se pudo guardar: ${(e as Error).message}`;
-		} finally { if (boton.isConnected) boton.disabled = false; }
+			const caja = cuerpo.querySelector<HTMLElement>('[data-cp="errores"], [data-cp-estado]');
+			const texto = mensajeErrorGuardado(e, persistido);
+			if (caja) { caja.classList.remove('cp-ok'); caja.textContent = texto; }
+			else cuerpo.textContent = texto;
+		} finally {
+			guardando = false;
+			for (const { control, disabled } of controles) if (control.isConnected) control.disabled = disabled;
+		}
 	}
 
 	async function exportarComponente(d: DefinicionComponentePersonalizado): Promise<void> {
@@ -470,26 +627,49 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		try {
 			const p = leerArchivoComponentePortatil(JSON.parse(await archivo.text()));
 			if (!MIME_IMAGEN.has(p.asset.mime) || p.asset.id !== p.definicion.assetId) throw new Error('El asset no corresponde a la definición.');
-			const guardado = await ctx.repositorio.guardarAsset(p.asset.mime, base64ABytes(p.asset.base64));
-			if (guardado.id !== p.asset.id) throw new Error('La huella SHA-256 del asset no coincide.');
-			try { await ctx.repositorio.crearComponente({ id: p.definicion.id, definicion: contenidoDe(p.definicion) }); }
+			const asset = { id: p.asset.id, mime: p.asset.mime, bytes: base64ABytes(p.asset.base64) };
+			let comoCopia = false;
+			try { await ctx.repositorio.importarComponenteConAsset({
+				id: p.definicion.id, definicion: contenidoDe(p.definicion), asset,
+			}); }
 			catch (e) {
-				if (!await confirmar('Ya existe esa identidad o no puede importarse. ¿Crear una copia con identidad nueva?')) throw e;
-				await ctx.repositorio.crearComponente({ definicion: { ...contenidoDe(p.definicion), nombre: `${p.definicion.nombre} (importado)` } });
+				if (!(e instanceof ComponentePersonalizadoDuplicado)) throw e;
+				if (!await confirmar('Esa identidad pertenece a una definición existente o archivada. ¿Importar una copia con identidad nueva?')) {
+					mensaje('Importación cancelada; no se guardó la imagen.');
+					return;
+				}
+				await ctx.repositorio.importarComponenteConAsset({
+					definicion: { ...contenidoDe(p.definicion), nombre: `${p.definicion.nombre} (importado)` }, asset,
+				});
+				comoCopia = true;
 			}
-			await pintarBiblioteca(); mensaje('Componente importado.');
+			await pintarBiblioteca();
+			const procedencia = p.definicion.revision > 1
+				? ` El archivo era r${p.definicion.revision}; se creó r1 local sin importar su historial anterior.` : '';
+			mensaje(`Componente importado${comoCopia ? ' como copia de identidad nueva' : ''}.${procedencia}`);
 		} catch (e) { mensaje(`No se pudo importar: ${(e as Error).message}`, true); }
 	}
 
-	function cerrar(): void { raiz.hidden = true; }
+	// El gestor comparte inercia, foco y Escape con el resto de ventanas. Sin él, los atajos del
+	// editor seguían actuando sobre el tablero invisible y la confirmación quedaba detrás del panel.
+	const bloquearAtajosDelFondo = (evento: KeyboardEvent): void => {
+		if (ventanaDeArriba() === ID_RAIZ) evento.stopPropagation();
+	};
+	document.addEventListener('keydown', bloquearAtajosDelFondo);
+	const abrirPanel = (): void => abrirVentana(ID_RAIZ, {
+		// Escape, botón y cierre programático comparten la misma captura: no se pierde el borrador.
+		alCerrar: () => { if (editor) capturarFormulario(); },
+	});
+	function cerrar(): void { cerrarVentana(ID_RAIZ); }
 	raiz.querySelector<HTMLButtonElement>('[data-cp="cerrar"]')!.onclick = cerrar;
 	raiz.addEventListener('click', (e) => { if (e.target === raiz) cerrar(); });
 
 	return {
-		abrir: async () => { raiz.hidden = false; await pintarBiblioteca(); },
-		nuevo: () => { raiz.hidden = false; abrirNuevo(); },
+		abrir: async () => { abrirPanel(); if (!editor) await pintarBiblioteca(); },
+		nuevo: () => { abrirPanel(); void iniciarNuevo(); },
 		refrescar: pintarBiblioteca, cerrar,
 		destruir: () => {
+			cerrar(); document.removeEventListener('keydown', bloquearAtajosDelFondo);
 			if (urlTemporal) URL.revokeObjectURL(urlTemporal); for (const url of urls.values()) URL.revokeObjectURL(url);
 			urls.clear(); raiz.remove();
 		},

@@ -92,7 +92,14 @@ function alTabular(ev: KeyboardEvent): void {
 	if (!id) return;
 	const caja = document.getElementById(id);
 	if (!caja) return;
-	if (ev.key === 'Escape') { ev.preventDefault(); cerrarVentana(id); return; }
+	if (ev.key === 'Escape') {
+		ev.preventDefault();
+		// La tecla pertenece a la ventana de arriba: no debe seguir hasta los atajos globales del
+		// editor después de cerrarla (ni cerrar una segunda ventana en la misma pulsación).
+		ev.stopPropagation();
+		cerrarVentana(id);
+		return;
+	}
 	if (ev.key !== 'Tab') return;
 	const lista = enfocables(caja);
 	if (lista.length === 0) return;

@@ -251,6 +251,20 @@
 	#estado-guardado.sucio::before { color: var(--aviso); }
 	#estado-guardado.fallo { color: var(--error); border-color: #6b3232; background: #2a1c1c; }
 	#estado-guardado.fallo::before { color: var(--error); }
+	#aviso-estado-documento {
+		position: fixed; top: 52px; left: 12px; z-index: 39;
+		max-width: min(720px, calc(100vw - 24px)); padding: 11px 13px;
+		display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+		background: #2a1c1c; border: 1px solid #7b4141; border-radius: 10px;
+		box-shadow: 0 12px 32px #0008; color: var(--texto); font-size: 12px; line-height: 1.45;
+	}
+	#aviso-estado-documento.recuperacion { background: #30261c; border-color: #8d6635; }
+	#aviso-estado-documento-texto { flex: 1 1 300px; }
+	#aviso-estado-documento button { flex: none; padding: 5px 10px; border-radius: 6px;
+		border: 1px solid currentColor; background: transparent; color: inherit; }
+	#aviso-estado-documento button:hover, #aviso-estado-documento button:focus-visible {
+		background: #fff2; outline: 2px solid var(--acento); outline-offset: 1px;
+	}
 	#nombre-proyecto {
 		background: transparent; border: 1px solid transparent; border-radius: 7px;
 		color: var(--texto); padding: 5px 8px;
@@ -311,7 +325,10 @@
 	#barra.apretada .boton { padding: 6px 9px; }
 	#barra.apretada #nombre-proyecto { flex: 1 1 90px; max-width: 170px; }
 	#barra.apretada #estado-guardado { padding: 3px 6px; }
-	#barra.minima .marca span, #barra.minima #estado-guardado, #barra.minima .sep { display: none; }
+	#barra.minima .marca span, #barra.minima .sep { display: none; }
+	/* En la barra mínima se conserva el punto de estado y su nombre accesible. */
+	#barra.minima #estado-guardado { width: 20px; height: 20px; padding: 0;
+		font-size: 0; justify-content: center; flex: 0 0 20px; }
 	#barra.minima { gap: 3px; padding: 0 6px; }
 	#barra.minima .boton { padding: 5px 7px; }
 	#barra.minima #nombre-proyecto { max-width: 120px; }
@@ -1134,12 +1151,14 @@
 
 	/* Mis Componentes vive en el DOM dinámico, pero su CSS forma parte de la hoja fuente. Así el
 	   HTML offline puede mantener una CSP por hash sin autorizar hojas inline creadas en runtime. */
-	#ui-componentes-personalizados[hidden]{display:none!important}#ui-componentes-personalizados{position:fixed;inset:0;z-index:12000;background:#08111dcc;display:grid;place-items:center;font:14px/1.4 system-ui,sans-serif;color:#eaf1f8}
+	#ui-componentes-personalizados[hidden]{display:none!important}#ui-componentes-personalizados{position:fixed;inset:0;z-index:calc(var(--capa-dialogo) - 1);background:#08111dcc;display:grid;place-items:center;font:14px/1.4 system-ui,sans-serif;color:#eaf1f8}
 	#ui-componentes-personalizados *{box-sizing:border-box}#ui-componentes-personalizados .cp-ventana{width:min(1180px,96vw);height:min(820px,94vh);background:#111c29;border:1px solid #38506a;border-radius:12px;box-shadow:0 24px 80px #000a;display:flex;flex-direction:column;overflow:hidden}
 	#ui-componentes-personalizados header{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #2e4054;background:#162536}#ui-componentes-personalizados header h2{font-size:18px;margin:0;flex:1}
 	#ui-componentes-personalizados button,#ui-componentes-personalizados input,#ui-componentes-personalizados select,#ui-componentes-personalizados textarea{font:inherit}#ui-componentes-personalizados button{border:1px solid #526d89;background:#21364b;color:#f2f7fb;border-radius:6px;padding:7px 11px;cursor:pointer}#ui-componentes-personalizados button:hover{background:#2a4662}#ui-componentes-personalizados button:disabled{opacity:.45;cursor:default}#ui-componentes-personalizados .primario{background:#176eae;border-color:#3ca0e9}#ui-componentes-personalizados .peligro{color:#ffb9b9;border-color:#a14a4a}
 	#ui-componentes-personalizados .cp-cuerpo{flex:1;min-height:0;overflow:auto;padding:16px}#ui-componentes-personalizados .cp-barra{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}#ui-componentes-personalizados .cp-barra .estado{margin-left:auto;color:#aac0d4}
-	#ui-componentes-personalizados .cp-lista{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}#ui-componentes-personalizados .cp-tarjeta{border:1px solid #30475e;background:#152334;border-radius:9px;padding:12px;display:grid;grid-template-columns:72px 1fr;gap:10px}#ui-componentes-personalizados .cp-tarjeta img{width:72px;height:72px;object-fit:contain;background:#e8edf2;border-radius:5px}#ui-componentes-personalizados .cp-tarjeta h3{font-size:15px;margin:0 0 3px}#ui-componentes-personalizados .cp-tarjeta p{margin:2px 0;color:#aebfd0;font-size:12px}#ui-componentes-personalizados .cp-acciones{grid-column:1/-1;display:flex;gap:5px;flex-wrap:wrap}#ui-componentes-personalizados .cp-vacio{color:#aebfd0;text-align:center;padding:50px}
+	#ui-componentes-personalizados .cp-filtros{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:0 0 14px}#ui-componentes-personalizados .cp-filtros label{min-width:min(250px,100%);flex:1}#ui-componentes-personalizados .cp-filtros label+label{flex:0 1 250px}
+	#ui-componentes-personalizados .cp-borrador{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;margin-bottom:14px;border:1px solid #8d6e3f;border-radius:8px;background:#29241c;color:#f4dbaf}#ui-componentes-personalizados .cp-borrador span{flex:1;min-width:190px}
+	#ui-componentes-personalizados .cp-lista{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}#ui-componentes-personalizados .cp-tarjeta{border:1px solid #30475e;background:#152334;border-radius:9px;padding:12px;display:grid;grid-template-columns:72px 1fr;gap:10px}#ui-componentes-personalizados .cp-tarjeta img{width:72px;height:72px;object-fit:contain;background:#e8edf2;border-radius:5px}#ui-componentes-personalizados .cp-tarjeta h3{font-size:15px;margin:0 0 3px}#ui-componentes-personalizados .cp-tarjeta p{margin:2px 0;color:#aebfd0;font-size:12px}#ui-componentes-personalizados .cp-acciones{grid-column:1/-1;display:flex;gap:5px;flex-wrap:wrap}#ui-componentes-personalizados .cp-vacio{grid-column:1/-1;color:#aebfd0;text-align:center;padding:50px}
 	#ui-componentes-personalizados .cp-editor{display:grid;grid-template-columns:minmax(310px,42%) 1fr;gap:16px;min-height:0}#ui-componentes-personalizados .cp-panel{border:1px solid #30475e;border-radius:8px;padding:12px;background:#132130;min-width:0}#ui-componentes-personalizados .cp-panel h3{margin:0 0 10px;font-size:15px}#ui-componentes-personalizados label{display:grid;gap:4px;color:#c1d0de}#ui-componentes-personalizados input,#ui-componentes-personalizados select,#ui-componentes-personalizados textarea{width:100%;background:#0b1520;color:#eef5fb;border:1px solid #405a74;border-radius:5px;padding:7px}#ui-componentes-personalizados textarea{min-height:70px;resize:vertical}#ui-componentes-personalizados .cp-campos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-bottom:12px}
 	#ui-componentes-personalizados .cp-preview{position:relative;display:inline-block;max-width:100%;background:#e9eef2;border:1px dashed #698097;border-radius:6px;min-width:240px;min-height:180px;cursor:crosshair;vertical-align:top}#ui-componentes-personalizados .cp-preview img{display:block;max-width:100%;max-height:330px;min-width:240px;min-height:180px;object-fit:contain}#ui-componentes-personalizados .cp-marca{position:absolute;width:14px;height:14px;border-radius:50%;background:#ffbf32;border:2px solid #17212b;transform:translate(-50%,-50%);pointer-events:none}#ui-componentes-personalizados .cp-marca span{position:absolute;left:10px;top:-8px;background:#101a25e8;color:white;padding:1px 4px;border-radius:3px;font-size:10px;white-space:nowrap}
 	#ui-componentes-personalizados table{width:100%;border-collapse:collapse;font-size:12px}#ui-componentes-personalizados th,#ui-componentes-personalizados td{border-bottom:1px solid #2d4257;padding:5px;text-align:left}#ui-componentes-personalizados td input,#ui-componentes-personalizados td select{padding:5px;min-width:70px}#ui-componentes-personalizados .cp-scroll{overflow:auto;max-height:315px}#ui-componentes-personalizados .cp-sugerencias{margin:10px 0;padding:9px;background:#0d1824;border-radius:6px;color:#b9cad9;font-size:12px}#ui-componentes-personalizados .cp-sugerencias ul{margin:6px 0 0;padding-left:18px}#ui-componentes-personalizados .cp-fidelidad{padding:8px;border-left:3px solid #d89b3c;background:#241f18;color:#e8d8bb;margin:8px 0;font-size:12px}#ui-componentes-personalizados .cp-errores{white-space:pre-wrap;padding:9px;border-radius:6px;background:#2a171b;color:#ffb9c0;min-height:38px}#ui-componentes-personalizados .cp-ok{background:#13281e;color:#aee9c4}#ui-componentes-personalizados .cp-pie{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
@@ -1185,6 +1204,12 @@
 		background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); width: 30px;
 		height: 30px; border-radius: 8px; cursor: pointer; }
 	.acciones-biblioteca { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 20px; }
+	.filtro-tableros { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px; }
+	.filtro-tableros label { color:var(--texto-suave); font-size:13px; font-weight:600; }
+	.filtro-tableros input { flex:1 1 220px; min-width:0; padding:8px 10px; border:1px solid var(--borde);
+		border-radius:8px; background:var(--panel-2); color:var(--texto); font:inherit; }
+	.filtro-tableros input:focus-visible { outline:2px solid var(--acento); outline-offset:2px; }
+	.filtro-tableros .contador { color:var(--texto-suave); font-size:12px; white-space:nowrap; }
 	.rejilla-documentos { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
 	.tarjeta-documento { border:1px solid var(--borde); background:var(--panel-2); border-radius:10px; padding:12px; }
 	.tarjeta-documento.activo { border-color:#4b9bd8; box-shadow:inset 0 0 0 1px #4b9bd866; }
@@ -1341,7 +1366,7 @@
 <header id="barra">
 	<button class="marca" id="btn-inicio" title="Volver a la ventana de inicio">⚡ Tablero<span>Studio</span></button>
 	<input id="nombre-proyecto" title="Nombre del proyecto">
-	<span id="estado-guardado" title="Estado del guardado automático">Guardado</span>
+	<span id="estado-guardado" role="status" aria-live="polite" title="Estado del guardado automático">Guardado</span>
 	<span id="chip-ejemplo" hidden>📚 Ejemplo — solo lectura
 		<button id="btn-volver-tablero" title="Cerrar el ejemplo y volver al último tablero guardado">Volver a mi tablero</button>
 		<button id="btn-copiar-ejemplo" title="Crea un tablero tuyo, igual a este, que sí puedes modificar y se guarda con tu trabajo">Hacer una copia para trabajar</button>
@@ -1402,6 +1427,11 @@
 	<button class="boton" id="btn-planta" aria-label="Abrir el visor 3D de la planta" title="Visor 3D de la planta: recorrer la cubierta del aeropuerto con sus UMAs, conductos y puntos de control del BMS">🏗️<span class="rotulo-boton">Planta 3D</span></button>
 	<button class="boton primario" id="btn-pdf" aria-label="Ver y editar el dossier antes de exportarlo" title="Ver el dossier antes de descargarlo: se puede quitar apartados y añadir textos e imágenes">📄<span class="rotulo-boton">Ver</span> dossier</button>
 </header>
+
+<div id="aviso-estado-documento" role="alert" hidden>
+	<span id="aviso-estado-documento-texto"></span>
+	<button id="btn-accion-estado-documento" type="button" hidden></button>
+</div>
 
 <!--
 	EL RAIL DE HERRAMIENTAS: QUÉ QUIERO HACER.
@@ -1784,8 +1814,15 @@
 			<button class="boton" id="btn-ejemplos-biblioteca">📚 Abrir ejemplos</button>
 			<input id="archivo-importar-biblioteca" type="file" accept=".json,.tablero" hidden>
 		</div>
+		<p id="error-mis-tableros" class="error-biblioteca" role="alert" hidden></p>
 		<section aria-labelledby="titulo-mis-tableros">
 			<h3 id="titulo-mis-tableros">Mis tableros</h3>
+			<div class="filtro-tableros">
+				<label for="buscar-mis-tableros">Buscar tableros</label>
+				<input id="buscar-mis-tableros" type="search" placeholder="Nombre, ID o revisión (r2)" autocomplete="off"
+					aria-controls="lista-mis-tableros">
+				<span id="contador-mis-tableros" class="contador" role="status" aria-live="polite" aria-atomic="true"></span>
+			</div>
 			<div id="lista-mis-tableros" class="rejilla-documentos"></div>
 		</section>
 		<details class="recuperacion-biblioteca">

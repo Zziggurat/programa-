@@ -1,6 +1,8 @@
 /** UI de biblioteca documental. No conoce IndexedDB, el renderer ni el proyecto global. */
 import type { GestorDocumentos } from './gestor-documentos.js';
-import type { RecuperacionLegacy } from '../src/persistencia/tipos.js';
+import type { RecuperacionLegacy, ResumenProyecto } from '../src/persistencia/tipos.js';
+import { filtrarTableros } from './busqueda-proyectos.js';
+import { ejecutarAccionBiblioteca } from './acciones-biblioteca.js';
 import { avisar, confirmar, descargar, escaparHtml, pedirTexto } from './dialogos.js';
 import { abrirVentana, cerrarVentana } from './ventanas.js';
 
@@ -25,18 +27,35 @@ const fecha = (iso: string): string => new Intl.DateTimeFormat(undefined, {
 
 export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 	const lista = $('lista-mis-tableros');
+	const errorBiblioteca = $('error-mis-tableros');
+	const busqueda = $('buscar-mis-tableros') as HTMLInputElement;
+	const contador = $('contador-mis-tableros');
 	const recuperacion = $('lista-recuperacion');
 	const recuperacionLegacy = $('lista-recuperacion-legacy');
 	const archivo = $('archivo-importar-biblioteca') as HTMLInputElement;
 	let pintando = 0;
+	let documentosCache: ResumenProyecto[] = [];
+	let cacheCargado = false;
+	function limpiarError(): void { errorBiblioteca.hidden = true; errorBiblioteca.textContent = ''; }
+	function mostrarError(error: unknown): void {
+		const detalle = error instanceof Error ? error.message : String(error);
+		errorBiblioteca.textContent = `No se pudo confirmar el resultado en Mis tableros: ${detalle}. `
+			+ 'Cierra y vuelve a abrir la lista antes de repetir la acción para evitar duplicados.';
+		errorBiblioteca.hidden = false;
+	}
 
-	async function pintar(): Promise<void> {
-		const turno = ++pintando;
+	function pintarDocumentos(): void {
 		const activo = ctx.gestor.documentoActivo();
 		const esperandoRecuperacion = ctx.gestor.estaEsperandoRecuperacion();
-		const documentos = await ctx.gestor.listar();
-		if (turno !== pintando) return;
-		lista.innerHTML = documentos.length ? '' : '<p class="vacio-biblioteca">Todavía no hay tableros guardados.</p>';
+		const documentos = filtrarTableros(documentosCache, busqueda.value);
+		contador.textContent = busqueda.value.trim()
+			? `${documentos.length} de ${documentosCache.length} tableros`
+			: `${documentosCache.length} tablero${documentosCache.length === 1 ? '' : 's'}`;
+		lista.innerHTML = !documentosCache.length
+			? '<p class="vacio-biblioteca">Todavía no hay tableros guardados.</p>'
+			: !documentos.length
+				? '<p class="vacio-biblioteca">No hay tableros que coincidan. Prueba con otro nombre, ID o revisión.</p>'
+				: '';
 		for (const d of documentos) {
 			const tarjeta = document.createElement('article');
 			tarjeta.className = `tarjeta-documento${d.id === activo?.id ? ' activo' : ''}`;
@@ -50,7 +69,11 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 			const acciones = tarjeta.querySelector('.acciones-documento')!;
 			const boton = (texto: string, titulo: string, accion: () => Promise<void>) => {
 				const b = document.createElement('button'); b.className = 'boton'; b.textContent = texto; b.title = titulo;
-				b.onclick = async () => { b.disabled = true; try { await accion(); } finally { b.disabled = false; } };
+				b.onclick = async () => {
+					b.disabled = true;
+					try { if (await ejecutarAccionBiblioteca(accion, mostrarError)) limpiarError(); }
+					finally { b.disabled = false; }
+				};
 				if (esperandoRecuperacion) b.disabled = true;
 				acciones.appendChild(b); return b;
 			};
@@ -89,6 +112,17 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 			borrar.classList.add('peligro');
 			lista.appendChild(tarjeta);
 		}
+	}
+
+	async function pintar(): Promise<void> {
+		const turno = ++pintando;
+		const activo = ctx.gestor.documentoActivo();
+		const esperandoRecuperacion = ctx.gestor.estaEsperandoRecuperacion();
+		const documentos = await ctx.gestor.listar();
+		if (turno !== pintando) return;
+		documentosCache = documentos;
+		cacheCargado = true;
+		pintarDocumentos();
 
 		recuperacion.innerHTML = esperandoRecuperacion
 			? '<p class="error-biblioteca">El proyecto activo no se puede leer. Elige una versión válida para recuperarlo; el registro dañado no se modificará hasta que confirmes.</p>'
@@ -102,11 +136,16 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 			fila.innerHTML = `<span>${escaparHtml(fecha(s.creadoEn))} · r${s.revisionOrigen}</span>`;
 			const b = document.createElement('button'); b.className = 'boton'; b.textContent = 'Restaurar';
 			b.onclick = async () => {
-				if (!await confirmar('¿Restaurar esta versión? La versión actual se conservará como recuperación.', {
-					ok: 'Restaurar', peligro: true,
-				})) return;
-				await ctx.gestor.restaurarSnapshot(s.id); cerrarVentana('modal-tableros');
-				avisar('Versión recuperada; la anterior también quedó guardada.', 'ok');
+				b.disabled = true;
+				try {
+					if (await ejecutarAccionBiblioteca(async () => {
+						if (!await confirmar('¿Restaurar esta versión? La versión actual se conservará como recuperación.', {
+							ok: 'Restaurar', peligro: true,
+						})) return;
+						await ctx.gestor.restaurarSnapshot(s.id); cerrarVentana('modal-tableros');
+						avisar('Versión recuperada; la anterior también quedó guardada.', 'ok');
+					}, mostrarError)) limpiarError();
+				} finally { b.disabled = false; }
 			};
 			fila.appendChild(b); recuperacion.appendChild(fila);
 		}
@@ -129,12 +168,18 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 
 	async function abrir(): Promise<void> {
 		abrirVentana('modal-tableros');
+		limpiarError();
+		busqueda.value = '';
+		cacheCargado = false;
+		contador.textContent = 'Cargando tableros…';
 		lista.innerHTML = '<p class="vacio-biblioteca">Cargando tableros…</p>';
 		try { await pintar(); } catch (e) {
+			contador.textContent = 'No se pudo cargar la lista';
 			lista.innerHTML = `<p class="error-biblioteca">No se pudo abrir la biblioteca: ${escaparHtml((e as Error).message)}</p>`;
 		}
 	}
 
+	busqueda.addEventListener('input', () => { if (cacheCargado) pintarDocumentos(); });
 	$('btn-cerrar-tableros').onclick = () => cerrarVentana('modal-tableros');
 	$('modal-tableros').addEventListener('click', (e) => {
 		if (e.target === $('modal-tableros')) cerrarVentana('modal-tableros');
