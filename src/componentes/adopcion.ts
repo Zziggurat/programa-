@@ -8,6 +8,7 @@ import {
 	instanciarComponentePersonalizado, validarDefinicionComponente,
 	type DefinicionComponentePersonalizado,
 } from './personalizados.js';
+import { evaluarCompatibilidadMontaje, type EstadoCompatibilidadMontaje } from './montaje.js';
 
 export interface ImpactoAdopcionComponente {
 	dispositivoId: string;
@@ -22,6 +23,7 @@ export interface ImpactoAdopcionComponente {
 	cambiaTipo: boolean;
 	cambiaImagen: boolean;
 	cambiaEnvolvente: boolean;
+	estadoMontaje: EstadoCompatibilidadMontaje | 'SIN_COLOCACION';
 	/** La candidata no contiene la URL runtime del asset nuevo. Resolverla antes de repintar. */
 	requiereHidratarAsset: boolean;
 	requiereRevisionTecnica: boolean;
@@ -154,7 +156,7 @@ export function prepararAdopcionRevisionComponente(
 		'tipo', 'descripcion', 'fabricante', 'referencia', 'tensionNominal', 'corrienteNominal',
 		'disipacionW', 'profundidad', 'temporizacion', 'programa', 'rangoSonda',
 		'unidadSonda', 'rangoSalidaAnalogica', 'bornes', 'comportamiento', 'assetId',
-		'componentePersonalizado',
+		'componentePersonalizado', 'montajeComponente',
 	] as const satisfies readonly (keyof Dispositivo)[];
 	for (const campo of camposDeDefinicion) {
 		// La ausencia en la definición nueva también retira el dato anterior; no debe sobrevivir
@@ -205,6 +207,12 @@ export function prepararAdopcionRevisionComponente(
 			}
 		}
 	}
+	const evaluacionMontaje = colocacion
+		? evaluarCompatibilidadMontaje(nueva.dimensiones, nueva.montaje, candidato.gabinete!, colocacion)
+		: undefined;
+	if (evaluacionMontaje?.estado === 'NO_CABE') {
+		throw new Error(`La revisión nueva no cabe en el montaje actual: ${evaluacionMontaje.motivos.join(' ')}`);
+	}
 	const usadosNuevos = new Set(entradas.map(([, destino]) => destino));
 	const puertosAfectados = entradas.map(([anteriorId, nuevo]) => ({
 		anterior: anteriorId, nuevo, conexiones: conexiones.get(anteriorId) ?? 0,
@@ -231,6 +239,7 @@ export function prepararAdopcionRevisionComponente(
 			cambiaTipo: anterior.tipo !== nueva.tipoDispositivo,
 			cambiaImagen,
 			cambiaEnvolvente,
+			estadoMontaje: evaluacionMontaje?.estado ?? 'SIN_COLOCACION',
 			requiereHidratarAsset: cambiaImagen,
 			requiereRevisionTecnica: vinculoTecnico || anterior.tipo !== nueva.tipoDispositivo
 				|| JSON.stringify(anterior.comportamiento) !== JSON.stringify(nueva.comportamiento),

@@ -10,7 +10,8 @@ import { validarAdopcionTecnica } from '../datos-tecnicos/operaciones.js';
 import {
 	ComportamientoSimulacion, validarComportamiento,
 } from '../modelo/comportamiento.js';
-import type { Borne, Dispositivo, Proyecto, TipoBorne, TipoDispositivo } from '../modelo/tipos.js';
+import type { Borne, Dispositivo, MontajeComponente, Proyecto, TipoBorne, TipoDispositivo } from '../modelo/tipos.js';
+import { leerMontajeDeclarado, validarMontajeDeclarado } from './montaje.js';
 
 export const FORMATO_COMPONENTE_PERSONALIZADO = 'tablero-studio-componente' as const;
 export const VERSION_COMPONENTE_PERSONALIZADO = 1 as const;
@@ -47,6 +48,8 @@ export interface DefinicionComponentePersonalizado {
 	/** Clasificación de catálogo/esquema. La simulación usa `comportamiento`. */
 	tipoDispositivo: TipoDispositivo;
 	dimensiones: { anchoMm: number; altoMm: number; fondoMm: number };
+	/** Ausente en definiciones anteriores: método y encaje físico no evaluables. */
+	montaje?: MontajeComponente;
 	assetId: string;
 	terminales: TerminalComponentePersonalizado[];
 	comportamiento: ComportamientoSimulacion;
@@ -148,6 +151,7 @@ export function validarDefinicionComponente(d: DefinicionComponentePersonalizado
 		|| !numeroPositivo(d.dimensiones.fondoMm)) {
 		errores.push('ancho, alto y fondo deben ser mayores que cero');
 	}
+	errores.push(...validarMontajeDeclarado(d.montaje, d.dimensiones));
 	const p = d.parametros;
 	if (p?.temporizacion && (!Number.isFinite(p.temporizacion.segundos) || p.temporizacion.segundos < 0)) {
 		errores.push('la temporización debe expresarse en segundos positivos o cero');
@@ -282,6 +286,7 @@ export function instanciarComponentePersonalizado(
 		comportamiento: clonar(definicion.comportamiento),
 		assetId: definicion.assetId,
 		componentePersonalizado: { definicionId: definicion.id, revision: definicion.revision },
+		...(definicion.montaje ? { montajeComponente: leerMontajeDeclarado(definicion.montaje, definicion.dimensiones)! } : {}),
 		...(opciones.imagenResuelta ? { imagen: opciones.imagenResuelta } : {}),
 	};
 }

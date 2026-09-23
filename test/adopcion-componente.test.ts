@@ -168,6 +168,22 @@ test('capacidad no declarada no se convierte en un máximo físico supuesto', ()
 	assert.equal(candidato.dispositivos[0].bornes.find((b) => b.id === 'B1')?.maxConductores, undefined);
 });
 
+test('adoptar otra mecánica exige recolocar; la instancia fija su nuevo contrato al confirmar', () => {
+	const proyecto = proyectoBase();
+	const nueva = definicion(2);
+	nueva.montaje = { metodo: 'atornillado-placa', anclajes: [{ xMm: 5, yMm: 5 }] };
+	assert.throws(() => prepararAdopcionRevisionComponente(proyecto, 'k1', nueva, {
+		A1: 'B1', L1: 'IN',
+	}), /no cabe.*riel/);
+	proyecto.gabinete!.colocaciones[0].rielId = undefined;
+	const { candidato, impacto } = prepararAdopcionRevisionComponente(proyecto, 'k1', nueva, {
+		A1: 'B1', L1: 'IN',
+	});
+	assert.equal(impacto.estadoMontaje, 'GEOMETRIA_COMPATIBLE');
+	assert.deepEqual(candidato.dispositivos[0].montajeComponente, nueva.montaje);
+	assert.equal(proyecto.dispositivos[0].montajeComponente, undefined);
+});
+
 test('remapea referencias técnicas puntuales y conserva los enlaces técnicos para revisión explícita', () => {
 	const proyecto = proyectoBase();
 	proyecto.datosTecnicos = {

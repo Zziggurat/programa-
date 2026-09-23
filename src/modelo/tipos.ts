@@ -94,6 +94,13 @@ export interface Borne {
 	v?: number;
 }
 
+/** Declaración mecánica de un componente propio, congelada también en cada instancia. */
+export interface MontajeComponente {
+	metodo: 'riel-din' | 'atornillado-placa';
+	/** Centros de fijación en mm desde la esquina superior izquierda del componente. */
+	anclajes?: { xMm: number; yMm: number; diametroMm?: number }[];
+}
+
 /** Borde del aparato por el que asoma una bornera. */
 export type LadoAparato = 'arriba' | 'abajo' | 'izquierda' | 'derecha';
 
@@ -248,6 +255,8 @@ export interface Dispositivo {
 	assetId?: string;
 	/** Revisión inmutable de la plantilla personal que se fotografió al colocar este aparato. */
 	componentePersonalizado?: { definicionId: string; revision: number };
+	/** Fotografía del método/anclajes declarados en la revisión colocada; ausencia = no evaluable. */
+	montajeComponente?: MontajeComponente;
 	/**
 	 * Colocación MANUAL en el esquema: la columna y la fila donde quien dibuja ha decidido que
 	 * va este aparato, arrastrándolo. Si falta, la decide el motor de esquema.

@@ -18,6 +18,7 @@ import { leerComportamientoSimulacion, validarComportamiento } from './comportam
 import { leerFisicaConductor, leerFisicaDispositivo } from './fisica.js';
 import { leerConfiguracionIngenieria } from './ingenieria.js';
 import { validarConfiguracionTecnica } from '../datos-tecnicos/schema.js';
+import { leerMontajeDeclarado } from '../componentes/montaje.js';
 import type { ConfiguracionProgramaPLC, EtiquetaPLC } from './programa-plc.js';
 
 /** Versión de formato que escribe este programa. */
@@ -984,6 +985,9 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			componentePersonalizado: oQuitado(d.componentePersonalizado,
 				leerProcedenciaPersonalizada(d.componentePersonalizado), ruta('componentePersonalizado'),
 				'la procedencia no tenía identidad y revisión válidas'),
+			montajeComponente: oQuitado(d.montajeComponente,
+				leerMontajeDeclarado(d.montajeComponente), ruta('montajeComponente'),
+				'el método o los anclajes del componente no eran válidos'),
 			curvaDisparo: oQuitado(d.curvaDisparo, unoDe(d.curvaDisparo, ['B', 'C', 'D', 'K', 'Z', 'gG', 'aM'] as const),
 				ruta('curvaDisparo'), 'la curva de disparo no era una de la norma'),
 			claseDiferencial: oQuitado(d.claseDiferencial, unoDe(d.claseDiferencial, ['AC', 'A', 'F', 'B'] as const),
