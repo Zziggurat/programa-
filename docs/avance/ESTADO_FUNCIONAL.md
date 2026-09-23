@@ -11,8 +11,8 @@
 
 | Hito | Estado | Frontera actual |
 |---|---|---|
-| M0 · preparación | EN_CURSO | Censo focal, helper de ejemplo/copia y p95 inicial de selección/drag/guardado registrados en SwiftShader. Falta el tablero de densidad R1 (30 aparatos/100 conductores) y medición con GPU física. |
-| M1 · flujo y componentes | EN_CURSO | Búsqueda, estado documental, borrador, teclado, copia de ejemplo y migración de revisiones probados en navegador. Importación individual asset+definición atómica; paquete V1 exige cierre exacto. Falta adopción explícita de revisión y remapeo de bornes conectados, asistente completo, portabilidad multirrevisión V2 y contratos mecánicos/técnicos CMP. No se acepta M1 todavía. |
+| M0 · preparación | EN_CURSO | Censo focal y escena sintética R1 de 30 aparatos/100 conductores medidos con SwiftShader; evidencia en `EVIDENCIA_FUNCIONAL.md`. Rendimiento R1 NO ACEPTADO: drag p95 38,63 s y reapertura p95 34,6 s. Perfil causal corto detectó 98 tubos reconstruidos y 10,97 s en `pointerup`; falta optimización medida y GPU física. |
+| M1 · flujo y componentes | EN_CURSO | Búsqueda/estado documental, biblioteca/teclado, copia de ejemplo, historial inmutable, paquete V2 multirrevisión, adopción explícita con remapeo y QA A/B 24/24. Asistente por pasos 19/19, montaje y arrastre 31/31 y QA largo de componente pasan. Ficha técnica V8 exacta y `.tscomp` V2 verificados en 169 pruebas focales y QA visible 11/11. Falta puertos multibloque/etiqueta y aceptación integral. No se acepta M1 todavía. |
 | M2 · esquema | PENDIENTE | Preservar conectividad común; inspeccionar editor SVG/PDF antes de ampliar. |
 | M3 · documentación | PENDIENTE | Reutilizar dossier e Ingeniería; integrar rutas físicas tras M6. |
 | M4 · simulación práctica | PENDIENTE | Motores V2–V9 existentes; cerrar solo casos objetivo no acreditados. |
@@ -24,8 +24,8 @@
 
 ## Siguiente acción y recuperación
 
-1. Cerrar la adopción explícita de una definición revisada: vista previa de bornes/cables/datos técnicos, remapeo confirmado y cancelación sin mutación.
-2. Verificar dos proyectos con una instancia propia, cambio de solo imagen y paquete portable limpio; resolver contratos M1 de montaje, ficha técnica y autoría antes de declarar el hito completo.
-3. Ampliar mediciones M0 al tablero de densidad R1 y GPU física cuando estén disponibles; el p95 actual proviene de SwiftShader y no certifica rendimiento.
+1. Cerrar puertos multibloque/etiqueta y aceptación integral de M1 sin perder las regresiones de ficha técnica y portabilidad.
+2. Diseñar una reducción focal de reconstrucción en `pointerup` R1; medir antes/después y exigir equivalencia de reparto, longitudes, picking, undo y persistencia. El perfil corto no acredita todavía rendimiento aceptable ni GPU física.
+3. Mantener benchmark R1 completo fuera del gate y repetirlo solo tras un cambio causal de rendimiento; validar por separado en GPU física cuando esté disponible.
 
 Esta campaña no incluye publicación automática del plano privado, arquitectura global, Project Breaker ni una release 1.0. Ninguna aceptación humana se presume realizada.

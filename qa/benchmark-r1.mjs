@@ -3,6 +3,7 @@
  * Después de `tsc` y `editor:build --mode qa`:
  *   node qa/benchmark-r1.mjs
  *   R1_GL=hardware node qa/benchmark-r1.mjs   # opt-in: comprobar renderer real en el informe
+ *   R1_FOCAL=1 node qa/benchmark-r1.mjs         # una selección + un drag para perfilar causas
  *
  * Importa un JSON por la misma entrada de archivo visible que usa una persona; el QA hook solo
  * observa identidad, picking, geometría y métricas. Selección/drag/guardar/validar usan ratón real.
@@ -24,8 +25,9 @@ const numeroMuestras = (nombre, valor, minimo, maximo) => {
 		throw new Error(`${nombre} exige un entero entre ${minimo} y ${maximo}`);
 	return n;
 };
-const repeticiones = numeroMuestras('R1_MUESTRAS', 5, 2, 20);
-const aperturas = numeroMuestras('R1_APERTURAS', 5, 2, 20);
+const focal = process.env.R1_FOCAL === '1';
+const repeticiones = numeroMuestras('R1_MUESTRAS', focal ? 1 : 5, focal ? 1 : 2, 20);
+const aperturas = numeroMuestras('R1_APERTURAS', focal ? 0 : 5, focal ? 0 : 2, 20);
 const glSolicitado = process.env.R1_GL === 'hardware' ? 'hardware' : 'swiftshader';
 const require = createRequire(import.meta.url);
 const entorno = {
@@ -40,7 +42,7 @@ const invariantes = verificarDensidadR1(fixture);
 const bytesFixture = Buffer.from(JSON.stringify(fixture));
 const hashFixture = createHash('sha256').update(bytesFixture).digest('hex');
 const resultado = {
-	metodo: 'R1 sintético · exploratorio · navegador local',
+	metodo: `R1 sintético · exploratorio · ${focal ? 'perfil causal corto' : 'navegador local'}`,
 	manifiesto: MANIFIESTO_R1, fixtureSha256: hashFixture,
 	entorno, muestras: { aperturas, operaciones: repeticiones },
 	mediciones: {}, advertencias: [], erroresJs: [],
@@ -54,6 +56,30 @@ const resumen = (valores) => {
 };
 const ahora = () => performance.now();
 const msDesde = (inicio) => performance.now() - inicio;
+const faseHost = async (accion) => {
+	const inicio = ahora();
+	const valor = await accion();
+	return { valor, ms: redondear(msDesde(inicio)) };
+};
+const resumirEventos = (eventos) => Object.fromEntries(
+	['pointerdown', 'pointermove', 'pointerup'].map((tipo) => {
+		const duraciones = eventos.filter((e) => e.tipo === tipo).map((e) => e.ms);
+		return [tipo, duraciones.length ? resumen(duraciones) : { n: 0 }];
+	}),
+);
+const resumenCampo = (muestras, campo) => resumen(muestras.map((m) => m[campo]));
+const deltaCDP = (antes, despues) => {
+	if (!antes || !despues) return null;
+	return Object.fromEntries([
+		['tareasMs', 'TaskDuration', 1000],
+		['scriptMs', 'ScriptDuration', 1000],
+		['layoutMs', 'LayoutDuration', 1000],
+		['recalcularEstilosMs', 'RecalcStyleDuration', 1000],
+		['heapJsMiB', 'JSHeapUsedSize', 1 / 2 ** 20],
+	].map(([salida, nombre, escala]) => [salida,
+		Number.isFinite(antes[nombre]) && Number.isFinite(despues[nombre])
+			? redondear((despues[nombre] - antes[nombre]) * escala) : null]));
+};
 const temporal = mkdtempSync(join(tmpdir(), 'tablerostudio-r1-'));
 const cwdInicial = process.cwd();
 const chromeLogAnterior = process.env.CHROME_LOG_FILE;
@@ -63,7 +89,14 @@ let servidor;
 let navegador;
 let contexto;
 let pagina;
+let sesionCDP;
 let fallo;
+
+async function metricasCDP() {
+	if (!sesionCDP) return null;
+	const { metrics } = await sesionCDP.send('Performance.getMetrics');
+	return Object.fromEntries(metrics.map((m) => [m.name, m.value]));
+}
 
 async function abrirChromium() {
 	const executablePath = ejecutableNavegador();
@@ -120,6 +153,48 @@ async function posicion(id) {
 	}, id);
 }
 
+/**
+ * Cronometra únicamente los listeners del canvas, en el reloj del navegador.
+ * El listener capture antecede a los handlers del editor y el de burbuja se instala después;
+ * no convierte los tiempos de Playwright en "latencia pura" ni modifica ninguna acción UX.
+ */
+async function instalarSondaDeEventos() {
+	await pagina.evaluate(() => {
+		const canvas = document.querySelector('#escena canvas');
+		if (!canvas) throw new Error('R1: falta el canvas para instrumentar gestos');
+		const inicio = new WeakMap();
+		const eventos = [];
+		const manejadores = [];
+		for (const tipo of ['pointerdown', 'pointermove', 'pointerup']) {
+			const antes = (e) => { inicio.set(e, performance.now()); };
+			const despues = (e) => {
+				const t = inicio.get(e);
+				if (t !== undefined) eventos.push({ tipo, ms: performance.now() - t });
+			};
+			canvas.addEventListener(tipo, antes, { capture: true });
+			canvas.addEventListener(tipo, despues);
+			manejadores.push({ tipo, antes, despues });
+		}
+		window.__r1SondaEventos = {
+			tomar: () => eventos.splice(0),
+			cerrar: () => {
+				for (const { tipo, antes, despues } of manejadores) {
+					canvas.removeEventListener(tipo, antes, { capture: true });
+					canvas.removeEventListener(tipo, despues);
+				}
+				delete window.__r1SondaEventos;
+			},
+		};
+	});
+}
+const tomarEventos = () => pagina.evaluate(() => window.__r1SondaEventos.tomar());
+const iniciarCronometroEditor = () => pagina.evaluate(() => window.qa.cronometro(true));
+const leerCronometroEditor = async () => {
+	const lectura = await pagina.evaluate(() => window.qa.cronometroLeer());
+	await pagina.evaluate(() => window.qa.cronometro(false));
+	return lectura;
+};
+
 try {
 	const inicioTotal = ahora();
 	({ servidor, url: resultado.urlLocal } = await servidorDeQA());
@@ -161,7 +236,7 @@ try {
 		tiemposApertura.push(msDesde(inicio));
 		console.log(`Apertura ${i + 1}/${aperturas}: ${redondear(tiemposApertura.at(-1))} ms`);
 	}
-	resultado.mediciones.aperturaPersistida = resumen(tiemposApertura);
+	if (tiemposApertura.length) resultado.mediciones.aperturaPersistida = resumen(tiemposApertura);
 	await cerrarSuperficies();
 	const metadatos = await pagina.evaluate(() => {
 		const canvas = document.querySelector('#escena canvas');
@@ -184,6 +259,20 @@ try {
 		resultado.advertencias.push('Backend WebGL no verificable; no afirmar GPU física.');
 	if (glSolicitado === 'hardware' && /swiftshader|software/i.test(metadatos.webglRenderer))
 		resultado.advertencias.push('Se solicitó hardware pero Chromium siguió usando software.');
+	resultado.mediciones.instrumentacion = {
+		host: 'Playwright/Node performance.now(): incluye protocolo y espera de respuesta',
+		navegador: 'performance.now() entre listeners capture/burbuja del canvas; no es una traza CPU completa',
+		etapas: 'cronómetro QA ya existente del editor y contadores, observación solamente',
+		cdp: 'deltas Performance.getMetrics por operación; proceso renderer, no perfil CPU granular',
+	};
+	try {
+		sesionCDP = await contexto.newCDPSession(pagina);
+		await sesionCDP.send('Performance.enable');
+	} catch (e) {
+		sesionCDP = undefined;
+		resultado.advertencias.push(`CDP Performance no disponible: ${e?.message ?? e}`);
+	}
+	await instalarSondaDeEventos();
 
 	await pagina.locator('#hta-seleccionar').click();
 	await pagina.locator('#btn-centrar').click();
@@ -196,16 +285,36 @@ try {
 	}
 	if (agarrables.length < 2) throw new Error('No se encontraron dos aparatos seleccionables dentro del visor R1');
 	const tiemposSeleccion = [];
+	const detalleSeleccion = [];
 	for (let i = 0; i < repeticiones; i++) {
 		const elegido = agarrables[i % 2];
 		const q = await puntoAparato(elegido.id);
 		if (!q) throw new Error(`Se perdió el punto seleccionable de ${elegido.id}`);
+		await tomarEventos();
+		await iniciarCronometroEditor();
+		const cdpAntes = await metricasCDP();
 		const inicio = ahora();
-		await pagina.mouse.click(q.x, q.y);
-		await pagina.waitForFunction((id) => window.qa.seleccion()?.id === id, elegido.id);
-		tiemposSeleccion.push(msDesde(inicio));
+		const hover = await faseHost(() => pagina.mouse.move(q.x, q.y));
+		const clic = await faseHost(async () => {
+			await pagina.mouse.down();
+			await pagina.mouse.up();
+			await pagina.waitForFunction((id) => window.qa.seleccion()?.id === id, elegido.id);
+		});
+		const totalMs = msDesde(inicio);
+		const cdpDespues = await metricasCDP();
+		tiemposSeleccion.push(totalMs);
+		const eventos = await tomarEventos();
+		detalleSeleccion.push({ id: elegido.id, totalHostMs: redondear(totalMs),
+			hoverHostMs: hover.ms, clicYConfirmacionHostMs: clic.ms,
+			canvas: resumirEventos(eventos), editor: await leerCronometroEditor(),
+			cdp: deltaCDP(cdpAntes, cdpDespues) });
 	}
 	resultado.mediciones.seleccionExtremoAExtremo = resumen(tiemposSeleccion);
+	resultado.mediciones.seleccionPorFase = detalleSeleccion;
+	resultado.mediciones.seleccionFases = {
+		hoverHost: resumenCampo(detalleSeleccion, 'hoverHostMs'),
+		clicYConfirmacionHost: resumenCampo(detalleSeleccion, 'clicYConfirmacionHostMs'),
+	};
 	console.log(`Selección p50/p95 ${resultado.mediciones.seleccionExtremoAExtremo.p50Ms}/${resultado.mediciones.seleccionExtremoAExtremo.p95Ms} ms`);
 
 	// El bornero auxiliar tiene un corredor libre. Cada muestra alterna el sentido, sin acumular
@@ -214,6 +323,7 @@ try {
 	const tiemposDrag = [];
 	const tiemposPersistencia = [];
 	const tareasDrag = [];
+	const detalleDrag = [];
 	for (let i = 0; i < repeticiones; i++) {
 		const antes = await posicion(dragId);
 		const q = await puntoAparato(dragId);
@@ -226,41 +336,83 @@ try {
 		}
 		const avance = i % 2 ? -12 : 12;
 		await pagina.evaluate(() => window.qa.olvidarTareasLargas());
+		await tomarEventos();
+		await iniciarCronometroEditor();
+		const cdpAntes = await metricasCDP();
 		const t = ahora();
-		await pagina.mouse.move(q.x, q.y);
-		await pagina.mouse.down();
-		try { await pagina.mouse.move(q.x + avance, q.y, { steps: 6 }); }
-		finally { await pagina.mouse.up(); }
-		tiemposDrag.push(msDesde(t));
+		const hover = await faseHost(() => pagina.mouse.move(q.x, q.y));
+		const bajar = await faseHost(() => pagina.mouse.down());
+		let seisMovimientos;
+		let soltar;
+		try { seisMovimientos = await faseHost(() => pagina.mouse.move(q.x + avance, q.y, { steps: 6 })); }
+		finally { soltar = await faseHost(() => pagina.mouse.up()); }
+		const totalDragMs = msDesde(t);
+		const cdpDespues = await metricasCDP();
+		tiemposDrag.push(totalDragMs);
+		const eventos = await tomarEventos();
+		const editor = await leerCronometroEditor();
+		const movimientosCanvas = eventos.filter((e) => e.tipo === 'pointermove');
 		const despues = await posicion(dragId);
 		if (!despues || (despues.x === antes.x && despues.y === antes.y))
 			throw new Error(`Drag ${i + 1} no cambió la colocación de ${dragId}`);
 		const tGuardar = ahora();
-		const activo = await pagina.evaluate(() => window.qa.esperarPersistencia());
+		const { activo, msNavegador } = await pagina.evaluate(async () => {
+			const inicio = performance.now();
+			const activo = await window.qa.esperarPersistencia();
+			return { activo, msNavegador: performance.now() - inicio };
+		});
 		if (activo.proyecto.gabinete.colocaciones.find((c) => c.dispositivoId === dragId)?.x !== despues.x)
 			throw new Error(`El gesto ${i + 1} no quedó persistido`);
-		tiemposPersistencia.push(msDesde(tGuardar));
+		const persistenciaMs = msDesde(tGuardar);
+		tiemposPersistencia.push(persistenciaMs);
+		detalleDrag.push({ id: dragId, totalHostMs: redondear(totalDragMs),
+			hoverHostMs: hover.ms, pointerdownHostMs: bajar.ms,
+			seisMovimientosHostMs: seisMovimientos?.ms ?? null, pointerupHostMs: soltar?.ms ?? null,
+			canvas: resumirEventos(eventos),
+			seisMovimientosCanvas: movimientosCanvas.length > 1
+				? resumen(movimientosCanvas.slice(1).map((e) => e.ms)) : { n: 0 },
+			editor, cdp: deltaCDP(cdpAntes, cdpDespues),
+			flushHostMs: redondear(persistenciaMs), flushNavegadorMs: redondear(msNavegador) });
 		tareasDrag.push(...await pagina.evaluate(() => window.qa.contadores().tareasLargas));
 		console.log(`Drag ${i + 1}/${repeticiones}: ${redondear(tiemposDrag.at(-1))} ms; flush ${redondear(tiemposPersistencia.at(-1))} ms`);
 	}
 	resultado.mediciones.dragExtremoAExtremo = resumen(tiemposDrag);
+	resultado.mediciones.dragPorFase = detalleDrag;
+	resultado.mediciones.dragFases = Object.fromEntries(
+		['hoverHostMs', 'pointerdownHostMs', 'seisMovimientosHostMs', 'pointerupHostMs',
+			'flushHostMs', 'flushNavegadorMs'].map((campo) => [campo, resumenCampo(detalleDrag, campo)]),
+	);
 	resultado.mediciones.confirmacionPersistencia = resumen(tiemposPersistencia);
 	resultado.mediciones.tareasLargas = {
 		n: tareasDrag.length,
 		peorMs: Math.max(0, ...tareasDrag.map((e) => e.ms)),
 	};
 
+	if (!focal) {
 	const tiemposExportacion = [];
+	const detalleExportacion = [];
 	for (let i = 0; i < repeticiones; i++) {
+		const inicioNavegador = await pagina.evaluate(() => performance.now());
 		const inicio = ahora();
-		await pagina.locator('#btn-archivo').click();
+		const menu = await faseHost(() => pagina.locator('#btn-archivo').click());
 		const descarga = pagina.waitForEvent('download');
-		await pagina.locator('#btn-guardar').click();
-		const archivo = await descarga;
+		const guardar = await faseHost(() => pagina.locator('#btn-guardar').click());
+		const entrega = await faseHost(() => descarga);
+		const archivo = entrega.valor;
 		if (!archivo.suggestedFilename().endsWith('.json')) throw new Error('Guardar no descargó JSON');
-		tiemposExportacion.push(msDesde(inicio));
+		const totalMs = msDesde(inicio);
+		tiemposExportacion.push(totalMs);
+		const finNavegador = await pagina.evaluate(() => performance.now());
+		detalleExportacion.push({ totalHostMs: redondear(totalMs), menuHostMs: menu.ms,
+			guardarHostMs: guardar.ms, descargaPendienteHostMs: entrega.ms,
+			intervaloNavegadorMs: redondear(finNavegador - inicioNavegador) });
 	}
 	resultado.mediciones.guardarJsonExtremoAExtremo = resumen(tiemposExportacion);
+	resultado.mediciones.guardarJsonPorFase = detalleExportacion;
+	resultado.mediciones.guardarJsonFases = Object.fromEntries(
+		['menuHostMs', 'guardarHostMs', 'descargaPendienteHostMs', 'intervaloNavegadorMs']
+			.map((campo) => [campo, resumenCampo(detalleExportacion, campo)]),
+	);
 
 	const dibujado = [];
 	for (let i = 0; i < 30; i++) dibujado.push((await pagina.evaluate(() => window.qa.medirDibujado(1))).mediana);
@@ -275,6 +427,11 @@ try {
 		tiemposValidacion.push(msDesde(inicio));
 	}
 	resultado.mediciones.validacionExtremoAExtremo = resumen(tiemposValidacion);
+	} else {
+		resultado.mediciones.omitidoEnPerfilCorto = [
+			'exportación JSON', 'render directo repetido', 'validación ingeniería', 'reaperturas',
+		];
+	}
 	resultado.mediciones.totalMs = redondear(msDesde(inicioTotal));
 	resultado.documento.revisionFinal = (await pagina.evaluate(() => window.qa.esperarPersistencia())).revision;
 	if (resultado.documento.revisionFinal <= resultado.documento.revisionInicial)
@@ -284,6 +441,8 @@ try {
 	fallo = error;
 	console.error(`BENCHMARK R1 INCOMPLETO: ${error?.stack ?? error}`);
 } finally {
+	try { await pagina?.evaluate(() => window.__r1SondaEventos?.cerrar()); }
+	catch (e) { fallo ??= e; console.error('Cierre de sonda R1:', e); }
 	try { await contexto?.close(); } catch (e) { fallo ??= e; console.error('Cierre de contexto:', e); }
 	try { await navegador?.close(); } catch (e) { fallo ??= e; console.error('Cierre de Chromium:', e); }
 	if (servidor) {
