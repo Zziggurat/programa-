@@ -62,6 +62,33 @@ test('un contactor personalizado completo valida sin inferir su función desde l
 	assert.deepEqual(validarDefinicionComponente(definicionContactor()), []);
 });
 
+test('los límites de borne se validan en el contrato común, no solo en el editor visual', () => {
+	const valido = definicionContactor();
+	valido.terminales[0].maxConductores = 1;
+	valido.terminales[0].seccionMaxMm2 = 2.5;
+	assert.deepEqual(validarDefinicionComponente(valido), []);
+	assert.equal(instanciarComponentePersonalizado(valido, 'k-limites').bornes[0].seccionMaxMm2, 2.5);
+
+	for (const valor of [0, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Infinity]) {
+		const invalido = definicionContactor();
+		invalido.terminales[0].maxConductores = valor;
+		assert.match(validarDefinicionComponente(invalido).join(' '), /máximo de conductores/);
+		assert.throws(() => instanciarComponentePersonalizado(invalido, 'k-limites'), /máximo de conductores/);
+		assert.throws(() => actualizarDefinicionComponente(definicionContactor(),
+			{ terminales: invalido.terminales }), /máximo de conductores/);
+	}
+	for (const valor of [0, -1, Number.NaN, Infinity]) {
+		const invalido = definicionContactor();
+		invalido.terminales[0].seccionMaxMm2 = valor;
+		assert.match(validarDefinicionComponente(invalido).join(' '), /sección máxima/);
+		assert.throws(() => instanciarComponentePersonalizado(invalido, 'k-limites'), /sección máxima/);
+	}
+	const sinTopeArbitrario = definicionContactor();
+	sinTopeArbitrario.terminales[0].maxConductores = 17;
+	sinTopeArbitrario.terminales[0].seccionMaxMm2 = 1001;
+	assert.deepEqual(validarDefinicionComponente(sinTopeArbitrario), []);
+});
+
 test('el asistente rechaza perfiles eléctricos incoherentes con errores comprensibles', () => {
 	const d = definicionContactor();
 	assert.equal(d.comportamiento.clase, 'contactos-electromagneticos');
@@ -163,6 +190,9 @@ test('el paquete portátil conserva proyecto, perfil, procedencia y asset requer
 	const malformado = structuredClone(paquete);
 	(malformado.componentes as unknown[])[0] = null;
 	assert.throws(() => leerPaqueteProyecto(JSON.stringify(malformado)), /Definición 1.*inválida/);
+	const limitesInvalidos = structuredClone(paquete);
+	limitesInvalidos.componentes[0].terminales[0].maxConductores = 0;
+	assert.throws(() => leerPaqueteProyecto(JSON.stringify(limitesInvalidos)), /máximo de conductores/);
 });
 
 test('el codec V1 informa que un proyecto con dos revisiones custom requiere V2', () => {

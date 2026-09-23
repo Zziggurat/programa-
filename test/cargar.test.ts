@@ -33,6 +33,26 @@ test('un proyecto bien formado se abre sin arreglos', () => {
 	assert.equal(r.proyecto.gabinete!.ancho, 600);
 });
 
+test('límites declarados de borne sobreviven al proyecto sin topes de catálogo inventados', () => {
+	const p = bueno();
+	p.dispositivos[0].bornes[0].maxConductores = 17;
+	p.dispositivos[0].bornes[0].seccionMaxMm2 = 1001;
+	p.dispositivos[0].bornes.push({ id: '2', tipo: 'L' });
+	const r = abrir(p);
+	assert.deepEqual(r.arreglos, []);
+	assert.equal(r.proyecto.dispositivos[0].bornes[0].maxConductores, 17);
+	assert.equal(r.proyecto.dispositivos[0].bornes[0].seccionMaxMm2, 1001);
+	assert.equal(r.proyecto.dispositivos[0].bornes[1].maxConductores, undefined,
+		'la ausencia no se transforma en un máximo supuesto');
+	assert.equal(r.proyecto.dispositivos[0].bornes[1].seccionMaxMm2, undefined);
+	const corrupto = structuredClone(p);
+	corrupto.dispositivos[0].bornes[0].maxConductores = Number.MAX_SAFE_INTEGER + 1;
+	corrupto.dispositivos[0].bornes[0].seccionMaxMm2 = -1;
+	const reparado = abrir(corrupto).proyecto.dispositivos[0].bornes[0];
+	assert.equal(reparado.maxConductores, undefined);
+	assert.equal(reparado.seccionMaxMm2, undefined);
+});
+
 test('un JSON roto da un motivo, no una excepción cualquiera', () => {
 	assert.throws(() => cargarProyecto('{"formato":"tablero-'), (e: Error) => {
 		assert.ok(e instanceof ArchivoInvalido);

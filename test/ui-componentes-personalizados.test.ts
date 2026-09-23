@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-	filtrarComponentesBiblioteca, leerArchivoComponentePortatil, mensajeErrorGuardado, prepararEditorVigente,
+	erroresLimitesTerminales, filtrarComponentesBiblioteca, leerArchivoComponentePortatil,
+	leerArchivoComponentePortatilDesdeArchivo, mensajeErrorGuardado, prepararEditorVigente,
+	terminalesDesdeEditor, terminalesParaEditor,
 } from '../app/ui-componentes-personalizados.js';
 
 const archivo = () => ({
@@ -13,7 +15,8 @@ const archivo = () => ({
 		tipoDispositivo: 'piloto', dimensiones: { anchoMm: 22, altoMm: 30, fondoMm: 40 },
 		assetId: `sha256:${'d'.repeat(64)}`,
 		terminales: [
-			{ id: 'alimentacion', tipo: 'L', u: 0.2, v: 0.8, campoDesconocido: 'no persistir' },
+			{ id: 'alimentacion', tipo: 'L', u: 0.2, v: 0.8,
+				maxConductores: 2, seccionMaxMm2: 2.5, campoDesconocido: 'no persistir' },
 			{ id: 'retorno', tipo: 'N', u: 0.8, v: 0.8 },
 		],
 		comportamiento: {
@@ -31,7 +34,60 @@ test('el importador individual reconstruye por lista blanca antes de persistir',
 	assert.equal(leido.definicion.parametros?.tensionV, 24);
 	assert.equal('campoDesconocido' in leido.definicion, false);
 	assert.equal('campoDesconocido' in leido.definicion.terminales[0], false);
+	assert.equal(leido.definicion.terminales[0].maxConductores, 2);
+	assert.equal(leido.definicion.terminales[0].seccionMaxMm2, 2.5);
+	assert.equal(leido.definicion.terminales[1].maxConductores, undefined,
+		'ausencia del límite no debe transformarse en un valor inventado');
 	assert.equal('secreto' in leido.definicion.parametros!, false);
+});
+
+test('importar → editar → guardar revisión → exportar conserva los límites por borne', () => {
+	const definicion = leerArchivoComponentePortatil(archivo()).definicion;
+	const editados = terminalesParaEditor(definicion);
+	assert.equal(editados[0].rol, 'carga-fase');
+	assert.equal(editados[0].maxConductores, 2);
+	assert.equal(editados[0].seccionMaxMm2, 2.5);
+	editados[0].maxConductores = 3;
+	editados[0].seccionMaxMm2 = 4;
+	assert.deepEqual(erroresLimitesTerminales(editados), []);
+	const guardados = terminalesDesdeEditor(editados);
+	assert.equal(guardados[0].maxConductores, 3);
+	assert.equal(guardados[0].seccionMaxMm2, 4);
+	assert.equal('maxConductores' in guardados[1], false);
+	assert.equal('seccionMaxMm2' in guardados[1], false);
+	const reexportado = archivo();
+	reexportado.definicion.terminales = guardados as typeof reexportado.definicion.terminales;
+	const vuelta = leerArchivoComponentePortatil(reexportado).definicion;
+	assert.equal(vuelta.terminales[0].maxConductores, 3);
+	assert.equal(vuelta.terminales[0].seccionMaxMm2, 4);
+});
+
+test('límites inválidos dan error visible; el importador nunca los descarta silenciosamente', () => {
+	for (const valor of [0, 1.5, -1, Number.MAX_SAFE_INTEGER + 1, 'dos', null, Number.NaN, Infinity]) {
+		const paquete = archivo();
+		(paquete.definicion.terminales[0] as Record<string, unknown>).maxConductores = valor;
+		assert.match(erroresLimitesTerminales([{ id: 'alimentacion', maxConductores: valor }]).join(' '), /máximo de conductores/);
+		assert.throws(() => leerArchivoComponentePortatil(paquete), /máximo de conductores/);
+	}
+	for (const valor of [0, -1, '2.5', null, Number.NaN, Infinity]) {
+		const paquete = archivo();
+		(paquete.definicion.terminales[0] as Record<string, unknown>).seccionMaxMm2 = valor;
+		assert.match(erroresLimitesTerminales([{ id: 'alimentacion', seccionMaxMm2: valor }]).join(' '), /sección máxima/);
+		assert.throws(() => leerArchivoComponentePortatil(paquete), /sección máxima/);
+	}
+	assert.deepEqual(erroresLimitesTerminales([{ id: 'A1', maxConductores: 1, seccionMaxMm2: 0.5 },
+		{ id: 'A2', maxConductores: 17, seccionMaxMm2: 1001 }]), []);
+});
+
+test('archivo individual mayor que 64 MiB se rechaza antes de leer JSON', async () => {
+	let lecturas = 0;
+	await assert.rejects(leerArchivoComponentePortatilDesdeArchivo({
+		size: 64 * 1024 * 1024 + 1,
+		text: async () => { lecturas++; return JSON.stringify(archivo()); },
+	}), /64 MiB/);
+	assert.equal(lecturas, 0);
+	const valido = await leerArchivoComponentePortatilDesdeArchivo(new Blob([JSON.stringify(archivo())]));
+	assert.equal(valido.definicion.terminales[0].seccionMaxMm2, 2.5);
 });
 
 test('el importador individual rechaza MIME y comportamiento no admitidos', () => {

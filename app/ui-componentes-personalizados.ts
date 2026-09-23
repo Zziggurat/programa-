@@ -7,8 +7,9 @@
  */
 import {
 	FORMATO_COMPONENTE_PERSONALIZADO, VERSION_COMPONENTE_PERSONALIZADO,
-	sugerirRolesIEC, validarDefinicionComponente,
+	sugerirRolesIEC, validarDefinicionComponente, validarLimitesTerminales,
 	type DefinicionComponentePersonalizado, type ParametrosNominalesComponente,
+	type TerminalComponentePersonalizado,
 } from '../src/componentes/personalizados.js';
 import { base64ABytes, bytesABase64 } from '../src/componentes/assets.js';
 import {
@@ -23,6 +24,7 @@ import { abrirVentana, cerrarVentana, ventanaDeArriba } from './ventanas.js';
 
 const ID_RAIZ = 'ui-componentes-personalizados';
 const MIME_IMAGEN = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const MAX_ARCHIVO_PORTATIL = 64 * 1024 * 1024;
 const NATURALEZAS: readonly (TipoBorne | '')[] = ['', 'L', 'N', 'PE', 'control', 'senal', 'otro'];
 const ROLES: readonly RolTerminalPerfil[] = [
 	'sin-asignar', 'bobina-entrada', 'bobina-retorno', 'polo-entrada', 'polo-salida',
@@ -62,12 +64,37 @@ interface EstadoEditor {
 		nombre: string; fabricante: string; referencia: string; descripcion: string;
 		anchoMm: number; altoMm: number; fondoMm: number;
 	};
-	terminales: TerminalPerfilComponente[];
+	terminales: TerminalEditor[];
 	parametros: ParametrosConstruccionPerfil;
 	assetId?: string;
 	assetBytes?: Uint8Array;
 	assetMime?: string;
 	previewUrl?: string;
+}
+
+type TerminalEditor = TerminalPerfilComponente & Pick<TerminalComponentePersonalizado,
+	'maxConductores' | 'seccionMaxMm2'>;
+
+/** Misma validación en UI y en persistencia/paquetes, sin aceptar datos distintos por ruta. */
+export const erroresLimitesTerminales = validarLimitesTerminales;
+
+/** Reconstruir roles al editar no puede borrar los límites eléctricos ya declarados. */
+export function terminalesParaEditor(d: Pick<DefinicionComponentePersonalizado,
+	'terminales' | 'comportamiento'>): TerminalEditor[] {
+	return rolesDesdeComportamiento(d.terminales, d.comportamiento).map((terminal, i) => ({
+		...terminal,
+		maxConductores: d.terminales[i].maxConductores,
+		seccionMaxMm2: d.terminales[i].seccionMaxMm2,
+	}));
+}
+
+/** Lista blanca compartida por guardar una definición nueva y guardar una revisión. */
+export function terminalesDesdeEditor(terminales: readonly TerminalEditor[]): TerminalComponentePersonalizado[] {
+	return terminales.map(({ id, tipo, u, v, maxConductores, seccionMaxMm2 }) => ({
+		id: id.trim(), tipo, u, v,
+		...(maxConductores !== undefined ? { maxConductores } : {}),
+		...(seccionMaxMm2 !== undefined ? { seccionMaxMm2 } : {}),
+	}));
 }
 
 const clonar = <T>(valor: T): T => structuredClone(valor);
@@ -150,8 +177,15 @@ export function leerArchivoComponentePortatil(bruto: unknown): ArchivoComponente
 		if (!esObjeto(terminal) || typeof terminal.id !== 'string' || typeof terminal.u !== 'number' || typeof terminal.v !== 'number') {
 			throw new Error(`Terminal ${i + 1} no válido.`);
 		}
+		const erroresLimites = erroresLimitesTerminales([{ id: terminal.id,
+			maxConductores: terminal.maxConductores, seccionMaxMm2: terminal.seccionMaxMm2 }]);
+		if (erroresLimites.length) throw new Error(erroresLimites.join(' '));
 		const tipoBorne = typeof terminal.tipo === 'string' ? terminal.tipo as TipoBorne : undefined;
-		return { id: terminal.id, ...(tipoBorne ? { tipo: tipoBorne } : {}), u: terminal.u, v: terminal.v };
+		return {
+			id: terminal.id, ...(tipoBorne ? { tipo: tipoBorne } : {}), u: terminal.u, v: terminal.v,
+			...(terminal.maxConductores !== undefined ? { maxConductores: terminal.maxConductores as number } : {}),
+			...(terminal.seccionMaxMm2 !== undefined ? { seccionMaxMm2: terminal.seccionMaxMm2 as number } : {}),
+		};
 	});
 	let parametros: ParametrosNominalesComponente | undefined;
 	if (d.parametros !== undefined) {
@@ -185,6 +219,20 @@ export function leerArchivoComponentePortatil(bruto: unknown): ArchivoComponente
 	};
 	const errores = validarDefinicionComponente(definicion); if (errores.length) throw new Error(errores.join('; '));
 	return archivo;
+}
+
+/** Mismo presupuesto de entrada que el paquete de proyecto; rechaza antes de leer o parsear. */
+export async function leerArchivoComponentePortatilDesdeArchivo(
+	archivo: Pick<File, 'size' | 'text'>,
+): Promise<ArchivoComponentePortatil> {
+	if (archivo.size > MAX_ARCHIVO_PORTATIL) {
+		throw new Error('El componente supera el límite de importación de 64 MiB.');
+	}
+	const textoJson = await archivo.text();
+	if (textoJson.length > MAX_ARCHIVO_PORTATIL) {
+		throw new Error('El componente supera el límite de 64 MiB de texto.');
+	}
+	return leerArchivoComponentePortatil(JSON.parse(textoJson));
 }
 
 function parametrosDesde(d: DefinicionComponentePersonalizado): ParametrosConstruccionPerfil {
@@ -383,7 +431,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 					nombre: d.nombre, fabricante: d.fabricante ?? '', referencia: d.referencia ?? '', descripcion: d.descripcion ?? '',
 					anchoMm: d.dimensiones.anchoMm, altoMm: d.dimensiones.altoMm, fondoMm: d.dimensiones.fondoMm,
 				},
-				terminales: rolesDesdeComportamiento(d.terminales, d.comportamiento), parametros: parametrosDesde(d),
+				terminales: terminalesParaEditor(d), parametros: parametrosDesde(d),
 				assetId: d.assetId, previewUrl,
 			};
 			if (urlTemporal) { URL.revokeObjectURL(urlTemporal); urlTemporal = undefined; }
@@ -406,7 +454,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			+ '<label>Descripción<textarea data-cp-campo="descripcion"></textarea></label><div class="cp-fidelidad" data-cp="fidelidad"></div>'
 			+ '<div class="cp-preview" data-cp="preview"><span style="position:absolute;inset:45% 10%;text-align:center;color:#516577">Carga una imagen y haz clic para marcar bornes</span></div></section></div>'
 			+ '<div><section class="cp-panel"><h3>Terminales confirmados</h3><p>Haz clic en la imagen para agregar un terminal. Las sugerencias IEC no se aplican solas.</p>'
-			+ '<div class="cp-scroll"><table><thead><tr><th>ID</th><th>Naturaleza</th><th>Rol</th><th>Grupo</th><th></th></tr></thead><tbody data-cp="terminales"></tbody></table></div>'
+			+ '<div class="cp-scroll"><table><thead><tr><th>ID</th><th>Naturaleza</th><th>Rol</th><th>Grupo</th><th>Máx. hilos</th><th>Sección máx. mm²</th><th></th></tr></thead><tbody data-cp="terminales"></tbody></table></div>'
 			+ '<div class="cp-sugerencias" data-cp="sugerencias"></div></section><section class="cp-panel" style="margin-top:12px"><h3>Parámetros del perfil</h3><div class="cp-campos" data-cp="parametros"></div>'
 			+ '<div class="cp-errores" data-cp="errores">Valida antes de guardar.</div><div class="cp-pie"><button data-cp="validar">Validar</button><button class="primario" data-cp="guardar">Guardar revisión</button></div></section></div></div>';
 		el<HTMLButtonElement>(cuerpo, '[data-cp="volver"]').onclick = () => { void pintarBiblioteca(); };
@@ -461,6 +509,18 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			for (const r of ROLES) rol.appendChild(opcion(r, `${permitidos.has(r) ? '' : '⚠ '}${r}`)); rol.value = terminal.rol;
 			rol.onchange = () => { terminal.rol = rol.value as RolTerminalPerfil; }; celda().appendChild(rol);
 			const grupo = document.createElement('input'); grupo.value = terminal.grupo ?? ''; grupo.placeholder = 'ej. polo-1'; grupo.oninput = () => { terminal.grupo = grupo.value || undefined; }; celda().appendChild(grupo);
+			const maxHilos = document.createElement('input'); maxHilos.type = 'number'; maxHilos.min = '1'; maxHilos.step = '1';
+			maxHilos.placeholder = 'No declarado'; maxHilos.title = 'Máximo de conductores admitidos; vacío si se desconoce';
+			maxHilos.setAttribute('aria-label', `Máximo de conductores del terminal ${terminal.id}`);
+			maxHilos.value = terminal.maxConductores === undefined ? '' : String(terminal.maxConductores);
+			maxHilos.oninput = () => { terminal.maxConductores = maxHilos.value === '' ? undefined : Number(maxHilos.value); };
+			celda().appendChild(maxHilos);
+			const seccion = document.createElement('input'); seccion.type = 'number'; seccion.min = '0'; seccion.step = 'any';
+			seccion.placeholder = 'No declarada'; seccion.title = 'Sección máxima admitida en mm²; vacío si se desconoce';
+			seccion.setAttribute('aria-label', `Sección máxima del terminal ${terminal.id} en mm²`);
+			seccion.value = terminal.seccionMaxMm2 === undefined ? '' : String(terminal.seccionMaxMm2);
+			seccion.oninput = () => { terminal.seccionMaxMm2 = seccion.value === '' ? undefined : Number(seccion.value); };
+			celda().appendChild(seccion);
 			const borrar = document.createElement('button'); borrar.textContent = '−'; borrar.title = 'Quitar terminal'; borrar.onclick = () => { editor!.terminales.splice(indice, 1); pintarPreview(); pintarTerminales(); }; celda().appendChild(borrar);
 			tbody.appendChild(tr);
 		});
@@ -538,7 +598,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			nombre: editor.datos.nombre.trim(), fabricante: editor.datos.fabricante.trim() || undefined,
 			referencia: editor.datos.referencia.trim() || undefined, descripcion: editor.datos.descripcion.trim() || undefined,
 			tipoDispositivo: editor.tipo, dimensiones: { anchoMm: editor.datos.anchoMm, altoMm: editor.datos.altoMm, fondoMm: editor.datos.fondoMm },
-			assetId, terminales: editor.terminales.map(({ id, tipo, u, v }) => ({ id: id.trim(), tipo, u, v })),
+			assetId, terminales: terminalesDesdeEditor(editor.terminales),
 			comportamiento: perfil.comportamiento ?? { version: 1, clase: 'sin-comportamiento', motivo: 'perfil incompleto' }, parametros: p,
 		};
 		return { definicion, errores: [...perfil.errores, ...validarDefinicionComponente(definicion)] };
@@ -625,7 +685,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 
 	async function importarComponente(archivo: File): Promise<void> {
 		try {
-			const p = leerArchivoComponentePortatil(JSON.parse(await archivo.text()));
+			const p = await leerArchivoComponentePortatilDesdeArchivo(archivo);
 			if (!MIME_IMAGEN.has(p.asset.mime) || p.asset.id !== p.definicion.assetId) throw new Error('El asset no corresponde a la definición.');
 			const asset = { id: p.asset.id, mime: p.asset.mime, bytes: base64ABytes(p.asset.base64) };
 			let comoCopia = false;

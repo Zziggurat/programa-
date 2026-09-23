@@ -1028,8 +1028,11 @@ function leerBornes(bruto: unknown): Borne[] {
 			tipo: unoDe(b.tipo, ['L', 'N', 'PE', 'control', 'senal', 'otro'] as const),
 			lado: unoDe(b.lado, ['primario', 'secundario+', 'secundario-'] as const),
 			obligatorio: bool(b.obligatorio),
-			maxConductores: enRango(b.maxConductores, 1, 16),
-			seccionMaxMm2: enRango(b.seccionMaxMm2, 0, 1000),
+			// Límites declarados del borne: no imponer topes de catálogo inventados al recargar.
+			maxConductores: typeof b.maxConductores === 'number' && Number.isSafeInteger(b.maxConductores)
+				&& b.maxConductores > 0 ? b.maxConductores : undefined,
+			seccionMaxMm2: typeof b.seccionMaxMm2 === 'number' && Number.isFinite(b.seccionMaxMm2)
+				&& b.seccionMaxMm2 > 0 ? b.seccionMaxMm2 : undefined,
 			u: enRango(b.u, 0, 1),
 			v: enRango(b.v, 0, 1),
 		});

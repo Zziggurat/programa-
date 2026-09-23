@@ -94,6 +94,26 @@ const clonar = <T>(valor: T): T => structuredClone(valor);
 const texto = (valor: string | undefined): string | undefined => valor?.trim() || undefined;
 const numeroPositivo = (n: number): boolean => Number.isFinite(n) && n > 0;
 
+/** Contrato único para editor, repositorio y paquetes: ausente significa «no declarado». */
+export function validarLimitesTerminales(terminales: readonly {
+	id: string; maxConductores?: unknown; seccionMaxMm2?: unknown;
+}[]): string[] {
+	const errores: string[] = [];
+	for (const terminal of terminales) {
+		if (terminal.maxConductores !== undefined
+			&& (!Number.isSafeInteger(terminal.maxConductores)
+				|| (terminal.maxConductores as number) < 1)) {
+			errores.push(`Terminal «${terminal.id}»: máximo de conductores debe ser un entero positivo seguro.`);
+		}
+		if (terminal.seccionMaxMm2 !== undefined
+			&& (typeof terminal.seccionMaxMm2 !== 'number' || !Number.isFinite(terminal.seccionMaxMm2)
+				|| terminal.seccionMaxMm2 <= 0)) {
+			errores.push(`Terminal «${terminal.id}»: sección máxima debe ser un número positivo finito en mm².`);
+		}
+	}
+	return errores;
+}
+
 /**
  * Errores comprensibles del asistente. No devuelve un booleano porque una configuración puede
  * tener varios problemas y obligar a corregirlos de uno en uno sería innecesariamente hostil.
@@ -139,6 +159,7 @@ export function validarDefinicionComponente(d: DefinicionComponentePersonalizado
 			errores.push(`terminal «${id ?? i + 1}»: naturaleza eléctrica no reconocida`);
 		}
 	}
+	errores.push(...validarLimitesTerminales(d.terminales));
 
 	errores.push(...validarComportamiento({ bornes: d.terminales, comportamiento: d.comportamiento }));
 
