@@ -733,11 +733,13 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 			});
 		}
 		const identidades = new Set<string>();
-		const version = recogido.componentes.some(({ id }) => {
+		const variasRevisiones = recogido.componentes.some(({ id }) => {
 			if (identidades.has(id)) return true;
 			identidades.add(id);
 			return false;
-		}) ? 2 : 1;
+		});
+		const version = recogido.componentes.some((componente) => componente.fichaTecnica !== undefined)
+			? 3 : variasRevisiones ? 2 : 1;
 		return crearPaqueteProyecto(recogido.proyecto, assets, recogido.componentes, version);
 	}
 

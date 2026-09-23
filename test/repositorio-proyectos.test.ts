@@ -9,6 +9,8 @@ import {
 	leerPaqueteProyecto,
 } from '../src/componentes/personalizados.js';
 import type { PaqueteProyectoPortatil } from '../src/componentes/personalizados.js';
+import { referenciaTecnica } from '../src/datos-tecnicos/tipos.js';
+import { productoTecnico } from './helpers/datos-tecnicos.js';
 import type { ContenidoComponentePersonalizado } from '../src/persistencia/index.js';
 import {
 	ALMACENES_PERSISTENCIA,
@@ -449,6 +451,38 @@ test('paquete V2 porta dos revisiones del mismo ID con assets distintos y conser
 	assert.deepEqual(await borrado.abrirRevisionComponente(r1.id, 2), r2);
 	assert.equal(await borradoBackend.contar('customComponentRevisions'), 2);
 	assert.equal((await borrado.exportarPaquete(documentoHistorico.id)).version, 2);
+});
+
+test('paquete V3 con ficha exacta se importa atómicamente y conserva su cierre sin catálogo global', async () => {
+	const { repositorio: origen } = entorno();
+	const asset = await origen.guardarAsset('image/png', new Uint8Array([90, 91, 92]));
+	const producto = productoTecnico();
+	const definicion = await origen.crearComponente({ id: 'cmp-proteccion-ficha', definicion: {
+		...contenidoComponente(asset.id, 'Protección propia con ficha'), tipoDispositivo: 'disyuntor',
+		terminales: [{ id: '1', tipo: 'L', u: .2, v: .2 }, { id: '2', tipo: 'L', u: .2, v: .8 }],
+		comportamiento: { version: 1, clase: 'proteccion', funcion: 'termomagnetico', rearmable: true,
+			polos: [{ entrada: '1', salida: '2' }], contactos: [] },
+		fichaTecnica: { producto: referenciaTecnica(producto), revisiones: [producto] },
+	} });
+	const proyecto = proyectoValido('Ficha portable');
+	proyecto.dispositivos = [instanciarComponentePersonalizado(definicion, 'q-ficha')];
+	proyecto.gabinete!.colocaciones = [{ dispositivoId: 'q-ficha', x: 20, y: 20, ancho: 30, alto: 45 }];
+	const documento = await origen.crear({ proyecto });
+	const paquete = await origen.exportarPaquete(documento.id);
+	assert.equal(paquete.version, 3);
+	assert.deepEqual(paquete.componentes[0].fichaTecnica, definicion.fichaTecnica);
+
+	const { backend, repositorio: destino } = entorno();
+	backend.fallarProximaTransaccion(new Error('fallo V3 simulado'));
+	await assert.rejects(destino.importarPaquete(paquete), /fallo V3 simulado/);
+	for (const almacen of ['projects', 'assets', 'customComponents', 'customComponentRevisions', 'snapshots'] as const) {
+		assert.equal(await backend.contar(almacen), 0, `${almacen} quedó publicado a medias`);
+	}
+	const importado = await destino.importarPaquete(paquete);
+	assert.deepEqual((await destino.abrirRevisionComponente(definicion.id, 1)).fichaTecnica, definicion.fichaTecnica);
+	assert.equal((await destino.exportarPaquete(importado.id)).version, 3);
+	assert.equal(await backend.contar('technicalData'), 0,
+		'la ficha viaja congelada en la definición; no se publica ni se adopta silenciosamente en el catálogo global');
 });
 
 test('borrar de Mis Componentes no destruye la revisión colocada ni reutiliza su identidad', async () => {

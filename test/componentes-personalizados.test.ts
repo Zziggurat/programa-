@@ -10,6 +10,8 @@ import {
 	sugerirRolesIEC,
 	validarDefinicionComponente,
 } from '../src/componentes/personalizados.js';
+import { referenciaTecnica } from '../src/datos-tecnicos/tipos.js';
+import { curvaTecnica, productoTecnico } from './helpers/datos-tecnicos.js';
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { generarFichaTablero } from '../src/motores/ficha-tablero.js';
@@ -56,6 +58,75 @@ const definicionContactor = (): DefinicionComponentePersonalizado => ({
 		],
 	},
 	parametros: { tensionV: 24, corrienteA: 9 },
+});
+
+const definicionProteccionConFicha = (): DefinicionComponentePersonalizado => {
+	const d = definicionContactor();
+	d.tipoDispositivo = 'disyuntor';
+	d.comportamiento = { version: 1, clase: 'proteccion', funcion: 'termomagnetico', rearmable: true,
+		polos: [{ entrada: 'L1', salida: 'T1' }], contactos: [] };
+	const curva = curvaTecnica();
+	const producto = productoTecnico({ curva: referenciaTecnica(curva) });
+	d.fichaTecnica = { producto: referenciaTecnica(producto), revisiones: [producto, curva] };
+	return d;
+};
+
+test('ficha V8 de componente: producto y curva exactos, sin atribuir autenticidad al hash', () => {
+	const d = definicionProteccionConFicha();
+	assert.deepEqual(validarDefinicionComponente(d), []);
+	const colocado = instanciarComponentePersonalizado(d, 'q-propia');
+	assert.equal(colocado.comportamiento?.clase, 'proteccion');
+	assert.equal(colocado.componentePersonalizado.revision, 1);
+	assert.equal(d.fichaTecnica?.revisiones.length, 2);
+	assert.equal(d.fichaTecnica?.revisiones[0].procedencia.origen, 'SINTETICO');
+});
+
+test('ficha V8 rechaza dependencia ausente, hash falso, extra, duplicado y familia distinta', () => {
+	const falta = definicionProteccionConFicha();
+	falta.fichaTecnica!.revisiones.pop();
+	assert.match(validarDefinicionComponente(falta).join(' '), /MISSING|dependencia exacta/);
+	const hash = definicionProteccionConFicha();
+	hash.fichaTecnica!.revisiones[0].nombre = 'Adulterado';
+	assert.match(validarDefinicionComponente(hash).join(' '), /Integridad inválida/);
+	const extra = definicionProteccionConFicha();
+	extra.fichaTecnica!.revisiones = [extra.fichaTecnica!.revisiones[0],
+		productoTecnico({ id: 'otro-producto', curva: undefined })];
+	assert.match(validarDefinicionComponente(extra).join(' '), /ajenas|dependencia exacta/);
+	const duplicada = definicionProteccionConFicha();
+	duplicada.fichaTecnica!.revisiones = [duplicada.fichaTecnica!.revisiones[0],
+		structuredClone(duplicada.fichaTecnica!.revisiones[0])];
+	assert.match(validarDefinicionComponente(duplicada).join(' '), /duplicada/);
+	const familia = definicionProteccionConFicha();
+	const ajeno = productoTecnico({ id: 'motor-ajeno', familia: 'MOTOR', campos: [], curva: undefined });
+	familia.fichaTecnica = { producto: referenciaTecnica(ajeno), revisiones: [ajeno] };
+	assert.match(validarDefinicionComponente(familia).join(' '), /familia funcional/);
+	const metadata = definicionProteccionConFicha();
+	(metadata.fichaTecnica as unknown as Record<string, unknown>).revisionHumana = { estado: 'REVISADO' };
+	assert.match(validarDefinicionComponente(metadata).join(' '), /solo un producto exacto/);
+});
+
+test('un paquete V3 porta la ficha técnica exacta de dos revisiones; V1/V2 siguen sin ficha', () => {
+	const r1 = definicionProteccionConFicha();
+	const r2 = { ...structuredClone(r1), revision: 2 };
+	const p = crearProyecto('Dos revisiones con ficha');
+	p.hojas = [{ id: 'h1', numero: 1, titulo: 'Hoja' }];
+	p.gabinete = { ancho: 400, alto: 500, rieles: [], canaletas: [], colocaciones: [
+		{ dispositivoId: 'q1', x: 10, y: 10, ancho: 45, alto: 85 },
+		{ dispositivoId: 'q2', x: 80, y: 10, ancho: 45, alto: 85 },
+	] };
+	p.dispositivos = [instanciarComponentePersonalizado(r1, 'q1'), instanciarComponentePersonalizado(r2, 'q2')];
+	const asset = [{ id: r1.assetId, mime: 'image/png' as const, base64: 'AQID' }];
+	assert.throws(() => crearPaqueteProyecto(p, asset, [r1, r2], 2), /requiere.*V3/);
+	const v3 = crearPaqueteProyecto(p, asset, [r2, r1], 3);
+	assert.equal(v3.version, 3);
+	assert.deepEqual(leerPaqueteProyecto(JSON.stringify(v3)).componentes, [r2, r1]);
+	const roto = structuredClone(v3); roto.componentes[0].fichaTecnica!.revisiones.pop();
+	assert.throws(() => leerPaqueteProyecto(JSON.stringify(roto)), /MISSING|dependencia exacta/);
+	const viejo = definicionContactor();
+	const anterior = crearProyecto('Formato anterior');
+	anterior.hojas = p.hojas; anterior.gabinete = { ...p.gabinete, colocaciones: [p.gabinete.colocaciones[0]] };
+	anterior.dispositivos = [instanciarComponentePersonalizado(viejo, 'q1')];
+	assert.equal(leerPaqueteProyecto(JSON.stringify(crearPaqueteProyecto(anterior, asset, [viejo]))).version, 1);
 });
 
 test('un contactor personalizado completo valida sin inferir su función desde la imagen', () => {

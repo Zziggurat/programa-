@@ -7,6 +7,10 @@
  */
 import { cargarProyecto } from '../modelo/cargar.js';
 import { validarAdopcionTecnica } from '../datos-tecnicos/operaciones.js';
+import { congelarSubconjunto, indexarRevisiones } from '../datos-tecnicos/hash.js';
+import { familiaDispositivo } from '../datos-tecnicos/resolver.js';
+import { validarReferencia } from '../datos-tecnicos/schema.js';
+import { claveRevision, type ReferenciaTecnica, type RevisionTecnica } from '../datos-tecnicos/tipos.js';
 import {
 	ComportamientoSimulacion, validarComportamiento,
 } from '../modelo/comportamiento.js';
@@ -54,6 +58,8 @@ export interface DefinicionComponentePersonalizado {
 	terminales: TerminalComponentePersonalizado[];
 	comportamiento: ComportamientoSimulacion;
 	parametros?: ParametrosNominalesComponente;
+	/** Ficha exacta y su cierre V8 inmutable. Hash = integridad, nunca autenticidad. */
+	fichaTecnica?: { producto: ReferenciaTecnica; revisiones: RevisionTecnica[] };
 }
 
 export interface ProcedenciaComponentePersonalizado {
@@ -83,8 +89,8 @@ export interface AssetPortatil {
 
 export interface PaqueteProyectoPortatil {
 	formato: 'tablero-studio-paquete';
-	/** V2 permite varias revisiones inmutables de una misma identidad. */
-	version: 1 | 2;
+	/** V2 porta varias revisiones de componente; V3 añade fichas técnicas autocontenidas. */
+	version: 1 | 2 | 3;
 	proyecto: Proyecto;
 	assets: AssetPortatil[];
 	componentes: DefinicionComponentePersonalizado[];
@@ -132,6 +138,39 @@ export function validarSemanticaTerminales(terminales: readonly {
 		}
 	}
 	return errores;
+}
+
+/** Una definición usa la misma familia funcional que V8 evaluará al colocar la instancia. */
+export function validarFichaTecnicaComponente(d: Pick<DefinicionComponentePersonalizado,
+	'tipoDispositivo' | 'terminales' | 'comportamiento' | 'fichaTecnica'>): string[] {
+	if (d.fichaTecnica === undefined) return [];
+	const ficha = d.fichaTecnica;
+	if (!ficha || typeof ficha !== 'object' || Array.isArray(ficha)
+		|| Object.keys(ficha).some((k) => k !== 'producto' && k !== 'revisiones')
+		|| !Array.isArray(ficha.revisiones) || ficha.revisiones.length < 1 || ficha.revisiones.length > 2) {
+		return ['La ficha técnica debe contener solo un producto exacto y su cierre de hasta dos revisiones V8.'];
+	}
+	try {
+		validarReferencia(ficha.producto, 'fichaTecnica.producto');
+		if (ficha.producto.tipo !== 'PRODUCTO') return ['La ficha técnica debe referenciar un PRODUCTO V8.'];
+		const indice = indexarRevisiones(ficha.revisiones);
+		if (indice.size !== ficha.revisiones.length) return ['La ficha técnica contiene una revisión duplicada.'];
+		const cierre = congelarSubconjunto([ficha.producto], ficha.revisiones);
+		if (cierre.length !== ficha.revisiones.length) return ['La ficha técnica incluye revisiones ajenas al producto.'];
+		const producto = indice.get(claveRevision(ficha.producto));
+		if (!producto || producto.tipo !== 'PRODUCTO' || producto.hash !== ficha.producto.hash) {
+			return ['La ficha técnica no contiene el producto exacto.'];
+		}
+		const familia = familiaDispositivo({ id: 'componente', tipo: d.tipoDispositivo,
+			bornes: d.terminales, comportamiento: d.comportamiento });
+		if (!familia || producto.familia !== familia) {
+			return [`La ficha ${producto.familia} no corresponde a la familia funcional ${familia ?? 'NO EVALUABLE'} del componente.`];
+		}
+		// El cierre no convierte una fuente SINTÉTICA/DOCUMENTAL en ficha certificada.
+		return [];
+	} catch (error) {
+		return [`Ficha técnica inválida: ${error instanceof Error ? error.message : String(error)}`];
+	}
 }
 
 /**
@@ -182,6 +221,7 @@ export function validarDefinicionComponente(d: DefinicionComponentePersonalizado
 	}
 	errores.push(...validarLimitesTerminales(d.terminales));
 	errores.push(...validarSemanticaTerminales(d.terminales));
+	errores.push(...validarFichaTecnicaComponente(d));
 
 	errores.push(...validarComportamiento({ bornes: d.terminales, comportamiento: d.comportamiento }));
 
@@ -351,7 +391,7 @@ export function validarCierreComponentesProyecto(
 	proyecto: Proyecto, componentes: readonly DefinicionComponentePersonalizado[],
 	version: PaqueteProyectoPortatil['version'] = 1,
 ): void {
-	if (version === 2) {
+	if (version >= 2) {
 		const requeridas = revisionesRequeridasProyectoV2(proyecto);
 		const disponibles = new Set(componentes.map((componente) =>
 			JSON.stringify([componente.id, componente.revision])));
@@ -399,6 +439,9 @@ export function crearPaqueteProyecto(
 		catch { throw new Error(`Definición ${indice + 1} del paquete incompleta o malformada.`); }
 		if (errores.length) throw new Error(`«${componente.nombre}»: ${errores.join('; ')}`);
 	}
+	if (version < 3 && componentes.some((componente) => componente.fichaTecnica !== undefined)) {
+		throw new Error('La ficha técnica de un componente requiere el paquete de proyecto V3.');
+	}
 	validarCierreComponentesProyecto(validado, componentes, version);
 	const idsComponentes = new Set<string>();
 	for (const componente of componentes) {
@@ -423,7 +466,7 @@ export function crearPaqueteProyecto(
 			throw new Error(`Falta el asset ${dispositivo.assetId} usado por el aparato ${dispositivo.id}`);
 		}
 	}
-	if (version === 2) {
+	if (version >= 2) {
 		const requeridos = new Set<string>();
 		for (const componente of componentes) requeridos.add(componente.assetId);
 		for (const dispositivo of validado.dispositivos) {
@@ -441,7 +484,7 @@ export function leerPaqueteProyecto(textoJson: string): PaqueteProyectoPortatil 
 	const bruto: unknown = JSON.parse(textoJson);
 	if (typeof bruto !== 'object' || bruto === null || Array.isArray(bruto)) throw new Error('El paquete no es un objeto.');
 	const p = bruto as Partial<PaqueteProyectoPortatil>;
-	if (p.formato !== 'tablero-studio-paquete' || (p.version !== 1 && p.version !== 2) || !p.proyecto
+	if (p.formato !== 'tablero-studio-paquete' || (p.version !== 1 && p.version !== 2 && p.version !== 3) || !p.proyecto
 		|| !Array.isArray(p.assets) || !Array.isArray(p.componentes)) {
 		throw new Error('El archivo no es un paquete portable de TableroStudio compatible.');
 	}
