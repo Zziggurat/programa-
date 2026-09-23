@@ -30,6 +30,10 @@ import { abrirVentana, cerrarVentana, ventanaDeArriba } from './ventanas.js';
 
 const ID_RAIZ = 'ui-componentes-personalizados';
 const MIME_IMAGEN = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const MAX_BYTES_IMAGEN_RECORTE = 16 * 1024 * 1024;
+const MAX_PIXELES_FUENTE_RECORTE = 24_000_000;
+const MAX_LADO_PNG_DERIVADO = 2000;
+const RECORTE_INICIAL: AjusteRecorteImagen = { escalaPct: 100, horizontalPct: 50, verticalPct: 50 };
 const NATURALEZAS: readonly (TipoBorne | '')[] = ['', 'L', 'N', 'PE', 'control', 'senal', 'otro'];
 const ROLES: readonly RolTerminalPerfil[] = [
 	'sin-asignar', 'bobina-entrada', 'bobina-retorno', 'polo-entrada', 'polo-salida',
@@ -73,6 +77,67 @@ export interface PanelComponentesPersonalizados {
 	destruir(): void;
 }
 
+/** Porcentajes de la fuente dentro del frente, sin transformar coordenadas de bornes. */
+export interface AjusteRecorteImagen {
+	escalaPct: number;
+	horizontalPct: number;
+	verticalPct: number;
+}
+
+export interface RectanguloRecorteImagen {
+	x: number; y: number; ancho: number; alto: number;
+}
+
+/** Zoom 100 % conserva todos los píxeles y la presentación previa del componente. */
+export function calcularRecorteImagen(
+	anchoFuente: number, altoFuente: number, ajuste: AjusteRecorteImagen,
+): RectanguloRecorteImagen {
+	if (!Number.isSafeInteger(anchoFuente) || !Number.isSafeInteger(altoFuente)
+		|| anchoFuente < 1 || altoFuente < 1 || anchoFuente * altoFuente > MAX_PIXELES_FUENTE_RECORTE) {
+		throw new Error('La imagen supera 24 megapíxeles o tiene dimensiones inválidas.');
+	}
+	if (!Number.isFinite(ajuste.escalaPct) || ajuste.escalaPct < 100 || ajuste.escalaPct > 400
+		|| !Number.isFinite(ajuste.horizontalPct) || ajuste.horizontalPct < 0 || ajuste.horizontalPct > 100
+		|| !Number.isFinite(ajuste.verticalPct) || ajuste.verticalPct < 0 || ajuste.verticalPct > 100) {
+		throw new Error('El recorte de la imagen debe tener escala 100–400 % y encuadres 0–100 %.');
+	}
+	const ancho = anchoFuente * 100 / ajuste.escalaPct;
+	const alto = altoFuente * 100 / ajuste.escalaPct;
+	return {
+		x: (anchoFuente - ancho) * ajuste.horizontalPct / 100,
+		y: (altoFuente - alto) * ajuste.verticalPct / 100,
+		ancho, alto,
+	};
+}
+
+/** PNG ajustado a la proporción física, con resolución y memoria acotadas. */
+export function tamanoPngDerivado(recorte: RectanguloRecorteImagen, anchoMm: number, altoMm: number,
+	maxLado = MAX_LADO_PNG_DERIVADO): {
+	ancho: number; alto: number;
+} {
+	if (!Number.isFinite(anchoMm) || !Number.isFinite(altoMm) || anchoMm <= 0 || altoMm <= 0
+		|| !Number.isFinite(recorte.ancho) || !Number.isFinite(recorte.alto)
+		|| recorte.ancho <= 0 || recorte.alto <= 0 || !Number.isSafeInteger(maxLado) || maxLado < 1) {
+		throw new Error('Declara dimensiones positivas antes de recortar la imagen.');
+	}
+	const relacion = anchoMm / altoMm;
+	if (!Number.isFinite(relacion) || relacion <= 0) {
+		throw new Error('La proporción física no se puede representar en la imagen.');
+	}
+	const anchoMaximo = Math.min(recorte.ancho, recorte.alto * relacion,
+		maxLado, maxLado * relacion);
+	// Una fuente diminuta necesita suficientes píxeles para expresar la proporción declarada.
+	const ladoMinimo = Math.max(64, Math.ceil(Math.max(relacion, 1 / relacion)));
+	const ancho = Math.max(1, Math.round(Math.max(anchoMaximo,
+		ladoMinimo * Math.min(1, relacion))));
+	const alto = Math.max(1, Math.round(ancho / relacion));
+	if (ancho > maxLado || alto > maxLado) throw new Error(`El PNG derivado excede el límite de ${maxLado} píxeles por lado.`);
+	if (Math.abs(ancho / alto - anchoMm / altoMm) > Math.max(0.01, anchoMm / altoMm * 0.01)) {
+		throw new Error('La proporción física es demasiado extrema para generar un PNG preciso.');
+	}
+	return { ancho, alto };
+}
+
 interface EstadoEditor {
 	original?: DefinicionComponentePersonalizado;
 	/** Estado de navegación del asistente; nunca entra a una definición persistida. */
@@ -95,6 +160,10 @@ interface EstadoEditor {
 	assetBytes?: Uint8Array;
 	assetMime?: string;
 	previewUrl?: string;
+	/** Estado de trabajo visual: solo los bytes PNG aplicados entran en la definición. */
+	recorte: AjusteRecorteImagen;
+	recorteAplicado: AjusteRecorteImagen;
+	fuenteRecorte?: { bytes: Uint8Array; mime: string };
 }
 
 type TerminalEditor = TerminalPerfilComponente & Pick<TerminalComponentePersonalizado,
@@ -129,6 +198,8 @@ export function terminalesDesdeEditor(terminales: readonly TerminalEditor[]): Te
 }
 
 const clonar = <T>(valor: T): T => structuredClone(valor);
+const mismoRecorte = (a: AjusteRecorteImagen, b: AjusteRecorteImagen): boolean =>
+	a.escalaPct === b.escalaPct && a.horizontalPct === b.horizontalPct && a.verticalPct === b.verticalPct;
 const normalizarBusqueda = (valor: string): string => valor.normalize('NFD')
 	.replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').trim();
 
@@ -185,6 +256,13 @@ function contenidoDe(d: DefinicionComponentePersonalizado): ContenidoComponenteP
 	return contenido;
 }
 
+/** Una revisión fotográfica no borra una plantilla de carcasa fijada previamente. */
+export function carcasaConservadaEnRevision(
+	original?: Pick<DefinicionComponentePersonalizado, 'carcasa'>,
+): Pick<DefinicionComponentePersonalizado, 'carcasa'> {
+	return original?.carcasa ? { carcasa: clonar(original.carcasa) } : {};
+}
+
 function parametrosDesde(d: DefinicionComponentePersonalizado): ParametrosConstruccionPerfil {
 	const p = d.parametros; const c = d.comportamiento;
 	const salida: ParametrosConstruccionPerfil = {
@@ -236,14 +314,24 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	let urlTemporal: string | undefined;
 	let pintado = 0;
 	let generacionFicha = 0;
+	let generacionVistaRecorte = 0;
+	let generacionAplicacionRecorte = 0;
+	let aplicandoRecorte: EstadoEditor | undefined;
+	let bitmapRecorte: { editor: EstadoEditor; bytes: Uint8Array; promesa: Promise<ImageBitmap> } | undefined;
+	const liberarBitmapRecorte = () => {
+		const anterior = bitmapRecorte; bitmapRecorte = undefined;
+		if (anterior) void anterior.promesa.then((bitmap) => bitmap.close()).catch(() => {});
+	};
 	const huellaEditor = (e: EstadoEditor): string => JSON.stringify({
 		original: e.original && [e.original.id, e.original.revision], tipo: e.tipo,
 		datos: e.datos, terminales: e.terminales, bloquesTerminales: e.bloquesTerminales,
 		parametros: e.parametros, montaje: e.montaje,
 		fichaTecnica: e.fichaTecnica,
 		assetId: e.assetId, assetNuevo: e.assetBytes && [e.assetBytes.byteLength, e.assetMime, e.previewUrl],
+		recorte: e.recorte, recorteAplicado: e.recorteAplicado,
 	});
-	const editorModificado = (): boolean => !!editor && (editor === imagenPendiente || huellaEditor(editor) !== huellaInicial);
+	const editorModificado = (): boolean => !!editor && (editor === imagenPendiente
+		|| editor === aplicandoRecorte || huellaEditor(editor) !== huellaInicial);
 	const confirmarReemplazo = async (): Promise<boolean> => {
 		if (guardando) return false;
 		if (editor) capturarFormulario();
@@ -268,6 +356,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	async function pintarBiblioteca(desdeGuardado = false): Promise<void> {
 		if (guardando) return;
 		++navegacionEditor;
+		++generacionVistaRecorte; ++generacionAplicacionRecorte; liberarBitmapRecorte();
 		if (editor) {
 			capturarFormulario();
 			if (editorModificado()) borrador = editor;
@@ -362,10 +451,11 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 
 	function abrirNuevo(): void {
 		if (urlTemporal) { URL.revokeObjectURL(urlTemporal); urlTemporal = undefined; }
+		++generacionAplicacionRecorte; liberarBitmapRecorte();
 		editor = {
 			paso: 'identidad',
 			tipo: 'contactor', datos: { nombre: '', fabricante: '', referencia: '', descripcion: '', anchoMm: 45, altoMm: 80, fondoMm: 60 },
-			terminales: [], parametros: {},
+			terminales: [], parametros: {}, recorte: { ...RECORTE_INICIAL }, recorteAplicado: { ...RECORTE_INICIAL },
 		}; huellaInicial = huellaEditor(editor); pintarEditor();
 	}
 
@@ -380,6 +470,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		if (!await confirmarReemplazo() || turno !== navegacionEditor) return;
 		await prepararEditorVigente(() => urlAsset(d.assetId), () => turno === navegacionEditor, (previewUrl) => {
 			// Nada que pueda fallar antes de aquí debe descartar el borrador anterior.
+			++generacionAplicacionRecorte; liberarBitmapRecorte();
 			const siguiente: EstadoEditor = {
 				paso: 'identidad',
 				original: clonar(d), tipo: d.tipoDispositivo, datos: {
@@ -391,6 +482,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 				fichaTecnica: d.fichaTecnica && clonar(d.fichaTecnica),
 				anclajesPlacaBorrador: d.montaje?.metodo === 'atornillado-placa' ? clonar(d.montaje.anclajes ?? []) : undefined,
 				assetId: d.assetId, previewUrl,
+				recorte: { ...RECORTE_INICIAL }, recorteAplicado: { ...RECORTE_INICIAL },
 			};
 			if (urlTemporal) { URL.revokeObjectURL(urlTemporal); urlTemporal = undefined; }
 			borrador = undefined;
@@ -428,8 +520,13 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			+ '<label class="cp-montaje-metodo">Método de montaje declarado<select data-cp-campo="montaje-metodo"><option value="">No declarado</option><option value="riel-din">Riel DIN</option><option value="atornillado-placa">Placa atornillada</option></select></label>'
 			+ '<div class="cp-sugerencias" data-cp="montaje-extension"></div></section>'
 			+ '<section class="cp-panel cp-paso" data-cp-paso="apariencia" hidden><h3 tabindex="-1">5. Apariencia y datos técnicos</h3>'
-			+ '<p>La imagen representa el componente; nunca define por sí sola su comportamiento. Si la reemplazas, revisa las posiciones de los bornes antes de guardar.</p>'
+			+ '<p>La imagen representa el componente; nunca define por sí sola su comportamiento. El recorte y la escala solo cambian sus píxeles dentro del frente, no las medidas ni los bornes.</p>'
 			+ '<label class="cp-carga-imagen">Reemplazar imagen<input type="file" accept="image/png,image/jpeg,image/webp" data-cp="imagen-apariencia"></label>'
+			+ '<div class="cp-campos"><label>Escala de imagen dentro del frente <input type="range" min="100" max="400" step="5" data-cp="escala-imagen"><output data-cp="escala-valor"></output></label>'
+			+ '<label>Encuadre horizontal <input type="range" min="0" max="100" step="1" data-cp="encuadre-horizontal"><output data-cp="horizontal-valor"></output></label>'
+			+ '<label>Encuadre vertical <input type="range" min="0" max="100" step="1" data-cp="encuadre-vertical"><output data-cp="vertical-valor"></output></label></div>'
+			+ '<button type="button" data-cp="aplicar-recorte">Aplicar recorte y escala</button><div data-cp="estado-recorte" role="status" aria-live="polite"></div>'
+			+ '<p>Vista previa con anclas u/v fijas. Revisa su alineación después de cambiar el encuadre. Aplicar crea un PNG derivado: las próximas ediciones partirán de ese resultado, no del original. Guardar crea una revisión nueva; los aparatos colocados conservan la anterior.</p>'
 			+ '<div class="cp-preview-apariencia" data-cp="preview-apariencia"></div>'
 			+ '<section class="cp-ficha" data-cp="ficha-tecnica"><h4>Ficha técnica V8 exacta</h4><p>Selecciona una revisión PRODUCTO de la familia funcional y fija también su curva dependiente. El hash prueba integridad, no autenticidad, licencia ni certificación. La selección no modifica los parámetros eléctricos por sí sola.</p><div data-cp="ficha-estado" role="status" aria-live="polite"></div><div data-cp="ficha-contenido"></div></section></section>'
 			+ '<section class="cp-panel cp-paso" data-cp-paso="revision" hidden><h3 tabindex="-1">6. Revisión antes de guardar</h3>'
@@ -474,7 +571,20 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		el<HTMLInputElement>(cuerpo, '[data-cp-campo="fondo"]').value = String(editor.datos.fondoMm);
 		el<HTMLInputElement>(cuerpo, '[data-cp="imagen"]').onchange = (evento) => { void cargarImagen((evento.currentTarget as HTMLInputElement).files?.[0]); };
 		el<HTMLInputElement>(cuerpo, '[data-cp="imagen-apariencia"]').onchange = (evento) => { void cargarImagen((evento.currentTarget as HTMLInputElement).files?.[0]); };
-		pintarFidelidad(); pintarPreview(); pintarTerminales(); pintarBloques(); pintarParametros(); pintarMontaje(); pintarApariencia();
+		for (const [selector, clave] of [
+			['escala-imagen', 'escalaPct'], ['encuadre-horizontal', 'horizontalPct'],
+			['encuadre-vertical', 'verticalPct'],
+		] as const) {
+			el<HTMLInputElement>(cuerpo, `[data-cp="${selector}"]`).oninput = (evento) => {
+				if (!editor) return;
+				editor.recorte[clave] = Number((evento.currentTarget as HTMLInputElement).value);
+				++generacionAplicacionRecorte;
+				pintarControlesRecorte(); void pintarApariencia();
+			};
+		}
+		el<HTMLButtonElement>(cuerpo, '[data-cp="aplicar-recorte"]').onclick = () => { void aplicarRecorteImagen(); };
+		pintarFidelidad(); pintarPreview(); pintarTerminales(); pintarBloques(); pintarParametros(); pintarMontaje();
+		pintarControlesRecorte(); void pintarApariencia();
 		el<HTMLButtonElement>(cuerpo, '[data-cp="validar"]').onclick = () => { validarDesdeFormulario(false); };
 		el<HTMLButtonElement>(cuerpo, '[data-cp="guardar"]').onclick = () => { void guardarDesdeFormulario(); };
 		mostrarPasoEditor(editor.paso ?? 'identidad', false);
@@ -496,7 +606,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		el<HTMLElement>(cuerpo, '[data-cp="acciones-revision"]').hidden = paso !== 'revision';
 		el<HTMLElement>(cuerpo, '[data-cp="progreso"]').textContent = `Paso ${indice + 1} de ${PASOS_ASISTENTE_COMPONENTE.length}`;
 		cuerpo.scrollTop = 0;
-		if (paso === 'apariencia') void actualizarFichaTecnica();
+		if (paso === 'apariencia') { void actualizarFichaTecnica(); void pintarApariencia(); }
 		if (paso === 'revision') {
 			pintarResumenEditor();
 			const errores = el<HTMLElement>(cuerpo, '[data-cp="errores"]');
@@ -534,7 +644,9 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 				? ' · tramo sin cotas: posición medida NO EVALUABLE' : ''}${bloques.motivos.length ? ` · ${bloques.motivos.join(' ')}` : ''}`
 			: 'Sin declarar; agrupación física NO EVALUABLE');
 		fila('Envolvente', `${editor.datos.anchoMm} × ${editor.datos.altoMm} × ${editor.datos.fondoMm} mm`);
-		fila('Imagen', editor.assetBytes ? 'Nueva imagen pendiente de guardar' : editor.assetId ? 'Asset ya guardado' : 'Falta imagen');
+		fila('Imagen', !mismoRecorte(editor.recorte, editor.recorteAplicado)
+			? 'Recorte pendiente de aplicar antes de guardar'
+			: editor.assetBytes ? 'Nueva imagen pendiente de guardar' : editor.assetId ? 'Asset ya guardado' : 'Falta imagen');
 		fila('Montaje', editor.montaje?.metodo === 'riel-din' ? 'Riel DIN declarado; ajuste físico pendiente de evaluar'
 			: editor.montaje?.metodo === 'atornillado-placa'
 				? editor.montaje.anclajes?.length
@@ -549,12 +661,140 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		fila('Publicación', editor.original ? `Nueva revisión después de r${editor.original.revision}` : 'Definición nueva r1');
 	}
 
-	function pintarApariencia(): void {
+	function pintarControlesRecorte(): void {
 		if (!editor) return;
+		const pendiente = !mismoRecorte(editor.recorte, editor.recorteAplicado);
+		for (const [control, valor, salida] of [
+			['escala-imagen', editor.recorte.escalaPct, 'escala-valor'],
+			['encuadre-horizontal', editor.recorte.horizontalPct, 'horizontal-valor'],
+			['encuadre-vertical', editor.recorte.verticalPct, 'vertical-valor'],
+		] as const) {
+			const entrada = el<HTMLInputElement>(cuerpo, `[data-cp="${control}"]`);
+			entrada.value = String(valor); entrada.disabled = !editor.previewUrl || guardando;
+			el<HTMLOutputElement>(cuerpo, `[data-cp="${salida}"]`).textContent = `${valor} %`;
+		}
+		el<HTMLButtonElement>(cuerpo, '[data-cp="aplicar-recorte"]').disabled =
+			!editor.previewUrl || !pendiente || guardando || aplicandoRecorte === editor;
+		el<HTMLElement>(cuerpo, '[data-cp="estado-recorte"]').textContent = !editor.previewUrl
+			? 'Carga una imagen para ajustar su encuadre.'
+			: aplicandoRecorte === editor ? 'Generando PNG derivado…'
+				: pendiente ? 'El encuadre está pendiente. Aplícalo antes de guardar.'
+					: 'La vista previa coincide con la imagen que se guardará.';
+	}
+
+	async function fuenteParaRecorte(destino: EstadoEditor): Promise<{ bytes: Uint8Array; mime: string }> {
+		if (destino.fuenteRecorte) return destino.fuenteRecorte;
+		if (destino.assetBytes && destino.assetMime) {
+			destino.fuenteRecorte = { bytes: destino.assetBytes, mime: destino.assetMime };
+			return destino.fuenteRecorte;
+		}
+		const assetId = destino.assetId;
+		if (!assetId) throw new Error('Carga una imagen antes de editar su encuadre.');
+		const asset = await ctx.repositorio.abrirAsset(assetId);
+		if (destino.fuenteRecorte) return destino.fuenteRecorte;
+		if (destino.assetId !== assetId || destino.assetBytes) throw new Error('La imagen cambió durante la lectura.');
+		if (!asset) throw new Error(`Falta el asset ${assetId}.`);
+		destino.fuenteRecorte = { bytes: Uint8Array.from(asset.bytes), mime: asset.mime };
+		return destino.fuenteRecorte;
+	}
+
+	async function bitmapParaRecorte(destino: EstadoEditor, fuente: { bytes: Uint8Array; mime: string }): Promise<ImageBitmap> {
+		if (fuente.bytes.byteLength > MAX_BYTES_IMAGEN_RECORTE) {
+			throw new Error('La imagen supera 16 MiB; utiliza una versión más pequeña para recortarla.');
+		}
+		if (bitmapRecorte?.editor === destino && bitmapRecorte.bytes === fuente.bytes) return bitmapRecorte.promesa;
+		liberarBitmapRecorte();
+		const promesa = createImageBitmap(new Blob([Uint8Array.from(fuente.bytes).buffer], { type: fuente.mime }))
+			.then((bitmap) => {
+				try { calcularRecorteImagen(bitmap.width, bitmap.height, RECORTE_INICIAL); }
+				catch (error) { bitmap.close(); throw error; }
+				return bitmap;
+			});
+		bitmapRecorte = { editor: destino, bytes: fuente.bytes, promesa };
+		return promesa;
+	}
+
+	async function pintarApariencia(): Promise<void> {
+		const destino = editor; if (!destino) return;
+		const turno = ++generacionVistaRecorte;
 		const caja = el<HTMLElement>(cuerpo, '[data-cp="preview-apariencia"]'); caja.replaceChildren();
-		if (!editor.previewUrl) { caja.textContent = 'Todavía no hay imagen. Cárgala aquí o en el paso Bornes.'; return; }
-		const img = document.createElement('img'); img.src = editor.previewUrl; img.alt = 'Imagen actual del componente';
-		caja.appendChild(img);
+		if (!destino.previewUrl) { caja.textContent = 'Todavía no hay imagen. Cárgala aquí o en el paso Bornes.'; return; }
+		caja.textContent = 'Preparando vista previa del encuadre…';
+		try {
+			capturarFormulario();
+			const fuente = await fuenteParaRecorte(destino);
+			if (editor !== destino || turno !== generacionVistaRecorte || !caja.isConnected) return;
+			const bitmap = await bitmapParaRecorte(destino, fuente);
+			if (editor !== destino || turno !== generacionVistaRecorte || !caja.isConnected) return;
+			const recorte = calcularRecorteImagen(bitmap.width, bitmap.height, destino.recorte);
+			const tamano = tamanoPngDerivado(recorte, destino.datos.anchoMm, destino.datos.altoMm, 600);
+			const marco = document.createElement('div'); marco.style.position = 'relative';
+			marco.style.display = 'block'; marco.style.margin = '0 auto';
+			marco.style.width = `min(100%, ${Math.round(Math.min(420 / tamano.ancho, 360 / tamano.alto) * tamano.ancho)}px)`;
+			marco.style.aspectRatio = `${tamano.ancho} / ${tamano.alto}`;
+			const canvas = document.createElement('canvas'); canvas.width = tamano.ancho; canvas.height = tamano.alto;
+			canvas.style.display = 'block'; canvas.style.width = '100%'; canvas.style.height = '100%';
+			canvas.setAttribute('role', 'img'); canvas.setAttribute('aria-label', 'Vista previa de la imagen recortada');
+			const contexto = canvas.getContext('2d'); if (!contexto) throw new Error('No se pudo preparar el lienzo de imagen.');
+			contexto.drawImage(bitmap, recorte.x, recorte.y, recorte.ancho, recorte.alto,
+				0, 0, tamano.ancho, tamano.alto);
+			marco.appendChild(canvas);
+			for (const terminal of destino.terminales) {
+				const marca = document.createElement('i'); marca.className = 'cp-marca';
+				marca.style.left = `${terminal.u * 100}%`; marca.style.top = `${terminal.v * 100}%`;
+				marca.style.pointerEvents = 'none';
+				marca.title = `${terminal.id}${terminal.rotulo ? ` · ${terminal.rotulo}` : ''} (ancla u/v sin mover)`;
+				const rotulo = document.createElement('span'); rotulo.textContent = terminal.rotulo || terminal.id;
+				marca.appendChild(rotulo); marco.appendChild(marca);
+			}
+			caja.replaceChildren(marco);
+		} catch (error) {
+			if (editor === destino && turno === generacionVistaRecorte && caja.isConnected) {
+				caja.textContent = `No se pudo previsualizar el recorte: ${(error as Error).message}`;
+			}
+		}
+	}
+
+	async function aplicarRecorteImagen(): Promise<void> {
+		const destino = editor;
+		if (!destino || !destino.previewUrl || guardando || aplicandoRecorte
+			|| mismoRecorte(destino.recorte, destino.recorteAplicado)) return;
+		capturarFormulario();
+		const ajuste = { ...destino.recorte };
+		const turno = ++generacionAplicacionRecorte;
+		aplicandoRecorte = destino; pintarControlesRecorte();
+		try {
+			const fuente = await fuenteParaRecorte(destino);
+			if (editor !== destino || turno !== generacionAplicacionRecorte) return;
+			const bitmap = await bitmapParaRecorte(destino, fuente);
+			if (editor !== destino || turno !== generacionAplicacionRecorte) return;
+			const recorte = calcularRecorteImagen(bitmap.width, bitmap.height, ajuste);
+			const tamano = tamanoPngDerivado(recorte, destino.datos.anchoMm, destino.datos.altoMm);
+			const canvas = document.createElement('canvas'); canvas.width = tamano.ancho; canvas.height = tamano.alto;
+			const contexto = canvas.getContext('2d'); if (!contexto) throw new Error('No se pudo preparar el lienzo de imagen.');
+			contexto.drawImage(bitmap, recorte.x, recorte.y, recorte.ancho, recorte.alto,
+				0, 0, tamano.ancho, tamano.alto);
+			const png = await new Promise<Blob>((resolver, rechazar) => canvas.toBlob((blob) => blob
+				? resolver(blob) : rechazar(new Error('No se pudo generar el PNG derivado.')), 'image/png'));
+			if (png.size > MAX_BYTES_IMAGEN_RECORTE) throw new Error('El PNG derivado supera 16 MiB.');
+			const bytes = new Uint8Array(await png.arrayBuffer());
+			if (editor !== destino || turno !== generacionAplicacionRecorte
+				|| !mismoRecorte(destino.recorte, ajuste)) return;
+			const nuevaUrl = URL.createObjectURL(png);
+			const anterior = urlTemporal; urlTemporal = nuevaUrl;
+			destino.assetBytes = bytes; destino.assetMime = 'image/png'; destino.previewUrl = nuevaUrl;
+			destino.recorteAplicado = ajuste;
+			if (anterior) URL.revokeObjectURL(anterior);
+			pintarPreview(); void pintarApariencia();
+			mensaje('PNG derivado listo. Revisa las anclas u/v antes de guardar la nueva revisión.');
+		} catch (error) {
+			if (editor === destino && turno === generacionAplicacionRecorte) {
+				mensaje(`No se pudo aplicar el recorte: ${(error as Error).message}`, true);
+			}
+		} finally {
+			if (aplicandoRecorte === destino) aplicandoRecorte = undefined;
+			if (editor === destino) pintarControlesRecorte();
+		}
 	}
 
 	function familiaFuncionalEditor(): FamiliaTecnica | undefined {
@@ -1002,6 +1242,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			assetId, terminales: terminalesDesdeEditor(editor.terminales),
 			...(editor.bloquesTerminales?.length ? { bloquesTerminales: clonar(editor.bloquesTerminales) } : {}),
 			...(editor.montaje ? { montaje: clonar(editor.montaje) } : {}),
+			...carcasaConservadaEnRevision(original),
 			...(editor.fichaTecnica ? { fichaTecnica: clonar(editor.fichaTecnica) } : {}),
 			comportamiento: perfil.comportamiento ?? { version: 1, clase: 'sin-comportamiento', motivo: 'perfil incompleto' }, parametros: p,
 		};
@@ -1011,6 +1252,12 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	function validarDesdeFormulario(guardar: boolean): DefinicionComponentePersonalizado | undefined {
 		if (!editor) return undefined; const assetId = editor.assetId ?? (editor.assetBytes ? 'asset-pendiente' : '');
 		const { definicion, errores } = datosFormulario(assetId);
+		if (!mismoRecorte(editor.recorte, editor.recorteAplicado)) {
+			errores.push('aplica el recorte y la escala de imagen antes de guardar');
+		}
+		if (aplicandoRecorte === editor || imagenPendiente === editor) {
+			errores.push('espera a que termine el procesamiento de la imagen');
+		}
 		const caja = el<HTMLElement>(cuerpo, '[data-cp="errores"]');
 		if (errores.length) { caja.classList.remove('cp-ok'); caja.textContent = errores.map((x) => `• ${x}`).join('\n'); return undefined; }
 		caja.classList.add('cp-ok'); caja.textContent = guardar ? 'Validación correcta. Guardando…' : 'Configuración válida. No se ha guardado todavía.';
@@ -1022,6 +1269,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		if (!MIME_IMAGEN.has(archivo.type)) { mensaje('Solo se admiten PNG, JPEG y WebP.', true); return; }
 		if (archivo.size === 0) { mensaje('La imagen está vacía.', true); return; }
 		const destino = editor; const turno = ++cargaImagen;
+		++generacionAplicacionRecorte;
 		imagenPendiente = destino;
 		try {
 			const bytes = new Uint8Array(await archivo.arrayBuffer());
@@ -1031,8 +1279,10 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			const preview = URL.createObjectURL(archivo);
 			if (urlTemporal) URL.revokeObjectURL(urlTemporal);
 			urlTemporal = preview; destino.assetBytes = bytes; destino.assetMime = archivo.type;
-			destino.previewUrl = preview;
-			if (editor === destino) { pintarPreview(); pintarApariencia(); }
+			destino.previewUrl = preview; destino.fuenteRecorte = { bytes, mime: archivo.type };
+			destino.recorte = { ...RECORTE_INICIAL }; destino.recorteAplicado = { ...RECORTE_INICIAL };
+			liberarBitmapRecorte();
+			if (editor === destino) { pintarPreview(); pintarControlesRecorte(); void pintarApariencia(); }
 		} catch (error) {
 			if (turno === cargaImagen && (editor === destino || borrador === destino)) {
 				mensaje(`No se pudo leer la imagen: ${(error as Error).message}`, true);
@@ -1119,16 +1369,20 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		// Escape, botón y cierre programático comparten la misma captura: no se pierde el borrador.
 		alCerrar: () => { if (editor) capturarFormulario(); },
 	});
-	function cerrar(): void { cerrarVentana(ID_RAIZ); }
+	function cerrar(): void {
+		++generacionVistaRecorte; ++generacionAplicacionRecorte;
+		liberarBitmapRecorte(); cerrarVentana(ID_RAIZ);
+	}
 	raiz.querySelector<HTMLButtonElement>('[data-cp="cerrar"]')!.onclick = cerrar;
 	raiz.addEventListener('click', (e) => { if (e.target === raiz) cerrar(); });
 
 	return {
-		abrir: async () => { abrirPanel(); if (!editor) await pintarBiblioteca(); },
+		abrir: async () => { abrirPanel(); if (!editor) await pintarBiblioteca(); else void pintarApariencia(); },
 		nuevo: () => { abrirPanel(); void iniciarNuevo(); },
 		refrescar: pintarBiblioteca, cerrar,
 		destruir: () => {
 			cerrar(); document.removeEventListener('keydown', bloquearAtajosDelFondo);
+			++generacionAplicacionRecorte; liberarBitmapRecorte();
 			if (urlTemporal) URL.revokeObjectURL(urlTemporal); for (const url of urls.values()) URL.revokeObjectURL(url);
 			urls.clear(); raiz.remove();
 		},

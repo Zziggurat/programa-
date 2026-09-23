@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 import {
-	PASOS_ASISTENTE_COMPONENTE, pasoAdyacenteComponente,
+	PASOS_ASISTENTE_COMPONENTE, calcularRecorteImagen, pasoAdyacenteComponente,
+	tamanoPngDerivado, carcasaConservadaEnRevision,
 } from '../app/ui-componentes-personalizados.js';
 import { leerComponentePortatil } from '../src/componentes/portatil.js';
 
@@ -19,6 +20,41 @@ test('el asistente recorre una sola edición de identidad a revisión sin salir 
 		assert.equal(pasoAdyacenteComponente(PASOS_ASISTENTE_COMPONENTE[i + 1].id, -1),
 			PASOS_ASISTENTE_COMPONENTE[i].id);
 	}
+});
+
+test('recortar y escalar la foto conserva el marco y limita la resolución', () => {
+	assert.deepEqual(calcularRecorteImagen(400, 200,
+		{ escalaPct: 100, horizontalPct: 50, verticalPct: 50 }),
+		{ x: 0, y: 0, ancho: 400, alto: 200 });
+	assert.deepEqual(calcularRecorteImagen(400, 200,
+		{ escalaPct: 200, horizontalPct: 50, verticalPct: 50 }),
+		{ x: 100, y: 50, ancho: 200, alto: 100 });
+	assert.deepEqual(calcularRecorteImagen(400, 200,
+		{ escalaPct: 200, horizontalPct: 0, verticalPct: 100 }),
+		{ x: 0, y: 100, ancho: 200, alto: 100 });
+	const salida = tamanoPngDerivado({ x: 0, y: 0, ancho: 4000, alto: 2000 }, 45, 80);
+	assert.deepEqual(salida, { ancho: 1125, alto: 2000 });
+	assert.deepEqual(tamanoPngDerivado({ x: 0, y: 0, ancho: 1, alto: 1 }, 45, 80),
+		{ ancho: 36, alto: 64 });
+});
+
+test('el recorte rechaza porcentajes, fuentes y proporciones que exceden los límites', () => {
+	assert.throws(() => calcularRecorteImagen(5000, 5000,
+		{ escalaPct: 100, horizontalPct: 50, verticalPct: 50 }), /24 megapíxeles/);
+	assert.throws(() => calcularRecorteImagen(100, 100,
+		{ escalaPct: Infinity, horizontalPct: 50, verticalPct: 50 }), /escala/);
+	assert.throws(() => calcularRecorteImagen(100, 100,
+		{ escalaPct: 200, horizontalPct: -1, verticalPct: 50 }), /encuadres/);
+	assert.throws(() => tamanoPngDerivado({ x: 0, y: 0, ancho: 100, alto: 100 }, 1, 10_000),
+		/2000 píxeles|proporción física/);
+});
+
+test('una revisión fotográfica conserva intacta la carcasa fijada', () => {
+	const original = { carcasa: { plantilla: 'modulo-din', acabado: 'grafito' } } as const;
+	const nueva = carcasaConservadaEnRevision(original);
+	assert.deepEqual(nueva, original);
+	assert.notStrictEqual(nueva.carcasa, original.carcasa);
+	assert.deepEqual(carcasaConservadaEnRevision(undefined), {});
 });
 
 const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7xQAAAAASUVORK5CYII=';
