@@ -88,6 +88,7 @@ export interface PaqueteProyectoPortatil {
 }
 
 const TIPOS_BORNE = new Set<TipoBorne>(['L', 'N', 'PE', 'control', 'senal', 'otro']);
+const LADOS_FUENTE = new Set(['primario', 'secundario+', 'secundario-']);
 const MIME_PORTATIL = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 const clonar = <T>(valor: T): T => structuredClone(valor);
@@ -109,6 +110,22 @@ export function validarLimitesTerminales(terminales: readonly {
 			&& (typeof terminal.seccionMaxMm2 !== 'number' || !Number.isFinite(terminal.seccionMaxMm2)
 				|| terminal.seccionMaxMm2 <= 0)) {
 			errores.push(`Terminal «${terminal.id}»: sección máxima debe ser un número positivo finito en mm².`);
+		}
+	}
+	return errores;
+}
+
+/** Metadatos eléctricos declarados: nunca se deducen del rótulo ni se descartan al importar. */
+export function validarSemanticaTerminales(terminales: readonly {
+	id: string; lado?: unknown; obligatorio?: unknown;
+}[]): string[] {
+	const errores: string[] = [];
+	for (const terminal of terminales) {
+		if (terminal.lado !== undefined && !LADOS_FUENTE.has(terminal.lado as string)) {
+			errores.push(`Terminal «${terminal.id}»: lado de fuente no reconocido.`);
+		}
+		if (terminal.obligatorio !== undefined && typeof terminal.obligatorio !== 'boolean') {
+			errores.push(`Terminal «${terminal.id}»: obligatorio debe ser sí o no.`);
 		}
 	}
 	return errores;
@@ -160,6 +177,7 @@ export function validarDefinicionComponente(d: DefinicionComponentePersonalizado
 		}
 	}
 	errores.push(...validarLimitesTerminales(d.terminales));
+	errores.push(...validarSemanticaTerminales(d.terminales));
 
 	errores.push(...validarComportamiento({ bornes: d.terminales, comportamiento: d.comportamiento }));
 

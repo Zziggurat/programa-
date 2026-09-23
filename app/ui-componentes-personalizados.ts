@@ -7,7 +7,7 @@
  */
 import {
 	FORMATO_COMPONENTE_PERSONALIZADO, VERSION_COMPONENTE_PERSONALIZADO,
-	sugerirRolesIEC, validarDefinicionComponente, validarLimitesTerminales,
+	sugerirRolesIEC, validarDefinicionComponente, validarLimitesTerminales, validarSemanticaTerminales,
 	type DefinicionComponentePersonalizado, type ParametrosNominalesComponente,
 	type TerminalComponentePersonalizado,
 } from '../src/componentes/personalizados.js';
@@ -73,27 +73,31 @@ interface EstadoEditor {
 }
 
 type TerminalEditor = TerminalPerfilComponente & Pick<TerminalComponentePersonalizado,
-	'maxConductores' | 'seccionMaxMm2'>;
+	'maxConductores' | 'seccionMaxMm2' | 'lado' | 'obligatorio'>;
 
 /** Misma validación en UI y en persistencia/paquetes, sin aceptar datos distintos por ruta. */
 export const erroresLimitesTerminales = validarLimitesTerminales;
 
-/** Reconstruir roles al editar no puede borrar los límites eléctricos ya declarados. */
+/** Reconstruir roles al editar no puede borrar metadatos eléctricos ya declarados. */
 export function terminalesParaEditor(d: Pick<DefinicionComponentePersonalizado,
 	'terminales' | 'comportamiento'>): TerminalEditor[] {
 	return rolesDesdeComportamiento(d.terminales, d.comportamiento).map((terminal, i) => ({
 		...terminal,
 		maxConductores: d.terminales[i].maxConductores,
 		seccionMaxMm2: d.terminales[i].seccionMaxMm2,
+		lado: d.terminales[i].lado,
+		obligatorio: d.terminales[i].obligatorio,
 	}));
 }
 
 /** Lista blanca compartida por guardar una definición nueva y guardar una revisión. */
 export function terminalesDesdeEditor(terminales: readonly TerminalEditor[]): TerminalComponentePersonalizado[] {
-	return terminales.map(({ id, tipo, u, v, maxConductores, seccionMaxMm2 }) => ({
+	return terminales.map(({ id, tipo, u, v, maxConductores, seccionMaxMm2, lado, obligatorio }) => ({
 		id: id.trim(), tipo, u, v,
 		...(maxConductores !== undefined ? { maxConductores } : {}),
 		...(seccionMaxMm2 !== undefined ? { seccionMaxMm2 } : {}),
+		...(lado !== undefined ? { lado } : {}),
+		...(obligatorio !== undefined ? { obligatorio } : {}),
 	}));
 }
 
@@ -180,11 +184,16 @@ export function leerArchivoComponentePortatil(bruto: unknown): ArchivoComponente
 		const erroresLimites = erroresLimitesTerminales([{ id: terminal.id,
 			maxConductores: terminal.maxConductores, seccionMaxMm2: terminal.seccionMaxMm2 }]);
 		if (erroresLimites.length) throw new Error(erroresLimites.join(' '));
+		const erroresSemantica = validarSemanticaTerminales([{ id: terminal.id,
+			lado: terminal.lado, obligatorio: terminal.obligatorio }]);
+		if (erroresSemantica.length) throw new Error(erroresSemantica.join(' '));
 		const tipoBorne = typeof terminal.tipo === 'string' ? terminal.tipo as TipoBorne : undefined;
 		return {
 			id: terminal.id, ...(tipoBorne ? { tipo: tipoBorne } : {}), u: terminal.u, v: terminal.v,
 			...(terminal.maxConductores !== undefined ? { maxConductores: terminal.maxConductores as number } : {}),
 			...(terminal.seccionMaxMm2 !== undefined ? { seccionMaxMm2: terminal.seccionMaxMm2 as number } : {}),
+			...(terminal.lado !== undefined ? { lado: terminal.lado as TerminalComponentePersonalizado['lado'] } : {}),
+			...(terminal.obligatorio !== undefined ? { obligatorio: terminal.obligatorio as boolean } : {}),
 		};
 	});
 	let parametros: ParametrosNominalesComponente | undefined;
@@ -454,7 +463,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			+ '<label>Descripción<textarea data-cp-campo="descripcion"></textarea></label><div class="cp-fidelidad" data-cp="fidelidad"></div>'
 			+ '<div class="cp-preview" data-cp="preview"><span style="position:absolute;inset:45% 10%;text-align:center;color:#516577">Carga una imagen y haz clic para marcar bornes</span></div></section></div>'
 			+ '<div><section class="cp-panel"><h3>Terminales confirmados</h3><p>Haz clic en la imagen para agregar un terminal. Las sugerencias IEC no se aplican solas.</p>'
-			+ '<div class="cp-scroll"><table><thead><tr><th>ID</th><th>Naturaleza</th><th>Rol</th><th>Grupo</th><th>Máx. hilos</th><th>Sección máx. mm²</th><th></th></tr></thead><tbody data-cp="terminales"></tbody></table></div>'
+			+ '<div class="cp-scroll"><table><thead><tr><th>ID</th><th>Naturaleza</th><th>Rol</th><th>Grupo</th><th>Lado fuente</th><th>Conexión requerida</th><th>Máx. hilos</th><th>Sección máx. mm²</th><th></th></tr></thead><tbody data-cp="terminales"></tbody></table></div>'
 			+ '<div class="cp-sugerencias" data-cp="sugerencias"></div></section><section class="cp-panel" style="margin-top:12px"><h3>Parámetros del perfil</h3><div class="cp-campos" data-cp="parametros"></div>'
 			+ '<div class="cp-errores" data-cp="errores">Valida antes de guardar.</div><div class="cp-pie"><button data-cp="validar">Validar</button><button class="primario" data-cp="guardar">Guardar revisión</button></div></section></div></div>';
 		el<HTMLButtonElement>(cuerpo, '[data-cp="volver"]').onclick = () => { void pintarBiblioteca(); };
@@ -509,6 +518,19 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			for (const r of ROLES) rol.appendChild(opcion(r, `${permitidos.has(r) ? '' : '⚠ '}${r}`)); rol.value = terminal.rol;
 			rol.onchange = () => { terminal.rol = rol.value as RolTerminalPerfil; }; celda().appendChild(rol);
 			const grupo = document.createElement('input'); grupo.value = terminal.grupo ?? ''; grupo.placeholder = 'ej. polo-1'; grupo.oninput = () => { terminal.grupo = grupo.value || undefined; }; celda().appendChild(grupo);
+			const lado = document.createElement('select');
+			lado.setAttribute('aria-label', `Lado de fuente del terminal ${terminal.id}`);
+			for (const [valor, etiqueta] of [['', 'No declarado'], ['primario', 'Primario'],
+				['secundario+', 'Secundario +'], ['secundario-', 'Secundario −']]) lado.appendChild(opcion(valor, etiqueta));
+			lado.value = terminal.lado ?? '';
+			lado.onchange = () => { terminal.lado = (lado.value || undefined) as TerminalEditor['lado']; };
+			celda().appendChild(lado);
+			const requerido = document.createElement('select');
+			requerido.setAttribute('aria-label', `Conexión requerida del terminal ${terminal.id}`);
+			for (const [valor, etiqueta] of [['', 'No declarado'], ['si', 'Sí'], ['no', 'No']]) requerido.appendChild(opcion(valor, etiqueta));
+			requerido.value = terminal.obligatorio === undefined ? '' : terminal.obligatorio ? 'si' : 'no';
+			requerido.onchange = () => { terminal.obligatorio = requerido.value === '' ? undefined : requerido.value === 'si'; };
+			celda().appendChild(requerido);
 			const maxHilos = document.createElement('input'); maxHilos.type = 'number'; maxHilos.min = '1'; maxHilos.step = '1';
 			maxHilos.placeholder = 'No declarado'; maxHilos.title = 'Máximo de conductores admitidos; vacío si se desconoce';
 			maxHilos.setAttribute('aria-label', `Máximo de conductores del terminal ${terminal.id}`);

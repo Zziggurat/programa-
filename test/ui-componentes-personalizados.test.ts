@@ -6,6 +6,11 @@ import {
 	leerArchivoComponentePortatilDesdeArchivo, mensajeErrorGuardado, prepararEditorVigente,
 	terminalesDesdeEditor, terminalesParaEditor,
 } from '../app/ui-componentes-personalizados.js';
+import { instanciarComponentePersonalizado, validarSemanticaTerminales } from '../src/componentes/personalizados.js';
+import { crearProyecto } from '../src/modelo/proyecto.js';
+import { verificarProyecto } from '../src/motores/drc.js';
+import { calcularPotenciales } from '../src/motores/potenciales.js';
+import { tensionDeBorne } from '../src/motores/tensiones.js';
 
 const archivo = () => ({
 	formato: 'tablero-studio-componente-portatil', version: 1,
@@ -60,6 +65,62 @@ test('importar → editar → guardar revisión → exportar conserva los límit
 	const vuelta = leerArchivoComponentePortatil(reexportado).definicion;
 	assert.equal(vuelta.terminales[0].maxConductores, 3);
 	assert.equal(vuelta.terminales[0].seccionMaxMm2, 4);
+});
+
+test('lado y conexión requerida sobreviven importación individual, edición, revisión y exportación', () => {
+	const paquete = archivo();
+	Object.assign(paquete.definicion, {
+		tipoDispositivo: 'fuente',
+		terminales: [
+			{ id: 'ENTRADA', tipo: 'L', u: 0.2, v: 0.1, lado: 'primario', obligatorio: true },
+			{ id: 'NEUTRO', tipo: 'N', u: 0.8, v: 0.1, lado: 'primario', obligatorio: true },
+			{ id: 'SALIDA', tipo: 'control', u: 0.2, v: 0.9, lado: 'secundario+', obligatorio: true },
+			{ id: 'COMUN', tipo: 'control', u: 0.8, v: 0.9, lado: 'secundario-', obligatorio: false },
+		],
+		comportamiento: {
+			version: 1, clase: 'fuente', primario: { entradas: ['ENTRADA'], retornos: ['NEUTRO'] },
+			salidas: [{ borne: 'SALIDA', papel: 'fase', tensionV: 24 },
+				{ borne: 'COMUN', papel: 'retorno', tensionV: 24 }],
+		},
+		parametros: { tensionV: 220 },
+	});
+	const importado = leerArchivoComponentePortatil(paquete);
+	const editados = terminalesParaEditor(importado.definicion);
+	assert.equal(editados[2].lado, 'secundario+');
+	assert.equal(editados[2].obligatorio, true);
+	assert.equal(editados[3].obligatorio, false, 'no declarado y no obligatorio deben distinguirse');
+	const terminales = terminalesDesdeEditor(editados);
+	const vuelta = leerArchivoComponentePortatil({ ...importado,
+		definicion: { ...importado.definicion, revision: 4, terminales } }).definicion;
+	assert.deepEqual(vuelta.terminales.map(({ lado, obligatorio }) => [lado, obligatorio]), [
+		['primario', true], ['primario', true], ['secundario+', true], ['secundario-', false],
+	]);
+	const dispositivo = instanciarComponentePersonalizado(vuelta, 'fuente-propia');
+	assert.equal(tensionDeBorne(dispositivo, dispositivo.bornes[0]), 220);
+	assert.equal(tensionDeBorne(dispositivo, dispositivo.bornes[2]), 24,
+		'el ID SALIDA no permite inferir el secundario: debe mandar lado explícito');
+	const proyecto = crearProyecto('Metadatos del borne');
+	proyecto.dispositivos = [dispositivo];
+	const drc = verificarProyecto(proyecto, calcularPotenciales(proyecto));
+	const faltantes = drc.filter((h) => h.regla === 'R2-borne-sin-conectar');
+	assert.equal(faltantes.length, 3);
+	assert.ok(faltantes.some((h) => h.mensaje.includes('SALIDA')));
+	assert.ok(faltantes.every((h) => !h.mensaje.includes('COMUN')));
+});
+
+test('lado/obligatorio hostiles se rechazan, no se descartan ni se reinterpretan', () => {
+	for (const valor of ['secundario', 'PE', '', null, 1, { lado: 'primario' }]) {
+		const paquete = archivo();
+		(paquete.definicion.terminales[0] as Record<string, unknown>).lado = valor;
+		assert.match(validarSemanticaTerminales([{ id: 'alimentacion', lado: valor }]).join(' '), /lado de fuente/);
+		assert.throws(() => leerArchivoComponentePortatil(paquete), /lado de fuente/);
+	}
+	for (const valor of ['true', 1, null, { obligatorio: true }]) {
+		const paquete = archivo();
+		(paquete.definicion.terminales[0] as Record<string, unknown>).obligatorio = valor;
+		assert.match(validarSemanticaTerminales([{ id: 'alimentacion', obligatorio: valor }]).join(' '), /obligatorio/);
+		assert.throws(() => leerArchivoComponentePortatil(paquete), /obligatorio/);
+	}
 });
 
 test('límites inválidos dan error visible; el importador nunca los descarta silenciosamente', () => {
