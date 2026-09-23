@@ -109,6 +109,78 @@ async function moverAMm(x, y) {
 	return punto;
 }
 
+/** Busca sobre la malla visible un punto que el picking real atribuya a la pieza. */
+async function puntoArrastrable(dispositivoId) {
+	return pagina.evaluate((id) => {
+		const col = window.qa.proyecto().gabinete.colocaciones.find((c) => c.dispositivoId === id);
+		const lienzo = document.querySelector('#escena canvas')?.getBoundingClientRect();
+		if (!col || !lienzo) return { punto: null, diagnostico: { col, lienzo } };
+		const muestras = [];
+		for (const z of [30, 20, 10, 45, 60, 0]) {
+			for (const u of [0.5, 0.3, 0.7]) for (const v of [0.5, 0.3, 0.7]) {
+				const punto = window.qa.puntoEnPantalla(col.x + col.ancho * u, col.y + col.alto * v, z);
+				if (punto.x < lienzo.left + 3 || punto.x > lienzo.right - 3
+					|| punto.y < lienzo.top + 3 || punto.y > lienzo.bottom - 3) {
+					if (muestras.length < 8) muestras.push({ z, u, v, punto, hit: 'fuera-del-canvas' });
+					continue;
+				}
+				const hit = window.qa.queSeleccionaEnPixel(punto.x, punto.y);
+				if (hit === `dispositivo:${id}`) return { punto, diagnostico: { z, u, v } };
+				if (muestras.length < 8) muestras.push({ z, u, v, punto, hit });
+			}
+		}
+		const centro = window.qa.puntoEnPantalla(col.x + col.ancho / 2, col.y + col.alto / 2, 30);
+		return { punto: null, diagnostico: {
+			col, lienzo, muestras,
+			crudo: window.qa.queHayEnPixel(centro.x, centro.y),
+			mallas: window.qa.mallasDeAparato(id),
+			senalar: window.qa.senalar(id),
+			elementoDom: document.elementFromPoint(centro.x, centro.y)?.id ?? 'sin-id',
+			modoEditor: document.getElementById('modo-editor')?.classList.contains('activo'),
+			espacioInterior: document.getElementById('esp-interior')?.classList.contains('activo'),
+			vista2D: document.body.classList.contains('vista-2d'),
+		} };
+	}, dispositivoId);
+}
+
+/** El cambio pasa únicamente por down/move/up humanos; el modelo solo se lee. */
+async function arrastrarPlaca(dispositivo, destino) {
+	await seleccionarEnLista(dispositivo);
+	const agarre = await puntoArrastrable(dispositivo.id);
+	const origen = agarre.punto;
+	if (!origen) {
+		const col = await colocacionDe(dispositivo.id);
+		const centro = await qa('puntoEnPantalla', col.x + col.ancho / 2, col.y + col.alto / 2, 30);
+		// Clic humano: distingue un fallo de la sonda de un fallo real de selección visible.
+		await pagina.mouse.click(centro.x + 100, centro.y + 100);
+		await pagina.mouse.click(centro.x, centro.y);
+		const seleccionHumana2D = await qa('seleccion');
+		await pagina.locator('#btn-2d').click();
+		await pagina.locator('#btn-centrar').click();
+		const perspectiva = await puntoArrastrable(dispositivo.id);
+		const centro3D = await qa('puntoEnPantalla', col.x + col.ancho / 2, col.y + col.alto / 2, 30);
+		await pagina.mouse.click(centro3D.x + 100, centro3D.y + 100);
+		await pagina.mouse.click(centro3D.x, centro3D.y);
+		const seleccionHumana3D = await qa('seleccion');
+		console.error('Diagnóstico picking imagen M1:', JSON.stringify({
+			frontal: agarre.diagnostico, seleccionHumana2D,
+			perspectiva: perspectiva.diagnostico, puntoDisponible3D: !!perspectiva.punto,
+			seleccionHumana3D,
+		}));
+	}
+	comprobar(`${dispositivo.descripcion}: existe punto de agarre real`, !!origen,
+		origen ? '' : JSON.stringify(agarre.diagnostico));
+	const final = await qa('puntoEnPantalla', destino.x, destino.y, 0);
+	await pagina.mouse.move(origen.x, origen.y);
+	await pagina.mouse.down();
+	let previa;
+	try {
+		await pagina.mouse.move(final.x, final.y, { steps: 6 });
+		previa = await colocacionDe(dispositivo.id);
+	} finally { await pagina.mouse.up(); }
+	return { previa, posterior: await colocacionDe(dispositivo.id) };
+}
+
 async function seleccionarEnLista(dispositivo) {
 	await pagina.locator('#hta-seleccionar').click();
 	if (!(await pagina.locator('#seccion-dispositivos').evaluate((e) => e.open))) {
@@ -163,6 +235,35 @@ try {
 			await pagina.locator('#panel-der .revision-personal').innerText()));
 	const colPlaca = await colocacionDe(placa.id);
 	comprobar('placa: colocación final no conserva rielId', !colPlaca.rielId);
+	const sobreCanaleta = await arrastrarPlaca(placa, { x: 300, y: ducto.y + ducto.ancho / 2 });
+	comprobar('drag: el intento apuntó físicamente a ch1',
+		sobreCanaleta.previa.x < ducto.x + ducto.largo
+		&& sobreCanaleta.previa.x + sobreCanaleta.previa.ancho > ducto.x
+		&& sobreCanaleta.previa.y < ducto.y + ducto.ancho
+		&& sobreCanaleta.previa.y + sobreCanaleta.previa.alto > ducto.y);
+	comprobar('drag: canaleta rechazada y posición anterior recuperada',
+		sobreCanaleta.posterior.x === colPlaca.x && sobreCanaleta.posterior.y === colPlaca.y
+		&& !sobreCanaleta.posterior.rielId
+		&& /canaleta/i.test(await pagina.locator('#toast').innerText()));
+	const riel = (await proyecto()).gabinete.rieles.find((r) => r.id === 'riel1');
+	comprobar('fixture: riel1 existente', !!riel && riel.orientacion !== 'v');
+	const sobreRiel = await arrastrarPlaca(placa, { x: 300, y: riel.y });
+	comprobar('drag: el intento apuntó físicamente al riel',
+		sobreRiel.previa.x < riel.x + riel.largo && sobreRiel.previa.x + sobreRiel.previa.ancho > riel.x
+		&& sobreRiel.previa.y < riel.y + 17.5 && sobreRiel.previa.y + sobreRiel.previa.alto > riel.y - 17.5);
+	comprobar('drag: riel rechazado sin convertir placa en DIN',
+		sobreRiel.posterior.x === colPlaca.x && sobreRiel.posterior.y === colPlaca.y
+		&& !sobreRiel.posterior.rielId
+		&& /riel/i.test(await pagina.locator('#toast').innerText()));
+	const haciaLibre = await arrastrarPlaca(placa, { x: 420, y: 250 });
+	comprobar('drag: hueco libre cambia posición sin adquirir riel',
+		haciaLibre.posterior.x !== colPlaca.x && !haciaLibre.posterior.rielId
+		&& haciaLibre.posterior.y > ducto.y + ducto.ancho);
+	comprobar('drag: la malla visible siguió a la colocación final',
+		!!(await puntoArrastrable(placa.id)).punto);
+	comprobar('drag: inspector conserva compatibilidad geométrica',
+		/Envolvente geométricamente compatible; fijación no certificada/i.test(
+			await pagina.locator('#panel-der .revision-personal').innerText()));
 	await qa('esperarPersistencia');
 	await pagina.reload({ waitUntil: 'load' });
 	await esperarEditorListo(pagina);
@@ -172,7 +273,10 @@ try {
 	comprobar('recarga: instancia, anclajes y posición sobreviven',
 		placaReabierta?.montajeComponente?.metodo === 'atornillado-placa'
 		&& placaReabierta.montajeComponente.anclajes?.length === 2
-		&& colReabierta?.x === colPlaca.x && colReabierta?.y === colPlaca.y && !colReabierta?.rielId);
+		&& colReabierta?.x === haciaLibre.posterior.x && colReabierta?.y === haciaLibre.posterior.y
+		&& !colReabierta?.rielId);
+	comprobar('recarga: la pieza sigue siendo seleccionable donde está guardada',
+		!!(await puntoArrastrable(placa.id)).punto);
 	await seleccionarEnLista(placaReabierta);
 	comprobar('recarga: inspector sigue explicando el alcance geométrico',
 		/Envolvente geométricamente compatible; fijación no certificada/i.test(
