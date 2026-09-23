@@ -282,6 +282,22 @@ test('editar la biblioteca crea una revisión nueva sin alterar la definición a
 	assert.equal(editada.nombre, 'Contactor revisado');
 });
 
+test('cambiar solo la imagen crea otra revisión sin cambiar bornes ni función de instancias existentes o nuevas', () => {
+	const original = definicionContactor();
+	const instanciaAnterior = instanciarComponentePersonalizado(original, 'k-anterior');
+	const editada = actualizarDefinicionComponente(original, {
+		assetId: `sha256:${'b'.repeat(64)}`,
+	}, '2026-08-23T11:00:00.000Z');
+	const instanciaNueva = instanciarComponentePersonalizado(editada, 'k-nueva');
+	assert.equal(instanciaAnterior.assetId, original.assetId);
+	assert.equal(instanciaNueva.assetId, editada.assetId);
+	assert.notEqual(instanciaAnterior.assetId, instanciaNueva.assetId);
+	assert.deepEqual(instanciaNueva.bornes, instanciaAnterior.bornes);
+	assert.deepEqual(instanciaNueva.comportamiento, instanciaAnterior.comportamiento);
+	assert.deepEqual(instanciaAnterior.componentePersonalizado, { definicionId: original.id, revision: 1 });
+	assert.deepEqual(instanciaNueva.componentePersonalizado, { definicionId: original.id, revision: 2 });
+});
+
 test('el paquete portátil conserva proyecto, perfil, procedencia y asset requerido', () => {
 	const definicion = definicionContactor();
 	const colocado = instanciarComponentePersonalizado(definicion, 'k-colocado');
