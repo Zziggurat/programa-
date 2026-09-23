@@ -23,6 +23,7 @@ import type {
 	MotivoSnapshot,
 	OpcionesActualizarComponentePersonalizado,
 	OpcionesCrearComponentePersonalizado,
+	OpcionesImportarComponenteConAsset,
 	OpcionesCrearProyecto,
 	OpcionesGuardarProyecto,
 	OpcionesRepositorio,
@@ -35,6 +36,7 @@ import type {
 } from './tipos.js';
 import {
 	ComponentePersonalizadoInvalido,
+	ComponentePersonalizadoDuplicado,
 	ComponentePersonalizadoNoEncontrado,
 	ConflictoRevision,
 	ConflictoRevisionComponente,
@@ -553,13 +555,56 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 		const definicion = construirComponente(opciones.definicion, id, 1, ahora, ahora);
 		return this.backend.transaccion(['customComponents', 'customComponentRevisions', 'assets'], 'readwrite', async (tx) => {
 			if (await tx.obtener('customComponents', id) || await this.existeIdentidadArchivada(tx, id)) {
-				throw new ComponentePersonalizadoInvalido(`Ya existe un componente con la identidad ${id}.`);
+				throw new ComponentePersonalizadoDuplicado(id);
 			}
 			await this.comprobarAssetComponente(tx, definicion.assetId);
 			await this.archivarRevision(tx, definicion);
 			await tx.guardar('customComponents', id, definicion);
 			return clonar(definicion);
 		});
+	}
+
+	/** La identidad SHA y el contrato se validan antes de abrir IDB; las tres escrituras son atómicas. */
+	async importarComponenteConAsset(
+		opciones: OpcionesImportarComponenteConAsset,
+	): Promise<DefinicionComponentePersonalizado> {
+		const { asset } = opciones;
+		if (!MIME_ASSET.has(asset.mime)) throw new ComponentePersonalizadoInvalido(`MIME no admitido: ${asset.mime}.`);
+		const bytes = new Uint8Array(asset.bytes);
+		if (!bytes.byteLength) throw new ComponentePersonalizadoInvalido('La imagen del componente está vacía.');
+		const digest = (await this.sha256(bytes)).toLowerCase();
+		if (!/^[a-f\d]{64}$/.test(digest) || asset.id !== `sha256:${digest}`) {
+			throw new ComponentePersonalizadoInvalido(`El asset ${asset.id} no coincide con su contenido SHA-256.`);
+		}
+		if (opciones.definicion.assetId !== asset.id) {
+			throw new ComponentePersonalizadoInvalido('La imagen no corresponde a la definición del componente.');
+		}
+		const id = opciones.id ?? this.crearId();
+		const ahora = this.ahora();
+		const definicion = construirComponente(opciones.definicion, id, 1, ahora, ahora);
+		return this.backend.transaccion(
+			['assets', 'customComponents', 'customComponentRevisions'], 'readwrite', async (tx) => {
+				// Resolver la colisión antes de escribir el asset: cancelar «importar como copia» no deja basura.
+				if (await tx.obtener('customComponents', id) || await this.existeIdentidadArchivada(tx, id)) {
+					throw new ComponentePersonalizadoDuplicado(id);
+				}
+				const existente = await tx.obtener<AssetPersistido>('assets', asset.id);
+				if (existente) {
+					if (existente.mime !== asset.mime || !bytesIguales(existente.bytes, bytes)) {
+						throw new ComponentePersonalizadoInvalido(
+							`Colisión del asset ${asset.id}: la identidad existe con otro contenido.`,
+						);
+					}
+				} else {
+					await tx.guardar('assets', asset.id, {
+						id: asset.id, mime: asset.mime, tamano: bytes.byteLength, creadoEn: ahora, bytes,
+					} satisfies AssetPersistido);
+				}
+				await this.archivarRevision(tx, definicion);
+				await tx.guardar('customComponents', id, definicion);
+				return clonar(definicion);
+			},
+		);
 	}
 
 	async abrirComponente(id: string): Promise<DefinicionComponentePersonalizado> {

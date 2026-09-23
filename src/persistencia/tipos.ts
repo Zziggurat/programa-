@@ -91,6 +91,11 @@ export interface OpcionesCrearComponentePersonalizado {
 	definicion: ContenidoComponentePersonalizado;
 }
 
+/** Import individual: la imagen y la definición se confirman o se descartan juntas. */
+export interface OpcionesImportarComponenteConAsset extends OpcionesCrearComponentePersonalizado {
+	asset: Pick<AssetPersistido, 'id' | 'mime' | 'bytes'>;
+}
+
 export interface OpcionesActualizarComponentePersonalizado {
 	revisionEsperada: number;
 	definicion: ContenidoComponentePersonalizado;
@@ -162,6 +167,9 @@ export interface RepositorioProyectos {
 	crearComponente(
 		opciones: OpcionesCrearComponentePersonalizado,
 	): Promise<DefinicionComponentePersonalizado>;
+	importarComponenteConAsset(
+		opciones: OpcionesImportarComponenteConAsset,
+	): Promise<DefinicionComponentePersonalizado>;
 	abrirComponente(id: string): Promise<DefinicionComponentePersonalizado>;
 	/** Fotografía inmutable de biblioteca; no depende de la revisión publicada actualmente. */
 	abrirRevisionComponente(id: string, revision: number): Promise<DefinicionComponentePersonalizado>;
@@ -207,6 +215,14 @@ export class ComponentePersonalizadoInvalido extends Error {
 	constructor(mensaje: string, readonly errores: string[] = []) {
 		super(mensaje);
 		this.name = 'ComponentePersonalizadoInvalido';
+	}
+}
+
+/** Solo una colisión de identidad admite ofrecer «importar como copia». */
+export class ComponentePersonalizadoDuplicado extends ComponentePersonalizadoInvalido {
+	constructor(readonly componenteId: string) {
+		super(`Ya existe un componente con la identidad ${componenteId}.`);
+		this.name = 'ComponentePersonalizadoDuplicado';
 	}
 }
 

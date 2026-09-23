@@ -12,6 +12,7 @@ import type { ContenidoComponentePersonalizado } from '../src/persistencia/index
 import {
 	ALMACENES_PERSISTENCIA,
 	BackendPersistenciaMemoria,
+	ComponentePersonalizadoDuplicado,
 	ComponentePersonalizadoInvalido,
 	ConflictoRevision,
 	ConflictoRevisionComponente,
@@ -46,6 +47,12 @@ function contenidoComponente(
 		terminales: [{ id: 'S', tipo: 'senal', u: 0.5, v: 0.8 }],
 		comportamiento: { version: 1, clase: 'sin-comportamiento', motivo: 'Prueba de persistencia' },
 	};
+}
+
+async function imagenImportable(bytes: Uint8Array, mime = 'image/png') {
+	const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', Uint8Array.from(bytes).buffer));
+	const id = `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+	return { id, mime, bytes };
 }
 
 function entorno(maxSnapshotsPorProyecto = 20) {
@@ -405,7 +412,7 @@ test('borrar de Mis Componentes no destruye la revisión colocada ni reutiliza s
 	assert.deepEqual(await repositorio.abrirRevisionComponente(r1.id, 1), r1);
 	assert.deepEqual((await repositorio.exportarPaquete(documento.id)).componentes, [r1]);
 	await assert.rejects(repositorio.crearComponente({ id: r1.id, definicion: contenidoComponente(asset.id) }),
-		/Ya existe un componente/);
+		ComponentePersonalizadoDuplicado);
 });
 
 test('fallo transaccional al actualizar deja latest y archivo de revisiones en r1', async () => {
@@ -449,6 +456,73 @@ test('una definición custom inválida o sin asset nunca entra a la biblioteca',
 		ComponentePersonalizadoInvalido,
 	);
 	assert.equal(await backend.contar('customComponents'), 0);
+});
+
+test('importar componente confirma asset, definición e histórico juntos y cancelar duplicado no deja asset', async () => {
+	const { backend, repositorio } = entorno();
+	const primera = await imagenImportable(new Uint8Array([10, 11, 12]));
+	const segunda = await imagenImportable(new Uint8Array([20, 21, 22]));
+	const original = await repositorio.importarComponenteConAsset({
+		id: 'cmp-importado', definicion: contenidoComponente(primera.id), asset: primera,
+	});
+	assert.equal(original.revision, 1);
+	assert.deepEqual((await repositorio.abrirAsset(primera.id))?.bytes, primera.bytes);
+	assert.deepEqual(await repositorio.abrirRevisionComponente(original.id, 1), original);
+
+	await assert.rejects(repositorio.importarComponenteConAsset({
+		id: original.id, definicion: contenidoComponente(segunda.id), asset: segunda,
+	}), ComponentePersonalizadoDuplicado);
+	assert.equal(await repositorio.abrirAsset(segunda.id), undefined);
+	assert.equal(await backend.contar('assets'), 1);
+	assert.equal(await backend.contar('customComponentRevisions'), 1);
+
+	const copia = await repositorio.importarComponenteConAsset({
+		definicion: contenidoComponente(segunda.id, 'Copia explícita'), asset: segunda,
+	});
+	assert.notEqual(copia.id, original.id);
+	assert.equal(copia.revision, 1);
+	assert.deepEqual((await repositorio.abrirAsset(segunda.id))?.bytes, segunda.bytes);
+	assert.equal(await backend.contar('assets'), 2);
+	assert.equal(await backend.contar('customComponents'), 2);
+});
+
+test('importar componente rechaza SHA falso, asset ajeno y colisión sin escrituras parciales', async () => {
+	const { backend, repositorio } = entorno();
+	const asset = await imagenImportable(new Uint8Array([33, 34, 35]));
+	const falso = { ...asset, id: `sha256:${'f'.repeat(64)}` };
+	await assert.rejects(repositorio.importarComponenteConAsset({
+		definicion: contenidoComponente(falso.id), asset: falso,
+	}), /SHA-256/);
+	await assert.rejects(repositorio.importarComponenteConAsset({
+		definicion: contenidoComponente(`sha256:${'0'.repeat(64)}`), asset,
+	}), /no corresponde/);
+	assert.equal(await backend.contar('assets'), 0);
+	assert.equal(await backend.contar('customComponents'), 0);
+
+	await backend.transaccion(['assets'], 'readwrite', async (tx) => {
+		await tx.guardar('assets', asset.id, {
+			id: asset.id, mime: asset.mime, tamano: 1,
+			creadoEn: '2026-01-01T00:00:00.000Z', bytes: new Uint8Array([99]),
+		});
+	});
+	await assert.rejects(repositorio.importarComponenteConAsset({
+		definicion: contenidoComponente(asset.id), asset,
+	}), /Colisión del asset/);
+	assert.equal(await backend.contar('assets'), 1);
+	assert.equal(await backend.contar('customComponents'), 0);
+	assert.equal(await backend.contar('customComponentRevisions'), 0);
+});
+
+test('fallo físico al importar componente revierte asset y definición en una transacción', async () => {
+	const { backend, repositorio } = entorno();
+	const asset = await imagenImportable(new Uint8Array([44, 45, 46]));
+	backend.fallarProximaTransaccion(new Error('almacenamiento indisponible'));
+	await assert.rejects(repositorio.importarComponenteConAsset({
+		definicion: contenidoComponente(asset.id), asset,
+	}), /almacenamiento indisponible/);
+	for (const almacen of ['assets', 'customComponents', 'customComponentRevisions'] as const) {
+		assert.equal(await backend.contar(almacen), 0, almacen);
+	}
 });
 
 test('export/import portable hace roundtrip autosuficiente y acepta contenido idéntico existente', async () => {
