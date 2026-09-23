@@ -1627,9 +1627,32 @@ const COLOR_TIPO: Record<string, number> = {
 function imagenReferencia(g: THREE.Group, d: Dispositivo, w: number, h: number): number {
 	const personalizado = !!d.componentePersonalizado;
 	const prof = personalizado ? Math.max(6, d.profundidad ?? 6) : 6;
-	// Marco/plano trasero.
-	g.add(caja(w + 4, h + 4, personalizado ? prof : 2, M.plastico(0x2a2f34, 0.8),
-		0, 0, personalizado ? prof / 2 : 1));
+	const carcasa = d.carcasaPersonalizada;
+	if (personalizado && carcasa) {
+		// La plantilla usa exclusivamente ancho/alto/fondo DECLARADOS. Es una envolvente
+		// visual aproximada, no una copia del producto ni una inferencia desde la foto.
+		const color = { 'gris-claro': 0xc1c6c8, grafito: 0x41484d, negro: 0x252b30 }[carcasa.acabado];
+		const chaflan = Math.min(0.55, prof / 8);
+		const cuerpo = w > 6 && h > 6 && prof > 4
+			? cajaCanto(w - 2 * chaflan, h - 2 * chaflan, prof, M.tecnico(color), 0, 0, prof / 2,
+				Math.min(2.2, w / 8, h / 8), chaflan)
+			: caja(w, h, prof, M.tecnico(color), 0, 0, prof / 2);
+		cuerpo.userData.plantillaCarcasa = carcasa.plantilla;
+		g.add(cuerpo);
+		if (carcasa.plantilla === 'modulo-din' && w > 10 && h > 16) {
+			// Nervios laterales moldeados: dan lectura de módulo DIN desde perspectiva
+			// sin mover la cara, los anclajes u/v ni el volumen técnico declarado.
+			for (const lado of [-1, 1]) for (const fraccion of [0.3, 0.62]) {
+				g.add(caja(0.65, h * 0.66, 0.8,
+					M.tecnico(carcasa.acabado === 'gris-claro' ? 0x939da1 : 0x171c20),
+					lado * (w / 2 - 0.34), 0, prof * fraccion));
+			}
+		}
+	} else {
+		// Los documentos anteriores siguen usando exactamente el soporte fotográfico legacy.
+		g.add(caja(w + 4, h + 4, personalizado ? prof : 2, M.plastico(0x2a2f34, 0.8),
+			0, 0, personalizado ? prof / 2 : 1));
+	}
 
 	// La textura llega asíncrona; se refresca sola en el bucle de render.
 	const tex = new THREE.Texture();

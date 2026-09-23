@@ -7,6 +7,7 @@ import {
 	type TerminalComponentePersonalizado,
 } from './personalizados.js';
 import { leerMontajeDeclarado, validarMontajeDeclarado } from './montaje.js';
+import { leerCarcasaParametrica, validarCarcasaParametrica } from './carcasa.js';
 import { leerComportamientoSimulacion } from '../modelo/comportamiento.js';
 import type { TipoBorne, TipoDispositivo } from '../modelo/tipos.js';
 import { inspeccionarDatosNoConfiables } from '../datos-tecnicos/schema.js';
@@ -15,8 +16,8 @@ import { PERFILES_BASE } from './perfiles-base.js';
 export type MimeComponentePortatil = 'image/png' | 'image/jpeg' | 'image/webp';
 export interface ArchivoComponentePortatil {
 	formato: 'tablero-studio-componente-portatil';
-	/** V2 es obligatorio si la definición lleva ficha técnica autocontenida. */
-	version: 1 | 2;
+	/** V2 cierra ficha técnica; V3 añade carcasa paramétrica sin perder compatibilidad V1/V2. */
+	version: 1 | 2 | 3;
 	definicion: DefinicionComponentePersonalizado;
 	asset: { id: string; mime: MimeComponentePortatil; base64: string };
 }
@@ -51,7 +52,7 @@ function validarDefinicionSegura(d: unknown): asserts d is DefinicionComponenteP
 }
 
 /** Reconstruye únicamente campos declarados; V1 puede tener metadatos ajenos inocuos. */
-function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePersonalizado {
+function leerDefinicion(bruto: unknown, version: 1 | 2 | 3): DefinicionComponentePersonalizado {
 	if (!esObjeto(bruto) || !esObjeto(bruto.dimensiones) || !Array.isArray(bruto.terminales)
 		|| bruto.terminales.length > MAX_TERMINALES || !Number.isInteger(bruto.revision)
 		|| bruto.formato !== FORMATO_COMPONENTE_PERSONALIZADO
@@ -62,9 +63,12 @@ function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePer
 	if (version === 1 && bruto.fichaTecnica !== undefined) {
 		throw new Error('Una ficha técnica exige .tscomp V2; V1 no puede descartarla silenciosamente.');
 	}
-	if (version === 2) {
+	if (version < 3 && bruto.carcasa !== undefined) {
+		throw new Error('Una carcasa paramétrica exige .tscomp V3; V1/V2 no pueden descartarla silenciosamente.');
+	}
+	if (version >= 2) {
 		exigirClaves(bruto, ['formato', 'version', 'id', 'revision', 'nombre', 'fabricante', 'referencia',
-			'descripcion', 'creadoEn', 'modificadoEn', 'tipoDispositivo', 'dimensiones', 'montaje', 'assetId',
+			'descripcion', 'creadoEn', 'modificadoEn', 'tipoDispositivo', 'dimensiones', 'montaje', 'carcasa', 'assetId',
 			'terminales', 'bloquesTerminales', 'comportamiento', 'parametros', 'fichaTecnica'], 'Definición V2');
 		exigirClaves(bruto.dimensiones, ['anchoMm', 'altoMm', 'fondoMm'], 'Dimensiones V2');
 		if (esObjeto(bruto.montaje)) {
@@ -73,7 +77,14 @@ function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePer
 				if (esObjeto(anclaje)) exigirClaves(anclaje, ['xMm', 'yMm', 'diametroMm'], 'Anclaje V2');
 			}
 		}
-		if (bruto.fichaTecnica === undefined) throw new Error('Un .tscomp V2 requiere una ficha técnica exacta.');
+		if (version === 2 && bruto.fichaTecnica === undefined) throw new Error('Un .tscomp V2 requiere una ficha técnica exacta.');
+	}
+	if (version === 3 && bruto.carcasa === undefined) {
+		throw new Error('Un .tscomp V3 requiere la carcasa paramétrica declarada.');
+	}
+	const erroresCarcasa = validarCarcasaParametrica(bruto.carcasa);
+	if (erroresCarcasa.length) {
+		throw new Error(`Carcasa paramétrica inválida: ${erroresCarcasa.join('; ')}`);
 	}
 	const tipo = requerido(bruto.tipoDispositivo, 'el perfil') as TipoDispositivo;
 	if (!Object.hasOwn(PERFILES_BASE, tipo)) throw new Error(`Perfil no reconocido: ${tipo}.`);
@@ -83,7 +94,7 @@ function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePer
 		if (!esObjeto(t) || typeof t.id !== 'string' || typeof t.u !== 'number' || typeof t.v !== 'number') {
 			throw new Error(`Terminal ${i + 1} no válido.`);
 		}
-		if (version === 2) exigirClaves(t, ['id', 'rotulo', 'tipo', 'u', 'v', 'lado', 'obligatorio',
+		if (version >= 2) exigirClaves(t, ['id', 'rotulo', 'tipo', 'u', 'v', 'lado', 'obligatorio',
 			'maxConductores', 'seccionMaxMm2'], `Terminal ${t.id}`);
 		if (t.tipo !== undefined && !TIPOS_BORNE.has(t.tipo as TipoBorne)) throw new Error(`Terminal ${t.id}: naturaleza eléctrica no reconocida.`);
 		const errores = [...validarLimitesTerminales([{ id: t.id, maxConductores: t.maxConductores,
@@ -103,7 +114,7 @@ function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePer
 	if (bruto.parametros !== undefined) {
 		if (!esObjeto(bruto.parametros)) throw new Error('Los parámetros no son un objeto.');
 		const p = bruto.parametros; parametros = {};
-		if (version === 2) exigirClaves(p, ['tensionV', 'corrienteA', 'potenciaW',
+		if (version >= 2) exigirClaves(p, ['tensionV', 'corrienteA', 'potenciaW',
 			'frecuenciaHz', 'temporizacion', 'programa', 'unidadSonda', 'rangoSonda',
 			'rangoSalidaAnalogica'], 'Parámetros V2');
 		for (const clave of ['tensionV', 'corrienteA', 'potenciaW', 'frecuenciaHz'] as const) {
@@ -117,7 +128,7 @@ function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePer
 				|| typeof p.temporizacion.segundos !== 'number' || !Number.isFinite(p.temporizacion.segundos)) {
 				throw new Error('Temporización inválida.');
 			}
-			if (version === 2) exigirClaves(p.temporizacion, ['tipo', 'segundos'], 'Temporización V2');
+			if (version >= 2) exigirClaves(p.temporizacion, ['tipo', 'segundos'], 'Temporización V2');
 			parametros.temporizacion = { tipo: p.temporizacion.tipo as 'trabajo' | 'reposo', segundos: p.temporizacion.segundos };
 		}
 		if (opcional(p.programa)) parametros.programa = opcional(p.programa);
@@ -144,12 +155,14 @@ function leerDefinicion(bruto: unknown, version: 1 | 2): DefinicionComponentePer
 		...(opcional(bruto.referencia) ? { referencia: opcional(bruto.referencia) } : {}),
 		...(opcional(bruto.descripcion) ? { descripcion: opcional(bruto.descripcion) } : {}), tipoDispositivo: tipo,
 		dimensiones, ...(montaje ? { montaje } : {}),
+		...(version === 3 && bruto.carcasa !== undefined ? { carcasa: leerCarcasaParametrica(bruto.carcasa)! } : {}),
 		assetId: requerido(bruto.assetId, 'el asset'), terminales, comportamiento,
 		...(bruto.bloquesTerminales !== undefined
 			? { bloquesTerminales: structuredClone(bruto.bloquesTerminales) as DefinicionComponentePersonalizado['bloquesTerminales'] }
 			: {}),
 		...(parametros ? { parametros } : {}),
-		...(version === 2 ? { fichaTecnica: structuredClone(bruto.fichaTecnica) as DefinicionComponentePersonalizado['fichaTecnica'] } : {}),
+		...(version >= 2 && bruto.fichaTecnica !== undefined
+			? { fichaTecnica: structuredClone(bruto.fichaTecnica) as DefinicionComponentePersonalizado['fichaTecnica'] } : {}),
 	};
 	validarDefinicionSegura(definicion);
 	return definicion;
@@ -177,23 +190,23 @@ async function verificarAsset(asset: ArchivoComponentePortatil['asset'], assetId
 	return bytes;
 }
 
-/** Parser no mutante de V1/V2. Toda validación sucede antes de cualquier transacción IDB. */
+/** Parser no mutante de V1/V2/V3. Toda validación sucede antes de cualquier transacción IDB. */
 export async function leerComponentePortatil(textoJson: string): Promise<ArchivoComponentePortatil> {
 	if (textoJson.length > MAX_TSCOMP_TEXTO) throw new Error('El componente supera el límite de 64 MiB de texto.');
 	let bruto: unknown;
 	try { bruto = JSON.parse(textoJson); } catch { throw new Error('JSON del componente inválido.'); }
 	if (!esObjeto(bruto) || bruto.formato !== 'tablero-studio-componente-portatil'
-		|| (bruto.version !== 1 && bruto.version !== 2) || !esObjeto(bruto.asset)) {
+		|| (bruto.version !== 1 && bruto.version !== 2 && bruto.version !== 3) || !esObjeto(bruto.asset)) {
 		throw new Error('Formato de componente portable no compatible.');
 	}
 	const version = bruto.version;
-	if (version === 2 && Object.keys(bruto).some((k) => !['formato', 'version', 'definicion', 'asset'].includes(k))) {
-		throw new Error('El archivo V2 incluye campos desconocidos.');
+	if (version >= 2 && Object.keys(bruto).some((k) => !['formato', 'version', 'definicion', 'asset'].includes(k))) {
+		throw new Error(`El archivo V${version} incluye campos desconocidos.`);
 	}
 	const definicion = leerDefinicion(bruto.definicion, version);
 	const asset = bruto.asset;
-	if (version === 2 && Object.keys(asset).some((k) => !['id', 'mime', 'base64'].includes(k))) {
-		throw new Error('El asset V2 incluye campos desconocidos.');
+	if (version >= 2 && Object.keys(asset).some((k) => !['id', 'mime', 'base64'].includes(k))) {
+		throw new Error(`El asset V${version} incluye campos desconocidos.`);
 	}
 	const limpio = { id: requerido(asset.id, 'la identidad del asset'),
 		mime: requerido(asset.mime, 'el MIME') as MimeComponentePortatil,
@@ -215,7 +228,7 @@ export async function crearComponentePortatil(definicion: DefinicionComponentePe
 	if (asset.bytes.length * 4 / 3 > MAX_TSCOMP_TEXTO) throw new Error('La imagen supera el límite portable de 64 MiB.');
 	const limpio = { id: asset.id, mime: asset.mime as MimeComponentePortatil, base64: bytesABase64(asset.bytes) };
 	await verificarAsset(limpio, definicion.assetId);
-	const version = definicion.fichaTecnica === undefined ? 1 : 2;
+	const version = definicion.carcasa !== undefined ? 3 : definicion.fichaTecnica === undefined ? 1 : 2;
 	const paquete: ArchivoComponentePortatil = { formato: 'tablero-studio-componente-portatil', version,
 		definicion: structuredClone(definicion), asset: limpio };
 	if (JSON.stringify(paquete).length > MAX_TSCOMP_TEXTO) throw new Error('El componente supera el límite portable de 64 MiB.');

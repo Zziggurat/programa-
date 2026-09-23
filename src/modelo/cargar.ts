@@ -19,6 +19,7 @@ import { leerFisicaConductor, leerFisicaDispositivo } from './fisica.js';
 import { leerConfiguracionIngenieria } from './ingenieria.js';
 import { validarConfiguracionTecnica } from '../datos-tecnicos/schema.js';
 import { leerMontajeDeclarado } from '../componentes/montaje.js';
+import { leerCarcasaParametrica } from '../componentes/carcasa.js';
 import type { ConfiguracionProgramaPLC, EtiquetaPLC } from './programa-plc.js';
 
 /** Versión de formato que escribe este programa. */
@@ -988,6 +989,9 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			montajeComponente: oQuitado(d.montajeComponente,
 				leerMontajeDeclarado(d.montajeComponente), ruta('montajeComponente'),
 				'el método o los anclajes del componente no eran válidos'),
+			carcasaPersonalizada: oQuitado(d.carcasaPersonalizada,
+				leerCarcasaParametrica(d.carcasaPersonalizada), ruta('carcasaPersonalizada'),
+				'la carcasa paramétrica no tenía plantilla y acabado reconocidos'),
 			curvaDisparo: oQuitado(d.curvaDisparo, unoDe(d.curvaDisparo, ['B', 'C', 'D', 'K', 'Z', 'gG', 'aM'] as const),
 				ruta('curvaDisparo'), 'la curva de disparo no era una de la norma'),
 			claseDiferencial: oQuitado(d.claseDiferencial, unoDe(d.claseDiferencial, ['AC', 'A', 'F', 'B'] as const),

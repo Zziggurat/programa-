@@ -485,6 +485,36 @@ test('paquete V3 con ficha exacta se importa atómicamente y conserva su cierre 
 		'la ficha viaja congelada en la definición; no se publica ni se adopta silenciosamente en el catálogo global');
 });
 
+test('paquete V4 exporta carcasa de definición e instancia y la importa atómicamente', async () => {
+	const { repositorio: origen } = entorno();
+	const asset = await origen.guardarAsset('image/png', new Uint8Array([120, 121, 122]));
+	const carcasa = { plantilla: 'modulo-din' as const, acabado: 'grafito' as const };
+	const definicion = await origen.crearComponente({ id: 'cmp-carcasa-v4', definicion: {
+		...contenidoComponente(asset.id, 'Caja personal'), carcasa,
+	} });
+	const proyecto = proyectoValido('Carcasa portable V4');
+	proyecto.dispositivos = [instanciarComponentePersonalizado(definicion, 'caja')];
+	proyecto.gabinete!.colocaciones = [{ dispositivoId: 'caja', x: 20, y: 20, ancho: 30, alto: 45 }];
+	const documento = await origen.crear({ proyecto });
+	const paquete = await origen.exportarPaquete(documento.id);
+	assert.equal(paquete.version, 4);
+	assert.deepEqual(paquete.componentes[0].carcasa, carcasa);
+	assert.deepEqual(paquete.proyecto.dispositivos[0].carcasaPersonalizada, carcasa);
+	const degradado = structuredClone(paquete); degradado.version = 3;
+	assert.throws(() => leerPaqueteProyecto(JSON.stringify(degradado)), /paquete de proyecto V4/);
+
+	const { backend, repositorio: destino } = entorno();
+	backend.fallarProximaTransaccion(new Error('fallo V4 simulado'));
+	await assert.rejects(destino.importarPaquete(paquete), /fallo V4 simulado/);
+	for (const almacen of ['projects', 'assets', 'customComponents', 'customComponentRevisions', 'snapshots'] as const) {
+		assert.equal(await backend.contar(almacen), 0, `${almacen} quedó publicado a medias`);
+	}
+	const importado = await destino.importarPaquete(paquete);
+	assert.deepEqual((await destino.abrirRevisionComponente(definicion.id, 1)).carcasa, carcasa);
+	assert.deepEqual(importado.proyecto.dispositivos[0].carcasaPersonalizada, carcasa);
+	assert.equal((await destino.exportarPaquete(importado.id)).version, 4);
+});
+
 test('borrar de Mis Componentes no destruye la revisión colocada ni reutiliza su identidad', async () => {
 	const { repositorio } = entorno();
 	const asset = await repositorio.guardarAsset('image/png', new Uint8Array([46, 47, 48]));

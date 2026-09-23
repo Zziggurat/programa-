@@ -16,6 +16,7 @@ import {
 } from '../modelo/comportamiento.js';
 import type { BloqueTerminales, Borne, Dispositivo, MontajeComponente, Proyecto, TipoBorne, TipoDispositivo } from '../modelo/tipos.js';
 import { leerMontajeDeclarado, validarMontajeDeclarado } from './montaje.js';
+import { leerCarcasaParametrica, validarCarcasaParametrica, type CarcasaParametrica } from './carcasa.js';
 import { MAX_TERMINALES_BLOQUE } from '../motores/terminales.js';
 
 export const FORMATO_COMPONENTE_PERSONALIZADO = 'tablero-studio-componente' as const;
@@ -55,6 +56,8 @@ export interface DefinicionComponentePersonalizado {
 	dimensiones: { anchoMm: number; altoMm: number; fondoMm: number };
 	/** Ausente en definiciones anteriores: método y encaje físico no evaluables. */
 	montaje?: MontajeComponente;
+	/** Envolvente visual declarada, aproximada; independiente del contrato eléctrico. */
+	carcasa?: CarcasaParametrica;
 	assetId: string;
 	terminales: TerminalComponentePersonalizado[];
 	/** Borneras físicas declaradas: IDs existentes, orden dentro de cada bloque y borde del aparato. */
@@ -92,8 +95,8 @@ export interface AssetPortatil {
 
 export interface PaqueteProyectoPortatil {
 	formato: 'tablero-studio-paquete';
-	/** V2 porta varias revisiones de componente; V3 añade fichas técnicas autocontenidas. */
-	version: 1 | 2 | 3;
+	/** V2 porta revisiones; V3 fichas exactas; V4 preserva carcasas visuales declaradas. */
+	version: 1 | 2 | 3 | 4;
 	proyecto: Proyecto;
 	assets: AssetPortatil[];
 	componentes: DefinicionComponentePersonalizado[];
@@ -263,6 +266,7 @@ export function validarDefinicionComponente(d: DefinicionComponentePersonalizado
 		errores.push('ancho, alto y fondo deben ser mayores que cero');
 	}
 	errores.push(...validarMontajeDeclarado(d.montaje, d.dimensiones));
+	errores.push(...validarCarcasaParametrica(d.carcasa));
 	const p = d.parametros;
 	if (p?.temporizacion && (!Number.isFinite(p.temporizacion.segundos) || p.temporizacion.segundos < 0)) {
 		errores.push('la temporización debe expresarse en segundos positivos o cero');
@@ -406,6 +410,7 @@ export function instanciarComponentePersonalizado(
 		assetId: definicion.assetId,
 		componentePersonalizado: { definicionId: definicion.id, revision: definicion.revision },
 		...(definicion.montaje ? { montajeComponente: leerMontajeDeclarado(definicion.montaje, definicion.dimensiones)! } : {}),
+		...(definicion.carcasa ? { carcasaPersonalizada: leerCarcasaParametrica(definicion.carcasa)! } : {}),
 		...(opciones.imagenResuelta ? { imagen: opciones.imagenResuelta } : {}),
 	};
 }
@@ -521,6 +526,10 @@ export function crearPaqueteProyecto(
 	if (version < 3 && componentes.some((componente) => componente.fichaTecnica !== undefined)) {
 		throw new Error('La ficha técnica de un componente requiere el paquete de proyecto V3.');
 	}
+	if (version < 4 && (componentes.some((componente) => componente.carcasa !== undefined)
+		|| validado.dispositivos.some((dispositivo) => dispositivo.carcasaPersonalizada !== undefined))) {
+		throw new Error('La carcasa paramétrica requiere el paquete de proyecto V4 para conservarse.');
+	}
 	validarCierreComponentesProyecto(validado, componentes, version);
 	const idsComponentes = new Set<string>();
 	for (const componente of componentes) {
@@ -563,7 +572,7 @@ export function leerPaqueteProyecto(textoJson: string): PaqueteProyectoPortatil 
 	const bruto: unknown = JSON.parse(textoJson);
 	if (typeof bruto !== 'object' || bruto === null || Array.isArray(bruto)) throw new Error('El paquete no es un objeto.');
 	const p = bruto as Partial<PaqueteProyectoPortatil>;
-	if (p.formato !== 'tablero-studio-paquete' || (p.version !== 1 && p.version !== 2 && p.version !== 3) || !p.proyecto
+	if (p.formato !== 'tablero-studio-paquete' || (p.version !== 1 && p.version !== 2 && p.version !== 3 && p.version !== 4) || !p.proyecto
 		|| !Array.isArray(p.assets) || !Array.isArray(p.componentes)) {
 		throw new Error('El archivo no es un paquete portable de TableroStudio compatible.');
 	}

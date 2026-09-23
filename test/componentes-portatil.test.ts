@@ -116,3 +116,28 @@ test('.tscomp rechaza tamaño excesivo antes de leer el archivo', async () => {
 		text: async () => { leido = true; return ''; } }), /64 MiB/);
 	assert.equal(leido, false);
 });
+
+test('.tscomp V3 conserva carcasa paramétrica y rechaza degradación o parámetros ajenos', async () => {
+	const d = await definicion(false);
+	d.carcasa = { plantilla: 'modulo-din', acabado: 'grafito' };
+	const archivo = await crearComponentePortatil(d, await imagen());
+	assert.equal(archivo.version, 3);
+	const importado = await leerComponentePortatil(JSON.stringify(archivo));
+	assert.deepEqual(importado.definicion.carcasa, d.carcasa);
+	assert.deepEqual(importado.definicion.terminales, d.terminales);
+	assert.deepEqual(importado.definicion.comportamiento, d.comportamiento);
+	const anterior = structuredClone(archivo); anterior.version = 2;
+	await assert.rejects(leerComponentePortatil(JSON.stringify(anterior)), /exige \.tscomp V3/);
+	const hostil = structuredClone(archivo);
+	(hostil.definicion.carcasa as unknown as Record<string, unknown>).url = 'file:///privado';
+	await assert.rejects(leerComponentePortatil(JSON.stringify(hostil)), /parámetros no reconocidos/);
+	const invalido = structuredClone(archivo);
+	invalido.definicion.carcasa!.plantilla = 'contactores-siemens' as 'modulo-din';
+	await assert.rejects(leerComponentePortatil(JSON.stringify(invalido)), /plantilla de carcasa/);
+	const conFicha = await definicion(true);
+	conFicha.carcasa = { plantilla: 'caja-industrial', acabado: 'negro' };
+	const conCierre = await crearComponentePortatil(conFicha, await imagen());
+	assert.equal(conCierre.version, 3);
+	assert.deepEqual((await leerComponentePortatil(JSON.stringify(conCierre))).definicion.fichaTecnica,
+		conFicha.fichaTecnica, 'V3 conserva también el cierre técnico exacto de V2');
+});

@@ -19,6 +19,7 @@ import type { ComportamientoSimulacion } from './comportamiento.js';
 import type { ConfiguracionProgramaPLC } from './programa-plc.js';
 import type { ConfiguracionFisicaConductor, ConfiguracionFisicaDispositivo } from './fisica.js';
 import type { ConfiguracionIngenieriaProyecto } from './ingenieria.js';
+import type { CarcasaParametrica } from '../componentes/carcasa.js';
 
 export type TipoDispositivo =
 	| 'plc' | 'fuente' | 'transformador' | 'contactor' | 'rele'
@@ -259,6 +260,8 @@ export interface Dispositivo {
 	componentePersonalizado?: { definicionId: string; revision: number };
 	/** Fotografía del método/anclajes declarados en la revisión colocada; ausencia = no evaluable. */
 	montajeComponente?: MontajeComponente;
+	/** Fotografía de la envolvente visual aproximada; nunca controla perfil ni conectividad. */
+	carcasaPersonalizada?: CarcasaParametrica;
 	/**
 	 * Colocación MANUAL en el esquema: la columna y la fila donde quien dibuja ha decidido que
 	 * va este aparato, arrastrándolo. Si falta, la decide el motor de esquema.
