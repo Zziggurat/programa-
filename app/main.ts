@@ -4404,12 +4404,15 @@ function moverAcompanantes(dx: number, dy: number): void {
 	for (const id of seleccionExtra) {
 		const col = g.colocaciones.find((c) => c.dispositivoId === id);
 		if (!col) continue;
+		const d = proyecto.dispositivos.find((x) => x.id === id);
+		const enPlaca = d?.montajeComponente?.metodo === 'atornillado-placa';
 		col.x = Math.min(Math.max(col.x + dx, 0), Math.max(0, g.ancho - col.ancho));
 		col.y = Math.min(Math.max(col.y + dy, 0), Math.max(0, g.alto - col.alto));
 		// Se re-ancla al riel al que lo ha llevado el movimiento —y se apoya en él— igual que
 		// hace el aparato principal: si no, quedaría diciendo que pertenece a un riel del que ya
 		// se ha bajado, y ese riel se lo llevaría consigo la próxima vez que se moviera.
-		const enganche = snapAriel(col.x + col.ancho / 2, col.y + col.alto / 2, col.ancho, col.alto);
+		const enganche = enPlaca ? undefined
+			: snapAriel(col.x + col.ancho / 2, col.y + col.alto / 2, col.ancho, col.alto);
 		if (enganche) {
 			col.x = Math.min(Math.max(enganche.cx - col.ancho / 2, 0), Math.max(0, g.ancho - col.ancho));
 			col.y = Math.min(Math.max(enganche.cy - col.alto / 2, 0), Math.max(0, g.alto - col.alto));
@@ -5331,7 +5334,10 @@ let handleArrastrado: DatosHandle | undefined;
 let arrastrandoCable: { id: string; indice: number } | undefined; // conductor y punto de quiebre que se arrastra
 /** Cable agarrado a la espera de que el ratón se mueva para empezar a arrastrarlo de verdad. */
 let pendienteCable: { id: string; indice: number; x: number; y: number } | undefined;
-let arrastreInicio: { x: number; y: number } | undefined; // posición del aparato al empezar a arrastrarlo
+let arrastreInicio: {
+	x: number; y: number; rielId?: string;
+	acompanantes: { id: string; x: number; y: number; rielId?: string }[];
+} | undefined; // posiciones originales para revertir juntos un montaje incompatible
 const desfase = new THREE.Vector2();
 
 /**
@@ -6369,7 +6375,11 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	if (elem.tipo === 'dispositivo') {
 		const col = g.colocaciones.find((c) => c.dispositivoId === elem.id)!;
 		desfase.set(p.x - (col.x + col.ancho / 2), p.y - (col.y + col.alto / 2));
-		arrastreInicio = { x: col.x, y: col.y };
+		arrastreInicio = { x: col.x, y: col.y, rielId: col.rielId,
+			acompanantes: seleccionExtra.flatMap((id) => {
+				const c = g.colocaciones.find((x) => x.dispositivoId === id);
+				return c ? [{ id, x: c.x, y: c.y, rielId: c.rielId }] : [];
+			}) };
 	} else if (elem.tipo === 'canaleta') {
 		const can = g.canaletas.find((c) => c.id === elem.id)!;
 		desfase.set(p.x - can.x, p.y - can.y);
@@ -6545,10 +6555,13 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (sel.tipo === 'cable') { arrastrando = false; permitirOrbita(true); return; }
 	if (sel.tipo === 'dispositivo') {
 		const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id)!;
+		const d = proyecto.dispositivos.find((x) => x.id === sel!.id);
+		const enPlaca = d?.montajeComponente?.metodo === 'atornillado-placa';
 		const antesX = col.x;
 		const antesY = col.y;
-		// El aparato SIEMPRE se pega al riel más cercano (nunca queda flotando).
-		const snap = snapAriel(p.x - desfase.x, p.y - desfase.y, col.ancho, col.alto);
+		// La placa atornillada no es un clip DIN: tampoco durante arrastres posteriores.
+		const snap = enPlaca ? undefined
+			: snapAriel(p.x - desfase.x, p.y - desfase.y, col.ancho, col.alto);
 		const cx = snap ? snap.cx : p.x - desfase.x;
 		const cy = snap ? snap.cy : p.y - desfase.y;
 		col.rielId = snap?.rielId;
@@ -6563,7 +6576,12 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 		// Aviso en vivo: rojo si se solapa con otro aparato, azul si está libre.
 		const solapa = aparatosSeleccionados().some((id) => {
 			const o = g.colocaciones.find((x) => x.dispositivoId === id);
-			return o && solapaCon(o.x, o.y, o.ancho, o.alto, id);
+			if (!o) return false;
+			const aparato = proyecto.dispositivos.find((x) => x.id === id);
+			return solapaCon(o.x, o.y, o.ancho, o.alto, id)
+				|| !!aparato?.montajeComponente && evaluarCompatibilidadMontaje({
+					anchoMm: o.ancho, altoMm: o.alto, fondoMm: aparato.profundidad ?? 0,
+				}, aparato.montajeComponente, g, o).estado === 'NO_CABE';
 		});
 		for (const r of resaltados) r.clon.emissive.setHex(solapa ? 0xff3b3b : 0x1d4ed8);
 	} else if (sel.tipo === 'canaleta') {
@@ -6700,7 +6718,30 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 	if (sel?.tipo === 'dispositivo' && !handleArrastrado) {
 		const g = proyecto.gabinete!;
 		const col = g.colocaciones.find((c) => c.dispositivoId === sel!.id);
-		if (col && solapaCon(col.x, col.y, col.ancho, col.alto, sel.id)) {
+		const motivoMontaje = aparatosSeleccionados().flatMap((id) => {
+			const c = g.colocaciones.find((x) => x.dispositivoId === id);
+			const d = proyecto.dispositivos.find((x) => x.id === id);
+			if (!c || !d?.montajeComponente) return [];
+			const ajuste = evaluarCompatibilidadMontaje({ anchoMm: c.ancho, altoMm: c.alto,
+				fondoMm: d.profundidad ?? 0 }, d.montajeComponente, g, c);
+			if (ajuste.estado === 'NO_CABE') return [`${id}: ${ajuste.motivos.join(' ')}`];
+			return solapaCon(c.x, c.y, c.ancho, c.alto, id)
+				? [`${id}: la huella invade la holgura de otro aparato.`] : [];
+		})[0];
+		if (motivoMontaje && col && arrastreInicio) {
+			const originales = [
+				{ id: sel.id, ...arrastreInicio }, ...arrastreInicio.acompanantes,
+			];
+			for (const original of originales) {
+				const c = g.colocaciones.find((x) => x.dispositivoId === original.id);
+				if (!c) continue;
+				c.x = original.x; c.y = original.y; c.rielId = original.rielId;
+				const centro = escenario.aEscena(c.x + c.ancho / 2, c.y + c.alto / 2, 0);
+				grupoDe(original.id)?.position.set(centro.x, centro.y, 0);
+			}
+			avisar(`Montaje rechazado; se conservó la posición anterior. ${motivoMontaje}`, 'error');
+		} else if (col && !proyecto.dispositivos.find((d) => d.id === sel!.id)?.montajeComponente
+			&& solapaCon(col.x, col.y, col.ancho, col.alto, sel.id)) {
 			const libre = xLibreCercano(col.x, col.y, col.ancho, col.alto, sel.id);
 			if (libre !== undefined) {
 				col.x = libre;
@@ -7026,13 +7067,26 @@ window.addEventListener('keydown', (ev) => {
 
 /** Reconstruye en la escena solo el aparato indicado (para arrastre/resize fluido). */
 function reconstruirDispositivoUno(id: string): void {
-	const viejo = grupoDe(id);
-	if (viejo) { escenario.dispositivos.remove(viejo); liberar(viejo); }
+	// La escena tiene un registro plano además del árbol Three.js: picking, arrastre,
+	// selección y animación consultan `aparatos`, no solo los hijos de `dispositivos`.
+	// Reemplazar únicamente la malla dejaba una referencia liberada en ese registro.
+	// También limpia mallas huérfanas de una reconstrucción incremental anterior a este
+	// registro: allí podían quedar hijos nuevos sin entrada en `aparatos`.
+	const viejos = new Set<THREE.Object3D>([
+		...escenario.aparatos.filter((aparato) => aparato.userData.dispositivoId === id),
+		...escenario.dispositivos.children.filter((aparato) => aparato.userData.dispositivoId === id),
+	]);
+	escenario.etiquetas = escenario.etiquetas.filter((etiqueta) => !viejos.has(etiqueta.parent!));
+	escenario.aparatos = escenario.aparatos.filter((aparato) => aparato.userData.dispositivoId !== id);
+	for (const viejo of viejos) { viejo.parent?.remove(viejo); liberar(viejo); }
 	const col = proyecto.gabinete!.colocaciones.find((c) => c.dispositivoId === id);
 	const d = proyecto.dispositivos.find((x) => x.id === id);
 	if (col && d) {
 		const etq: THREE.Object3D[] = [];
-		escenario.dispositivos.add(construirDispositivo(d, col, escenario.aEscena, etq));
+		const nuevo = construirDispositivo(d, col, escenario.aEscena, etq);
+		escenario.dispositivos.add(nuevo);
+		escenario.aparatos.push(nuevo);
+		escenario.etiquetas.push(...etq);
 	}
 }
 
