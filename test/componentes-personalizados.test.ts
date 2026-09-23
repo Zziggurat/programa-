@@ -178,4 +178,20 @@ test('el codec V1 informa que un proyecto con dos revisiones custom requiere V2'
 	assert.throws(() => crearPaqueteProyecto(proyecto,
 		[{ id: r1.assetId, mime: 'image/png', base64: 'AQID' }], [r1, r2]),
 	/V1.*revisiones.*formato V2/);
+	const paquete = crearPaqueteProyecto(proyecto,
+		[{ id: r1.assetId, mime: 'image/png', base64: 'AQID' }], [r2, r1], 2);
+	assert.equal(paquete.version, 2);
+	assert.deepEqual(leerPaqueteProyecto(JSON.stringify(paquete)).componentes, [r2, r1]);
+	const incompleto = structuredClone(paquete);
+	incompleto.componentes = [r2];
+	assert.throws(() => leerPaqueteProyecto(JSON.stringify(incompleto)), /no contiene la revisión 1/);
+	const duplicado = structuredClone(paquete);
+	duplicado.componentes.push(r1);
+	assert.throws(() => leerPaqueteProyecto(JSON.stringify(duplicado)), /Componente repetido/);
+	const sobrante = structuredClone(paquete);
+	sobrante.componentes.push({ ...r2, revision: 3 });
+	assert.throws(() => leerPaqueteProyecto(JSON.stringify(sobrante)), /no utilizada/);
+	const assetSobrante = structuredClone(paquete);
+	assetSobrante.assets.push({ id: `sha256:${'b'.repeat(64)}`, mime: 'image/png', base64: 'AQID' });
+	assert.throws(() => leerPaqueteProyecto(JSON.stringify(assetSobrante)), /asset no utilizado/);
 });

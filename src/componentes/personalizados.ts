@@ -80,7 +80,8 @@ export interface AssetPortatil {
 
 export interface PaqueteProyectoPortatil {
 	formato: 'tablero-studio-paquete';
-	version: 1;
+	/** V2 permite varias revisiones inmutables de una misma identidad. */
+	version: 1 | 2;
 	proyecto: Proyecto;
 	assets: AssetPortatil[];
 	componentes: DefinicionComponentePersonalizado[];
@@ -285,9 +286,41 @@ export function revisionesRequeridasProyecto(proyecto: Proyecto): Map<string, nu
 	return requeridas;
 }
 
+/** La procedencia física del proyecto fija una clave compuesta, nunca la definición vigente. */
+export function revisionesRequeridasProyectoV2(
+	proyecto: Proyecto,
+): Map<string, { id: string; revision: number }> {
+	const requeridas = new Map<string, { id: string; revision: number }>();
+	for (const dispositivo of proyecto.dispositivos) {
+		const origen = dispositivo.componentePersonalizado;
+		if (!origen) continue;
+		if (!origen.definicionId?.trim() || !Number.isInteger(origen.revision) || origen.revision < 1) {
+			throw new Error(`Procedencia inválida del aparato ${dispositivo.id}.`);
+		}
+		const clave = JSON.stringify([origen.definicionId, origen.revision]);
+		requeridas.set(clave, { id: origen.definicionId, revision: origen.revision });
+	}
+	return requeridas;
+}
+
 export function validarCierreComponentesProyecto(
 	proyecto: Proyecto, componentes: readonly DefinicionComponentePersonalizado[],
+	version: PaqueteProyectoPortatil['version'] = 1,
 ): void {
+	if (version === 2) {
+		const requeridas = revisionesRequeridasProyectoV2(proyecto);
+		const disponibles = new Set(componentes.map((componente) =>
+			JSON.stringify([componente.id, componente.revision])));
+		for (const [clave, { id, revision }] of requeridas) {
+			if (!disponibles.has(clave)) {
+				throw new Error(`El paquete no contiene la revisión ${revision} del componente ${id}; la procedencia no es verificable.`);
+			}
+		}
+		for (const clave of disponibles) {
+			if (!requeridas.has(clave)) throw new Error(`El paquete incluye una revisión de componente no utilizada: ${clave}.`);
+		}
+		return;
+	}
 	const requeridas = revisionesRequeridasProyecto(proyecto);
 	const disponibles = new Map(componentes.map((componente) => [componente.id, componente]));
 	for (const [id, revision] of requeridas) {
@@ -305,6 +338,7 @@ export function crearPaqueteProyecto(
 	proyecto: Proyecto,
 	assets: readonly AssetPortatil[],
 	componentes: readonly DefinicionComponentePersonalizado[],
+	version: PaqueteProyectoPortatil['version'] = 1,
 ): PaqueteProyectoPortatil {
 	// Usa el mismo codec que cualquier archivo entrante; IndexedDB no convierte el proyecto en fiable.
 	const carga = cargarProyecto(JSON.stringify(proyecto));
@@ -321,11 +355,12 @@ export function crearPaqueteProyecto(
 		catch { throw new Error(`Definición ${indice + 1} del paquete incompleta o malformada.`); }
 		if (errores.length) throw new Error(`«${componente.nombre}»: ${errores.join('; ')}`);
 	}
-	validarCierreComponentesProyecto(validado, componentes);
+	validarCierreComponentesProyecto(validado, componentes, version);
 	const idsComponentes = new Set<string>();
 	for (const componente of componentes) {
-		if (idsComponentes.has(componente.id)) throw new Error(`Componente repetido en el paquete: ${componente.id}`);
-		idsComponentes.add(componente.id);
+		const clave = version === 1 ? componente.id : JSON.stringify([componente.id, componente.revision]);
+		if (idsComponentes.has(clave)) throw new Error(`Componente repetido en el paquete: ${clave}`);
+		idsComponentes.add(clave);
 	}
 	const idsAssets = new Set<string>();
 	for (const asset of assets) {
@@ -344,7 +379,17 @@ export function crearPaqueteProyecto(
 			throw new Error(`Falta el asset ${dispositivo.assetId} usado por el aparato ${dispositivo.id}`);
 		}
 	}
-	return { formato: 'tablero-studio-paquete', version: 1, proyecto: validado, assets: clonar([...assets]), componentes: clonar([...componentes]) };
+	if (version === 2) {
+		const requeridos = new Set<string>();
+		for (const componente of componentes) requeridos.add(componente.assetId);
+		for (const dispositivo of validado.dispositivos) {
+			if (dispositivo.assetId) requeridos.add(dispositivo.assetId);
+		}
+		for (const id of idsAssets) {
+			if (!requeridos.has(id)) throw new Error(`El paquete incluye un asset no utilizado: ${id}.`);
+		}
+	}
+	return { formato: 'tablero-studio-paquete', version, proyecto: validado, assets: clonar([...assets]), componentes: clonar([...componentes]) };
 }
 
 export function leerPaqueteProyecto(textoJson: string): PaqueteProyectoPortatil {
@@ -352,11 +397,11 @@ export function leerPaqueteProyecto(textoJson: string): PaqueteProyectoPortatil 
 	const bruto: unknown = JSON.parse(textoJson);
 	if (typeof bruto !== 'object' || bruto === null || Array.isArray(bruto)) throw new Error('El paquete no es un objeto.');
 	const p = bruto as Partial<PaqueteProyectoPortatil>;
-	if (p.formato !== 'tablero-studio-paquete' || p.version !== 1 || !p.proyecto
+	if (p.formato !== 'tablero-studio-paquete' || (p.version !== 1 && p.version !== 2) || !p.proyecto
 		|| !Array.isArray(p.assets) || !Array.isArray(p.componentes)) {
 		throw new Error('El archivo no es un paquete portable de TableroStudio compatible.');
 	}
-	const resultado = crearPaqueteProyecto(p.proyecto, p.assets, p.componentes);
+	const resultado = crearPaqueteProyecto(p.proyecto, p.assets, p.componentes, p.version);
 	validarAdopcionTecnica(resultado.proyecto);
 	return resultado;
 }

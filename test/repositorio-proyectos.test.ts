@@ -6,6 +6,7 @@ import type { Proyecto } from '../src/modelo/tipos.js';
 import {
 	crearPaqueteProyecto,
 	instanciarComponentePersonalizado,
+	leerPaqueteProyecto,
 } from '../src/componentes/personalizados.js';
 import type { PaqueteProyectoPortatil } from '../src/componentes/personalizados.js';
 import type { ContenidoComponentePersonalizado } from '../src/persistencia/index.js';
@@ -382,21 +383,72 @@ test('la revisión colocada r1 se exporta intacta aunque la biblioteca esté en 
 	assert.equal(importado.proyecto.dispositivos[0].componentePersonalizado?.revision, 1);
 });
 
-test('paquete V1 bloquea dos revisiones de la misma identidad y nunca inserta latest a ciegas', async () => {
+test('paquete V2 porta dos revisiones del mismo ID con assets distintos y conserva V1 para casos simples', async () => {
 	const { repositorio } = entorno();
-	const asset = await repositorio.guardarAsset('image/png', new Uint8Array([43, 44, 45]));
-	const r1 = await repositorio.crearComponente({ id: 'cmp-doble', definicion: contenidoComponente(asset.id) });
+	const asset1 = await repositorio.guardarAsset('image/png', new Uint8Array([43, 44, 45]));
+	const asset2 = await repositorio.guardarAsset('image/png', new Uint8Array([46, 47, 48]));
+	const r1 = await repositorio.crearComponente({ id: 'cmp-doble', definicion: contenidoComponente(asset1.id) });
 	const r2 = await repositorio.actualizarComponente(r1.id, {
-		revisionEsperada: 1, definicion: contenidoComponente(asset.id, 'Sensor r2'),
+		revisionEsperada: 1, definicion: contenidoComponente(asset2.id, 'Sensor r2'),
 	});
 	const proyecto = proyectoValido('Dos revisiones');
-	proyecto.dispositivos = [instanciarComponentePersonalizado(r1, 'd1'), instanciarComponentePersonalizado(r2, 'd2')];
+	proyecto.dispositivos = [instanciarComponentePersonalizado(r2, 'd2'), instanciarComponentePersonalizado(r1, 'd1')];
 	proyecto.gabinete!.colocaciones = [
 		{ dispositivoId: 'd1', x: 20, y: 20, ancho: 30, alto: 45 },
 		{ dispositivoId: 'd2', x: 70, y: 20, ancho: 30, alto: 45 },
 	];
 	const documento = await repositorio.crear({ proyecto });
-	await assert.rejects(repositorio.exportarPaquete(documento.id), /V1.*revisiones.*formato V2/);
+	const paquete = await repositorio.exportarPaquete(documento.id);
+	assert.equal(paquete.version, 2);
+	assert.deepEqual(paquete.componentes, [r1, r2], 'orden canónico por identidad y revisión');
+	assert.deepEqual(paquete.assets.map((asset) => asset.id).sort(), [asset1.id, asset2.id].sort());
+	assert.deepEqual(paquete.proyecto.dispositivos.map((dispositivo) => dispositivo.componentePersonalizado?.revision), [2, 1]);
+	const leido = leerPaqueteProyecto(JSON.stringify(paquete));
+	const { backend: limpioBackend, repositorio: limpio } = entorno();
+	const importado = await limpio.importarPaquete(leido);
+	assert.deepEqual(importado.proyecto.dispositivos.map((dispositivo) => dispositivo.componentePersonalizado?.revision), [2, 1]);
+	assert.deepEqual(await limpio.abrirRevisionComponente(r1.id, 1), r1);
+	assert.deepEqual(await limpio.abrirRevisionComponente(r1.id, 2), r2);
+	assert.deepEqual(await limpio.abrirComponente(r1.id), r2, 'una identidad nueva publica su última revisión');
+	assert.equal(await limpioBackend.contar('customComponentRevisions'), 2);
+	assert.equal(await limpioBackend.contar('assets'), 2);
+	assert.equal((await limpio.exportarPaquete(importado.id)).version, 2);
+	const invertido = structuredClone(leido);
+	invertido.componentes.reverse();
+	const otro = entorno().repositorio;
+	const importadoInvertido = await otro.importarPaquete(invertido);
+	assert.deepEqual(await otro.abrirComponente(r1.id), r2);
+	assert.equal((await otro.exportarPaquete(importadoInvertido.id)).version, 2);
+
+	const { backend: conLocalBackend, repositorio: conLocal } = entorno();
+	await conLocal.guardarAsset('image/png', new Uint8Array([43, 44, 45]));
+	await conLocal.crearComponente({ id: r1.id, definicion: contenidoComponente(asset1.id) });
+	await assert.rejects(conLocal.importarPaquete(leido), /posterior.*adopción explícita/);
+	assert.equal(await conLocalBackend.contar('projects'), 0);
+	assert.equal(await conLocalBackend.contar('customComponentRevisions'), 1);
+	assert.equal(await conLocalBackend.contar('assets'), 1, 'el asset r2 no queda publicado tras rollback');
+
+	const { backend: conConflictoBackend, repositorio: conConflicto } = entorno();
+	await conConflicto.guardarAsset('image/png', new Uint8Array([43, 44, 45]));
+	await conConflicto.crearComponente({ id: r1.id, definicion: contenidoComponente(asset1.id) });
+	await conConflicto.actualizarComponente(r1.id, {
+		revisionEsperada: 1, definicion: contenidoComponente(asset1.id, 'Otra r2 local'),
+	});
+	await assert.rejects(conConflicto.importarPaquete(leido), /Colisión del componente.*r2/);
+	assert.equal((await conConflicto.abrirComponente(r1.id)).nombre, 'Otra r2 local');
+	assert.equal(await conConflictoBackend.contar('projects'), 0);
+	assert.equal(await conConflictoBackend.contar('assets'), 1);
+	assert.equal(await conConflictoBackend.contar('customComponentRevisions'), 2);
+
+	const { backend: borradoBackend, repositorio: borrado } = entorno();
+	await borrado.guardarAsset('image/png', new Uint8Array([43, 44, 45]));
+	const eliminado = await borrado.crearComponente({ id: r1.id, definicion: contenidoComponente(asset1.id) });
+	await borrado.eliminarComponente(eliminado.id, eliminado.revision);
+	const documentoHistorico = await borrado.importarPaquete(leido);
+	assert.equal((await borrado.listarComponentes()).length, 0, 'importar no republica la identidad eliminada');
+	assert.deepEqual(await borrado.abrirRevisionComponente(r1.id, 2), r2);
+	assert.equal(await borradoBackend.contar('customComponentRevisions'), 2);
+	assert.equal((await borrado.exportarPaquete(documentoHistorico.id)).version, 2);
 });
 
 test('borrar de Mis Componentes no destruye la revisión colocada ni reutiliza su identidad', async () => {

@@ -5,7 +5,7 @@ import {
 	VERSION_COMPONENTE_PERSONALIZADO,
 	crearPaqueteProyecto,
 	leerPaqueteProyecto,
-	revisionesRequeridasProyecto,
+	revisionesRequeridasProyectoV2,
 	validarDefinicionComponente,
 } from '../componentes/personalizados.js';
 import type {
@@ -684,15 +684,16 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 			'readonly',
 			async (tx) => {
 				const documento = await this.documento(tx, projectId);
-				let requeridas: Map<string, number>;
-				try { requeridas = revisionesRequeridasProyecto(documento.proyecto); }
+				let requeridas: Map<string, { id: string; revision: number }>;
+				try { requeridas = revisionesRequeridasProyectoV2(documento.proyecto); }
 				catch (error) {
 					throw new ProyectoPersistenciaInvalido(
 						error instanceof Error ? error.message : String(error), error,
 					);
 				}
 				const componentes: DefinicionComponentePersonalizado[] = [];
-				for (const [id, revision] of [...requeridas].sort(([a], [b]) => a.localeCompare(b))) {
+				for (const { id, revision } of [...requeridas.values()]
+					.sort((a, b) => a.id.localeCompare(b.id) || a.revision - b.revision)) {
 					const disponible = await this.revisionComponente(tx, id, revision);
 					if (!disponible) {
 						throw new ProyectoPersistenciaInvalido(
@@ -731,7 +732,13 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 				base64: bytesABase64(asset.bytes),
 			});
 		}
-		return crearPaqueteProyecto(recogido.proyecto, assets, recogido.componentes);
+		const identidades = new Set<string>();
+		const version = recogido.componentes.some(({ id }) => {
+			if (identidades.has(id)) return true;
+			identidades.add(id);
+			return false;
+		}) ? 2 : 1;
+		return crearPaqueteProyecto(recogido.proyecto, assets, recogido.componentes, version);
 	}
 
 	async importarPaquete(
@@ -768,6 +775,13 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 			});
 		}
 		const componentes = validado.componentes.map(validarComponente);
+		const componentesPorId = new Map<string, DefinicionComponentePersonalizado[]>();
+		for (const componente of componentes) {
+			const revisiones = componentesPorId.get(componente.id) ?? [];
+			revisiones.push(componente);
+			componentesPorId.set(componente.id, revisiones);
+		}
+		for (const revisiones of componentesPorId.values()) revisiones.sort((a, b) => a.revision - b.revision);
 		const nombre = nombreValido(nuevoNombre ?? validado.proyecto.nombre);
 		const proyecto = validarProyecto({ ...validado.proyecto, nombre }).proyecto;
 		const id = this.crearId();
@@ -812,37 +826,39 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 						}
 					} else await tx.guardar('assets', asset.id, asset);
 				}
-				for (const componente of componentes) {
-					const archivada = await tx.obtener<DefinicionComponentePersonalizado>(
-						'customComponentRevisions', claveRevisionComponente(componente.id, componente.revision),
-					);
-					if (archivada && !contenidoIgual(archivada, componente)) {
-						throw new ProyectoPersistenciaInvalido(
-							`Colisión del componente ${componente.id} r${componente.revision}: `
-							+ 'la revisión inmutable existe con otro contenido.',
+				for (const [idComponente, revisiones] of componentesPorId) {
+					const vigente = await tx.obtener<DefinicionComponentePersonalizado>('customComponents', idComponente);
+					const teniaHistoriaSinPublicar = !vigente && await this.existeIdentidadArchivada(tx, idComponente);
+					for (const componente of revisiones) {
+						const archivada = await tx.obtener<DefinicionComponentePersonalizado>(
+							'customComponentRevisions', claveRevisionComponente(idComponente, componente.revision),
+						);
+						if (archivada && !contenidoIgual(archivada, componente)) {
+							throw new ProyectoPersistenciaInvalido(
+								`Colisión del componente ${idComponente} r${componente.revision}: `
+								+ 'la revisión inmutable existe con otro contenido.',
+							);
+						}
+						if (vigente?.revision === componente.revision && !contenidoIgual(vigente, componente)) {
+							throw new ProyectoPersistenciaInvalido(
+								`Colisión del componente ${idComponente} r${componente.revision}: `
+								+ 'la biblioteca vigente tiene otro contenido.',
+							);
+						}
+						if (vigente && vigente.revision < componente.revision) {
+							throw new ProyectoPersistenciaInvalido(
+								`El paquete trae ${idComponente} r${componente.revision}, posterior a la revisión `
+								+ `${vigente.revision} de la biblioteca local. Importarla requiere una adopción explícita.`,
+							);
+						}
+						if (!archivada) await tx.guardar(
+							'customComponentRevisions', claveRevisionComponente(idComponente, componente.revision), componente,
 						);
 					}
-					const vigente = await tx.obtener<DefinicionComponentePersonalizado>('customComponents', componente.id);
-					if (vigente?.revision === componente.revision && !contenidoIgual(vigente, componente)) {
-						throw new ProyectoPersistenciaInvalido(
-							`Colisión del componente ${componente.id} r${componente.revision}: `
-							+ 'la biblioteca vigente tiene otro contenido.',
-						);
-					}
-					if (vigente && vigente.revision < componente.revision) {
-						throw new ProyectoPersistenciaInvalido(
-							`El paquete trae ${componente.id} r${componente.revision}, posterior a la revisión `
-							+ `${vigente.revision} de la biblioteca local. Importarla requiere una adopción explícita.`,
-						);
-					}
-					const teniaHistoriaSinPublicar = !vigente && await this.existeIdentidadArchivada(tx, componente.id);
-					if (!archivada) await tx.guardar(
-						'customComponentRevisions', claveRevisionComponente(componente.id, componente.revision), componente,
-					);
 					// Importar un proyecto no altera una definición local vigente. Si la biblioteca
 					// fue borrada pero conserva historia, tampoco la republica silenciosamente.
 					if (!vigente && !teniaHistoriaSinPublicar) {
-						await tx.guardar('customComponents', componente.id, componente);
+						await tx.guardar('customComponents', idComponente, revisiones[revisiones.length - 1]);
 					}
 				}
 				await tx.guardar('projects', id, documento);
