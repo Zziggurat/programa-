@@ -92,6 +92,7 @@ import {
 	instanciarComponentePersonalizado, leerPaqueteProyecto,
 	type DefinicionComponentePersonalizado,
 } from '../src/componentes/personalizados.js';
+import { buscarColocacionPlaca, evaluarCompatibilidadMontaje } from '../src/componentes/montaje.js';
 import { abrirAdopcionComponente } from './ui-adopcion-componente.js';
 import type { PreparacionAdopcionComponente } from '../src/componentes/adopcion.js';
 import type { RepositorioProyectos } from '../src/persistencia/tipos.js';
@@ -2758,12 +2759,28 @@ function colocarComponentePersonalizado(
 	imagenUrl: string,
 ): void {
 	const { anchoMm: ancho, altoMm: alto } = definicion.dimensiones;
-	const hueco = buscarHueco(ancho, alto);
+	const enPlaca = definicion.montaje?.metodo === 'atornillado-placa';
+	const hueco = enPlaca
+		? buscarColocacionPlaca(definicion.dimensiones, definicion.montaje!, proyecto.gabinete!, 'nuevo')
+		: buscarHueco(ancho, alto);
 	if (!hueco) {
-		avisar('Añade primero un riel DIN para colocar el componente personalizado.', 'error');
+		avisar(enPlaca ? 'No hay huella libre demostrable en la placa para este componente.'
+			: 'No hay riel DIN con huella libre para este componente.', 'error');
 		return;
 	}
-	if (colocando) soltarColocacion();
+	const preliminar = evaluarCompatibilidadMontaje(definicion.dimensiones, definicion.montaje,
+		proyecto.gabinete!, { dispositivoId: 'nuevo', ...hueco, ancho, alto });
+	if (preliminar.estado === 'NO_CABE') {
+		avisar(`Montaje no compatible: ${preliminar.motivos.join(' ')}`, 'error');
+		return;
+	}
+	if (colocando) {
+		soltarColocacion();
+		if (colocando) {
+			avisar('Confirma o cancela el componente que aún estás colocando antes de añadir otro.', 'info');
+			return;
+		}
+	}
 	if (!capturar()) return;
 	const clase = CLASE_POR_TIPO[definicion.tipoDispositivo];
 	let maximo = 0;
@@ -2782,20 +2799,21 @@ function colocarComponentePersonalizado(
 	d.posicion = { x: proyecto.dispositivos.length % 10, y: Math.floor(proyecto.dispositivos.length / 10) };
 	proyecto.dispositivos.push(d);
 	let x = hueco.x;
-	if (solapaCon(x, hueco.y, ancho, alto, d.id)) {
+	if (!enPlaca && solapaCon(x, hueco.y, ancho, alto, d.id)) {
 		x = xLibreCercano(x, hueco.y, ancho, alto, d.id) ?? x;
 	}
-	const col = { dispositivoId: d.id, x, y: hueco.y, ancho, alto, rielId: hueco.rielId as string | undefined };
+	const col = { dispositivoId: d.id, x, y: hueco.y, ancho, alto, rielId: hueco.rielId };
 	proyecto.gabinete!.colocaciones.push(col);
-	const rielTocado = extenderRielPara(col);
+	const rielTocado = enPlaca ? undefined : extenderRielPara(col);
 	reconstruirDispositivoUno(d.id);
 	if (rielTocado) reconstruirEstructuraUno({ tipo: 'riel', id: rielTocado });
 	actualizarConservandoAparatos();
 	seleccionar(d.id);
-	colocando = { id: d.id };
+	colocando = { id: d.id, metodo: definicion.montaje?.metodo };
 	renderer.domElement.style.cursor = 'copy';
 	ayudaDeEstado([`${d.designacion ?? definicion.nombre} · componente personalizado`,
-		'Clic · soltarlo en la placa', 'Esc · cancelar']);
+		definicion.montaje ? 'Clic · confirmar montaje declarado' : 'Montaje sin declarar · verificar antes de fabricar',
+		'Esc · cancelar']);
 }
 
 /** La biblioteca conserva sus revisiones; un aparato ya colocado solo cambia por esta operación explícita. */
@@ -2908,7 +2926,7 @@ function colocarPlantilla(plantilla: PlantillaAparato): void {
  * El aparato ya existe en el proyecto mientras se coloca —así se ve de verdad, con su tamaño y
  * su color, en vez de una silueta—; si se cancela con Esc, se quita.
  */
-let colocando: { id: string } | undefined;
+let colocando: { id: string; metodo?: 'riel-din' | 'atornillado-placa' } | undefined;
 
 /** Lleva el aparato que se está colocando al punto del ratón, pegado al riel más cercano. */
 function moverColocacionAlCursor(ev: MouseEvent): void {
@@ -2917,7 +2935,8 @@ function moverColocacionAlCursor(ev: MouseEvent): void {
 	const col = g.colocaciones.find((c) => c.dispositivoId === colocando!.id);
 	const p = puntoModelo(ev);
 	if (!col || !p) return;
-	const snap = snapAriel(p.x, p.y, col.ancho, col.alto);
+	const snap = colocando.metodo === 'atornillado-placa'
+		? undefined : snapAriel(p.x, p.y, col.ancho, col.alto);
 	const cx = snap ? snap.cx : p.x;
 	const cy = snap ? snap.cy : p.y;
 	col.rielId = snap?.rielId;
@@ -2938,13 +2957,27 @@ function soltarColocacion(): boolean {
 		avisar('Ahí se encima con otro aparato: busca un hueco libre.', 'error');
 		return true;   // sigue pegado al ratón
 	}
+	const dispositivo = proyecto.dispositivos.find((d) => d.id === colocando!.id);
+	const ajuste = col && dispositivo?.componentePersonalizado
+		? evaluarCompatibilidadMontaje({ anchoMm: col.ancho, altoMm: col.alto,
+			fondoMm: dispositivo.profundidad ?? 0 }, dispositivo.montajeComponente,
+			proyecto.gabinete!, col)
+		: undefined;
+	if (ajuste?.estado === 'NO_CABE') {
+		avisar(`Ese montaje no cabe: ${ajuste.motivos.join(' ')}`, 'error');
+		return true;
+	}
 	const id = colocando.id;
+	const rielTocado = col && colocando.metodo !== 'atornillado-placa'
+		? extenderRielPara(col) : undefined;
 	colocando = undefined;
 	renderer.domElement.style.cursor = '';
-	const rielTocado = col ? extenderRielPara(col) : undefined;
 	if (rielTocado) reconstruirEstructuraUno({ tipo: 'riel', id: rielTocado });
 	actualizarConservandoAparatos();
 	seleccionar(id);
+	if (ajuste?.estado === 'NO_EVALUABLE') {
+		avisar(`Montaje no evaluable: ${ajuste.motivos.join(' ')}`, 'info');
+	}
 	ayudaDeEstado(undefined);
 	return true;
 }
@@ -3441,10 +3474,19 @@ function pintarFichaDeLoElegido(): void {
 			<button class="boton" id="btn-duplicar">Duplicar</button>
 			<button class="boton peligro" id="btn-eliminar">Eliminar</button>
 		</div>` : '';
+	const compatibilidadPersonal = d.componentePersonalizado && col
+		? evaluarCompatibilidadMontaje({ anchoMm: col.ancho, altoMm: col.alto,
+			fondoMm: d.profundidad ?? 0 }, d.montajeComponente, proyecto.gabinete!, col)
+		: undefined;
+	const estadoMontaje = compatibilidadPersonal?.estado === 'NO_CABE' ? 'No cabe según datos declarados'
+		: compatibilidadPersonal?.estado === 'GEOMETRIA_COMPATIBLE' ? 'Envolvente geométricamente compatible; fijación no certificada'
+			: 'Compatibilidad mecánica no evaluable';
 	const bloqueRevisionPersonal = d.componentePersonalizado ? `
 		<section class="revision-personal" aria-label="Revisión del componente personalizado">
 			<h2>Componente personalizado</h2>
 			<p>Revisión fijada: <strong>r${d.componentePersonalizado.revision}</strong>. La biblioteca no altera este tablero automáticamente.</p>
+			<p><strong>Montaje:</strong> ${estadoMontaje}.</p>
+			${compatibilidadPersonal?.motivos.length ? `<p class="sub">${escaparHtml(compatibilidadPersonal.motivos.join(' '))}</p>` : ''}
 			<p id="estado-revision-personal" class="sub" role="status">Consultando biblioteca…</p>
 		</section>` : '';
 
