@@ -5,6 +5,7 @@ import { crearProyecto } from '../src/modelo/proyecto.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
 import {
 	crearPaqueteProyecto,
+	instanciarComponentePersonalizado,
 } from '../src/componentes/personalizados.js';
 import type { PaqueteProyectoPortatil } from '../src/componentes/personalizados.js';
 import type { ContenidoComponentePersonalizado } from '../src/persistencia/index.js';
@@ -75,9 +76,10 @@ async function paquetePortable(): Promise<PaqueteProyectoPortatil> {
 	return repositorio.exportarPaquete(documento.id);
 }
 
-test('el esquema V8 conserva los seis almacenes anteriores y añade datos técnicos', () => {
+test('el esquema conserva los almacenes V1/V8 y añade revisiones custom sin sustituirlos', () => {
 	assert.deepEqual(ALMACENES_PERSISTENCIA, [
 		'projects', 'assets', 'customComponents', 'snapshots', 'metadata', 'recovery', 'technicalData',
+		'customComponentRevisions',
 	]);
 });
 
@@ -347,6 +349,76 @@ test('actualizar custom exige revisión y un fallo no pisa la versión vigente',
 		ComponentePersonalizadoInvalido,
 	);
 	assert.equal((await repositorio.abrirComponente(creado.id)).revision, 2);
+	assert.equal((await repositorio.abrirRevisionComponente(creado.id, 1)).nombre, 'Sensor propio');
+	assert.equal((await repositorio.abrirRevisionComponente(creado.id, 2)).nombre, 'Sensor revisado');
+});
+
+test('la revisión colocada r1 se exporta intacta aunque la biblioteca esté en r2', async () => {
+	const { repositorio } = entorno();
+	const asset = await repositorio.guardarAsset('image/png', new Uint8Array([40, 41, 42]));
+	const r1 = await repositorio.crearComponente({ id: 'cmp-fijo', definicion: contenidoComponente(asset.id) });
+	const colocado = instanciarComponentePersonalizado(r1, 'd1');
+	const proyecto = proyectoValido('Revisión fija');
+	proyecto.dispositivos = [colocado];
+	proyecto.gabinete!.colocaciones = [{ dispositivoId: colocado.id, x: 20, y: 20, ancho: 30, alto: 45 }];
+	const documento = await repositorio.crear({ proyecto });
+	const r2 = await repositorio.actualizarComponente(r1.id, {
+		revisionEsperada: 1, definicion: contenidoComponente(asset.id, 'Sensor cambiado'),
+	});
+	assert.equal(r2.revision, 2);
+	assert.equal((await repositorio.abrir(documento.id)).proyecto.dispositivos[0].descripcion, r1.descripcion ?? r1.nombre);
+	const paquete = await repositorio.exportarPaquete(documento.id);
+	assert.deepEqual(paquete.componentes, [r1]);
+	const limpio = entorno().repositorio;
+	const importado = await limpio.importarPaquete(paquete);
+	assert.equal((await limpio.abrirRevisionComponente(r1.id, 1)).nombre, r1.nombre);
+	assert.equal(importado.proyecto.dispositivos[0].componentePersonalizado?.revision, 1);
+});
+
+test('paquete V1 bloquea dos revisiones de la misma identidad y nunca inserta latest a ciegas', async () => {
+	const { repositorio } = entorno();
+	const asset = await repositorio.guardarAsset('image/png', new Uint8Array([43, 44, 45]));
+	const r1 = await repositorio.crearComponente({ id: 'cmp-doble', definicion: contenidoComponente(asset.id) });
+	const r2 = await repositorio.actualizarComponente(r1.id, {
+		revisionEsperada: 1, definicion: contenidoComponente(asset.id, 'Sensor r2'),
+	});
+	const proyecto = proyectoValido('Dos revisiones');
+	proyecto.dispositivos = [instanciarComponentePersonalizado(r1, 'd1'), instanciarComponentePersonalizado(r2, 'd2')];
+	proyecto.gabinete!.colocaciones = [
+		{ dispositivoId: 'd1', x: 20, y: 20, ancho: 30, alto: 45 },
+		{ dispositivoId: 'd2', x: 70, y: 20, ancho: 30, alto: 45 },
+	];
+	const documento = await repositorio.crear({ proyecto });
+	await assert.rejects(repositorio.exportarPaquete(documento.id), /V1.*revisiones.*formato V2/);
+});
+
+test('borrar de Mis Componentes no destruye la revisión colocada ni reutiliza su identidad', async () => {
+	const { repositorio } = entorno();
+	const asset = await repositorio.guardarAsset('image/png', new Uint8Array([46, 47, 48]));
+	const r1 = await repositorio.crearComponente({ id: 'cmp-borrado', definicion: contenidoComponente(asset.id) });
+	const proyecto = proyectoValido('Histórico');
+	proyecto.dispositivos = [instanciarComponentePersonalizado(r1, 'd1')];
+	proyecto.gabinete!.colocaciones = [{ dispositivoId: 'd1', x: 20, y: 20, ancho: 30, alto: 45 }];
+	const documento = await repositorio.crear({ proyecto });
+	await repositorio.eliminarComponente(r1.id, r1.revision);
+	assert.equal((await repositorio.listarComponentes()).length, 0);
+	assert.deepEqual(await repositorio.abrirRevisionComponente(r1.id, 1), r1);
+	assert.deepEqual((await repositorio.exportarPaquete(documento.id)).componentes, [r1]);
+	await assert.rejects(repositorio.crearComponente({ id: r1.id, definicion: contenidoComponente(asset.id) }),
+		/Ya existe un componente/);
+});
+
+test('fallo transaccional al actualizar deja latest y archivo de revisiones en r1', async () => {
+	const { backend, repositorio } = entorno();
+	const asset = await repositorio.guardarAsset('image/png', new Uint8Array([49, 50, 51]));
+	const r1 = await repositorio.crearComponente({ definicion: contenidoComponente(asset.id) });
+	backend.fallarProximaTransaccion(new Error('fallo compuesto'));
+	await assert.rejects(repositorio.actualizarComponente(r1.id, {
+		revisionEsperada: 1, definicion: contenidoComponente(asset.id, 'No publicado'),
+	}), /fallo compuesto/);
+	assert.equal((await repositorio.abrirComponente(r1.id)).revision, 1);
+	assert.equal(await backend.contar('customComponentRevisions'), 1);
+	await assert.rejects(repositorio.abrirRevisionComponente(r1.id, 2), /No existe/);
 });
 
 test('duplicar custom crea identidad/revisión nuevas y eliminar también detecta conflictos', async () => {
@@ -399,7 +471,66 @@ test('export/import portable hace roundtrip autosuficiente y acepta contenido id
 	assert.equal(await backend.contar('projects'), 2);
 	assert.equal(await backend.contar('assets'), 1);
 	assert.equal(await backend.contar('customComponents'), 1);
+	assert.equal(await backend.contar('customComponentRevisions'), 1);
 	assert.equal(await backend.contar('snapshots'), 2);
+});
+
+test('importar una revisión histórica no desplaza la definición vigente local', async () => {
+	const paquete = await paquetePortable();
+	const { repositorio } = entorno();
+	const asset = paquete.assets[0];
+	const bytes = Uint8Array.from(globalThis.atob(asset.base64), (c) => c.charCodeAt(0));
+	await repositorio.guardarAsset(asset.mime, bytes);
+	const r1 = await repositorio.crearComponente({
+		id: 'cmp-portable', definicion: contenidoComponente(asset.id, 'Componente portable'),
+	});
+	const r2 = await repositorio.actualizarComponente(r1.id, {
+		revisionEsperada: 1, definicion: contenidoComponente(asset.id, 'Revisión local nueva'),
+	});
+	await repositorio.importarPaquete(paquete);
+	assert.equal((await repositorio.abrirComponente(r1.id)).revision, r2.revision);
+	assert.deepEqual(await repositorio.abrirRevisionComponente(r1.id, 1), paquete.componentes[0]);
+	assert.equal((await repositorio.listarComponentes()).length, 1);
+});
+
+test('importar no republica una definición borrada ni adopta una revisión posterior automáticamente', async () => {
+	const paquete = await paquetePortable();
+	const { repositorio } = entorno();
+	const asset = paquete.assets[0];
+	const bytes = Uint8Array.from(globalThis.atob(asset.base64), (c) => c.charCodeAt(0));
+	await repositorio.guardarAsset(asset.mime, bytes);
+	const r1 = await repositorio.crearComponente({
+		id: 'cmp-portable', definicion: contenidoComponente(asset.id, 'Componente portable'),
+	});
+	await repositorio.eliminarComponente(r1.id, 1);
+	await repositorio.importarPaquete(paquete);
+	assert.equal((await repositorio.listarComponentes()).length, 0);
+
+	const { repositorio: destinoPosterior, backend } = entorno();
+	await destinoPosterior.guardarAsset(asset.mime, bytes);
+	const local = await destinoPosterior.crearComponente({
+		id: 'cmp-portable', definicion: contenidoComponente(asset.id, 'Biblioteca local r1'),
+	});
+	const posterior = structuredClone(paquete);
+	posterior.componentes[0].revision = 2;
+	posterior.proyecto.dispositivos[0].componentePersonalizado!.revision = 2;
+	await assert.rejects(destinoPosterior.importarPaquete(posterior), /posterior.*adopción explícita/);
+	assert.equal((await destinoPosterior.abrirComponente(local.id)).revision, 1);
+	assert.equal(await backend.contar('projects'), 0);
+	assert.equal(await backend.contar('customComponentRevisions'), 1);
+});
+
+test('importar rechaza procedencia incompleta o revisión incorrecta antes de escribir', async () => {
+	const paquete = await paquetePortable();
+	const { repositorio, backend } = entorno();
+	const ausente = structuredClone(paquete);
+	ausente.componentes = [];
+	await assert.rejects(repositorio.importarPaquete(ausente), /no contiene la revisión 1/);
+	const distinta = structuredClone(paquete);
+	distinta.componentes[0].revision = 2;
+	await assert.rejects(repositorio.importarPaquete(distinta), /no contiene la revisión 1/);
+	assert.equal(await backend.contar('projects'), 0);
+	assert.equal(await backend.contar('customComponentRevisions'), 0);
 });
 
 test('import rechaza paquete incompleto y hash falso antes de abrir una transacción', async () => {
@@ -432,7 +563,7 @@ test('fallo físico al importar revierte proyecto, asset, componente y snapshot 
 	const { backend, repositorio } = entorno();
 	backend.fallarProximaTransaccion(new Error('fallo import simulado'));
 	await assert.rejects(repositorio.importarPaquete(paquete), /fallo import simulado/);
-	for (const almacen of ['projects', 'assets', 'customComponents', 'snapshots'] as const) {
+	for (const almacen of ['projects', 'assets', 'customComponents', 'customComponentRevisions', 'snapshots'] as const) {
 		assert.equal(await backend.contar(almacen), 0, `${almacen} quedó publicado a medias`);
 	}
 });

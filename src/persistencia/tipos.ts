@@ -12,6 +12,7 @@ export const ALMACENES_PERSISTENCIA = [
 	'metadata',
 	'recovery',
 	'technicalData',
+	'customComponentRevisions',
 ] as const;
 
 export type AlmacenPersistencia = typeof ALMACENES_PERSISTENCIA[number];
@@ -162,6 +163,8 @@ export interface RepositorioProyectos {
 		opciones: OpcionesCrearComponentePersonalizado,
 	): Promise<DefinicionComponentePersonalizado>;
 	abrirComponente(id: string): Promise<DefinicionComponentePersonalizado>;
+	/** Fotografía inmutable de biblioteca; no depende de la revisión publicada actualmente. */
+	abrirRevisionComponente(id: string, revision: number): Promise<DefinicionComponentePersonalizado>;
 	listarComponentes(): Promise<DefinicionComponentePersonalizado[]>;
 	actualizarComponente(
 		id: string,

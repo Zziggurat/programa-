@@ -267,6 +267,40 @@ export function actualizarDefinicionComponente(
 	return nueva;
 }
 
+/** Un paquete V1 solo tiene un registro por identidad; dos revisiones requieren formato nuevo. */
+export function revisionesRequeridasProyecto(proyecto: Proyecto): Map<string, number> {
+	const requeridas = new Map<string, number>();
+	for (const dispositivo of proyecto.dispositivos) {
+		const origen = dispositivo.componentePersonalizado;
+		if (!origen) continue;
+		const previa = requeridas.get(origen.definicionId);
+		if (previa !== undefined && previa !== origen.revision) {
+			throw new Error(
+				`El paquete portátil V1 no puede contener simultáneamente las revisiones ${previa} y `
+				+ `${origen.revision} del componente ${origen.definicionId}. Hace falta el formato V2.`,
+			);
+		}
+		requeridas.set(origen.definicionId, origen.revision);
+	}
+	return requeridas;
+}
+
+export function validarCierreComponentesProyecto(
+	proyecto: Proyecto, componentes: readonly DefinicionComponentePersonalizado[],
+): void {
+	const requeridas = revisionesRequeridasProyecto(proyecto);
+	const disponibles = new Map(componentes.map((componente) => [componente.id, componente]));
+	for (const [id, revision] of requeridas) {
+		const disponible = disponibles.get(id);
+		if (!disponible || disponible.revision !== revision) {
+			throw new Error(
+				`El paquete no contiene la revisión ${revision} del componente ${id}; `
+				+ 'la procedencia de la instancia no es verificable.',
+			);
+		}
+	}
+}
+
 export function crearPaqueteProyecto(
 	proyecto: Proyecto,
 	assets: readonly AssetPortatil[],
@@ -278,10 +312,18 @@ export function crearPaqueteProyecto(
 		throw new Error(`El proyecto del paquete requeriría reparaciones: ${carga.arreglos.join('; ')}`);
 	}
 	const validado = carga.proyecto;
+	for (const [indice, componente] of componentes.entries()) {
+		if (!componente || typeof componente !== 'object' || Array.isArray(componente)) {
+			throw new Error(`Definición ${indice + 1} del paquete inválida.`);
+		}
+		let errores: string[];
+		try { errores = validarDefinicionComponente(componente); }
+		catch { throw new Error(`Definición ${indice + 1} del paquete incompleta o malformada.`); }
+		if (errores.length) throw new Error(`«${componente.nombre}»: ${errores.join('; ')}`);
+	}
+	validarCierreComponentesProyecto(validado, componentes);
 	const idsComponentes = new Set<string>();
 	for (const componente of componentes) {
-		const errores = validarDefinicionComponente(componente);
-		if (errores.length) throw new Error(`«${componente.nombre}»: ${errores.join('; ')}`);
 		if (idsComponentes.has(componente.id)) throw new Error(`Componente repetido en el paquete: ${componente.id}`);
 		idsComponentes.add(componente.id);
 	}

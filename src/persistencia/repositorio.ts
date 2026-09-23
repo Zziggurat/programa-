@@ -5,6 +5,7 @@ import {
 	VERSION_COMPONENTE_PERSONALIZADO,
 	crearPaqueteProyecto,
 	leerPaqueteProyecto,
+	revisionesRequeridasProyecto,
 	validarDefinicionComponente,
 } from '../componentes/personalizados.js';
 import type {
@@ -161,6 +162,9 @@ function contenidoIgual(a: unknown, b: unknown): boolean {
 		&& contenidoIgual((a as Record<string, unknown>)[clave], (b as Record<string, unknown>)[clave]));
 }
 
+/** Una identidad puede tener varias fotografías; la clave no depende del orden de inserción. */
+const claveRevisionComponente = (id: string, revision: number): string => JSON.stringify([id, revision]);
+
 function resumen(documento: DocumentoProyecto): ResumenProyecto {
 	const { proyecto: _proyecto, ...salida } = documento;
 	return salida;
@@ -218,6 +222,43 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 		const definicion = await tx.obtener<DefinicionComponentePersonalizado>('customComponents', id);
 		if (!definicion) throw new ComponentePersonalizadoNoEncontrado(id);
 		return validarComponente(definicion);
+	}
+
+	private async revisionComponente(
+		tx: TransaccionPersistencia, id: string, revision: number,
+	): Promise<DefinicionComponentePersonalizado | undefined> {
+		const archivada = await tx.obtener<DefinicionComponentePersonalizado>(
+			'customComponentRevisions', claveRevisionComponente(id, revision),
+		);
+		const vigente = await tx.obtener<DefinicionComponentePersonalizado>('customComponents', id);
+		if (archivada) {
+			if (vigente?.revision === revision && !contenidoIgual(archivada, vigente)) {
+				throw new ComponentePersonalizadoInvalido(
+					`La revisión ${revision} de ${id} difiere entre biblioteca y archivo inmutable.`,
+				);
+			}
+			return validarComponente(archivada);
+		}
+		// Compatibilidad con una base antigua aún no migrada por otro backend.
+		return vigente?.revision === revision ? validarComponente(vigente) : undefined;
+	}
+
+	private async archivarRevision(
+		tx: TransaccionPersistencia, definicion: DefinicionComponentePersonalizado,
+	): Promise<void> {
+		const clave = claveRevisionComponente(definicion.id, definicion.revision);
+		const anterior = await tx.obtener<DefinicionComponentePersonalizado>('customComponentRevisions', clave);
+		if (anterior && !contenidoIgual(anterior, definicion)) {
+			throw new ComponentePersonalizadoInvalido(
+				`Colisión de la revisión inmutable ${definicion.id} r${definicion.revision}.`,
+			);
+		}
+		if (!anterior) await tx.guardar('customComponentRevisions', clave, definicion);
+	}
+
+	private async existeIdentidadArchivada(tx: TransaccionPersistencia, id: string): Promise<boolean> {
+		return (await tx.listar<DefinicionComponentePersonalizado>('customComponentRevisions'))
+			.some((definicion) => definicion?.id === id);
 	}
 
 	private comprobarRevisionComponente(
@@ -510,11 +551,12 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 		const id = opciones.id ?? this.crearId();
 		const ahora = this.ahora();
 		const definicion = construirComponente(opciones.definicion, id, 1, ahora, ahora);
-		return this.backend.transaccion(['customComponents', 'assets'], 'readwrite', async (tx) => {
-			if (await tx.obtener('customComponents', id)) {
+		return this.backend.transaccion(['customComponents', 'customComponentRevisions', 'assets'], 'readwrite', async (tx) => {
+			if (await tx.obtener('customComponents', id) || await this.existeIdentidadArchivada(tx, id)) {
 				throw new ComponentePersonalizadoInvalido(`Ya existe un componente con la identidad ${id}.`);
 			}
 			await this.comprobarAssetComponente(tx, definicion.assetId);
+			await this.archivarRevision(tx, definicion);
 			await tx.guardar('customComponents', id, definicion);
 			return clonar(definicion);
 		});
@@ -523,6 +565,17 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 	async abrirComponente(id: string): Promise<DefinicionComponentePersonalizado> {
 		return this.backend.transaccion(['customComponents'], 'readonly', async (tx) =>
 			clonar(await this.componente(tx, id)));
+	}
+
+	async abrirRevisionComponente(id: string, revision: number): Promise<DefinicionComponentePersonalizado> {
+		if (!Number.isInteger(revision) || revision < 1) {
+			throw new ComponentePersonalizadoInvalido('La revisión solicitada no es válida.');
+		}
+		return this.backend.transaccion(['customComponents', 'customComponentRevisions'], 'readonly', async (tx) => {
+			const definicion = await this.revisionComponente(tx, id, revision);
+			if (!definicion) throw new ComponentePersonalizadoNoEncontrado(`${id} r${revision}`);
+			return clonar(definicion);
+		});
 	}
 
 	async listarComponentes(): Promise<DefinicionComponentePersonalizado[]> {
@@ -538,13 +591,15 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 		id: string,
 		opciones: OpcionesActualizarComponentePersonalizado,
 	): Promise<DefinicionComponentePersonalizado> {
-		return this.backend.transaccion(['customComponents', 'assets'], 'readwrite', async (tx) => {
+		return this.backend.transaccion(['customComponents', 'customComponentRevisions', 'assets'], 'readwrite', async (tx) => {
 			const anterior = await this.componente(tx, id);
 			this.comprobarRevisionComponente(anterior, opciones.revisionEsperada);
 			const actualizado = construirComponente(
 				opciones.definicion, id, anterior.revision + 1, anterior.creadoEn, this.ahora(),
 			);
 			await this.comprobarAssetComponente(tx, actualizado.assetId);
+			await this.archivarRevision(tx, anterior);
+			await this.archivarRevision(tx, actualizado);
 			await tx.guardar('customComponents', id, actualizado);
 			return clonar(actualizado);
 		});
@@ -552,9 +607,9 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 
 	async duplicarComponente(id: string, nuevoNombre?: string): Promise<DefinicionComponentePersonalizado> {
 		const nuevoId = this.crearId();
-		return this.backend.transaccion(['customComponents', 'assets'], 'readwrite', async (tx) => {
+		return this.backend.transaccion(['customComponents', 'customComponentRevisions', 'assets'], 'readwrite', async (tx) => {
 			const original = await this.componente(tx, id);
-			if (await tx.obtener('customComponents', nuevoId)) {
+			if (await tx.obtener('customComponents', nuevoId) || await this.existeIdentidadArchivada(tx, nuevoId)) {
 				throw new ComponentePersonalizadoInvalido(`Ya existe un componente con la identidad ${nuevoId}.`);
 			}
 			const { id: _id, revision: _revision, creadoEn: _creadoEn, modificadoEn: _modificadoEn,
@@ -563,34 +618,43 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 			const ahora = this.ahora();
 			const copia = construirComponente({ ...contenido, nombre }, nuevoId, 1, ahora, ahora);
 			await this.comprobarAssetComponente(tx, copia.assetId);
+			await this.archivarRevision(tx, copia);
 			await tx.guardar('customComponents', nuevoId, copia);
 			return clonar(copia);
 		});
 	}
 
 	async eliminarComponente(id: string, revisionEsperada: number): Promise<void> {
-		await this.backend.transaccion(['customComponents'], 'readwrite', async (tx) => {
+		await this.backend.transaccion(['customComponents', 'customComponentRevisions'], 'readwrite', async (tx) => {
 			const definicion = await this.componente(tx, id);
 			this.comprobarRevisionComponente(definicion, revisionEsperada);
+			await this.archivarRevision(tx, definicion);
 			await tx.eliminar('customComponents', id);
 		});
 	}
 
 	async exportarPaquete(projectId: string): Promise<PaqueteProyectoPortatil> {
 		const recogido = await this.backend.transaccion(
-			['projects', 'assets', 'customComponents'],
+			['projects', 'assets', 'customComponents', 'customComponentRevisions'],
 			'readonly',
 			async (tx) => {
 				const documento = await this.documento(tx, projectId);
-				const idsDefiniciones = new Set(
-					documento.proyecto.dispositivos
-						.map((d) => d.componentePersonalizado?.definicionId)
-						.filter((id): id is string => typeof id === 'string' && id.length > 0),
-				);
+				let requeridas: Map<string, number>;
+				try { requeridas = revisionesRequeridasProyecto(documento.proyecto); }
+				catch (error) {
+					throw new ProyectoPersistenciaInvalido(
+						error instanceof Error ? error.message : String(error), error,
+					);
+				}
 				const componentes: DefinicionComponentePersonalizado[] = [];
-				for (const id of [...idsDefiniciones].sort()) {
-					const disponible = await tx.obtener<DefinicionComponentePersonalizado>('customComponents', id);
-					if (disponible) componentes.push(validarComponente(disponible));
+				for (const [id, revision] of [...requeridas].sort(([a], [b]) => a.localeCompare(b))) {
+					const disponible = await this.revisionComponente(tx, id, revision);
+					if (!disponible) {
+						throw new ProyectoPersistenciaInvalido(
+							`Falta la revisión ${revision} del componente ${id}; no puede exportarse un cierre portable verificable.`,
+						);
+					}
+					componentes.push(disponible);
 				}
 				const idsAssets = new Set<string>();
 				for (const dispositivo of documento.proyecto.dispositivos) {
@@ -634,7 +698,10 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 			// El mismo codec gobierna archivos leídos y objetos entregados por otras capas.
 			validado = leerPaqueteProyecto(JSON.stringify(paquete));
 		} catch (error) {
-			throw new ProyectoPersistenciaInvalido('El paquete portable no es válido.', error);
+			if (error instanceof ProyectoPersistenciaInvalido) throw error;
+			throw new ProyectoPersistenciaInvalido(
+				`El paquete portable no es válido: ${error instanceof Error ? error.message : String(error)}`, error,
+			);
 		}
 
 		// Decodificar y verificar hashes ANTES de abrir la transacción IndexedDB.
@@ -681,7 +748,7 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 		};
 
 		return this.backend.transaccion(
-			['projects', 'assets', 'customComponents', 'snapshots'],
+			['projects', 'assets', 'customComponents', 'customComponentRevisions', 'snapshots'],
 			'readwrite',
 			async (tx) => {
 				if (await tx.obtener('projects', id)) {
@@ -701,16 +768,37 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 					} else await tx.guardar('assets', asset.id, asset);
 				}
 				for (const componente of componentes) {
-					const existente = await tx.obtener<DefinicionComponentePersonalizado>(
-						'customComponents', componente.id,
+					const archivada = await tx.obtener<DefinicionComponentePersonalizado>(
+						'customComponentRevisions', claveRevisionComponente(componente.id, componente.revision),
 					);
-					if (existente) {
-						if (!contenidoIgual(existente, componente)) {
-							throw new ProyectoPersistenciaInvalido(
-								`Colisión del componente ${componente.id}: la identidad existe con otra definición.`,
-							);
-						}
-					} else await tx.guardar('customComponents', componente.id, componente);
+					if (archivada && !contenidoIgual(archivada, componente)) {
+						throw new ProyectoPersistenciaInvalido(
+							`Colisión del componente ${componente.id} r${componente.revision}: `
+							+ 'la revisión inmutable existe con otro contenido.',
+						);
+					}
+					const vigente = await tx.obtener<DefinicionComponentePersonalizado>('customComponents', componente.id);
+					if (vigente?.revision === componente.revision && !contenidoIgual(vigente, componente)) {
+						throw new ProyectoPersistenciaInvalido(
+							`Colisión del componente ${componente.id} r${componente.revision}: `
+							+ 'la biblioteca vigente tiene otro contenido.',
+						);
+					}
+					if (vigente && vigente.revision < componente.revision) {
+						throw new ProyectoPersistenciaInvalido(
+							`El paquete trae ${componente.id} r${componente.revision}, posterior a la revisión `
+							+ `${vigente.revision} de la biblioteca local. Importarla requiere una adopción explícita.`,
+						);
+					}
+					const teniaHistoriaSinPublicar = !vigente && await this.existeIdentidadArchivada(tx, componente.id);
+					if (!archivada) await tx.guardar(
+						'customComponentRevisions', claveRevisionComponente(componente.id, componente.revision), componente,
+					);
+					// Importar un proyecto no altera una definición local vigente. Si la biblioteca
+					// fue borrada pero conserva historia, tampoco la republica silenciosamente.
+					if (!vigente && !teniaHistoriaSinPublicar) {
+						await tx.guardar('customComponents', componente.id, componente);
+					}
 				}
 				await tx.guardar('projects', id, documento);
 				await tx.guardar('snapshots', snapshotId, snapshot);

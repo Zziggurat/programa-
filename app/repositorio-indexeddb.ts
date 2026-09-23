@@ -11,7 +11,7 @@ import type {
 import { ALMACENES_PERSISTENCIA } from '../src/persistencia/tipos.js';
 
 export const NOMBRE_BASE_PROYECTOS = 'tablerostudio-documentos';
-export const VERSION_BASE_PROYECTOS = 2; // V8: conserva stores V1 y añade technicalData.
+export const VERSION_BASE_PROYECTOS = 3; // V9+: archiva revisiones custom sin alterar los stores V1/V8.
 
 function esperarPeticion<T>(peticion: IDBRequest<T>): Promise<T> {
 	return new Promise((resolve, reject) => {
@@ -78,7 +78,26 @@ export function abrirBaseProyectosIndexedDB(
 	return new Promise((resolve, reject) => {
 		let aperturaRechazada = false;
 		const peticion = fabrica.open(nombre, VERSION_BASE_PROYECTOS);
-		peticion.onupgradeneeded = () => crearEsquema(peticion.result);
+		peticion.onupgradeneeded = (evento) => {
+			crearEsquema(peticion.result);
+			if (evento.oldVersion === 0 || evento.oldVersion >= 3) return;
+			// V1/V2 conservaban solo la definición vigente. La migración archiva exactamente
+			// esa revisión conocida; no inventa las revisiones antiguas ya sobrescritas.
+			const upgrade = peticion.transaction!;
+			const historico = upgrade.objectStore('customComponentRevisions');
+			const cursor = upgrade.objectStore('customComponents').openCursor();
+			cursor.onsuccess = () => {
+				const actual = cursor.result;
+				if (!actual) return;
+				const definicion = actual.value as { id?: unknown; revision?: unknown };
+				if (typeof definicion?.id === 'string' && Number.isInteger(definicion.revision)
+					&& (definicion.revision as number) >= 1) {
+					historico.put(actual.value, JSON.stringify([definicion.id, definicion.revision]));
+				}
+				actual.continue();
+			};
+			cursor.onerror = () => upgrade.abort();
+		};
 		peticion.onsuccess = () => {
 			const base = peticion.result;
 			if (aperturaRechazada) {

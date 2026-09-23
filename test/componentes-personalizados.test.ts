@@ -154,4 +154,28 @@ test('el paquete portátil conserva proyecto, perfil, procedencia y asset requer
 	assert.equal(recuperado.comportamiento?.clase, 'contactos-electromagneticos');
 	assert.equal(releido.assets[0].base64, 'AQID');
 	assert.throws(() => crearPaqueteProyecto(proyecto, [], [definicion]), /Falta el asset/);
+	assert.throws(() => crearPaqueteProyecto(proyecto, [asset], []), /no contiene la revisión 1/);
+	const revisionFalsa = actualizarDefinicionComponente(definicion, { nombre: 'Otra revisión' });
+	assert.throws(() => crearPaqueteProyecto(proyecto, [asset], [revisionFalsa]), /no contiene la revisión 1/);
+	const corrupto = structuredClone(paquete);
+	corrupto.componentes[0].revision = 2;
+	assert.throws(() => leerPaqueteProyecto(JSON.stringify(corrupto)), /no contiene la revisión 1/);
+	const malformado = structuredClone(paquete);
+	(malformado.componentes as unknown[])[0] = null;
+	assert.throws(() => leerPaqueteProyecto(JSON.stringify(malformado)), /Definición 1.*inválida/);
+});
+
+test('el codec V1 informa que un proyecto con dos revisiones custom requiere V2', () => {
+	const r1 = definicionContactor();
+	const r2 = actualizarDefinicionComponente(r1, { nombre: 'r2' });
+	const proyecto = crearProyecto('Dos revisiones');
+	proyecto.hojas = [{ id: 'h1', numero: 1, titulo: 'Hoja' }];
+	proyecto.gabinete = { ancho: 400, alto: 500, rieles: [], canaletas: [], colocaciones: [
+		{ dispositivoId: 'k1', x: 10, y: 10, ancho: 45, alto: 85 },
+		{ dispositivoId: 'k2', x: 80, y: 10, ancho: 45, alto: 85 },
+	] };
+	proyecto.dispositivos = [instanciarComponentePersonalizado(r1, 'k1'), instanciarComponentePersonalizado(r2, 'k2')];
+	assert.throws(() => crearPaqueteProyecto(proyecto,
+		[{ id: r1.assetId, mime: 'image/png', base64: 'AQID' }], [r1, r2]),
+	/V1.*revisiones.*formato V2/);
 });
