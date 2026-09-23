@@ -12,8 +12,8 @@
 | Hito | Estado | Frontera actual |
 |---|---|---|
 | M0 · preparación | EN_CURSO | Censo focal y escena sintética R1 de 30 aparatos/100 conductores medidos con SwiftShader; evidencia en `EVIDENCIA_FUNCIONAL.md`. Rendimiento R1 NO ACEPTADO: drag p95 38,63 s y reapertura p95 34,6 s. Perfil causal corto detectó 98 tubos reconstruidos y 10,97 s en `pointerup`; falta optimización medida y GPU física. |
-| M1 · flujo y componentes | EN_CURSO | Búsqueda/estado documental, biblioteca/teclado, copia de ejemplo, historial inmutable, paquete V2 multirrevisión, adopción explícita con remapeo y QA A/B 24/24. Asistente por pasos 19/19, montaje y arrastre 31/31 y QA largo de componente pasan. Ficha técnica V8 exacta y `.tscomp` V2 verificados en 169 pruebas focales y QA visible 11/11. Falta puertos multibloque/etiqueta y aceptación integral. No se acepta M1 todavía. |
-| M2 · esquema | PENDIENTE | Preservar conectividad común; inspeccionar editor SVG/PDF antes de ampliar. |
+| M1 · flujo y componentes | EN_CURSO | Búsqueda/estado documental, historial y adopción explícita A/B 24/24. Asistente 19/19, montaje/arrastre 31/31, ficha V8 exacta y `.tscomp` V2; puertos con ID/rótulo separados y bloques físicos desde UI, QA visible 18/18. Falta cerrar CMP-04 de apariencia/plantillas y aceptación integral; no se acepta M1 todavía. |
+| M2 · esquema | EN_CURSO | Primer corte: seleccionar/inspeccionar/desconectar un conductor real en SVG, con ejemplo solo lectura, cancelar, undo/redo y reapertura verificados. Faltan conexión desde esquema, representaciones múltiples de un dispositivo, hojas estables, cruces y referencias; M2 NO aceptado. |
 | M3 · documentación | PENDIENTE | Reutilizar dossier e Ingeniería; integrar rutas físicas tras M6. |
 | M4 · simulación práctica | PENDIENTE | Motores V2–V9 existentes; cerrar solo casos objetivo no acreditados. |
 | M5 · montaje/3D | PENDIENTE | Contratos de anclaje y calidad visual requieren evidencia nueva. |
@@ -24,8 +24,8 @@
 
 ## Siguiente acción y recuperación
 
-1. Cerrar puertos multibloque/etiqueta y aceptación integral de M1 sin perder las regresiones de ficha técnica y portabilidad.
+1. Cerrar apariencia/plantillas CMP-04 y aceptación integral de M1 sin perder las regresiones de ficha técnica, puertos y portabilidad.
 2. Diseñar una reducción focal de reconstrucción en `pointerup` R1; medir antes/después y exigir equivalencia de reparto, longitudes, picking, undo y persistencia. El perfil corto no acredita todavía rendimiento aceptable ni GPU física.
-3. Mantener benchmark R1 completo fuera del gate y repetirlo solo tras un cambio causal de rendimiento; validar por separado en GPU física cuando esté disponible.
+3. Ampliar M2 desde la topología única: representaciones múltiples del mismo aparato y hojas estables, sin inventar longitudes físicas. Mantener benchmark R1 completo fuera del gate y validar por separado en GPU física.
 
 Esta campaña no incluye publicación automática del plano privado, arquitectura global, Project Breaker ni una release 1.0. Ninguna aceptación humana se presume realizada.
