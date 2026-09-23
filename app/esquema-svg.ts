@@ -41,6 +41,10 @@ export interface OpcionesEsquema {
 	totalHojas?: number;
 	/** Resalta un aparato (el seleccionado en el resto del programa). */
 	resaltado?: string;
+	/** Conductor seleccionado en el editor de esquema. No se usa al exportar. */
+	resaltadoConductor?: string;
+	/** Añade zonas de clic y navegación por teclado solo a la vista interactiva. */
+	interactivo?: boolean;
 }
 
 /**
@@ -250,7 +254,15 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 	// aquí: los coloca el motor junto con el resto del texto, para que nada tape a nada.
 	for (const hilo of hoja.hilos) {
 		const d = hilo.nodos.map((p, i) => `${i ? 'L' : 'M'}${n(p.x)} ${n(p.y)}`).join(' ');
-		partes.push(`<path d="${d}" fill="none" stroke="${tinta}" stroke-width="0.45" stroke-linejoin="round" data-conductor="${esc(hilo.conductorId)}"/>`);
+		const seleccionado = hilo.conductorId === o.resaltadoConductor;
+		const id = esc(hilo.conductorId);
+		const agarre = o.interactivo
+			? `<path class="hilo-agarre" d="${d}" fill="none" stroke="transparent" stroke-width="4.5" pointer-events="stroke"/>`
+			: '';
+		partes.push(`<g data-conductor="${id}" class="hilo"${o.interactivo
+			? ` tabindex="0" role="button" aria-label="Seleccionar conductor ${id}" style="cursor:pointer"` : ''}>`
+			+ `<path d="${d}" fill="none" stroke="${seleccionado ? '#2ea3ff' : tinta}" `
+			+ `stroke-width="${seleccionado ? '1.2' : '0.45'}" stroke-linejoin="round"/>${agarre}</g>`);
 	}
 
 	// Puntos de unión: donde tres o más hilos coinciden se marca el nudo, como en un plano real.

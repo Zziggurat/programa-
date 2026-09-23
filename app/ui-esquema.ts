@@ -8,7 +8,7 @@
  *
  * No importa nada de `main.ts`: lo que necesita del editor entra por `ContextoEsquema`.
  */
-import { Proyecto } from '../src/modelo/tipos.js';
+import { Proyecto, RefBorne } from '../src/modelo/tipos.js';
 import { cerrarTodasLasVentanas } from './ventanas.js';
 import { ResultadoPotenciales } from '../src/motores/potenciales.js';
 import {
@@ -27,6 +27,10 @@ export interface ContextoEsquema {
 	dispositivoSeleccionado: () => string | undefined;
 	/** Selecciona un aparato en todo el programa (el esquema y el 3D son dos vistas del mismo). */
 	seleccionar: (id: string) => void;
+	/** Consulta de solo lectura antes de ofrecer una eliminación; no crea entrada de deshacer. */
+	puedeEditar: () => boolean;
+	/** El editor central elimina el conductor real y gestiona historial, recálculo y guardado. */
+	desconectarConductor: (conductorId: string) => boolean;
 	/**
 	 * Guarda un punto de deshacer antes de cambiar nada, y DICE SI SE PUEDE CAMBIAR: en un tablero
 	 * de ejemplo dice que no. Quien la llama tiene que mirar el resultado y no tocar nada si es
@@ -65,6 +69,58 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let hojasEsquema: HojaEsq[] = [];
 	let hojaActual = 0;
 	let zoomEsquema = 1;
+	/** Selección de vista: el conductor sigue identificado por su id del proyecto. */
+	let conductorSeleccionado: string | undefined;
+
+	const describirBorne = (ref: RefBorne): string => {
+		const d = proyecto().dispositivos.find((x) => x.id === ref.dispositivoId);
+		return `${d?.designacion ?? ref.dispositivoId} [${ref.dispositivoId}] · ${ref.borneId}`;
+	};
+
+	/** Inspector de la conexión real. Todo texto del proyecto entra como texto, nunca como HTML. */
+	function pintarConductorSeleccionado(): void {
+		const ayuda = $('esq-ayuda');
+		ayuda.replaceChildren();
+		const c = proyecto().conductores.find((x) => x.id === conductorSeleccionado);
+		if (!c) {
+			conductorSeleccionado = undefined;
+			ayuda.innerHTML = '<b>Arrastra</b> cualquier símbolo para colocarlo donde quieras · los hilos lo siguen'
+				+ ' · <b>selecciona un hilo</b> para ver sus bornes';
+			return;
+		}
+		const detalle = document.createElement('span');
+		detalle.textContent = `Conductor ${c.id}: ${describirBorne(c.de)} ↔ ${describirBorne(c.a)}`;
+		const boton = document.createElement('button');
+		boton.id = 'esq-desconectar';
+		boton.className = 'boton';
+		boton.type = 'button';
+		boton.textContent = 'Desconectar';
+		boton.setAttribute('aria-label', `Desconectar conductor ${c.id}`);
+		boton.onclick = async () => {
+			// Los ejemplos se pueden inspeccionar, pero no debe preguntarse por una mutación vetada.
+			if (!ctx.puedeEditar()) return;
+			const documento = proyecto();
+			const actual = documento.conductores.find((x) => x.id === c.id);
+			if (actual !== c) { refrescarEsquema(); return; }
+			const ruta = c.trazado?.length ? ` Tiene ${c.trazado.length} puntos de ruta manual.` : '';
+			const confirmado = await confirmar(
+				`¿Desconectar ${c.id} entre ${describirBorne(c.de)} y ${describirBorne(c.a)}? `
+				+ `Se quitará del esquema, tablero, simulación y listas.${ruta} Ctrl+Z permite deshacer.`,
+				{ ok: 'Desconectar', peligro: true },
+			);
+			if (!confirmado) return;
+			// Un diálogo es asíncrono: no se aplica su respuesta a otro proyecto o conductor.
+			if (proyecto() !== documento || documento.conductores.find((x) => x.id === c.id) !== c) {
+				avisar('La conexión cambió mientras confirmabas. Selecciónala de nuevo.', 'info');
+				refrescarEsquema();
+				return;
+			}
+			if (!ctx.desconectarConductor(c.id)) return;
+			conductorSeleccionado = undefined;
+			refrescarEsquema();
+		};
+		ayuda.append(detalle, document.createTextNode(' · '), boton);
+	}
 
 	/**
 	 * Cuántas hojas hay para donde arrastrar. Se cuenta UNA MÁS que las montadas: cuando una hoja
@@ -77,19 +133,24 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		if (!esquemaAbierto) return;
 		hojasEsquema = montarEsquema(proyecto(), ctx.potenciales());
 		if (hojasEsquema.length === 0) {
+			conductorSeleccionado = undefined;
 			$('esquema-hoja').innerHTML = '<div id="esquema-vacio">Todavía no hay nada que dibujar.<br>'
 				+ 'Coloca aparatos y conéctalos, y el esquema se dibuja solo.</div>';
 			$('esq-indicador').textContent = 'Sin hojas';
 			$('esq-titulo').textContent = '';
+			pintarConductorSeleccionado();
 			return;
 		}
 		hojaActual = Math.max(0, Math.min(hojaActual, hojasEsquema.length - 1));
 		const hoja = hojasEsquema[hojaActual];
+		if (!hoja.hilos.some((h) => h.conductorId === conductorSeleccionado)) conductorSeleccionado = undefined;
 		$('esquema-hoja').innerHTML = hojaASvg(hoja, {
 			proyecto: proyecto().nombre,
 			datos: proyecto().datos,
 			totalHojas: hojasEsquema.length,
-			resaltado: ctx.dispositivoSeleccionado(),
+			resaltado: conductorSeleccionado ? undefined : ctx.dispositivoSeleccionado(),
+			resaltadoConductor: conductorSeleccionado,
+			interactivo: true,
 		});
 		$('esq-indicador').textContent = `Hoja ${hoja.numero} / ${hojasEsquema.length}`;
 		$('esq-titulo').textContent = hoja.titulo;
@@ -98,7 +159,23 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		// nada cuando no hay nada que soltar, y sorprende cuando sí lo hay.
 		const aMano = proyecto().dispositivos.filter((d) => d.esquema).length;
 		($('esq-auto') as HTMLButtonElement).textContent = aMano ? `⟲ Ordenar solo (${aMano})` : '⟲ Ordenar solo';
+		pintarConductorSeleccionado();
 		aplicarZoomEsquema();
+
+		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('.hilo[data-conductor]')) {
+			const seleccionarConductor = (): void => {
+				const id = g.getAttribute('data-conductor');
+				if (!id || !proyecto().conductores.some((c) => c.id === id)) return;
+				conductorSeleccionado = id;
+				refrescarEsquema();
+			};
+			g.addEventListener('click', (ev) => { ev.stopPropagation(); seleccionarConductor(); });
+			g.addEventListener('keydown', (ev) => {
+				if (ev.key !== 'Enter' && ev.key !== ' ') return;
+				ev.preventDefault();
+				seleccionarConductor();
+			});
+		}
 
 		// Pinchar un símbolo selecciona ese aparato en todo el programa —el esquema y el 3D son dos
 		// vistas del mismo tablero— y arrastrarlo lo COLOCA donde se suelte.
@@ -127,6 +204,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const d = proyecto().dispositivos.find((x) => x.id === id);
 		if (!d) return;
 		ev.preventDefault();
+		conductorSeleccionado = undefined;
+		pintarConductorSeleccionado();
 		seleccionar(id);
 
 		const antes = d.esquema ? { ...d.esquema } : undefined;
@@ -218,6 +297,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		// Igual que el dossier: una ventana abierta dejaría el esquema debajo e inerte.
 		if (abrir) cerrarTodasLasVentanas();
 		esquemaAbierto = abrir;
+		if (!abrir) conductorSeleccionado = undefined;
 		($('panel-esquema') as HTMLElement).hidden = !abrir;
 		$('btn-esquema').classList.toggle('activo', abrir);
 		if (abrir) {
@@ -239,6 +319,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 
 	function pasarHoja(delta: number): void {
 		hojaActual += delta;
+		conductorSeleccionado = undefined;
 		refrescarEsquema();
 	}
 

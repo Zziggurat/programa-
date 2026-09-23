@@ -7772,6 +7772,12 @@ const panelEsq = instalarEsquema({
 	potenciales: () => revision.potenciales,
 	dispositivoSeleccionado: () => (sel?.tipo === 'dispositivo' ? sel.id : undefined),
 	seleccionar,
+	puedeEditar: sePuedeEditar,
+	desconectarConductor: (id) => {
+		if (!proyecto.conductores.some((c) => c.id === id)) return false;
+		quitarCable(id);
+		return !proyecto.conductores.some((c) => c.id === id);
+	},
 	capturar,
 	marcarSucio,
 	actualizarTodo,
