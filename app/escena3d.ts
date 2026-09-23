@@ -2580,11 +2580,107 @@ export function construirUnCable(
 	ruta: RutaCable, color: number, aEscena: Escenario['aEscena'],
 ): THREE.Group {
 	const grupo = new THREE.Group();
+	grupo.userData.conductorId = ruta.conductorId;
 	contadores.cablesConstruidos++;
-	const puntos = ruta.puntos.map((q) => aEscena(q.x, q.y, q.z));
-	const curva = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
-	anadirTuboCable(grupo, curva, Math.min(260, Math.max(64, puntos.length * 3)), ruta.radio, color, ruta.conductorId);
-	return grupo;
+	try {
+		const puntos = ruta.puntos.map((q) => aEscena(q.x, q.y, q.z));
+		const curva = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
+		anadirTuboCable(grupo, curva, Math.min(260, Math.max(64, puntos.length * 3)), ruta.radio, color, ruta.conductorId);
+		return grupo;
+	} catch (error) {
+		liberar(grupo);
+		throw error;
+	}
+}
+
+/** Resultado del diff de geometría; el reparto se sigue resolviendo completo y determinista. */
+export interface ReconciliacionCables {
+	reutilizados: number;
+	reconstruidos: number;
+	retirados: number;
+}
+
+/**
+ * Reusa únicamente el tubo cuyo recorrido 3D y apariencia siguen EXACTAMENTE iguales.
+ * No decide qué ruta corresponde a un cable: recibe el reparto global vigente y nunca reserva
+ * carriles por su cuenta. El string conserva los números completos (incluido -0), sin redondear
+ * milímetros; así un cambio pequeño no puede dejar una malla vieja con un picking nuevo.
+ */
+const numeroFirma = (n: number): string => Object.is(n, -0) ? '-0' : String(n);
+function firmaCableDibujado(ruta: RutaCable, color: number, transformacion: string): string {
+	return JSON.stringify([
+		ruta.conductorId, numeroFirma(ruta.radio), color, transformacion,
+		ruta.puntos.map((p) => [numeroFirma(p.x), numeroFirma(p.y), numeroFirma(p.z)]),
+	]);
+}
+
+/**
+ * Reconcilia los grupos bajo `destino` por conductor. Un grupo de vista previa no lleva firma:
+ * al soltar se reemplaza por el recorrido validado, sin reutilizar una geometría provisional.
+ * También retira el grupo agregado legado si el escenario fue construido antes de este contrato.
+ * La preparación de los nuevos tubos precede a cualquier retirada: si falla, la escena previa
+ * permanece intacta y se liberan las geometrías parciales.
+ */
+export function reconciliarCablesDibujados(
+	destino: THREE.Group, rutas: readonly RutaCable[], conductores: readonly Conductor[],
+	aEscena: Escenario['aEscena'], voltajePorConductor?: Map<string, number | undefined>,
+): ReconciliacionCables {
+	const conductorPorId = new Map<string, Conductor>();
+	for (const c of conductores) if (!conductorPorId.has(c.id)) conductorPorId.set(c.id, c);
+	const actuales = new Map<string, THREE.Object3D>();
+	// `aEscena` es afín (traslación, inversión Y) y lee el tamaño del gabinete. Incluso si
+	// alguien cambia esas dimensiones sin montar otro escenario, la malla debe invalidarse.
+	const transformacion = JSON.stringify([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]]
+		.map(([x, y, z]) => {
+			const p = aEscena(x, y, z);
+			return [numeroFirma(p.x), numeroFirma(p.y), numeroFirma(p.z)];
+		}));
+	for (const hijo of destino.children) {
+		const id = hijo.userData.conductorId;
+		if (typeof id === 'string' && !actuales.has(id)) actuales.set(id, hijo);
+	}
+	const ids = new Set<string>();
+	const elegidos: THREE.Object3D[] = [];
+	const nuevos: THREE.Group[] = [];
+	let reutilizados = 0;
+	try {
+		for (const ruta of rutas) {
+			if (ids.has(ruta.conductorId)) throw new Error(`Ruta de cable duplicada: ${ruta.conductorId}`);
+			ids.add(ruta.conductorId);
+			const conductor = conductorPorId.get(ruta.conductorId);
+			if (!conductor) throw new Error(`Ruta sin conductor: ${ruta.conductorId}`);
+			const color = voltajePorConductor
+				? colorVoltaje(voltajePorConductor.get(conductor.id)) : colorDeCable(conductor.color);
+			const firma = firmaCableDibujado(ruta, color, transformacion);
+			const anterior = actuales.get(ruta.conductorId);
+			if (anterior && anterior.userData.firmaCableDibujado === firma) {
+				elegidos.push(anterior);
+				reutilizados++;
+			} else {
+				const grupo = construirUnCable(ruta, color, aEscena);
+				grupo.userData.firmaCableDibujado = firma;
+				nuevos.push(grupo);
+				elegidos.push(grupo);
+			}
+		}
+	} catch (error) {
+		for (const grupo of nuevos) liberar(grupo);
+		throw error;
+	}
+	const mantener = new Set(elegidos);
+	let retirados = 0;
+	for (const hijo of [...destino.children]) {
+		if (mantener.has(hijo)) continue;
+		destino.remove(hijo);
+		liberar(hijo);
+		retirados++;
+	}
+	// El orden del reparto es el orden de dibujo y desempate; solo se reordena si cambió.
+	if (destino.children.length !== elegidos.length
+		|| destino.children.some((hijo, i) => hijo !== elegidos[i])) {
+		for (const grupo of elegidos) destino.add(grupo);
+	}
+	return { reutilizados, reconstruidos: nuevos.length, retirados };
 }
 
 /** Corredores libres del gabinete: franjas sin aparatos, incluida la que va a los prensaestopas. */

@@ -32,10 +32,11 @@ import { aplicarPlantilla, numerarDispositivos } from '../src/motores/numeracion
 import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import {
-	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCables, construirCanaleta,
+	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	diagnosticoCables, largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable,
-	construirUnCable, contadores, radioCodo, radioDeCable, reiniciarContadores, rutaProvisional,
+	construirUnCable, contadores, radioCodo, radioDeCable, reconciliarCablesDibujados,
+	reiniciarContadores, rutaProvisional,
 	RutaCable, rutasVigentes, rutaVigente,
 	vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
@@ -1408,8 +1409,12 @@ function encuadrar(): void {
 }
 
 function reconstruirCables(): void {
-	vaciar(escenario.cables);
-	rutaPrevia = undefined; // manda otra vez el reparto completo
+	// El reparto sigue siendo GLOBAL; solo se conservan las mallas cuyas rutas resueltas no
+	// cambiaron. Antes de reconciliar se restauran los materiales prestados al hover/selección:
+	// liberar una malla con un clon aún registrado dejaría una referencia a material destruido.
+	resaltarHoverCable(undefined);
+	limpiarResaltadoDeCables();
+	rutaPrevia = undefined;
 	// Coloreado por voltaje: cada cable toma el color del nivel de tensión de su potencial.
 	let voltajeMap: Map<string, number | undefined> | undefined;
 	if (coloreaVoltaje) {
@@ -1419,11 +1424,13 @@ function reconstruirCables(): void {
 			voltajeMap.set(c.id, p?.tensiones[p.tensiones.length - 1]);
 		}
 	}
-	escenario.cables.add(construirCables(proyecto, escenario.aEscena, voltajeMap));
+	const rutas = medirEtapa('drop 4 rutas globales', () => rutasDeCables(proyecto));
+	medirEtapa('drop 5 reconciliar geometria', () => reconciliarCablesDibujados(
+		escenario.cables, rutas, proyecto.conductores, escenario.aEscena, voltajeMap));
 	mostrarCables(($('ver-cables') as HTMLInputElement).checked);
 	// Reaplicar el resaltado/atenuado del cable seleccionado tras reconstruir.
-	cableHover = undefined;
-	if (sel?.tipo === 'cable') { resaltarCable(sel.id); atenuarCables(sel.id); }
+	if (sel?.tipo === 'cable') resaltarCable(sel.id);
+	atenuarCables(sel?.tipo === 'cable' ? sel.id : undefined);
 }
 
 function reconstruirCotas(): void {
@@ -1466,6 +1473,8 @@ let romperMontaje = false;
 /** Desmonta y vuelve a construir todo el gabinete. */
 function montarEscenario(): void {
 	if (__QA__ && romperMontaje) { romperMontaje = false; throw new Error('QA: montaje roto a propósito'); }
+	resaltarHoverCable(undefined);
+	limpiarResaltadoDeCables();
 	escena.remove(escenario.raiz);
 	liberar(escenario.raiz); // sin esto, cada reconstrucción deja el tablero entero en la GPU
 	escenario = construirEscenario(proyecto, visualizacion);
@@ -4259,6 +4268,21 @@ function limpiarResaltado(): void {
 	}
 }
 
+/** Limpia solo los clones de cable; el realce de un aparato movido no se pierde al soltar. */
+function limpiarResaltadoDeCables(conductorId?: string): void {
+	const restantes: Resaltado[] = [];
+	for (const r of resaltados) {
+		const id = r.malla.userData.conductorId;
+		if (typeof id !== 'string' || (conductorId !== undefined && id !== conductorId)) {
+			restantes.push(r);
+			continue;
+		}
+		if (r.malla.material === r.clon) r.malla.material = r.original;
+		r.clon.dispose();
+	}
+	resaltados = restantes;
+}
+
 /**
  * Un marco de aristas alrededor del volumen de un objeto. No intercepta el ratón NUNCA: un helper
  * visual que se cuela en el raycast convierte «marcar dónde está el aparato» en «no poder pinchar
@@ -5638,6 +5662,9 @@ function previsualizarCable(conductorId: string): void {
 	rutaPrevia = ruta;
 	const conductor = proyecto.conductores.find((c) => c.id === conductorId);
 	if (!conductor) return;
+	// La vista previa se reemplaza en cada movimiento. No conservar clones de selección
+	// apuntando a mallas que `liberar` destruirá, ni acumular uno nuevo por píxel.
+	limpiarResaltadoDeCables(conductorId);
 	// Fuera la malla vieja de ESTE cable, y solo la suya.
 	for (const hijo of [...escenario.cables.children]) {
 		let suyo = false;
@@ -6757,16 +6784,16 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		for (const r of resaltados) r.clon.emissive.setHex(0x1d4ed8); // restaurar color de selección
 	}
 	arrastreInicio = undefined;
-	avisarSiSeMovioAlgunCable(contarTrazadosInvadidos());
+	medirEtapa('drop 1 trazados invadidos', () => avisarSiSeMovioAlgunCable(contarTrazadosInvadidos()));
 
-	recalcular();
-	reconstruirCables();
-	reconstruirBornes(); // si se movió un aparato, sus bornes clicables van con él
-	reconstruirCotas();
-	construirHandles();
-	pintarPaneles();
-	pintarSeleccion();
-	pintarEstructura();
+	medirEtapa('drop 2 recalcular', () => recalcular());
+	medirEtapa('drop 3 reconstruir cables', () => reconstruirCables());
+	medirEtapa('drop 6 bornes', () => reconstruirBornes()); // si se movió un aparato, sus bornes clicables van con él
+	medirEtapa('drop 7 cotas', () => reconstruirCotas());
+	medirEtapa('drop 8 handles', () => construirHandles());
+	medirEtapa('drop 9 paneles', () => pintarPaneles());
+	medirEtapa('drop 10 seleccion', () => pintarSeleccion());
+	medirEtapa('drop 11 estructura', () => pintarEstructura());
 });
 
 // Doble clic sobre un punto de quiebre de un cable → se quita ese punto.
@@ -9012,6 +9039,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		cablesDibujados: () => new Set(
 			mallasDeCable().flatMap((g) => g.children.map((m) => m.userData.conductorId as string)).filter(Boolean),
 		).size,
+		/** Registro QA de clones de material de cable todavía vivos, para detectar fugas en preview. */
+		resaltadosDeCable: () => resaltados.filter((r) => typeof r.malla.userData.conductorId === 'string').length,
 		/**
 		 * Puntos del cable que el usuario VE de verdad: aquellos en los que, al disparar un rayo
 		 * desde la cámara, lo primero que se encuentra es el propio cable (no un aparato delante).

@@ -345,6 +345,7 @@ try {
 	const tiemposPersistencia = [];
 	const tareasDrag = [];
 	const detalleDrag = [];
+	let controlFocal;
 	for (let i = 0; i < repeticiones; i++) {
 		const antes = await posicion(dragId);
 		const q = await puntoAparato(dragId);
@@ -378,6 +379,7 @@ try {
 		const despues = await posicion(dragId);
 		if (!despues || (despues.x === antes.x && despues.y === antes.y))
 			throw new Error(`Drag ${i + 1} no cambió la colocación de ${dragId}`);
+		if (focal) controlFocal = { antes, despues, rutasAntes, rutasDespues };
 		const tGuardar = ahora();
 		const { activo, msNavegador } = await pagina.evaluate(async () => {
 			const inicio = performance.now();
@@ -411,6 +413,49 @@ try {
 		n: tareasDrag.length,
 		peorMs: Math.max(0, ...tareasDrag.map((e) => e.ms)),
 	};
+	if (focal && controlFocal) {
+		// En Editor los cables son deliberadamente no seleccionables. El rail visible
+		// activa Trabajo mediante Cablear; las pastillas antiguas de modo están ocultas.
+		await pagina.locator('#hta-conectar').click({ timeout: 10_000 });
+		await pagina.waitForFunction(() => document.body.classList.contains('modo-trabajo'),
+			null, { timeout: 10_000 });
+		const puntoCable = await pagina.evaluate(() => {
+			for (const id of ['dol-w3', 'dol-w28', 'reserva-w1', 'reserva-w2', 'reserva-w4']) {
+				const p = window.qa.puntoParaAgarrar(id, 31);
+				if (p && window.qa.queSeleccionaEnPixel(p.x, p.y) === `cable:${id}`) return { id, p };
+			}
+			return null;
+		});
+		if (!puntoCable) throw new Error('Tras reconciliar no hay cable seleccionable entre los candidatos R1');
+		await pagina.mouse.move(puntoCable.p.x, puntoCable.p.y);
+		const cursorHover = await pagina.locator('#escena canvas').evaluate((canvas) => canvas.style.cursor);
+		await pagina.mouse.click(puntoCable.p.x, puntoCable.p.y);
+		await pagina.waitForFunction((id) => window.qa.seleccion()?.tipo === 'cable'
+			&& window.qa.seleccion()?.id === id, puntoCable.id, { timeout: 10_000 });
+		if (cursorHover !== 'grab') throw new Error(`Hover de ${puntoCable.id} sin cursor de cable: ${cursorHover}`);
+		await pagina.locator('#btn-deshacer').click();
+		await pagina.waitForFunction(({ id, antes }) => {
+			const c = window.qa.proyecto().gabinete.colocaciones.find((x) => x.dispositivoId === id);
+			return c?.x === antes.x && c?.y === antes.y;
+		}, { id: dragId, antes: controlFocal.antes });
+		const rutasDeshechas = await instantaneaRutas();
+		if (JSON.stringify(rutasDeshechas) !== JSON.stringify(controlFocal.rutasAntes))
+			throw new Error('Deshacer el drag no restauró las rutas R1');
+		await pagina.locator('#btn-rehacer').click();
+		await pagina.waitForFunction(({ id, despues }) => {
+			const c = window.qa.proyecto().gabinete.colocaciones.find((x) => x.dispositivoId === id);
+			return c?.x === despues.x && c?.y === despues.y;
+		}, { id: dragId, despues: controlFocal.despues });
+		const rutasRehechas = await instantaneaRutas();
+		if (JSON.stringify(rutasRehechas) !== JSON.stringify(controlFocal.rutasDespues))
+			throw new Error('Rehacer el drag no recuperó las rutas R1');
+		if (await pagina.evaluate(() => window.qa.cablesDibujados()) !== 100)
+			throw new Error('Undo/redo dejó geometrías de cable faltantes o fantasma');
+		resultado.mediciones.verificacionFocal = {
+			cableSeleccionado: puntoCable.id, hover: cursorHover,
+			undoRutasIdenticas: true, redoRutasIdenticas: true, geometriaTrasRedo: 100,
+		};
+	}
 
 	if (!focal) {
 	const tiemposExportacion = [];

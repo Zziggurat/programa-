@@ -158,7 +158,14 @@ if (pc) {
 	// Se agarra por el TIRADOR de la unión, que es lo que se arrastra ahora.
 	const pc2 = (await qa('puntoDeUnion', idCable, 0)) ?? pc;
 	await page.mouse.move(pc2.x, pc2.y); await page.mouse.down(); await page.waitForTimeout(30);
-	for (let k = 1; k <= 4; k++) { await page.mouse.move(pc2.x + 15 * k, pc2.y + 12 * k); await page.waitForTimeout(20); }
+	const clonesPorMovimiento = [];
+	for (let k = 1; k <= 4; k++) {
+		await page.mouse.move(pc2.x + 15 * k, pc2.y + 12 * k); await page.waitForTimeout(20);
+		clonesPorMovimiento.push(await qa('resaltadosDeCable'));
+	}
+	must('la vista previa no acumula materiales clonados en movimientos sucesivos',
+		Math.max(...clonesPorMovimiento) - Math.min(...clonesPorMovimiento) <= 1,
+		clonesPorMovimiento.join('→'));
 	await page.mouse.up(); await page.waitForTimeout(250);
 	const despues = JSON.stringify((await proyecto()).conductores.find((c) => c.id === idCable).trazado);
 	must('arrastrar mueve la unión', antes !== despues);
