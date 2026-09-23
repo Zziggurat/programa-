@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import {
-	PASOS_ASISTENTE_COMPONENTE, leerArchivoComponentePortatil, pasoAdyacenteComponente,
+	PASOS_ASISTENTE_COMPONENTE, pasoAdyacenteComponente,
 } from '../app/ui-componentes-personalizados.js';
+import { leerComponentePortatil } from '../src/componentes/portatil.js';
 
 test('el asistente recorre una sola edición de identidad a revisión sin salir de sus límites', () => {
 	assert.deepEqual(PASOS_ASISTENTE_COMPONENTE.map(({ id }) => id), [
@@ -19,6 +21,8 @@ test('el asistente recorre una sola edición de identidad a revisión sin salir 
 	}
 });
 
+const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7xQAAAAASUVORK5CYII=';
+const ASSET_ID = `sha256:${createHash('sha256').update(Buffer.from(PNG_BASE64, 'base64')).digest('hex')}`;
 const paquete = (montaje?: unknown) => ({
 	formato: 'tablero-studio-componente-portatil', version: 1,
 	definicion: {
@@ -27,18 +31,18 @@ const paquete = (montaje?: unknown) => ({
 		modificadoEn: '2026-09-22T00:00:00.000Z', tipoDispositivo: 'piloto',
 		dimensiones: { anchoMm: 40, altoMm: 50, fondoMm: 30 },
 		...(montaje === undefined ? {} : { montaje }),
-		assetId: `sha256:${'a'.repeat(64)}`, terminales: [],
+		assetId: ASSET_ID, terminales: [],
 		comportamiento: { version: 1, clase: 'sin-comportamiento', motivo: 'prueba mecánica' },
 	},
-	asset: { id: `sha256:${'a'.repeat(64)}`, mime: 'image/png', base64: 'AQID' },
+	asset: { id: ASSET_ID, mime: 'image/png', base64: PNG_BASE64 },
 });
 
-test('archivo individual conserva montaje declarado y no inventa montaje legacy', () => {
+test('archivo individual conserva montaje declarado y no inventa montaje legacy', async () => {
 	const placa = { metodo: 'atornillado-placa', anclajes: [{ xMm: 7, yMm: 8, diametroMm: 3 }] };
-	assert.deepEqual(leerArchivoComponentePortatil(paquete(placa)).definicion.montaje, placa);
-	assert.deepEqual(leerArchivoComponentePortatil(paquete({ metodo: 'riel-din' })).definicion.montaje,
+	assert.deepEqual((await leerComponentePortatil(JSON.stringify(paquete(placa)))).definicion.montaje, placa);
+	assert.deepEqual((await leerComponentePortatil(JSON.stringify(paquete({ metodo: 'riel-din' })))).definicion.montaje,
 		{ metodo: 'riel-din' });
-	assert.equal(leerArchivoComponentePortatil(paquete()).definicion.montaje, undefined);
-	assert.throws(() => leerArchivoComponentePortatil(paquete({ metodo: 'atornillado-placa',
-		anclajes: [{ xMm: 70, yMm: 8 }] })), /anclaje/);
+	assert.equal((await leerComponentePortatil(JSON.stringify(paquete()))).definicion.montaje, undefined);
+	await assert.rejects(leerComponentePortatil(JSON.stringify(paquete({ metodo: 'atornillado-placa',
+		anclajes: [{ xMm: 70, yMm: 8 }] }))), /anclaje/);
 });

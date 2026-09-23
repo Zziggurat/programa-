@@ -8564,6 +8564,7 @@ async function iniciarPersistenciaDocumental(): Promise<void> {
 			panelComponentesPersonalizados?.destruir();
 			panelComponentesPersonalizados = instalarUIComponentesPersonalizados({
 				repositorio: abierto.repositorio,
+				datosTecnicos: abierto.datosTecnicos,
 				colocar: (definicion, imagenUrl) => {
 					if (modo !== 'editor') aplicarModo('editor');
 					colocarComponentePersonalizado(definicion, imagenUrl);

@@ -7,25 +7,29 @@
  */
 import {
 	FORMATO_COMPONENTE_PERSONALIZADO, VERSION_COMPONENTE_PERSONALIZADO,
-	sugerirRolesIEC, validarDefinicionComponente, validarLimitesTerminales, validarSemanticaTerminales,
+	evaluarBloquesTerminales, sugerirRolesIEC, validarDefinicionComponente, validarFichaTecnicaComponente, validarLimitesTerminales,
 	type DefinicionComponentePersonalizado, type ParametrosNominalesComponente,
 	type TerminalComponentePersonalizado,
 } from '../src/componentes/personalizados.js';
-import { base64ABytes, bytesABase64 } from '../src/componentes/assets.js';
-import { leerMontajeDeclarado, validarMontajeDeclarado } from '../src/componentes/montaje.js';
+import { base64ABytes } from '../src/componentes/assets.js';
+import { crearComponentePortatil, leerComponentePortatilDesdeArchivo } from '../src/componentes/portatil.js';
+import { congelarSubconjunto } from '../src/datos-tecnicos/hash.js';
+import { familiaDispositivo } from '../src/datos-tecnicos/resolver.js';
+import { MAX_TERMINALES_BLOQUE } from '../src/motores/terminales.js';
+import { claveRevision, referenciaTecnica, type FamiliaTecnica, type RevisionProductoTecnico,
+	type RevisionTecnica } from '../src/datos-tecnicos/tipos.js';
+import type { RepositorioDatosTecnicos } from '../src/datos-tecnicos/repositorio.js';
 import {
 	LISTA_PERFILES_BASE, PERFILES_BASE, construirComportamientoPerfil, rolesDesdeComportamiento,
 	type ParametrosConstruccionPerfil, type RolTerminalPerfil, type TerminalPerfilComponente,
 } from '../src/componentes/perfiles-base.js';
-import type { MontajeComponente, TipoBorne, TipoDispositivo } from '../src/modelo/tipos.js';
-import { leerComportamientoSimulacion } from '../src/modelo/comportamiento.js';
+import type { BloqueTerminales, Dispositivo, LadoAparato, MontajeComponente, TipoBorne, TipoDispositivo } from '../src/modelo/tipos.js';
 import { ComponentePersonalizadoDuplicado, type ContenidoComponentePersonalizado,
 	type RepositorioProyectos } from '../src/persistencia/tipos.js';
 import { abrirVentana, cerrarVentana, ventanaDeArriba } from './ventanas.js';
 
 const ID_RAIZ = 'ui-componentes-personalizados';
 const MIME_IMAGEN = new Set(['image/png', 'image/jpeg', 'image/webp']);
-const MAX_ARCHIVO_PORTATIL = 64 * 1024 * 1024;
 const NATURALEZAS: readonly (TipoBorne | '')[] = ['', 'L', 'N', 'PE', 'control', 'senal', 'otro'];
 const ROLES: readonly RolTerminalPerfil[] = [
 	'sin-asignar', 'bobina-entrada', 'bobina-retorno', 'polo-entrada', 'polo-salida',
@@ -54,6 +58,8 @@ export function pasoAdyacenteComponente(actual: PasoAsistenteComponente, direcci
 
 export interface ContextoUIComponentesPersonalizados {
 	repositorio: RepositorioProyectos;
+	/** Biblioteca V8 global; la ficha se congela en la definición, no se resuelve por latest. */
+	datosTecnicos?: RepositorioDatosTecnicos;
 	/** Recibe una fotografía profunda; editar después la biblioteca no altera lo colocado. */
 	colocar(definicion: DefinicionComponentePersonalizado, imagenUrl: string): void | Promise<void>;
 	confirmar?: (mensaje: string) => boolean | Promise<boolean>;
@@ -67,13 +73,6 @@ export interface PanelComponentesPersonalizados {
 	destruir(): void;
 }
 
-interface ArchivoComponentePortatil {
-	formato: 'tablero-studio-componente-portatil';
-	version: 1;
-	definicion: DefinicionComponentePersonalizado;
-	asset: { id: string; mime: 'image/png' | 'image/jpeg' | 'image/webp'; base64: string };
-}
-
 interface EstadoEditor {
 	original?: DefinicionComponentePersonalizado;
 	/** Estado de navegación del asistente; nunca entra a una definición persistida. */
@@ -84,8 +83,12 @@ interface EstadoEditor {
 		anchoMm: number; altoMm: number; fondoMm: number;
 	};
 	terminales: TerminalEditor[];
+	bloquesTerminales?: BloqueTerminales[];
 	parametros: ParametrosConstruccionPerfil;
 	montaje?: MontajeComponente;
+	fichaTecnica?: DefinicionComponentePersonalizado['fichaTecnica'];
+	/** Selección de UI no aplicada hasta pulsar «Fijar revisión exacta». */
+	candidatoFichaClave?: string;
 	/** Los anclajes se conservan si se compara temporalmente DIN y placa en el asistente. */
 	anclajesPlacaBorrador?: NonNullable<MontajeComponente['anclajes']>;
 	assetId?: string;
@@ -95,7 +98,7 @@ interface EstadoEditor {
 }
 
 type TerminalEditor = TerminalPerfilComponente & Pick<TerminalComponentePersonalizado,
-	'maxConductores' | 'seccionMaxMm2' | 'lado' | 'obligatorio'>;
+	'rotulo' | 'maxConductores' | 'seccionMaxMm2' | 'lado' | 'obligatorio'>;
 
 /** Misma validación en UI y en persistencia/paquetes, sin aceptar datos distintos por ruta. */
 export const erroresLimitesTerminales = validarLimitesTerminales;
@@ -105,6 +108,7 @@ export function terminalesParaEditor(d: Pick<DefinicionComponentePersonalizado,
 	'terminales' | 'comportamiento'>): TerminalEditor[] {
 	return rolesDesdeComportamiento(d.terminales, d.comportamiento).map((terminal, i) => ({
 		...terminal,
+		rotulo: d.terminales[i].rotulo,
 		maxConductores: d.terminales[i].maxConductores,
 		seccionMaxMm2: d.terminales[i].seccionMaxMm2,
 		lado: d.terminales[i].lado,
@@ -114,8 +118,9 @@ export function terminalesParaEditor(d: Pick<DefinicionComponentePersonalizado,
 
 /** Lista blanca compartida por guardar una definición nueva y guardar una revisión. */
 export function terminalesDesdeEditor(terminales: readonly TerminalEditor[]): TerminalComponentePersonalizado[] {
-	return terminales.map(({ id, tipo, u, v, maxConductores, seccionMaxMm2, lado, obligatorio }) => ({
+	return terminales.map(({ id, tipo, u, v, rotulo, maxConductores, seccionMaxMm2, lado, obligatorio }) => ({
 		id: id.trim(), tipo, u, v,
+		...(rotulo?.trim() ? { rotulo: rotulo.trim() } : {}),
 		...(maxConductores !== undefined ? { maxConductores } : {}),
 		...(seccionMaxMm2 !== undefined ? { seccionMaxMm2 } : {}),
 		...(lado !== undefined ? { lado } : {}),
@@ -157,8 +162,6 @@ export function mensajeErrorGuardado(error: unknown, persistido: boolean): strin
 		? `El componente se guardó, pero no se pudo actualizar la biblioteca: ${detalle}`
 		: `No se pudo guardar: ${detalle}`;
 }
-const esObjeto = (valor: unknown): valor is Record<string, unknown> =>
-	typeof valor === 'object' && valor !== null && !Array.isArray(valor);
 const el = <T extends HTMLElement>(raiz: ParentNode, selector: string): T => {
 	const encontrado = raiz.querySelector<T>(selector);
 	if (!encontrado) throw new Error(`Falta el control ${selector} de Mis Componentes.`);
@@ -180,95 +183,6 @@ function contenidoDe(d: DefinicionComponentePersonalizado): ContenidoComponenteP
 	const { id: _id, revision: _revision, creadoEn: _creado, modificadoEn: _modificado,
 		formato: _formato, version: _version, ...contenido } = clonar(d);
 	return contenido;
-}
-
-/** Lista blanca del archivo individual. No deja campos JSON desconocidos dentro de IndexedDB. */
-export function leerArchivoComponentePortatil(bruto: unknown): ArchivoComponentePortatil {
-	if (!esObjeto(bruto) || bruto.formato !== 'tablero-studio-componente-portatil' || bruto.version !== 1
-		|| !esObjeto(bruto.definicion) || !esObjeto(bruto.asset)) throw new Error('Formato de componente no compatible.');
-	const d = bruto.definicion; const a = bruto.asset;
-	const requerido = (valor: unknown, campo: string): string => {
-		if (typeof valor !== 'string' || !valor.trim()) throw new Error(`Falta ${campo}.`); return valor.trim();
-	};
-	const opcional = (valor: unknown): string | undefined => typeof valor === 'string' && valor.trim() ? valor.trim() : undefined;
-	if (d.formato !== FORMATO_COMPONENTE_PERSONALIZADO || d.version !== VERSION_COMPONENTE_PERSONALIZADO
-		|| !Number.isInteger(d.revision) || !esObjeto(d.dimensiones) || !Array.isArray(d.terminales)) {
-		throw new Error('La definición no es compatible.');
-	}
-	const tipo = requerido(d.tipoDispositivo, 'el perfil') as TipoDispositivo;
-	if (!(tipo in PERFILES_BASE)) throw new Error(`Perfil no reconocido: ${tipo}.`);
-	const comportamiento = leerComportamientoSimulacion(d.comportamiento);
-	if (!comportamiento) throw new Error('El comportamiento del componente no es válido.');
-	const terminales = d.terminales.map((terminal, i) => {
-		if (!esObjeto(terminal) || typeof terminal.id !== 'string' || typeof terminal.u !== 'number' || typeof terminal.v !== 'number') {
-			throw new Error(`Terminal ${i + 1} no válido.`);
-		}
-		const erroresLimites = erroresLimitesTerminales([{ id: terminal.id,
-			maxConductores: terminal.maxConductores, seccionMaxMm2: terminal.seccionMaxMm2 }]);
-		if (erroresLimites.length) throw new Error(erroresLimites.join(' '));
-		const erroresSemantica = validarSemanticaTerminales([{ id: terminal.id,
-			lado: terminal.lado, obligatorio: terminal.obligatorio }]);
-		if (erroresSemantica.length) throw new Error(erroresSemantica.join(' '));
-		const tipoBorne = typeof terminal.tipo === 'string' ? terminal.tipo as TipoBorne : undefined;
-		return {
-			id: terminal.id, ...(tipoBorne ? { tipo: tipoBorne } : {}), u: terminal.u, v: terminal.v,
-			...(terminal.maxConductores !== undefined ? { maxConductores: terminal.maxConductores as number } : {}),
-			...(terminal.seccionMaxMm2 !== undefined ? { seccionMaxMm2: terminal.seccionMaxMm2 as number } : {}),
-			...(terminal.lado !== undefined ? { lado: terminal.lado as TerminalComponentePersonalizado['lado'] } : {}),
-			...(terminal.obligatorio !== undefined ? { obligatorio: terminal.obligatorio as boolean } : {}),
-		};
-	});
-	let parametros: ParametrosNominalesComponente | undefined;
-	if (d.parametros !== undefined) {
-		if (!esObjeto(d.parametros)) throw new Error('Los parámetros no son un objeto.');
-		const p = d.parametros; parametros = {};
-		for (const clave of ['tensionV', 'corrienteA', 'potenciaW', 'frecuenciaHz'] as const) {
-			if (typeof p[clave] === 'number') parametros[clave] = p[clave];
-		}
-		if (esObjeto(p.temporizacion) && (p.temporizacion.tipo === 'trabajo' || p.temporizacion.tipo === 'reposo')
-			&& typeof p.temporizacion.segundos === 'number') parametros.temporizacion = { tipo: p.temporizacion.tipo, segundos: p.temporizacion.segundos };
-		parametros.programa = opcional(p.programa); parametros.unidadSonda = opcional(p.unidadSonda);
-		const rango = (v: unknown): [number, number] | undefined => Array.isArray(v) && v.length === 2
-			&& typeof v[0] === 'number' && typeof v[1] === 'number' ? [v[0], v[1]] : undefined;
-		parametros.rangoSonda = rango(p.rangoSonda); parametros.rangoSalidaAnalogica = rango(p.rangoSalidaAnalogica);
-	}
-	const dimensiones = {
-		anchoMm: Number(d.dimensiones.anchoMm), altoMm: Number(d.dimensiones.altoMm), fondoMm: Number(d.dimensiones.fondoMm),
-	};
-	const erroresMontaje = validarMontajeDeclarado(d.montaje, dimensiones);
-	if (erroresMontaje.length) throw new Error(erroresMontaje.join('; '));
-	const montaje = leerMontajeDeclarado(d.montaje, dimensiones);
-	const definicion: DefinicionComponentePersonalizado = {
-		formato: FORMATO_COMPONENTE_PERSONALIZADO, version: VERSION_COMPONENTE_PERSONALIZADO,
-		id: requerido(d.id, 'la identidad'), revision: d.revision as number,
-		nombre: requerido(d.nombre, 'el nombre'), fabricante: opcional(d.fabricante), referencia: opcional(d.referencia),
-		descripcion: opcional(d.descripcion), creadoEn: requerido(d.creadoEn, 'la fecha de creación'),
-		modificadoEn: requerido(d.modificadoEn, 'la fecha de modificación'), tipoDispositivo: tipo,
-		dimensiones, ...(montaje ? { montaje } : {}),
-		assetId: requerido(d.assetId, 'el asset'), terminales, comportamiento, ...(parametros ? { parametros } : {}),
-	};
-	const mime = requerido(a.mime, 'el MIME');
-	if (!MIME_IMAGEN.has(mime)) throw new Error(`MIME no admitido: ${mime}.`);
-	const archivo: ArchivoComponentePortatil = {
-		formato: 'tablero-studio-componente-portatil', version: 1, definicion,
-		asset: { id: requerido(a.id, 'la identidad del asset'), mime: mime as ArchivoComponentePortatil['asset']['mime'], base64: requerido(a.base64, 'el contenido del asset') },
-	};
-	const errores = validarDefinicionComponente(definicion); if (errores.length) throw new Error(errores.join('; '));
-	return archivo;
-}
-
-/** Mismo presupuesto de entrada que el paquete de proyecto; rechaza antes de leer o parsear. */
-export async function leerArchivoComponentePortatilDesdeArchivo(
-	archivo: Pick<File, 'size' | 'text'>,
-): Promise<ArchivoComponentePortatil> {
-	if (archivo.size > MAX_ARCHIVO_PORTATIL) {
-		throw new Error('El componente supera el límite de importación de 64 MiB.');
-	}
-	const textoJson = await archivo.text();
-	if (textoJson.length > MAX_ARCHIVO_PORTATIL) {
-		throw new Error('El componente supera el límite de 64 MiB de texto.');
-	}
-	return leerArchivoComponentePortatil(JSON.parse(textoJson));
 }
 
 function parametrosDesde(d: DefinicionComponentePersonalizado): ParametrosConstruccionPerfil {
@@ -321,9 +235,12 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	let guardando = false;
 	let urlTemporal: string | undefined;
 	let pintado = 0;
+	let generacionFicha = 0;
 	const huellaEditor = (e: EstadoEditor): string => JSON.stringify({
 		original: e.original && [e.original.id, e.original.revision], tipo: e.tipo,
-		datos: e.datos, terminales: e.terminales, parametros: e.parametros, montaje: e.montaje,
+		datos: e.datos, terminales: e.terminales, bloquesTerminales: e.bloquesTerminales,
+		parametros: e.parametros, montaje: e.montaje,
+		fichaTecnica: e.fichaTecnica,
 		assetId: e.assetId, assetNuevo: e.assetBytes && [e.assetBytes.byteLength, e.assetMime, e.previewUrl],
 	});
 	const editorModificado = (): boolean => !!editor && (editor === imagenPendiente || huellaEditor(editor) !== huellaInicial);
@@ -469,7 +386,9 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 					nombre: d.nombre, fabricante: d.fabricante ?? '', referencia: d.referencia ?? '', descripcion: d.descripcion ?? '',
 					anchoMm: d.dimensiones.anchoMm, altoMm: d.dimensiones.altoMm, fondoMm: d.dimensiones.fondoMm,
 				},
-				terminales: terminalesParaEditor(d), parametros: parametrosDesde(d), montaje: d.montaje && clonar(d.montaje),
+				terminales: terminalesParaEditor(d), bloquesTerminales: d.bloquesTerminales && clonar(d.bloquesTerminales),
+				parametros: parametrosDesde(d), montaje: d.montaje && clonar(d.montaje),
+				fichaTecnica: d.fichaTecnica && clonar(d.fichaTecnica),
 				anclajesPlacaBorrador: d.montaje?.metodo === 'atornillado-placa' ? clonar(d.montaje.anclajes ?? []) : undefined,
 				assetId: d.assetId, previewUrl,
 			};
@@ -482,7 +401,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	}
 
 	function pintarEditor(): void {
-		if (!editor) return; ++pintado;
+		if (!editor) return; ++pintado; ++generacionFicha;
 		cuerpo.innerHTML = '<div class="cp-barra"><button data-cp="volver">← Biblioteca</button>'
 			+ `<strong>${editor.original ? 'Editar componente' : 'Nuevo componente'}</strong><span class="estado" data-cp-estado role="status" aria-live="polite"></span></div>`
 			+ '<nav class="cp-pasos" data-cp="pasos" aria-label="Pasos del asistente de componentes"></nav>'
@@ -495,11 +414,12 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			+ '<div class="cp-campos"><label>Perfil<select data-cp-campo="tipo"></select></label></div>'
 			+ '<div class="cp-fidelidad" data-cp="fidelidad"></div><div class="cp-campos" data-cp="parametros"></div></section>'
 			+ '<section class="cp-panel cp-paso" data-cp-paso="bornes" hidden><h3 tabindex="-1">3. Bornes y ubicación sobre la imagen</h3>'
-			+ '<p>Carga una imagen para marcar físicamente los bornes. Cada clic añade un terminal; confirma naturaleza, rol y límites abajo. Las sugerencias IEC no se aplican solas.</p>'
+			+ '<p>Carga una imagen para marcar físicamente los bornes. Cada clic fija un ancla u/v en la imagen; el ID conecta el circuito y el rótulo visible se muestra sin sustituir ese ID. Confirma naturaleza, rol y límites abajo. Las sugerencias IEC no se aplican solas.</p>'
 			+ '<label class="cp-carga-imagen">Imagen PNG/JPEG/WebP<input type="file" accept="image/png,image/jpeg,image/webp" data-cp="imagen"></label>'
 			+ '<div class="cp-preview" data-cp="preview"><span style="position:absolute;inset:45% 10%;text-align:center;color:#516577">Carga una imagen y haz clic para marcar bornes</span></div>'
-			+ '<div class="cp-scroll"><table><thead><tr><th>ID</th><th>Naturaleza</th><th>Rol</th><th>Grupo</th><th>Lado fuente</th><th>Conexión requerida</th><th>Máx. hilos</th><th>Sección máx. mm²</th><th></th></tr></thead><tbody data-cp="terminales"></tbody></table></div>'
-			+ '<div class="cp-sugerencias" data-cp="sugerencias"></div></section>'
+			+ '<div class="cp-scroll"><table><thead><tr><th>ID estable</th><th>Naturaleza</th><th>Rol</th><th>Grupo</th><th>Rótulo visible</th><th>Lado fuente</th><th>Conexión requerida</th><th>Máx. hilos</th><th>Sección máx. mm²</th><th></th></tr></thead><tbody data-cp="terminales"></tbody></table></div>'
+			+ '<div class="cp-sugerencias" data-cp="sugerencias"></div>'
+			+ '<section class="cp-bloques"><h4>Bloques físicos de terminales</h4><p>Opcional. Declara lado, orden de bornes y, si conoces su tramo real, inicio/fin porcentual sobre ese lado. En un componente con imagen, las anclas u/v siguen ubicando los contactos en 3D; estos bloques documentan la agrupación física y el esquema. Sin rangos suficientes, la ubicación de varios bloques en un mismo lado es NO EVALUABLE.</p><div data-cp="bloques-estado" role="status"></div><div data-cp="bloques"></div><button type="button" data-cp="agregar-bloque">Añadir bloque físico</button></section></section>'
 			+ '<section class="cp-panel cp-paso" data-cp-paso="dimensiones" hidden><h3 tabindex="-1">4. Dimensiones y montaje</h3>'
 			+ '<p>Estas medidas definen la envolvente física que se colocará en el tablero.</p>'
 			+ '<div class="cp-campos"><label>Ancho (mm)<input type="number" min="1" data-cp-campo="ancho"></label>'
@@ -511,7 +431,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			+ '<p>La imagen representa el componente; nunca define por sí sola su comportamiento. Si la reemplazas, revisa las posiciones de los bornes antes de guardar.</p>'
 			+ '<label class="cp-carga-imagen">Reemplazar imagen<input type="file" accept="image/png,image/jpeg,image/webp" data-cp="imagen-apariencia"></label>'
 			+ '<div class="cp-preview-apariencia" data-cp="preview-apariencia"></div>'
-			+ '<p class="cp-sugerencias">Datos técnicos externos: este asistente todavía no vincula una hoja de fabricante ni una revisión de catálogo. Los parámetros declarados en «Función» son datos aportados por ti; no los marques como verificados solo por guardar el componente.</p></section>'
+			+ '<section class="cp-ficha" data-cp="ficha-tecnica"><h4>Ficha técnica V8 exacta</h4><p>Selecciona una revisión PRODUCTO de la familia funcional y fija también su curva dependiente. El hash prueba integridad, no autenticidad, licencia ni certificación. La selección no modifica los parámetros eléctricos por sí sola.</p><div data-cp="ficha-estado" role="status" aria-live="polite"></div><div data-cp="ficha-contenido"></div></section></section>'
 			+ '<section class="cp-panel cp-paso" data-cp-paso="revision" hidden><h3 tabindex="-1">6. Revisión antes de guardar</h3>'
 			+ '<p>Confirma identidad, perfil, bornes, dimensiones y asset. Guardar crea una revisión de biblioteca; no actualiza automáticamente los aparatos colocados.</p>'
 			+ '<dl class="cp-resumen" data-cp="resumen"></dl>'
@@ -554,7 +474,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		el<HTMLInputElement>(cuerpo, '[data-cp-campo="fondo"]').value = String(editor.datos.fondoMm);
 		el<HTMLInputElement>(cuerpo, '[data-cp="imagen"]').onchange = (evento) => { void cargarImagen((evento.currentTarget as HTMLInputElement).files?.[0]); };
 		el<HTMLInputElement>(cuerpo, '[data-cp="imagen-apariencia"]').onchange = (evento) => { void cargarImagen((evento.currentTarget as HTMLInputElement).files?.[0]); };
-		pintarFidelidad(); pintarPreview(); pintarTerminales(); pintarParametros(); pintarMontaje(); pintarApariencia();
+		pintarFidelidad(); pintarPreview(); pintarTerminales(); pintarBloques(); pintarParametros(); pintarMontaje(); pintarApariencia();
 		el<HTMLButtonElement>(cuerpo, '[data-cp="validar"]').onclick = () => { validarDesdeFormulario(false); };
 		el<HTMLButtonElement>(cuerpo, '[data-cp="guardar"]').onclick = () => { void guardarDesdeFormulario(); };
 		mostrarPasoEditor(editor.paso ?? 'identidad', false);
@@ -576,6 +496,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		el<HTMLElement>(cuerpo, '[data-cp="acciones-revision"]').hidden = paso !== 'revision';
 		el<HTMLElement>(cuerpo, '[data-cp="progreso"]').textContent = `Paso ${indice + 1} de ${PASOS_ASISTENTE_COMPONENTE.length}`;
 		cuerpo.scrollTop = 0;
+		if (paso === 'apariencia') void actualizarFichaTecnica();
 		if (paso === 'revision') {
 			pintarResumenEditor();
 			const errores = el<HTMLElement>(cuerpo, '[data-cp="errores"]');
@@ -605,7 +526,13 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		}).filter((valor): valor is string => valor !== undefined);
 		fila('Parámetros del perfil', parametros.length ? parametros.join(' · ') : 'Sin parámetros adicionales');
 		fila('Bornes', editor.terminales.length ? editor.terminales.map((t) =>
-			`${t.id || 'sin ID'} (${t.tipo ?? 'sin naturaleza'}; ${t.rol})`).join(', ') : 'Sin bornes confirmados');
+			`${t.id || 'sin ID'}${t.rotulo ? ` «${t.rotulo}»` : ''} (${t.tipo ?? 'sin naturaleza'}; ${t.rol})`).join(', ') : 'Sin bornes confirmados');
+		const bloques = evaluarBloquesTerminales(editor.bloquesTerminales, terminalesDesdeEditor(editor.terminales),
+			{ anchoMm: editor.datos.anchoMm, altoMm: editor.datos.altoMm });
+		fila('Bloques físicos', editor.bloquesTerminales?.length
+			? `${editor.bloquesTerminales.length} declarados · ${bloques.estado}${editor.bloquesTerminales.some((b) => b.desde === undefined || b.hasta === undefined)
+				? ' · tramo sin cotas: posición medida NO EVALUABLE' : ''}${bloques.motivos.length ? ` · ${bloques.motivos.join(' ')}` : ''}`
+			: 'Sin declarar; agrupación física NO EVALUABLE');
 		fila('Envolvente', `${editor.datos.anchoMm} × ${editor.datos.altoMm} × ${editor.datos.fondoMm} mm`);
 		fila('Imagen', editor.assetBytes ? 'Nueva imagen pendiente de guardar' : editor.assetId ? 'Asset ya guardado' : 'Falta imagen');
 		fila('Montaje', editor.montaje?.metodo === 'riel-din' ? 'Riel DIN declarado; ajuste físico pendiente de evaluar'
@@ -614,7 +541,11 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 					? `Placa atornillada; ${editor.montaje.anclajes.length} ${editor.montaje.anclajes.length === 1 ? 'anclaje declarado' : 'anclajes declarados'}; ajuste físico pendiente de evaluar`
 					: 'Placa atornillada sin anclajes: fijación NO EVALUABLE'
 				: 'No declarado: ajuste NO EVALUABLE');
-		fila('Datos técnicos', 'Sin vínculo a ficha de fabricante');
+		const producto = editor.fichaTecnica?.revisiones.find((r): r is RevisionProductoTecnico =>
+			r.tipo === 'PRODUCTO' && r.hash === editor!.fichaTecnica?.producto.hash);
+		fila('Datos técnicos', producto
+			? `${producto.nombre} · r${producto.revision} · ${producto.hash} · ${editor.fichaTecnica!.revisiones.length} revisión(es) congeladas; fuente declarada, no certificada`
+			: 'Sin revisión PRODUCTO V8 vinculada');
 		fila('Publicación', editor.original ? `Nueva revisión después de r${editor.original.revision}` : 'Definición nueva r1');
 	}
 
@@ -624,6 +555,124 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		if (!editor.previewUrl) { caja.textContent = 'Todavía no hay imagen. Cárgala aquí o en el paso Bornes.'; return; }
 		const img = document.createElement('img'); img.src = editor.previewUrl; img.alt = 'Imagen actual del componente';
 		caja.appendChild(img);
+	}
+
+	function familiaFuncionalEditor(): FamiliaTecnica | undefined {
+		if (!editor) return undefined;
+		capturarParametros();
+		const perfil = construirComportamientoPerfil(editor.tipo, editor.terminales, editor.parametros);
+		if (!perfil.comportamiento) return undefined;
+		return familiaDispositivo({ id: 'previsualizacion-componente', tipo: editor.tipo,
+			bornes: terminalesDesdeEditor(editor.terminales), comportamiento: perfil.comportamiento } as Dispositivo);
+	}
+
+	async function actualizarFichaTecnica(): Promise<void> {
+		const destino = editor; if (!destino) return;
+		const turno = ++generacionFicha;
+		const estado = el<HTMLElement>(cuerpo, '[data-cp="ficha-estado"]');
+		estado.textContent = ctx.datosTecnicos ? 'Consultando revisiones publicadas de la biblioteca V8…'
+			: 'Biblioteca V8 no disponible en esta sesión. La ficha ya fijada se conserva, si existe.';
+		if (!ctx.datosTecnicos) { pintarFichaTecnica([]); return; }
+		try {
+			const revisiones = await ctx.datosTecnicos.listar();
+			if (turno !== generacionFicha || editor !== destino || editor.paso !== 'apariencia') return;
+			pintarFichaTecnica(revisiones);
+			const familia = familiaFuncionalEditor();
+			estado.textContent = familia ? `Familia funcional explícita: ${familia}. Elige una revisión exacta; ninguna se vincula automáticamente.`
+				: 'El perfil y los bornes actuales no declaran una familia V8 vinculable. Completa la función antes de elegir ficha.';
+		} catch (error) {
+			if (turno !== generacionFicha || editor !== destino || editor.paso !== 'apariencia') return;
+			pintarFichaTecnica([], true);
+			estado.textContent = `No se pudo consultar Datos técnicos: ${(error as Error).message}. La ficha ya fijada no se ha modificado.`;
+		}
+	}
+
+	function pintarFichaTecnica(revisiones: readonly RevisionTecnica[], falloRepositorio = false): void {
+		if (!editor) return;
+		const caja = el<HTMLElement>(cuerpo, '[data-cp="ficha-contenido"]'); caja.replaceChildren();
+		const familia = familiaFuncionalEditor();
+		const vinculada = editor.fichaTecnica;
+		const productoVinculado = vinculada?.revisiones.find((r): r is RevisionProductoTecnico =>
+			r.tipo === 'PRODUCTO' && r.hash === vinculada.producto.hash);
+		const estadoActual = document.createElement('p'); estadoActual.className = 'cp-ficha-actual';
+		estadoActual.textContent = productoVinculado
+			? `Fijada en esta definición: ${productoVinculado.nombre} · r${productoVinculado.revision} · ${productoVinculado.hash}. Origen declarado: ${productoVinculado.procedencia.origen}; ${productoVinculado.procedencia.referencia}. Cierre de ${vinculada!.revisiones.length} revisión(es).`
+			: 'Sin ficha técnica vinculada. Los parámetros del perfil siguen siendo declaraciones de la persona usuaria.';
+		caja.appendChild(estadoActual);
+		if (vinculada) {
+			const perfil = construirComportamientoPerfil(editor.tipo, editor.terminales, editor.parametros);
+			const errores = validarFichaTecnicaComponente({ tipoDispositivo: editor.tipo,
+				terminales: terminalesDesdeEditor(editor.terminales),
+				comportamiento: perfil.comportamiento ?? { version: 1, clase: 'sin-comportamiento', motivo: 'perfil incompleto' },
+				fichaTecnica: vinculada });
+			if (errores.length) {
+				const aviso = document.createElement('p'); aviso.className = 'cp-ficha-error';
+				aviso.textContent = `La ficha fijada ya no corresponde al perfil actual: ${errores.join(' ')} Corrige el perfil o desvincúlala antes de guardar.`;
+				caja.appendChild(aviso);
+			}
+			const desvincular = document.createElement('button'); desvincular.type = 'button';
+			desvincular.dataset.cp = 'desvincular-ficha'; desvincular.textContent = 'Desvincular ficha del borrador';
+			desvincular.onclick = () => {
+				if (!editor) return; editor.fichaTecnica = undefined; pintarFichaTecnica(revisiones);
+				el<HTMLElement>(cuerpo, '[data-cp="ficha-estado"]').textContent = 'Ficha desvinculada del borrador. Guarda para crear la nueva revisión.';
+			};
+			caja.appendChild(desvincular);
+		}
+		if (!ctx.datosTecnicos || !familia || falloRepositorio) return;
+		const productos = revisiones.filter((r): r is RevisionProductoTecnico => r.tipo === 'PRODUCTO' && r.familia === familia)
+			.sort((a, b) => {
+				const ka = `${claveRevision(referenciaTecnica(a))}:${a.hash}`;
+				const kb = `${claveRevision(referenciaTecnica(b))}:${b.hash}`;
+				return ka < kb ? -1 : ka > kb ? 1 : 0;
+			});
+		if (!productos.length) {
+			const vacio = document.createElement('p');
+			vacio.textContent = `No hay revisiones PRODUCTO V8 de familia ${familia} en la biblioteca global. Puedes crearlas o importarlas desde «Datos técnicos».`;
+			caja.appendChild(vacio); return;
+		}
+		const etiqueta = document.createElement('label'); etiqueta.textContent = `Revisión PRODUCTO compatible (${familia})`;
+		const selector = document.createElement('select'); selector.dataset.cp = 'producto-tecnico';
+		selector.appendChild(opcion('', 'Seleccionar revisión exacta…'));
+		for (const producto of productos) {
+			const ref = referenciaTecnica(producto);
+			selector.appendChild(opcion(JSON.stringify(ref),
+				`${producto.nombre} · ${producto.catalogo.nombre} · r${producto.revision} · ${producto.estado} · ${producto.hash.slice(0, 23)}…`));
+		}
+		if (editor.candidatoFichaClave && productos.some((p) => JSON.stringify(referenciaTecnica(p)) === editor!.candidatoFichaClave)) {
+			selector.value = editor.candidatoFichaClave;
+		}
+		etiqueta.appendChild(selector); caja.appendChild(etiqueta);
+		const detalle = document.createElement('p'); detalle.dataset.cp = 'detalle-ficha'; caja.appendChild(detalle);
+		const fijar = document.createElement('button'); fijar.type = 'button'; fijar.dataset.cp = 'vincular-ficha';
+		fijar.textContent = 'Fijar revisión exacta'; caja.appendChild(fijar);
+		const pintarDetalle = () => {
+			const producto = productos.find((p) => JSON.stringify(referenciaTecnica(p)) === selector.value);
+			detalle.textContent = producto
+				? `${producto.nombre} · r${producto.revision} · ${producto.hash}. Origen declarado: ${producto.procedencia.origen}; ${producto.procedencia.referencia}. ${producto.campos.length} campo(s); ${producto.curva ? `curva dependiente ${producto.curva.hash}` : 'sin curva'}. Estado ${producto.estado}. Hash = integridad, NO autenticidad.`
+				: 'La selección todavía no modifica la definición.';
+			fijar.disabled = !producto;
+		};
+		selector.onchange = () => { if (editor) editor.candidatoFichaClave = selector.value; pintarDetalle(); };
+		fijar.onclick = () => {
+			const producto = productos.find((p) => JSON.stringify(referenciaTecnica(p)) === selector.value);
+			if (!editor || !producto) return;
+			try {
+				const candidata = { producto: referenciaTecnica(producto),
+					revisiones: congelarSubconjunto([referenciaTecnica(producto)], revisiones) };
+				const perfil = construirComportamientoPerfil(editor.tipo, editor.terminales, editor.parametros);
+				const errores = validarFichaTecnicaComponente({ tipoDispositivo: editor.tipo,
+					terminales: terminalesDesdeEditor(editor.terminales),
+					comportamiento: perfil.comportamiento ?? { version: 1, clase: 'sin-comportamiento', motivo: 'perfil incompleto' },
+					fichaTecnica: candidata });
+				if (errores.length) throw new Error(errores.join(' '));
+				editor.fichaTecnica = candidata;
+				pintarFichaTecnica(revisiones);
+				el<HTMLElement>(cuerpo, '[data-cp="ficha-estado"]').textContent = 'Revisión exacta y curva dependiente fijadas en el borrador. Guarda para publicarlas; no implican certificación.';
+			} catch (error) {
+				el<HTMLElement>(cuerpo, '[data-cp="ficha-estado"]').textContent = `No se fijó la ficha: ${(error as Error).message}`;
+			}
+		};
+		pintarDetalle();
 	}
 
 	function leerAnclajesFormulario(): NonNullable<MontajeComponente['anclajes']> {
@@ -719,7 +768,8 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		const img = document.createElement('img'); img.src = editor.previewUrl; img.alt = 'Vista del componente'; preview.appendChild(img);
 		for (const t of editor.terminales) {
 			const marca = document.createElement('i'); marca.className = 'cp-marca'; marca.style.left = `${t.u * 100}%`; marca.style.top = `${t.v * 100}%`;
-			const rotulo = document.createElement('span'); rotulo.textContent = t.id; marca.appendChild(rotulo); preview.appendChild(marca);
+			marca.title = `${t.id}${t.rotulo ? ` · ${t.rotulo}` : ''} (ancla sobre imagen)`;
+			const rotulo = document.createElement('span'); rotulo.textContent = t.rotulo || t.id; marca.appendChild(rotulo); preview.appendChild(marca);
 		}
 		img.onclick = (evento) => {
 			if (!editor) return; const r = img.getBoundingClientRect();
@@ -728,7 +778,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			let n = editor.terminales.length + 1; while (editor.terminales.some((t) => t.id === `X${n}`)) n++;
 			editor.terminales.push({ id: `X${n}`, tipo: 'otro', u: Math.round(u * 10_000) / 10_000,
 				v: Math.round(v * 10_000) / 10_000, rol: 'sin-asignar' });
-			pintarPreview(); pintarTerminales();
+			pintarPreview(); pintarTerminales(); pintarBloques();
 		};
 	}
 
@@ -736,13 +786,18 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		if (!editor) return; const tbody = el<HTMLTableSectionElement>(cuerpo, '[data-cp="terminales"]'); tbody.innerHTML = '';
 		editor.terminales.forEach((terminal, indice) => {
 			const tr = document.createElement('tr'); const celda = () => { const td = document.createElement('td'); tr.appendChild(td); return td; };
-			const id = document.createElement('input'); id.value = terminal.id; id.oninput = () => { terminal.id = id.value; pintarPreview(); pintarSugerencias(); }; celda().appendChild(id);
+			const id = document.createElement('input'); id.value = terminal.id; id.oninput = () => { terminal.id = id.value; pintarPreview(); pintarSugerencias(); pintarEstadoBloques(); };
+			id.onchange = () => pintarBloques(); celda().appendChild(id);
 			const naturaleza = document.createElement('select'); for (const n of NATURALEZAS) naturaleza.appendChild(opcion(n, n || '—'));
 			naturaleza.value = terminal.tipo ?? ''; naturaleza.onchange = () => { terminal.tipo = (naturaleza.value || undefined) as TipoBorne | undefined; pintarSugerencias(); }; celda().appendChild(naturaleza);
 			const rol = document.createElement('select'); const permitidos = new Set(PERFILES_BASE[editor!.tipo].roles);
 			for (const r of ROLES) rol.appendChild(opcion(r, `${permitidos.has(r) ? '' : '⚠ '}${r}`)); rol.value = terminal.rol;
 			rol.onchange = () => { terminal.rol = rol.value as RolTerminalPerfil; }; celda().appendChild(rol);
 			const grupo = document.createElement('input'); grupo.value = terminal.grupo ?? ''; grupo.placeholder = 'ej. polo-1'; grupo.oninput = () => { terminal.grupo = grupo.value || undefined; }; celda().appendChild(grupo);
+			const rotulo = document.createElement('input'); rotulo.value = terminal.rotulo ?? ''; rotulo.placeholder = 'Opcional';
+			rotulo.setAttribute('aria-label', `Rótulo visible del terminal ${terminal.id}`);
+			rotulo.oninput = () => { terminal.rotulo = rotulo.value || undefined; pintarPreview(); };
+			celda().appendChild(rotulo);
 			const lado = document.createElement('select');
 			lado.setAttribute('aria-label', `Lado de fuente del terminal ${terminal.id}`);
 			for (const [valor, etiqueta] of [['', 'No declarado'], ['primario', 'Primario'],
@@ -768,10 +823,109 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			seccion.value = terminal.seccionMaxMm2 === undefined ? '' : String(terminal.seccionMaxMm2);
 			seccion.oninput = () => { terminal.seccionMaxMm2 = seccion.value === '' ? undefined : Number(seccion.value); };
 			celda().appendChild(seccion);
-			const borrar = document.createElement('button'); borrar.textContent = '−'; borrar.title = 'Quitar terminal'; borrar.onclick = () => { editor!.terminales.splice(indice, 1); pintarPreview(); pintarTerminales(); }; celda().appendChild(borrar);
+			const borrar = document.createElement('button'); borrar.textContent = '−'; borrar.title = 'Quitar terminal'; borrar.onclick = () => { editor!.terminales.splice(indice, 1); pintarPreview(); pintarTerminales(); pintarBloques(); }; celda().appendChild(borrar);
 			tbody.appendChild(tr);
 		});
 		pintarSugerencias();
+	}
+
+	function pintarEstadoBloques(): void {
+		if (!editor) return;
+		const estado = el<HTMLElement>(cuerpo, '[data-cp="bloques-estado"]');
+		const anchoMm = Number(el<HTMLInputElement>(cuerpo, '[data-cp-campo="ancho"]').value);
+		const altoMm = Number(el<HTMLInputElement>(cuerpo, '[data-cp-campo="alto"]').value);
+		const evaluacion = evaluarBloquesTerminales(editor.bloquesTerminales,
+			terminalesDesdeEditor(editor.terminales), { anchoMm, altoMm });
+		const sinTramo = editor.bloquesTerminales?.some((bloque) => bloque.desde === undefined || bloque.hasta === undefined);
+		estado.textContent = evaluacion.estado === 'SIN_DECLARAR'
+			? 'SIN DECLARAR: no hay agrupación física evaluable.'
+			: `${evaluacion.estado}: ${[...evaluacion.errores, ...evaluacion.motivos].join(' ')
+				|| 'IDs, lados y tramos declarados sin contradicciones detectadas.'}${sinTramo
+				? ' Hay tramos sin cotas: no se afirma su posición medida sobre el lado.' : ''}`;
+		estado.classList.toggle('cp-ficha-error', evaluacion.errores.length > 0);
+	}
+
+	function pintarBloques(): void {
+		if (!editor) return;
+		const zona = el<HTMLElement>(cuerpo, '[data-cp="bloques"]'); zona.replaceChildren();
+		const lista = editor.bloquesTerminales ?? [];
+		for (const [indice, bloque] of lista.entries()) {
+			const tarjeta = document.createElement('fieldset'); tarjeta.className = 'cp-bloque'; tarjeta.dataset.cpBloque = String(indice);
+			const titulo = document.createElement('legend'); titulo.textContent = `Bloque ${indice + 1}`; tarjeta.appendChild(titulo);
+			const campos = document.createElement('div'); campos.className = 'cp-campos'; tarjeta.appendChild(campos);
+			const texto = (titulo: string, valor: string, cambio: (valor: string) => void, placeholder = '') => {
+				const label = document.createElement('label'); label.textContent = titulo;
+				const input = document.createElement('input'); input.value = valor; input.placeholder = placeholder;
+				input.oninput = () => { cambio(input.value); pintarEstadoBloques(); };
+				label.appendChild(input); campos.appendChild(label); return input;
+			};
+			texto('Rótulo del bloque', bloque.rotulo ?? '', (valor) => { bloque.rotulo = valor || undefined; }, 'ej. Potencia L1–L3');
+			const ladoLabel = document.createElement('label'); ladoLabel.textContent = 'Lado físico declarado';
+			const lado = document.createElement('select'); lado.dataset.cpBloqueCampo = 'lado';
+			for (const valor of ['arriba', 'abajo', 'izquierda', 'derecha'] as LadoAparato[]) lado.appendChild(opcion(valor));
+			lado.value = bloque.lado; lado.onchange = () => { bloque.lado = lado.value as LadoAparato; pintarEstadoBloques(); };
+			ladoLabel.appendChild(lado); campos.appendChild(ladoLabel);
+			const rango = (nombre: string, clave: 'desde' | 'hasta') => {
+				const label = document.createElement('label'); label.textContent = nombre;
+				const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.max = '100'; input.step = 'any';
+				input.dataset.cpBloqueCampo = clave; input.placeholder = 'Sin cota';
+				input.value = bloque[clave] === undefined ? '' : String(Math.round(bloque[clave]! * 10000) / 100);
+				input.oninput = () => { bloque[clave] = input.value === '' ? undefined : Number(input.value) / 100; pintarEstadoBloques(); };
+				label.appendChild(input); campos.appendChild(label);
+			};
+			rango('Inicio del lado (%)', 'desde'); rango('Fin del lado (%)', 'hasta');
+			const margen = texto('Margen al borde (mm)', bloque.margen === undefined ? '' : String(bloque.margen),
+				(valor) => { bloque.margen = valor === '' ? undefined : Number(valor); }, 'Sin declarar');
+			margen.type = 'number'; margen.min = '0'; margen.step = 'any'; margen.dataset.cpBloqueCampo = 'margen';
+			const color = texto('Color declarado (#rrggbb)', bloque.color ?? '',
+				(valor) => { bloque.color = valor || undefined; }, 'Sin declarar'); color.dataset.cpBloqueCampo = 'color';
+			const extraibleLabel = document.createElement('label'); extraibleLabel.textContent = 'Conector extraíble';
+			const extraible = document.createElement('select'); extraible.dataset.cpBloqueCampo = 'extraible';
+			for (const [valor, etiqueta] of [['', 'No declarado'], ['si', 'Sí'], ['no', 'No']]) extraible.appendChild(opcion(valor, etiqueta));
+			extraible.value = bloque.extraible === undefined ? '' : bloque.extraible ? 'si' : 'no';
+			extraible.onchange = () => { bloque.extraible = extraible.value === '' ? undefined : extraible.value === 'si'; pintarEstadoBloques(); };
+			extraibleLabel.appendChild(extraible); campos.appendChild(extraibleLabel);
+			const encabezado = document.createElement('strong'); encabezado.textContent = 'Bornes en orden físico declarado'; tarjeta.appendChild(encabezado);
+			const bornes = document.createElement('div'); bornes.className = 'cp-bloque-bornes'; tarjeta.appendChild(bornes);
+			for (const [posicion, id] of bloque.bornes.entries()) {
+				const fila = document.createElement('div'); fila.className = 'cp-bloque-borne';
+				const selector = document.createElement('select'); selector.dataset.cpBloqueBorne = String(posicion);
+				const ids = new Set(editor.terminales.map((terminal) => terminal.id));
+				if (!ids.has(id)) selector.appendChild(opcion(id, `${id} · ID ausente`));
+				for (const terminal of editor.terminales) selector.appendChild(opcion(terminal.id,
+					`${terminal.id}${terminal.rotulo ? ` · ${terminal.rotulo}` : ''}`));
+				selector.value = id; selector.onchange = () => { bloque.bornes[posicion] = selector.value; pintarEstadoBloques(); };
+				selector.setAttribute('aria-label', `Borne ${posicion + 1} del bloque ${indice + 1}`); fila.appendChild(selector);
+				const accion = (texto: string, habilitada: boolean, aplicar: () => void) => {
+					const boton = document.createElement('button'); boton.type = 'button'; boton.textContent = texto;
+					boton.setAttribute('aria-label', `${texto === '↑' ? 'Subir' : texto === '↓' ? 'Bajar' : 'Quitar'} borne ${posicion + 1} del bloque ${indice + 1}`);
+					boton.disabled = !habilitada; boton.onclick = () => { aplicar(); pintarBloques(); };
+					fila.appendChild(boton);
+				};
+				accion('↑', posicion > 0, () => { [bloque.bornes[posicion - 1], bloque.bornes[posicion]] = [bloque.bornes[posicion], bloque.bornes[posicion - 1]]; });
+				accion('↓', posicion < bloque.bornes.length - 1, () => { [bloque.bornes[posicion + 1], bloque.bornes[posicion]] = [bloque.bornes[posicion], bloque.bornes[posicion + 1]]; });
+				accion('Quitar', true, () => { bloque.bornes.splice(posicion, 1); });
+				bornes.appendChild(fila);
+			}
+			const disponibles = editor.terminales.map((terminal) => terminal.id).filter((id) =>
+				!lista.some((otro) => otro.bornes.includes(id)));
+			const agregar = document.createElement('button'); agregar.type = 'button'; agregar.textContent = 'Añadir borne al bloque';
+			agregar.disabled = !disponibles.length || bloque.bornes.length >= MAX_TERMINALES_BLOQUE;
+			agregar.onclick = () => { bloque.bornes.push(disponibles[0]); pintarBloques(); };
+			tarjeta.appendChild(agregar);
+			const quitar = document.createElement('button'); quitar.type = 'button'; quitar.textContent = 'Quitar bloque';
+			quitar.setAttribute('aria-label', `Quitar bloque ${indice + 1}`);
+			quitar.onclick = () => { lista.splice(indice, 1); editor!.bloquesTerminales = lista.length ? lista : undefined; pintarBloques(); };
+			tarjeta.appendChild(quitar); zona.appendChild(tarjeta);
+		}
+		const sinAsignar = editor.terminales.map((terminal) => terminal.id).find((id) => !lista.some((bloque) => bloque.bornes.includes(id)));
+		const agregarBloque = el<HTMLButtonElement>(cuerpo, '[data-cp="agregar-bloque"]');
+		agregarBloque.disabled = !sinAsignar || lista.length >= 128;
+		agregarBloque.onclick = () => { if (!editor || !sinAsignar) return;
+			editor.bloquesTerminales = [...(editor.bloquesTerminales ?? []), { lado: 'arriba', bornes: [sinAsignar] }];
+			pintarBloques();
+		};
+		pintarEstadoBloques();
 	}
 
 	function pintarSugerencias(): void {
@@ -846,7 +1000,9 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			referencia: editor.datos.referencia.trim() || undefined, descripcion: editor.datos.descripcion.trim() || undefined,
 			tipoDispositivo: editor.tipo, dimensiones: { anchoMm: editor.datos.anchoMm, altoMm: editor.datos.altoMm, fondoMm: editor.datos.fondoMm },
 			assetId, terminales: terminalesDesdeEditor(editor.terminales),
+			...(editor.bloquesTerminales?.length ? { bloquesTerminales: clonar(editor.bloquesTerminales) } : {}),
 			...(editor.montaje ? { montaje: clonar(editor.montaje) } : {}),
+			...(editor.fichaTecnica ? { fichaTecnica: clonar(editor.fichaTecnica) } : {}),
 			comportamiento: perfil.comportamiento ?? { version: 1, clase: 'sin-comportamiento', motivo: 'perfil incompleto' }, parametros: p,
 		};
 		return { definicion, errores: [...perfil.errores, ...validarDefinicionComponente(definicion)] };
@@ -923,18 +1079,13 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 
 	async function exportarComponente(d: DefinicionComponentePersonalizado): Promise<void> {
 		const asset = await ctx.repositorio.abrirAsset(d.assetId); if (!asset) throw new Error(`Falta el asset ${d.assetId}.`);
-		if (!MIME_IMAGEN.has(asset.mime)) throw new Error(`El MIME ${asset.mime} no es exportable.`);
-		const paquete: ArchivoComponentePortatil = {
-			formato: 'tablero-studio-componente-portatil', version: 1, definicion: clonar(d),
-			asset: { id: asset.id, mime: asset.mime as ArchivoComponentePortatil['asset']['mime'], base64: bytesABase64(asset.bytes) },
-		};
+		const paquete = await crearComponentePortatil(d, asset);
 		descargar(nombreArchivo(d.nombre), new Blob([JSON.stringify(paquete, null, 2)], { type: 'application/json' }));
 	}
 
 	async function importarComponente(archivo: File): Promise<void> {
 		try {
-			const p = await leerArchivoComponentePortatilDesdeArchivo(archivo);
-			if (!MIME_IMAGEN.has(p.asset.mime) || p.asset.id !== p.definicion.assetId) throw new Error('El asset no corresponde a la definición.');
+			const p = await leerComponentePortatilDesdeArchivo(archivo);
 			const asset = { id: p.asset.id, mime: p.asset.mime, bytes: base64ABytes(p.asset.base64) };
 			let comoCopia = false;
 			try { await ctx.repositorio.importarComponenteConAsset({

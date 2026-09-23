@@ -98,8 +98,9 @@ try {
 	comprobar('apariencia muestra la misma imagen seleccionada en Bornes',
 		(await pagina.locator('[data-cp="preview-apariencia"] img').getAttribute('src'))
 		=== (await pagina.locator('[data-cp="preview"] img').getAttribute('src')));
-	comprobar('vínculo técnico pendiente se indica sin simular certificación',
-		/todavía no vincula una hoja de fabricante/.test(await pasoVisible().innerText()));
+	comprobar('ficha técnica opcional no vinculada indica límite de autenticidad sin simular certificación',
+		/Sin ficha técnica vinculada/.test(await pasoVisible().innerText())
+		&& /hash prueba integridad, no autenticidad, licencia ni certificación/i.test(await pasoVisible().innerText()));
 	await pagina.locator('[data-cp="siguiente"]').click();
 	await comprobarPaso('revision');
 	const resumen = await pagina.locator('[data-cp="resumen"]').innerText();
