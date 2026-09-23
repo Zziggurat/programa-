@@ -92,6 +92,8 @@ import {
 	instanciarComponentePersonalizado, leerPaqueteProyecto,
 	type DefinicionComponentePersonalizado,
 } from '../src/componentes/personalizados.js';
+import { abrirAdopcionComponente } from './ui-adopcion-componente.js';
+import type { PreparacionAdopcionComponente } from '../src/componentes/adopcion.js';
 import type { RepositorioProyectos } from '../src/persistencia/tipos.js';
 import type { RevisionTecnica } from '../src/datos-tecnicos/tipos.js';
 
@@ -235,7 +237,24 @@ let panelDatosTecnicos: PanelDatosTecnicos | undefined;
 let repositorioDocumentos: RepositorioProyectos | undefined;
 let cerrarRepositorioDocumentos: (() => void) | undefined;
 let recursosImagenActivos: { liberar(): void } | undefined;
+/** URL nuevas tras una adopción: sobreviven al deshacer/rehacer, no al cierre de este documento. */
+const imagenesAdoptadas = new Set<string>();
+function liberarImagenesAdoptadas(): void {
+	for (const url of imagenesAdoptadas) URL.revokeObjectURL(url);
+	imagenesAdoptadas.clear();
+}
 let panelComponentesPersonalizados: PanelComponentesPersonalizados | undefined;
+/** Repintados del inspector comparten una lectura en curso, sin cachear revisiones viejas. */
+const consultasRevisionPersonal = new Map<string, Promise<DefinicionComponentePersonalizado>>();
+function consultarRevisionPersonal(id: string): Promise<DefinicionComponentePersonalizado> {
+	const anterior = consultasRevisionPersonal.get(id);
+	if (anterior) return anterior;
+	const actual = repositorioDocumentos!.abrirComponente(id).finally(() => {
+		if (consultasRevisionPersonal.get(id) === actual) consultasRevisionPersonal.delete(id);
+	});
+	consultasRevisionPersonal.set(id, actual);
+	return actual;
+}
 let panelIngenieria: PanelIngenieria | undefined;
 let listarRevisionesTecnicas = async (): Promise<RevisionTecnica[]> => structuredClone(proyecto.datosTecnicos?.revisiones ?? []);
 /** Hasta que la migración termine no se toca la clave legacy que constituye su fuente segura. */
@@ -506,6 +525,7 @@ window.addEventListener('pagehide', (ev) => {
 	cerrandoSesionDocumental = true;
 	panelComponentesPersonalizados?.destruir();
 	recursosImagenActivos?.liberar();
+	liberarImagenesAdoptadas();
 	const gestor = gestorDocumentos;
 	const cerrarRepositorio = cerrarRepositorioDocumentos;
 	// `pagehide` no permite bloquear el cierre, pero sí iniciar el flush ya encolado y cerrar la
@@ -2778,6 +2798,50 @@ function colocarComponentePersonalizado(
 		'Clic · soltarlo en la placa', 'Esc · cancelar']);
 }
 
+/** La biblioteca conserva sus revisiones; un aparato ya colocado solo cambia por esta operación explícita. */
+async function revisarRevisionDeComponente(dispositivoId: string): Promise<void> {
+	if (!repositorioDocumentos || !sePuedeEditar()) return;
+	if (panelSim.energizado()) throw new Error('Detén la simulación antes de adoptar una revisión de componente.');
+	const d = proyecto.dispositivos.find((x) => x.id === dispositivoId);
+	const origen = d?.componentePersonalizado;
+	if (!origen) throw new Error('Esta instancia ya no tiene procedencia personal.');
+	const repositorio = repositorioDocumentos;
+	const nueva = await repositorio.abrirComponente(origen.definicionId);
+	if (nueva.revision <= origen.revision) throw new Error('No hay una revisión posterior que adoptar.');
+	const base = JSON.stringify(proyecto);
+	const documentoId = gestorDocumentos?.documentoActivo()?.id;
+	const aplicar = async (preparacion: PreparacionAdopcionComponente, sigueAbierta: () => boolean): Promise<void> => {
+		const comprobarVigencia = (): void => {
+			if (!sigueAbierta() || !sePuedeEditar()) throw new Error('La operación fue cancelada o el proyecto ya no es editable.');
+			if (panelSim.energizado()) throw new Error('Detén la simulación antes de adoptar una revisión.');
+			if (gestorDocumentos?.documentoActivo()?.id !== documentoId || JSON.stringify(proyecto) !== base) {
+				throw new Error('El tablero cambió mientras revisabas la adopción. Cierra y vuelve a abrir la vista previa.');
+			}
+		};
+		comprobarVigencia();
+		const vigente = await repositorio.abrirComponente(origen.definicionId);
+		if (vigente.revision !== nueva.revision) throw new Error('La biblioteca publicó otra revisión. Reabre la vista previa.');
+		let urlNueva: string | undefined;
+		if (preparacion.impacto.cambiaImagen) {
+			const asset = await repositorio.abrirAsset(nueva.assetId);
+			if (!asset) throw new Error(`Falta la imagen de la revisión nueva (${nueva.assetId}).`);
+			const bytes = Uint8Array.from(asset.bytes);
+			urlNueva = URL.createObjectURL(new Blob([bytes.buffer], { type: asset.mime }));
+			preparacion.candidato.dispositivos.find((x) => x.id === dispositivoId)!.imagen = urlNueva;
+		}
+		try {
+			comprobarVigencia();
+			// Una sola mutación: dispositivo, bornes, cables y envolvente comparten undo y autosave.
+			mutarProyecto(() => { proyecto = preparacion.candidato; });
+			if (urlNueva) imagenesAdoptadas.add(urlNueva);
+		} catch (e) {
+			if (urlNueva) URL.revokeObjectURL(urlNueva);
+			throw e;
+		}
+	};
+	abrirAdopcionComponente({ proyecto, dispositivoId, nueva, aplicar });
+}
+
 /** Crea el aparato de una plantilla y lo coloca en el primer hueco libre de un riel. */
 function colocarPlantilla(plantilla: PlantillaAparato): void {
 	/*
@@ -3377,6 +3441,12 @@ function pintarFichaDeLoElegido(): void {
 			<button class="boton" id="btn-duplicar">Duplicar</button>
 			<button class="boton peligro" id="btn-eliminar">Eliminar</button>
 		</div>` : '';
+	const bloqueRevisionPersonal = d.componentePersonalizado ? `
+		<section class="revision-personal" aria-label="Revisión del componente personalizado">
+			<h2>Componente personalizado</h2>
+			<p>Revisión fijada: <strong>r${d.componentePersonalizado.revision}</strong>. La biblioteca no altera este tablero automáticamente.</p>
+			<p id="estado-revision-personal" class="sub" role="status">Consultando biblioteca…</p>
+		</section>` : '';
 
 	panel.style.display = 'block';
 	panel.innerHTML = `
@@ -3389,6 +3459,7 @@ function pintarFichaDeLoElegido(): void {
 			${d.tensionNominal !== undefined ? `<dt>Tensión</dt><dd><span class="chip-volt" style="background:${hexColor(colorVoltaje(d.tensionNominal))}">${d.tensionNominal} V</span></dd>` : ''}
 			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${revision.posicionesEsquema.get(d.id) ?? '—'}</dd>`}
 		</dl>
+		${bloqueRevisionPersonal}
 		${bloqueComoSeConecta}
 		${bloqueTension}
 		${bloquePines}
@@ -3396,6 +3467,26 @@ function pintarFichaDeLoElegido(): void {
 		${bloqueCableado}
 		${bloqueAcciones}
 	`;
+	if (d.componentePersonalizado) {
+		const marcador = panel.querySelector<HTMLElement>('#estado-revision-personal')!;
+		const origen = d.componentePersonalizado;
+		if (proyecto.esEjemplo) marcador.textContent = 'Ejemplo de solo lectura. Haz una copia para adoptar otra revisión.';
+		else if (!repositorioDocumentos) marcador.textContent = 'Biblioteca local no disponible; se conserva la revisión fijada.';
+		else if (panelSim.energizado()) marcador.textContent = 'Detén la simulación para revisar otra revisión.';
+		else void consultarRevisionPersonal(origen.definicionId).then((vigente) => {
+			if (!marcador.isConnected || proyecto.dispositivos.find((x) => x.id === d.id) !== d) return;
+			if (vigente.revision <= origen.revision) { marcador.textContent = 'Al día con la biblioteca.'; return; }
+			marcador.textContent = `Disponible r${vigente.revision}. La instancia seguirá en r${origen.revision} hasta tu confirmación.`;
+			const boton = document.createElement('button');
+			boton.className = 'boton';
+			boton.id = 'btn-revisar-componente';
+			boton.textContent = 'Revisar nueva revisión';
+			boton.onclick = () => { void revisarRevisionDeComponente(d.id).catch((e) => avisar(nombreDeError(e), 'error')); };
+			marcador.after(boton);
+		}).catch(() => {
+			if (marcador.isConnected) marcador.textContent = 'No se pudo consultar la biblioteca; la revisión fijada sigue intacta.';
+		});
+	}
 
 	// Lista de cables existentes con botón de quitar (solo en modo Trabajo).
 	const contCables = panel.querySelector('#cables-aparato');
@@ -8315,6 +8406,8 @@ async function iniciarPersistenciaDocumental(): Promise<void> {
 				const anteriores = recursosImagenActivos;
 				recursosImagenActivos = recursos;
 				anteriores?.liberar();
+				// Cambiar de documento vacía su historial. Estas URL ya no pueden reaparecer con Redo.
+				liberarImagenesAdoptadas();
 				if (recursos.faltantes.length) {
 					avisar(`Faltan ${recursos.faltantes.length} imagen(es) del proyecto; su perfil eléctrico se conserva.`, 'error');
 				}
