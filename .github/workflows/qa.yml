@@ -3,7 +3,7 @@ name: Pruebas
 on:
   pull_request:
   push:
-    branches: [main, 'v8/**', 'v9/**']
+    branches: [main, 'v8/**', 'v9/**', 'roadmap/1.0-functional']
 
 # Un commit nuevo vuelve obsoleto el workflow anterior. GitHub lo mostrará como cancelado por
 # concurrencia, distinto de un job que alcance su timeout propio.
