@@ -153,6 +153,27 @@ async function posicion(id) {
 	}, id);
 }
 
+async function instantaneaRutas() {
+	return pagina.evaluate(() => {
+		const colorPorId = new Map(window.qa.proyecto().conductores.map((c) => [c.id, c.color ?? null]));
+		return window.qa.rutas().map((r) => ({ ...r, colorDeclarado: colorPorId.get(r.id) ?? null }));
+	});
+}
+
+function diferenciarRutas(antes, despues) {
+	const iniciales = new Map(antes.map((r) => [r.id, r]));
+	const finales = new Map(despues.map((r) => [r.id, r]));
+	const ids = [...new Set([...iniciales.keys(), ...finales.keys()])].sort();
+	const cambio = (id, clave) => JSON.stringify(iniciales.get(id)?.[clave]) !== JSON.stringify(finales.get(id)?.[clave]);
+	const cambiadas = ids.filter((id) => ['puntos', 'radio', 'colorDeclarado'].some((clave) => cambio(id, clave)));
+	return { antes: antes.length, despues: despues.length,
+		cambiadas: cambiadas.length, estables: ids.length - cambiadas.length, idsCambiados: cambiadas,
+		puntosCambiados: ids.filter((id) => cambio(id, 'puntos')).length,
+		radioCambiado: ids.filter((id) => cambio(id, 'radio')).length,
+		colorDeclaradoCambiado: ids.filter((id) => cambio(id, 'colorDeclarado')).length,
+		precision: 'puntos del hook QA redondeados a 0,1 mm; color declarado, no material WebGL' };
+}
+
 /**
  * Cronometra únicamente los listeners del canvas, en el reloj del navegador.
  * El listener capture antecede a los handlers del editor y el de burbuja se instala después;
@@ -335,6 +356,7 @@ try {
 			await pagina.waitForFunction((id) => window.qa.seleccion()?.id === id, dragId);
 		}
 		const avance = i % 2 ? -12 : 12;
+		const rutasAntes = await instantaneaRutas();
 		await pagina.evaluate(() => window.qa.olvidarTareasLargas());
 		await tomarEventos();
 		await iniciarCronometroEditor();
@@ -351,6 +373,7 @@ try {
 		tiemposDrag.push(totalDragMs);
 		const eventos = await tomarEventos();
 		const editor = await leerCronometroEditor();
+		const rutasDespues = await instantaneaRutas();
 		const movimientosCanvas = eventos.filter((e) => e.tipo === 'pointermove');
 		const despues = await posicion(dragId);
 		if (!despues || (despues.x === antes.x && despues.y === antes.y))
@@ -372,6 +395,7 @@ try {
 			seisMovimientosCanvas: movimientosCanvas.length > 1
 				? resumen(movimientosCanvas.slice(1).map((e) => e.ms)) : { n: 0 },
 			editor, cdp: deltaCDP(cdpAntes, cdpDespues),
+			rutas: diferenciarRutas(rutasAntes, rutasDespues),
 			flushHostMs: redondear(persistenciaMs), flushNavegadorMs: redondear(msNavegador) });
 		tareasDrag.push(...await pagina.evaluate(() => window.qa.contadores().tareasLargas));
 		console.log(`Drag ${i + 1}/${repeticiones}: ${redondear(tiemposDrag.at(-1))} ms; flush ${redondear(tiemposPersistencia.at(-1))} ms`);
