@@ -153,6 +153,21 @@ test('rechaza degradar PE, exceder bornes y recolocar encima de otro aparato', (
 	assert.throws(() => prepararAdopcionRevisionComponente(proyecto, 'k1', nueva, { A1: 'B1', L1: 'IN' }), /varias colocaciones/);
 });
 
+test('capacidad no declarada no se convierte en un máximo físico supuesto', () => {
+	const proyecto = proyectoBase();
+	const nueva = definicion(2);
+	delete nueva.terminales[0].maxConductores;
+	proyecto.conductores.push(
+		{ id: 'w3', de: { dispositivoId: 'k1', borneId: 'A1' }, a: { dispositivoId: 'x1', borneId: '2' } },
+		{ id: 'w4', de: { dispositivoId: 'k1', borneId: 'A1' }, a: { dispositivoId: 'x1', borneId: '1' } },
+	);
+	const { candidato } = prepararAdopcionRevisionComponente(proyecto, 'k1', nueva, {
+		A1: 'B1', L1: 'IN',
+	});
+	assert.equal(candidato.conductores.filter((c) => c.de.dispositivoId === 'k1' && c.de.borneId === 'B1').length, 3);
+	assert.equal(candidato.dispositivos[0].bornes.find((b) => b.id === 'B1')?.maxConductores, undefined);
+});
+
 test('remapea referencias técnicas puntuales y conserva los enlaces técnicos para revisión explícita', () => {
 	const proyecto = proyectoBase();
 	proyecto.datosTecnicos = {

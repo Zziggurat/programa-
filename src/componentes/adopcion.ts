@@ -140,8 +140,11 @@ export function prepararAdopcionRevisionComponente(
 		cantidadDestino.set(destino, (cantidadDestino.get(destino) ?? 0) + (conexiones.get(origen) ?? 0));
 	}
 	for (const [destino, cantidad] of cantidadDestino) {
-		const maximo = siguientes.get(destino)?.maxConductores ?? 2;
-		if (cantidad > maximo) throw new Error(`El borne ${destino} solo admite ${maximo} conductores (${cantidad} conectados).`);
+		const maximo = siguientes.get(destino)?.maxConductores;
+		// Un límite ausente es desconocido, no una capacidad física supuesta.
+		if (maximo !== undefined && cantidad > maximo) {
+			throw new Error(`El borne ${destino} solo admite ${maximo} conductores (${cantidad} conectados).`);
+		}
 	}
 
 	const candidato = structuredClone(proyecto);
