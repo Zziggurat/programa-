@@ -664,6 +664,28 @@ export interface AjustesEsquema {
 	columnasPorHoja?: number;
 	/** Títulos propios de las hojas, por índice de hoja (1, 2, 3…). */
 	titulos?: Record<string, string>;
+	/**
+	 * Ausente = esquema legacy de un símbolo por aparato. Una lista vacía significa que el usuario
+	 * quitó deliberadamente todas las representaciones; no se regenera al abrir.
+	 * Esta colección solo describe el dibujo: no crea aparatos, bornes ni conductores.
+	 */
+	representaciones?: RepresentacionEsquema[];
+}
+
+/** Referencia gráfica a funciones y bornes del aparato, nunca una copia de su comportamiento. */
+export type ParteRepresentacionEsquema =
+	| { tipo: 'completa' }
+	| { tipo: 'bobina' }
+	| { tipo: 'contactos'; pares: { entrada: string; salida: string }[] };
+
+/** Una vista del mismo `Dispositivo` en una hoja del proyecto. `id` no es identidad eléctrica. */
+export interface RepresentacionEsquema {
+	id: string;
+	dispositivoId: string;
+	hojaId: string;
+	/** Casilla local a `hojaId`; reordenar hojas no cambia esta referencia ni el circuito. */
+	posicion: { columna: number; fila: number };
+	parte: ParteRepresentacionEsquema;
 }
 
 export const OPCIONES_POR_DEFECTO: Required<OpcionesProyecto> = {

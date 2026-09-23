@@ -20,6 +20,7 @@ import { leerConfiguracionIngenieria } from './ingenieria.js';
 import { validarConfiguracionTecnica } from '../datos-tecnicos/schema.js';
 import { leerMontajeDeclarado } from '../componentes/montaje.js';
 import { leerCarcasaParametrica } from '../componentes/carcasa.js';
+import { leerRepresentacionesEsquema } from './representaciones-esquema.js';
 import type { ConfiguracionProgramaPLC, EtiquetaPLC } from './programa-plc.js';
 
 /** Versión de formato que escribe este programa. */
@@ -239,7 +240,7 @@ export function cargarProyecto(json: string): ResultadoCarga {
 		conductores,
 		gabinete,
 		opciones: leerOpciones(bruto.opciones),
-		esquema: leerAjustesEsquema(bruto.esquema),
+		esquema: leerAjustesEsquema(bruto.esquema, dispositivos, hojas),
 		dossier: leerAjustesDossier(bruto.dossier),
 		ingenieria: leerConfiguracionIngenieria(bruto.ingenieria),
 	};
@@ -455,7 +456,7 @@ function leerMazoPuerta(bruto: unknown): AjustesMazo | undefined {
  * Se leen aquí y no se dejan pasar tal cual porque son del archivo, y un archivo puede venir
  * tocado a mano: 500 columnas por hoja dejarían el esquema ilegible sin decir por qué.
  */
-function leerAjustesEsquema(bruto: unknown): Proyecto['esquema'] {
+function leerAjustesEsquema(bruto: unknown, dispositivos: Dispositivo[], hojas: Hoja[]): Proyecto['esquema'] {
 	if (!esObjeto(bruto)) return undefined;
 	const cols = Number(bruto.columnasPorHoja);
 	const titulos: Record<string, string> = {};
@@ -467,6 +468,8 @@ function leerAjustesEsquema(bruto: unknown): Proyecto['esquema'] {
 	const ajustes: Proyecto['esquema'] = {};
 	if (Number.isFinite(cols)) ajustes.columnasPorHoja = Math.max(4, Math.min(20, Math.round(cols)));
 	if (Object.keys(titulos).length) ajustes.titulos = titulos;
+	const representaciones = leerRepresentacionesEsquema(bruto.representaciones, dispositivos, hojas, anotar);
+	if (representaciones !== undefined) ajustes.representaciones = representaciones;
 	return Object.keys(ajustes).length ? ajustes : undefined;
 }
 

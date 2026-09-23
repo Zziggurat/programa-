@@ -15,6 +15,7 @@
  *  - Los contactos de un aparato llevan la referencia cruzada de dónde está su bobina.
  */
 import { Dispositivo, Proyecto } from '../modelo/tipos.js';
+import type { ParteRepresentacionEsquema, RepresentacionEsquema } from '../modelo/tipos.js';
 import { rotuloVisibleBorne } from '../modelo/bornes.js';
 import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { ResultadoPotenciales } from './potenciales.js';
@@ -32,6 +33,9 @@ export type Trazo =
 /** Símbolo de un aparato ya colocado en la hoja, con sus puntos de conexión. */
 export interface SimboloEsq {
 	dispositivoId: string;
+	/** Identidad gráfica; ausente solo en el esquema legacy de un símbolo por aparato. */
+	representacionId?: string;
+	parte?: ParteRepresentacionEsquema['tipo'];
 	designacion: string;
 	/** Columna de la rejilla (desde 1): es la coordenada con la que se cita en el plano. */
 	columna: number;
@@ -68,16 +72,29 @@ export interface HojaEsq {
 	 * que nada tape a nada. Quien dibuje se limita a pintarlo donde diga aquí.
 	 */
 	referencias: EtiquetaEsq[];
+	/** Incidencias derivadas del montaje explícito; no cambian aparatos, cables ni colocaciones. */
+	problemas?: ProblemaEsq[];
+}
+
+export interface ProblemaEsq {
+	codigo: 'posicion-fuera-de-hoja' | 'representacion-invalida' | 'conexion-sin-ancla';
+	mensaje: string;
+	dispositivoId?: string;
+	representacionId?: string;
+	conductorId?: string;
 }
 
 /** Un texto suelto ya colocado en la hoja. */
 export interface EtiquetaEsq {
 	texto: string;
 	p: PuntoEsq;
-	/** 'hilo' = número de potencial · 'enlace' = va a otra hoja · 'bobina' = referencia cruzada. */
-	tipo: 'hilo' | 'enlace' | 'bobina';
+	/** 'hilo' = potencial · 'enlace' = otra hoja · 'bobina' = referencia · 'aviso' = ubicación pendiente. */
+	tipo: 'hilo' | 'enlace' | 'bobina' | 'aviso';
 	/** Aparato al que pertenece (si aplica), para poder resaltarlo con él. */
 	dispositivoId?: string;
+	/** Identidad de la vista o del conductor de la que sale esta referencia, sin crear otro cable. */
+	representacionId?: string;
+	conductorId?: string;
 }
 
 /* ------------------------------- Medidas del papel ------------------------------- */
@@ -438,6 +455,9 @@ export function montarEsquema(
 	potenciales: ResultadoPotenciales,
 	opciones: { columnasPorHoja?: number; hoja?: { ancho: number; alto: number } } = {},
 ): HojaEsq[] {
+	if (proyecto.esquema?.representaciones !== undefined) {
+		return montarRepresentaciones(proyecto, potenciales, opciones);
+	}
 	const papel = opciones.hoja ?? HOJA_A3;
 	// Las columnas por hoja son del PROYECTO: quien dibuja decide si quiere el esquema apretado
 	// en pocas hojas o desahogado en varias. `opciones` solo manda cuando se pide expresamente.
@@ -595,6 +615,208 @@ export function montarEsquema(
 	return hojas;
 }
 
+type GeometriaSimbolo = ReturnType<typeof simboloDe>;
+
+/** Cada parte referencia el perfil del aparato; nunca copia un segundo aparato eléctrico. */
+function simboloDeRepresentacion(d: Dispositivo, r: RepresentacionEsquema): GeometriaSimbolo | undefined {
+	if (r.parte.tipo === 'completa') return simboloDe(d);
+	const bornes = new Map(d.bornes.map((b) => [b.id, b]));
+	if (r.parte.tipo === 'bobina') {
+		const perfil = d.comportamiento;
+		if (perfil?.clase !== 'contactos-electromagneticos') return undefined;
+		const { entrada, retorno } = perfil.bobina;
+		const a = bornes.get(entrada);
+		const b = bornes.get(retorno);
+		if (!a || !b) return undefined;
+		return {
+			ancho: 12, alto: 20,
+			pines: new Map([[entrada, { x: 0, y: -10 }], [retorno, { x: 0, y: 10 }]]),
+			trazos: [
+				{ tipo: 'linea', a: { x: 0, y: -10 }, b: { x: 0, y: -5 } },
+				{ tipo: 'linea', a: { x: 0, y: 5 }, b: { x: 0, y: 10 } },
+				{ tipo: 'linea', a: { x: -5, y: -5 }, b: { x: 5, y: -5 } },
+				{ tipo: 'linea', a: { x: 5, y: -5 }, b: { x: 5, y: 5 } },
+				{ tipo: 'linea', a: { x: 5, y: 5 }, b: { x: -5, y: 5 } },
+				{ tipo: 'linea', a: { x: -5, y: 5 }, b: { x: -5, y: -5 } },
+				{ tipo: 'texto', p: { x: 1, y: -11 }, texto: rotuloVisibleBorne(a), tam: 2.2 },
+				{ tipo: 'texto', p: { x: 1, y: 13 }, texto: rotuloVisibleBorne(b), tam: 2.2 },
+			],
+		};
+	}
+
+	const perfil = d.comportamiento;
+	if (!perfil || r.parte.pares.length === 0) return undefined;
+	const estadoContacto = (entrada: string, salida: string): boolean | undefined => {
+		const igual = (p: { entrada: string; salida: string }) => p.entrada === entrada && p.salida === salida;
+		if (perfil.clase === 'contactos-electromagneticos' || perfil.clase === 'proteccion') {
+			const contacto = perfil.contactos.find(igual);
+			if (contacto) return contacto.reposo === 'cerrado';
+			if (perfil.polos.some(igual)) return perfil.clase === 'proteccion';
+		} else if (perfil.clase === 'mando' || perfil.clase === 'sensor') {
+			const contacto = perfil.contactos.find(igual);
+			if (contacto) return contacto.reposo === 'cerrado';
+		} else if (perfil.clase === 'variador' && perfil.contactoFallo && igual(perfil.contactoFallo)) {
+			return perfil.contactoFallo.reposo === 'cerrado';
+		}
+		return undefined;
+	};
+	const ancho = Math.min(18, Math.max(10, r.parte.pares.length * 6));
+	const pines = new Map<string, PuntoEsq>();
+	const trazos: Trazo[] = [];
+	for (const [i, par] of r.parte.pares.entries()) {
+		// Un común compartido necesitaría un anclaje gráfico único: no sobrescribirlo en el Map.
+		if (par.entrada === par.salida || pines.has(par.entrada) || pines.has(par.salida)) return undefined;
+		const a = bornes.get(par.entrada);
+		const b = bornes.get(par.salida);
+		const cerrado = estadoContacto(par.entrada, par.salida);
+		if (!a || !b || cerrado === undefined) return undefined;
+		const x = -ancho / 2 + ancho * (i + 0.5) / r.parte.pares.length;
+		pines.set(a.id, { x, y: -10 });
+		pines.set(b.id, { x, y: 10 });
+		trazos.push(
+			{ tipo: 'linea', a: { x, y: -10 }, b: { x, y: -4 } },
+			{ tipo: 'linea', a: { x, y: 4 }, b: { x, y: 10 } },
+			{ tipo: 'linea', a: { x, y: 4 }, b: { x: x + (cerrado ? 0 : 3), y: -4 } },
+			{ tipo: 'texto', p: { x: x + 1, y: -11 }, texto: rotuloVisibleBorne(a), tam: 2.2 },
+			{ tipo: 'texto', p: { x: x + 1, y: 13 }, texto: rotuloVisibleBorne(b), tam: 2.2 },
+		);
+	}
+	return { ancho, alto: 20, trazos, pines };
+}
+
+/** Montaje M2 opt-in: hoja/posición son referencias estables, no columnas globales legacy. */
+function montarRepresentaciones(
+	proyecto: Proyecto,
+	potenciales: ResultadoPotenciales,
+	opciones: { columnasPorHoja?: number; hoja?: { ancho: number; alto: number } },
+): HojaEsq[] {
+	const papel = opciones.hoja ?? HOJA_A3;
+	const columnasDefecto = proyecto.esquema?.columnasPorHoja ?? 10;
+	const cuentaHojas = new Map<string, number>();
+	for (const h of proyecto.hojas) cuentaHojas.set(h.id, (cuentaHojas.get(h.id) ?? 0) + 1);
+	const hojas: HojaEsq[] = proyecto.hojas
+		.filter((h) => cuentaHojas.get(h.id) === 1)
+		.sort((a, b) => a.numero - b.numero || a.id.localeCompare(b.id))
+		.map((h) => ({
+			id: h.id, numero: h.numero, titulo: h.titulo,
+			anchoMm: papel.ancho, altoMm: papel.alto,
+			columnas: Math.max(4, Math.min(20, opciones.columnasPorHoja ?? h.columnas ?? columnasDefecto)),
+			simbolos: [], hilos: [], referencias: [], problemas: [],
+		}));
+	const hojaPorId = new Map(hojas.map((h) => [h.id, h]));
+	const dispositivoPorId = new Map(proyecto.dispositivos.map((d) => [d.id, d]));
+	type Lugar = { pin: PuntoEsq; hoja: HojaEsq; columna: number };
+	const lugares = new Map<string, Lugar[]>();
+	const simbolosDeAparato = new Map<string, { simbolo: SimboloEsq; hoja: HojaEsq }[]>();
+	for (const r of proyecto.esquema?.representaciones ?? []) {
+		const d = dispositivoPorId.get(r.dispositivoId);
+		const hoja = hojaPorId.get(r.hojaId);
+		if (!d || !hoja || esReferenciaVisualInerte(d)) {
+			(hoja ?? hojas[0])?.problemas?.push({ codigo: 'representacion-invalida',
+				representacionId: r.id, dispositivoId: r.dispositivoId,
+				mensaje: `La vista ${r.id} refiere a una hoja o aparato inexistente/no esquemático.`,
+			});
+			continue;
+		}
+		const geometria = simboloDeRepresentacion(d, r);
+		if (!geometria) {
+			hoja.problemas!.push({ codigo: 'representacion-invalida', representacionId: r.id,
+				dispositivoId: d.id, mensaje: `La vista ${r.id} no tiene anclajes gráficos inequívocos.` });
+			continue;
+		}
+		const columna = Math.max(1, Math.min(hoja.columnas, r.posicion.columna));
+		const fila = Math.max(1, Math.min(FILAS_ESQ, r.posicion.fila));
+		const cx = MARGEN.izq + anchoColumna(papel, hoja.columnas) * (columna - 0.5);
+		const cyIdeal = alturaDeFila(fila, papel);
+		const mitad = geometria.alto / 2;
+		const techo = MARGEN.arriba + BARRA_ARRIBA + mitad;
+		const suelo = papel.alto - MARGEN.abajo - BARRA_ABAJO - mitad;
+		const cy = suelo >= techo ? Math.min(Math.max(cyIdeal, techo), suelo) : (techo + suelo) / 2;
+		const pines = new Map<string, PuntoEsq>();
+		for (const [borneId, pin] of geometria.pines) {
+			const abs = { x: cx + pin.x, y: cy + pin.y };
+			pines.set(borneId, abs);
+			const clave = JSON.stringify([d.id, borneId]);
+			const lista = lugares.get(clave) ?? [];
+			lista.push({ pin: abs, hoja, columna });
+			lugares.set(clave, lista);
+		}
+		const simbolo: SimboloEsq = {
+			dispositivoId: d.id, representacionId: r.id, parte: r.parte.tipo,
+			designacion: d.designacion ?? d.id, columna,
+			x: cx - geometria.ancho / 2, y: cy - geometria.alto / 2,
+			ancho: geometria.ancho, alto: geometria.alto,
+			trazos: geometria.trazos.map((t) => desplazar(t, cx, cy)), pines,
+		};
+		hoja.simbolos.push(simbolo);
+		if (columna !== r.posicion.columna || fila !== r.posicion.fila) {
+			hoja.problemas!.push({ codigo: 'posicion-fuera-de-hoja', representacionId: r.id,
+				dispositivoId: d.id,
+				mensaje: `La vista ${r.id} pide ${r.posicion.columna}.${r.posicion.fila}, fuera de la rejilla ${hoja.columnas}×${FILAS_ESQ}; se muestra en ${columna}.${fila} sin cambiar el proyecto.`,
+			});
+			hoja.referencias.push({ tipo: 'aviso', representacionId: r.id, dispositivoId: d.id,
+				texto: `ubicación pendiente ${r.posicion.columna}.${r.posicion.fila}`,
+				p: { x: cx, y: cy + geometria.alto / 2 + 7 },
+			});
+		}
+		const anteriores = simbolosDeAparato.get(d.id) ?? [];
+		anteriores.push({ simbolo, hoja });
+		simbolosDeAparato.set(d.id, anteriores);
+	}
+
+	for (const c of proyecto.conductores) {
+		const a = lugares.get(JSON.stringify([c.de.dispositivoId, c.de.borneId]));
+		const b = lugares.get(JSON.stringify([c.a.dispositivoId, c.a.borneId]));
+		// Un borne sin vista o con dos anclajes no se asigna arbitrariamente a una hoja.
+		if (a?.length !== 1 || b?.length !== 1) {
+			const hoja = (a?.length === 1 ? a[0].hoja : b?.length === 1 ? b[0].hoja : hojas[0]);
+			hoja?.problemas?.push({ codigo: 'conexion-sin-ancla', conductorId: c.id,
+				mensaje: `El conductor ${c.id} necesita una vista única para cada borne extremo.`,
+			});
+			continue;
+		}
+		const origen = a[0], destino = b[0];
+		const numero = c.numero ?? potenciales.porConductor.get(c.id)?.id;
+		if (origen.hoja.id === destino.hoja.id) {
+			const nodos = rutaHilo(origen.pin, destino.pin, origen.hoja);
+			origen.hoja.hilos.push({ conductorId: c.id, numero, nodos });
+			if (numero) origen.hoja.referencias.push({ texto: numero,
+				p: puntoMedioDelTramoMasLargo(nodos), tipo: 'hilo', conductorId: c.id });
+		} else {
+			for (const [propia, otra, dispositivoId] of [
+				[origen, destino, c.de.dispositivoId], [destino, origen, c.a.dispositivoId],
+			] as const) {
+				propia.hoja.referencias.push({
+					dispositivoId, conductorId: c.id, tipo: 'enlace',
+					texto: `${numero ? `${numero} ` : ''}→ /${otra.hoja.numero}.${otra.columna}`,
+					p: { x: propia.pin.x, y: propia.pin.y + (propia.pin.y > papel.alto / 2 ? 6 : -6) },
+				});
+			}
+		}
+	}
+
+	for (const [dispositivoId, vistas] of simbolosDeAparato) {
+		const bobinas = vistas.filter(({ simbolo }) => simbolo.parte === 'bobina');
+		if (bobinas.length !== 1) continue;
+		const bobina = bobinas[0];
+		for (const { simbolo, hoja } of vistas) {
+			if (simbolo.parte !== 'contactos') continue;
+			hoja.referencias.push({
+				dispositivoId, representacionId: simbolo.representacionId, tipo: 'bobina',
+				texto: `bobina /${bobina.hoja.numero}.${bobina.simbolo.columna}`,
+				p: { x: simbolo.x + simbolo.ancho / 2, y: simbolo.y + simbolo.alto + 12 },
+			});
+		}
+	}
+	for (const hoja of hojas) separarEtiquetas(hoja.referencias, {
+		altoMm: hoja.altoMm,
+		obstaculos: hoja.simbolos.map((s) => ({
+			x: s.x - 24, y: s.y - MARCA_BORNE, ancho: s.ancho + 24, alto: s.alto + 2 * MARCA_BORNE,
+		})),
+	});
+	return hojas;
+}
+
 /**
  * Dónde quedó dibujado cada aparato, en la notación con la que se cita un esquema:
  * «hoja.columna» (p. ej. «2.4»). Es la ÚNICA posición válida para el índice, las
@@ -603,6 +825,16 @@ export function montarEsquema(
  */
 export function posicionesEnEsquema(hojas: HojaEsq[]): Map<string, string> {
 	const posiciones = new Map<string, string>();
+	if (hojas.some((h) => h.simbolos.some((s) => s.representacionId))) {
+		// El índice general conserva una sola posición por aparato: la bobina es su referencia primaria.
+		for (const h of hojas) for (const s of h.simbolos) {
+			if (s.parte === 'bobina') posiciones.set(s.dispositivoId, `${h.numero}.${s.columna}`);
+		}
+		for (const h of hojas) for (const s of h.simbolos) {
+			if (!posiciones.has(s.dispositivoId)) posiciones.set(s.dispositivoId, `${h.numero}.${s.columna}`);
+		}
+		return posiciones;
+	}
 	for (const h of hojas) {
 		for (const s of h.simbolos) posiciones.set(s.dispositivoId, `${h.numero}.${s.columna}`);
 	}
