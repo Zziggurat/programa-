@@ -32,3 +32,31 @@ test('el ID hostil del conductor se escapa dentro de atributos SVG', () => {
 	assert.match(svg, /data-conductor="c&lt;&amp;&quot; onload=&quot;mal"/);
 	assert.doesNotMatch(svg, /data-conductor="c<&"/);
 });
+
+test('dos vistas del mismo aparato tienen IDs gráficos propios y solo una marca seleccionada', () => {
+	const conVistas: HojaEsq = { ...hoja, hilos: [], simbolos: [
+		{ dispositivoId: 'km1', representacionId: 'bobina', parte: 'bobina', designacion: '-KM1',
+			columna: 2, x: 60, y: 80, ancho: 12, alto: 20, trazos: [], pines: new Map() },
+		{ dispositivoId: 'km1', representacionId: 'aux', parte: 'contactos', designacion: '-KM1',
+			columna: 5, x: 170, y: 80, ancho: 12, alto: 20, trazos: [], pines: new Map() },
+	] };
+	const svg = hojaASvg(conVistas, { interactivo: true, resaltado: 'km1', resaltadoRepresentacion: 'aux' });
+	assert.equal(svg.match(/data-dispositivo="km1"/g)?.length, 2);
+	assert.match(svg, /data-representacion="bobina" class="simbolo" tabindex="0" role="button"/);
+	assert.match(svg, /data-representacion="aux" class="simbolo" tabindex="0" role="button"/);
+	assert.equal(svg.match(/stroke="#f5a623"/g)?.length, 1);
+	assert.equal(svg.match(/stroke="#2ea3ff"/g)?.length, 1);
+	const exportado = hojaASvg(conVistas);
+	assert.doesNotMatch(exportado, /tabindex="0"|role="button"|#f5a623/);
+});
+
+test('ID hostil de vista y referencia cruzada se escapan en SVG', () => {
+	const conVista: HojaEsq = { ...hoja, hilos: [], simbolos: [
+		{ dispositivoId: 'km1', representacionId: 'vista<&" onclick="mal', designacion: '-KM1',
+			columna: 2, x: 60, y: 80, ancho: 12, alto: 20, trazos: [], pines: new Map() },
+	], referencias: [{ tipo: 'bobina', texto: 'bobina <&"', p: { x: 60, y: 120 } }] };
+	const svg = hojaASvg(conVista, { interactivo: true });
+	assert.match(svg, /data-representacion="vista&lt;&amp;&quot; onclick=&quot;mal"/);
+	assert.doesNotMatch(svg, /data-representacion="vista<&"/);
+	assert.match(svg, /bobina &lt;&amp;&quot;/);
+});

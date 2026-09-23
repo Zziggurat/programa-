@@ -43,6 +43,8 @@ export interface OpcionesEsquema {
 	resaltado?: string;
 	/** Conductor seleccionado en el editor de esquema. No se usa al exportar. */
 	resaltadoConductor?: string;
+	/** Vista gráfica concreta; varias vistas pueden apuntar al mismo aparato. */
+	resaltadoRepresentacion?: string;
 	/** Añade zonas de clic y navegación por teclado solo a la vista interactiva. */
 	interactivo?: boolean;
 }
@@ -271,8 +273,10 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 	}
 
 	for (const s of hoja.simbolos) {
-		const marca = s.dispositivoId === o.resaltado
-			? `<rect x="${n(s.x - 4)}" y="${n(s.y - 4)}" width="${n(s.ancho + 8)}" height="${n(s.alto + 8)}" rx="2" fill="none" stroke="#2ea3ff" stroke-width="0.8"/>`
+		const vistaSeleccionada = !!s.representacionId && s.representacionId === o.resaltadoRepresentacion;
+		const marca = vistaSeleccionada || s.dispositivoId === o.resaltado
+			? `<rect x="${n(s.x - 4)}" y="${n(s.y - 4)}" width="${n(s.ancho + 8)}" height="${n(s.alto + 8)}" rx="2" fill="none" `
+				+ `stroke="${vistaSeleccionada ? '#f5a623' : '#2ea3ff'}" stroke-width="${vistaSeleccionada ? '1.2' : '0.8'}"/>`
 			: '';
 		// La designación va a la IZQUIERDA del símbolo, como en un esquema de verdad: encima se
 		// pisaría con los números de los bornes y con los hilos que entran por arriba.
@@ -282,8 +286,12 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 		// recibe el puntero, así que se agarra el símbolo entero, rótulo incluido.
 		const agarre = `<rect x="${n(s.x - 9)}" y="${n(s.y - 3)}" width="${n(s.ancho + 12)}" `
 			+ `height="${n(s.alto + 6)}" fill="transparent" pointer-events="all"/>`;
+		const vista = s.representacionId ? ` data-representacion="${esc(s.representacionId)}"` : '';
+		const teclado = o.interactivo && s.representacionId
+			? ` tabindex="0" role="button" aria-label="Seleccionar representación ${esc(s.representacionId)} de ${esc(s.designacion)}" style="cursor:move"`
+			: '';
 		partes.push(
-			`<g data-dispositivo="${esc(s.dispositivoId)}" class="simbolo">${marca}${agarre}`
+			`<g data-dispositivo="${esc(s.dispositivoId)}"${vista} class="simbolo"${teclado}>${marca}${agarre}`
 			+ s.trazos.map((t) => pintarTrazo(t, tinta)).join('')
 			+ `<text x="${n(s.x - 5)}" y="${n(s.y + s.alto / 2 + 1.2)}" font-size="3.4" text-anchor="end" fill="${tinta}" `
 			+ `font-family="system-ui, sans-serif" font-weight="700">${esc(s.designacion)}</text></g>`,

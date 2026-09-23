@@ -71,55 +71,118 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let zoomEsquema = 1;
 	/** Selección de vista: el conductor sigue identificado por su id del proyecto. */
 	let conductorSeleccionado: string | undefined;
+	/** Identidad gráfica M2, distinta de la identidad eléctrica del aparato. */
+	let representacionSeleccionada: string | undefined;
 
 	const describirBorne = (ref: RefBorne): string => {
 		const d = proyecto().dispositivos.find((x) => x.id === ref.dispositivoId);
 		return `${d?.designacion ?? ref.dispositivoId} [${ref.dispositivoId}] · ${ref.borneId}`;
 	};
 
-	/** Inspector de la conexión real. Todo texto del proyecto entra como texto, nunca como HTML. */
+	/** Inspector de conexiones, vistas y problemas. Todo dato del proyecto entra como texto. */
 	function pintarConductorSeleccionado(): void {
 		const ayuda = $('esq-ayuda');
 		ayuda.replaceChildren();
 		const c = proyecto().conductores.find((x) => x.id === conductorSeleccionado);
-		if (!c) {
-			conductorSeleccionado = undefined;
-			ayuda.innerHTML = '<b>Arrastra</b> cualquier símbolo para colocarlo donde quieras · los hilos lo siguen'
-				+ ' · <b>selecciona un hilo</b> para ver sus bornes';
-			return;
-		}
-		const detalle = document.createElement('span');
-		detalle.textContent = `Conductor ${c.id}: ${describirBorne(c.de)} ↔ ${describirBorne(c.a)}`;
-		const boton = document.createElement('button');
-		boton.id = 'esq-desconectar';
-		boton.className = 'boton';
-		boton.type = 'button';
-		boton.textContent = 'Desconectar';
-		boton.setAttribute('aria-label', `Desconectar conductor ${c.id}`);
-		boton.onclick = async () => {
-			// Los ejemplos se pueden inspeccionar, pero no debe preguntarse por una mutación vetada.
-			if (!ctx.puedeEditar()) return;
-			const documento = proyecto();
-			const actual = documento.conductores.find((x) => x.id === c.id);
-			if (actual !== c) { refrescarEsquema(); return; }
-			const ruta = c.trazado?.length ? ` Tiene ${c.trazado.length} puntos de ruta manual.` : '';
-			const confirmado = await confirmar(
-				`¿Desconectar ${c.id} entre ${describirBorne(c.de)} y ${describirBorne(c.a)}? `
-				+ `Se quitará del esquema, tablero, simulación y listas.${ruta} Ctrl+Z permite deshacer.`,
-				{ ok: 'Desconectar', peligro: true },
-			);
-			if (!confirmado) return;
-			// Un diálogo es asíncrono: no se aplica su respuesta a otro proyecto o conductor.
-			if (proyecto() !== documento || documento.conductores.find((x) => x.id === c.id) !== c) {
-				avisar('La conexión cambió mientras confirmabas. Selecciónala de nuevo.', 'info');
+		const representaciones = proyecto().esquema?.representaciones;
+		const vista = representaciones?.find((x) => x.id === representacionSeleccionada);
+		if (c) {
+			const detalle = document.createElement('span');
+			detalle.textContent = `Conductor ${c.id}: ${describirBorne(c.de)} ↔ ${describirBorne(c.a)}`;
+			const boton = document.createElement('button');
+			boton.id = 'esq-desconectar';
+			boton.className = 'boton';
+			boton.type = 'button';
+			boton.textContent = 'Desconectar';
+			boton.setAttribute('aria-label', `Desconectar conductor ${c.id}`);
+			boton.onclick = async () => {
+				// Los ejemplos se pueden inspeccionar, pero no debe preguntarse por una mutación vetada.
+				if (!ctx.puedeEditar()) return;
+				const documento = proyecto();
+				const actual = documento.conductores.find((x) => x.id === c.id);
+				if (actual !== c) { refrescarEsquema(); return; }
+				const ruta = c.trazado?.length ? ` Tiene ${c.trazado.length} puntos de ruta manual.` : '';
+				const confirmado = await confirmar(
+					`¿Desconectar ${c.id} entre ${describirBorne(c.de)} y ${describirBorne(c.a)}? `
+					+ `Se quitará del esquema, tablero, simulación y listas.${ruta} Ctrl+Z permite deshacer.`,
+					{ ok: 'Desconectar', peligro: true },
+				);
+				if (!confirmado) return;
+				// Un diálogo es asíncrono: no se aplica su respuesta a otro proyecto o conductor.
+				if (proyecto() !== documento || documento.conductores.find((x) => x.id === c.id) !== c) {
+					avisar('La conexión cambió mientras confirmabas. Selecciónala de nuevo.', 'info');
+					refrescarEsquema();
+					return;
+				}
+				if (!ctx.desconectarConductor(c.id)) return;
+				conductorSeleccionado = undefined;
 				refrescarEsquema();
-				return;
-			}
-			if (!ctx.desconectarConductor(c.id)) return;
+			};
+			ayuda.append(detalle, document.createTextNode(' · '), boton);
+		} else if (vista) {
+			const d = proyecto().dispositivos.find((x) => x.id === vista.dispositivoId);
+			const descripcion = vista.parte.tipo === 'contactos'
+				? `${vista.parte.pares.length} contacto(s)` : vista.parte.tipo;
+			const detalle = document.createElement('span');
+			detalle.textContent = `Vista ${vista.id} · ${d?.designacion ?? vista.dispositivoId} [${vista.dispositivoId}] · ${descripcion} · hoja ${vista.hojaId}, casilla ${vista.posicion.columna}.${vista.posicion.fila}`;
+			const referencias = hojasEsquema.flatMap((h) => h.referencias
+				.filter((ref) => ref.representacionId === vista.id)
+				.map((ref) => ref.texto));
+			if (referencias.length) detalle.textContent += ` · Referencias: ${referencias.join(' · ')}`;
+			const boton = document.createElement('button');
+			boton.id = 'esq-borrar-representacion';
+			boton.className = 'boton';
+			boton.type = 'button';
+			boton.textContent = 'Borrar vista';
+			boton.setAttribute('aria-label', `Borrar representación ${vista.id} sin borrar aparato`);
+			boton.onclick = async () => {
+				if (!ctx.puedeEditar()) return;
+				const documento = proyecto();
+				if (documento.esquema?.representaciones?.find((x) => x.id === vista.id) !== vista) return;
+				const confirmado = await confirmar(
+					`¿Borrar solo la vista ${vista.id} de ${d?.designacion ?? vista.dispositivoId}? `
+					+ 'El aparato y sus conductores seguirán en el proyecto; las conexiones sin vista quedarán pendientes. Ctrl+Z permite deshacer.',
+					{ ok: 'Borrar vista', peligro: true },
+				);
+				if (!confirmado) return;
+				const lista = documento.esquema?.representaciones;
+				if (proyecto() !== documento || !lista || lista.find((x) => x.id === vista.id) !== vista) {
+					avisar('La vista cambió mientras confirmabas. Selecciónala de nuevo.', 'info');
+					refrescarEsquema();
+					return;
+				}
+				if (!capturar()) return;
+				lista.splice(lista.indexOf(vista), 1);
+				representacionSeleccionada = undefined;
+				marcarSucio();
+				actualizarTodo();
+				refrescarEsquema();
+				avisar(`Vista ${vista.id} borrada; ${d?.designacion ?? vista.dispositivoId} permanece en el proyecto.`, 'ok');
+			};
+			ayuda.append(detalle, document.createTextNode(' · '), boton);
+		} else {
 			conductorSeleccionado = undefined;
-			refrescarEsquema();
-		};
-		ayuda.append(detalle, document.createTextNode(' · '), boton);
+			representacionSeleccionada = undefined;
+			ayuda.textContent = representaciones !== undefined
+				? 'Selecciona una vista o un conductor para inspeccionarlo. Arrastra una vista para moverla; el circuito no cambia.'
+				: 'Arrastra cualquier símbolo para colocarlo donde quieras · los hilos lo siguen · selecciona un hilo para ver sus bornes';
+		}
+		const problemas = hojasEsquema[hojaActual]?.problemas ?? [];
+		if (problemas.length) {
+			const panel = document.createElement('details');
+			panel.id = 'esq-problemas';
+			panel.open = true;
+			const titulo = document.createElement('summary');
+			titulo.textContent = `${problemas.length} pendiente(s) en esta hoja`;
+			const lista = document.createElement('ul');
+			for (const problema of problemas) {
+				const fila = document.createElement('li');
+				fila.textContent = problema.mensaje;
+				lista.append(fila);
+			}
+			panel.append(titulo, lista);
+			ayuda.append(panel);
+		}
 	}
 
 	/**
@@ -134,6 +197,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		hojasEsquema = montarEsquema(proyecto(), ctx.potenciales());
 		if (hojasEsquema.length === 0) {
 			conductorSeleccionado = undefined;
+			representacionSeleccionada = undefined;
 			$('esquema-hoja').innerHTML = '<div id="esquema-vacio">Todavía no hay nada que dibujar.<br>'
 				+ 'Coloca aparatos y conéctalos, y el esquema se dibuja solo.</div>';
 			$('esq-indicador').textContent = 'Sin hojas';
@@ -150,6 +214,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			totalHojas: hojasEsquema.length,
 			resaltado: conductorSeleccionado ? undefined : ctx.dispositivoSeleccionado(),
 			resaltadoConductor: conductorSeleccionado,
+			resaltadoRepresentacion: conductorSeleccionado ? undefined : representacionSeleccionada,
 			interactivo: true,
 		});
 		$('esq-indicador').textContent = `Hoja ${hoja.numero} / ${hojasEsquema.length}`;
@@ -157,8 +222,12 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		($('esq-columnas') as HTMLInputElement).value = String(hoja.columnas);
 		// Se dice cuántos aparatos están colocados a mano: si no, «Ordenar solo» parece que no hace
 		// nada cuando no hay nada que soltar, y sorprende cuando sí lo hay.
+		const explicito = proyecto().esquema?.representaciones !== undefined;
 		const aMano = proyecto().dispositivos.filter((d) => d.esquema).length;
-		($('esq-auto') as HTMLButtonElement).textContent = aMano ? `⟲ Ordenar solo (${aMano})` : '⟲ Ordenar solo';
+		const auto = $('esq-auto') as HTMLButtonElement;
+		auto.disabled = explicito;
+		auto.textContent = explicito ? 'Ordenar solo (no disponible para vistas M2)'
+			: aMano ? `⟲ Ordenar solo (${aMano})` : '⟲ Ordenar solo';
 		pintarConductorSeleccionado();
 		aplicarZoomEsquema();
 
@@ -167,6 +236,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				const id = g.getAttribute('data-conductor');
 				if (!id || !proyecto().conductores.some((c) => c.id === id)) return;
 				conductorSeleccionado = id;
+				representacionSeleccionada = undefined;
 				refrescarEsquema();
 			};
 			g.addEventListener('click', (ev) => { ev.stopPropagation(); seleccionarConductor(); });
@@ -181,10 +251,104 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		// vistas del mismo tablero— y arrastrarlo lo COLOCA donde se suelte.
 		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('[data-dispositivo]')) {
 			g.addEventListener('pointerdown', (ev) => empezarArrastreEsquema(ev, g));
+			g.addEventListener('keydown', (ev) => {
+				if (ev.key !== 'Enter' && ev.key !== ' ') return;
+				const id = g.getAttribute('data-representacion');
+				if (!id || !proyecto().esquema?.representaciones?.some((r) => r.id === id)) return;
+				ev.preventDefault();
+				representacionSeleccionada = id;
+				conductorSeleccionado = undefined;
+				const aparato = g.getAttribute('data-dispositivo');
+				if (aparato) seleccionar(aparato);
+				refrescarEsquema();
+			});
 		}
 	}
 
 	/* ------------------- Colocar los símbolos del esquema a mano ------------------- */
+
+	/** Mueve la vista M2 por su ID gráfico; ni el aparato ni sus cables cambian. */
+	function empezarArrastreRepresentacion(ev: PointerEvent, g: SVGGElement): void {
+		const id = g.getAttribute('data-representacion');
+		const hoja = hojasEsquema[hojaActual];
+		const documento = proyecto();
+		const lista = documento.esquema?.representaciones;
+		const vista = lista?.find((r) => r.id === id);
+		if (!id || !hoja || !vista || vista.hojaId !== hoja.id || ev.button !== 0) return;
+		const d = documento.dispositivos.find((x) => x.id === vista.dispositivoId);
+		const simbolo = hoja.simbolos.find((s) => s.representacionId === id);
+		if (!d || !simbolo) return;
+		ev.preventDefault();
+		conductorSeleccionado = undefined;
+		representacionSeleccionada = id;
+		seleccionar(d.id);
+		pintarConductorSeleccionado();
+
+		const inicialVisible = {
+			hojaId: hoja.id, columna: simbolo.columna,
+			fila: filaDeAltura(simbolo.y + simbolo.alto / 2),
+		};
+		let destino = inicialVisible;
+		let capturado = false;
+		const limpiar = (): void => {
+			window.removeEventListener('pointermove', alMover);
+			window.removeEventListener('pointerup', alSoltar);
+			window.removeEventListener('pointercancel', alSoltar);
+			$('esquema-hoja').classList.remove('arrastrando');
+		};
+		const rejillaEn = (cx: number, cy: number): typeof destino | undefined => {
+			const svg = $('esquema-hoja').querySelector('svg');
+			if (!svg) return undefined;
+			const caja = svg.getBoundingClientRect();
+			if (caja.width < 1 || caja.height < 1) return undefined;
+			const xmm = ((cx - caja.left) / caja.width) * hoja.anchoMm;
+			const ymm = ((cy - caja.top) / caja.height) * hoja.altoMm;
+			const enHoja = Math.floor((xmm - MARGEN.izq) / anchoColumna(HOJA_A3, hoja.columnas));
+			let indice = hojaActual;
+			let columna = enHoja + 1;
+			if (columna < 1) {
+				indice = Math.max(0, hojaActual - 1);
+				columna = indice === hojaActual ? 1 : hojasEsquema[indice].columnas;
+			} else if (columna > hoja.columnas) {
+				indice = Math.min(hojasEsquema.length - 1, hojaActual + 1);
+				columna = indice === hojaActual ? hoja.columnas : 1;
+			}
+			return { hojaId: hojasEsquema[indice].id, columna, fila: filaDeAltura(ymm) };
+		};
+		const alMover = (e: PointerEvent): void => {
+			if (proyecto() !== documento || documento.esquema?.representaciones?.find((r) => r.id === id) !== vista) {
+				limpiar();
+				return;
+			}
+			const siguiente = rejillaEn(e.clientX, e.clientY);
+			if (!siguiente) return;
+			if (!capturado && siguiente.hojaId === inicialVisible.hojaId
+				&& siguiente.columna === inicialVisible.columna && siguiente.fila === inicialVisible.fila) return;
+			if (siguiente.hojaId === destino.hojaId && siguiente.columna === destino.columna
+				&& siguiente.fila === destino.fila) return;
+			if (!capturado) {
+				if (!capturar()) { limpiar(); refrescarEsquema(); return; }
+				capturado = true;
+				$('esquema-hoja').classList.add('arrastrando');
+			}
+			destino = siguiente;
+			vista.hojaId = siguiente.hojaId;
+			vista.posicion = { columna: siguiente.columna, fila: siguiente.fila };
+			refrescarEsquema();
+		};
+		const alSoltar = (): void => {
+			limpiar();
+			if (!capturado) { refrescarEsquema(); return; }
+			hojaActual = Math.max(0, hojasEsquema.findIndex((h) => h.id === destino.hojaId));
+			marcarSucio();
+			actualizarTodo();
+			refrescarEsquema();
+			avisar(`Vista ${id} colocada en hoja ${destino.hojaId}, casilla ${destino.columna}.${destino.fila}`, 'ok');
+		};
+		window.addEventListener('pointermove', alMover);
+		window.addEventListener('pointerup', alSoltar);
+		window.addEventListener('pointercancel', alSoltar);
+	}
 
 	/**
 	 * Arrastrar un símbolo del esquema para ponerlo donde uno quiere.
@@ -198,6 +362,10 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	 * esquema que se entrega tiene los aparatos alineados, no puestos a ojo.
 	 */
 	function empezarArrastreEsquema(ev: PointerEvent, g: SVGGElement): void {
+		if (proyecto().esquema?.representaciones !== undefined) {
+			empezarArrastreRepresentacion(ev, g);
+			return;
+		}
 		const id = g.getAttribute('data-dispositivo');
 		const hoja = hojasEsquema[hojaActual];
 		if (!id || !hoja || ev.button !== 0) return;
@@ -205,6 +373,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		if (!d) return;
 		ev.preventDefault();
 		conductorSeleccionado = undefined;
+		representacionSeleccionada = undefined;
 		pintarConductorSeleccionado();
 		seleccionar(id);
 
@@ -297,7 +466,10 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		// Igual que el dossier: una ventana abierta dejaría el esquema debajo e inerte.
 		if (abrir) cerrarTodasLasVentanas();
 		esquemaAbierto = abrir;
-		if (!abrir) conductorSeleccionado = undefined;
+		if (!abrir) {
+			conductorSeleccionado = undefined;
+			representacionSeleccionada = undefined;
+		}
 		($('panel-esquema') as HTMLElement).hidden = !abrir;
 		$('btn-esquema').classList.toggle('activo', abrir);
 		if (abrir) {
@@ -320,6 +492,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	function pasarHoja(delta: number): void {
 		hojaActual += delta;
 		conductorSeleccionado = undefined;
+		representacionSeleccionada = undefined;
 		refrescarEsquema();
 	}
 
@@ -328,6 +501,17 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	($('esq-columnas') as HTMLInputElement).onchange = (ev) => {
 		const n = Math.max(4, Math.min(20, Number((ev.target as HTMLInputElement).value) || 10));
 		(ev.target as HTMLInputElement).value = String(n);
+		if (proyecto().esquema?.representaciones !== undefined) {
+			const actual = hojasEsquema[hojaActual];
+			const hoja = proyecto().hojas.find((h) => h.id === actual?.id);
+			if (!hoja || n === actual.columnas) return;
+			if (!capturar()) return;
+			hoja.columnas = n;
+			marcarSucio();
+			actualizarTodo();
+			refrescarEsquema();
+			return;
+		}
 		if (n === (proyecto().esquema?.columnasPorHoja ?? 10)) return;
 		if (!capturar()) return;
 		proyecto().esquema = { ...proyecto().esquema, columnasPorHoja: n };
@@ -339,8 +523,20 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	($('esq-titulo-editar') as HTMLButtonElement).onclick = async () => {
 		const hoja = hojasEsquema[hojaActual];
 		if (!hoja) { avisar('Todavía no hay ninguna hoja.', 'info'); return; }
+		const documento = proyecto();
 		const nuevo = await pedirTexto(`Título de la hoja ${hoja.numero}:`, hoja.titulo);
 		if (nuevo === null) return;
+		if (proyecto() !== documento) { avisar('El proyecto cambió mientras editabas el título.', 'info'); return; }
+		if (proyecto().esquema?.representaciones !== undefined) {
+			const folio = documento.hojas.find((h) => h.id === hoja.id);
+			if (!folio || nuevo.trim() === folio.titulo) return;
+			if (!capturar()) return;
+			folio.titulo = nuevo.trim() || `Hoja ${folio.numero}`;
+			marcarSucio();
+			actualizarTodo();
+			refrescarEsquema();
+			return;
+		}
 		if (!capturar()) return;
 		const titulos = { ...(proyecto().esquema?.titulos ?? {}) };
 		// Vaciarlo devuelve el título automático, que es lo que espera quien borra el texto.
@@ -353,6 +549,10 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	};
 
 	($('esq-auto') as HTMLButtonElement).onclick = async () => {
+		if (proyecto().esquema?.representaciones !== undefined) {
+			avisar('Las vistas M2 mantienen su colocación manual; ordenar automáticamente no está disponible.', 'info');
+			return;
+		}
 		const aMano = proyecto().dispositivos.filter((d) => d.esquema);
 		if (aMano.length === 0) { avisar('El esquema ya está ordenado solo: no has movido nada.', 'info'); return; }
 		if (!(await confirmar(
