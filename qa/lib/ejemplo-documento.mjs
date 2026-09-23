@@ -136,6 +136,10 @@ export async function abrirEjemploYCopiar(page, {
 	}, undefined, { timeout });
 	const ejemplo = await page.evaluate(() => window.qa.proyecto());
 	verificarProyectoEjemplo(ejemplo, requisitos);
+	exigir(await page.locator('#nombre-proyecto').evaluate((campo) => campo.readOnly),
+		'el nombre del ejemplo debe ser de solo lectura');
+	exigir(await page.locator('#estado-guardado').isHidden(),
+		'el ejemplo no puede mostrar un estado de guardado propio');
 	if (await page.locator('#modal-explicacion').isVisible()) {
 		await page.locator('#btn-cerrar-explicacion').click();
 	}
@@ -149,6 +153,8 @@ export async function abrirEjemploYCopiar(page, {
 	}, anterior.id, { timeout });
 	const persistido = await page.evaluate(() => window.qa.esperarPersistencia());
 	const copia = await page.evaluate(() => window.qa.proyecto());
+	exigir(!(await page.locator('#nombre-proyecto').evaluate((campo) => campo.readOnly)),
+		'la copia independiente debe volver a ser editable');
 	const registrados = await page.evaluate(() => window.qa.documentos());
 	verificarCopiaEjemplo({ anterior, ejemplo, copia, persistido, registrados, requisitos });
 	return { ejemplo, copia, documento: persistido };

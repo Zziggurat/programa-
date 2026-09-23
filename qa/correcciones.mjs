@@ -17,11 +17,9 @@ import { abrirNavegador, servidorDeQA, trabajarSobreCopia } from './lib/entorno.
 const { servidor: server } = await servidorDeQA();
 const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
-const browser = await abrirNavegador(chromium);
-const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+let browser;
+let page;
 const errs = [];
-page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errs.push(m.text()); });
 
 let fallos = 0;
 const must = (n, c, extra = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${extra ? ' → ' + extra : ''}`); };
@@ -29,16 +27,47 @@ const info = (t) => console.log('     ' + t);
 const jsClick = (id) => page.evaluate((i) => document.getElementById(i)?.click(), id);
 const qa = (f, ...a) => page.evaluate(([n, g]) => window.qa[n](...g), [f, a]);
 const LIBRE = { x0: 340, x1: 1060, y0: 110, y1: 800 };
+const HOLGADA = { x0: LIBRE.x0 + 40, x1: LIBRE.x1 - 40, y0: LIBRE.y0 + 40, y1: LIBRE.y1 - 80 };
 const enZona = (p) => p && p.x > LIBRE.x0 && p.x < LIBRE.x1 && p.y > LIBRE.y0 && p.y < LIBRE.y1;
+const puntoAgarreEnLienzo = async (id, separadoDe, zonas = [HOLGADA, LIBRE]) => {
+	for (const zona of zonas) for (const muestras of [31, 61, 121, 241]) {
+		const p = await qa('puntoParaAgarrar', id, muestras, zona);
+		if (enZona(p) && (!separadoDe || Math.hypot(p.x - separadoDe.x, p.y - separadoDe.y) > 60)) return p;
+	}
+	return undefined;
+};
 
+async function abrirEjemploCableado() {
+	await jsClick('btn-empezar-ejemplo');
+	await page.locator('#modal-ejemplos').waitFor({ state: 'visible', timeout: 60_000 });
+	await page.locator('.tarjeta-ejemplo').filter({ has: page.getByRole('heading', {
+		name: 'Arranque directo de motor (380 V)', exact: true,
+	}) }).getByRole('button', { name: 'Abrir y estudiar', exact: true }).click();
+	await page.waitForFunction(() => {
+		const dialogo = document.getElementById('modal-dialogo');
+		return document.getElementById('chip-ejemplo')?.hidden === false
+			|| !!dialogo && !dialogo.hidden && getComputedStyle(dialogo).display !== 'none';
+	}, null, { timeout: 60_000 });
+	if (await page.isVisible('#modal-dialogo')) {
+		await jsClick('dialogo-ok');
+		await page.waitForFunction(() => document.getElementById('chip-ejemplo')?.hidden === false,
+			null, { timeout: 60_000 });
+	}
+	if (await page.isVisible('#modal-explicacion')) await jsClick('btn-cerrar-explicacion');
+	if (!(await trabajarSobreCopia(page, { timeout: 60_000 }))) {
+		throw new Error('El ejemplo no produjo una copia editable confirmada.');
+	}
+	await page.waitForFunction(() => window.qa.rutas().length > 0, null, { timeout: 60_000 });
+}
+
+try {
+browser = await abrirNavegador(chromium);
+page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
+page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errs.push(m.text()); });
 await page.goto(url); await page.waitForTimeout(900);
 if (await page.isVisible('#modal-ayuda')) { await jsClick('btn-cerrar-ayuda'); await page.waitForTimeout(200); }
-await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
-if (await page.isVisible('#modal-ejemplos')) {
-	await page.evaluate(() => document.querySelectorAll('.tarjeta-ejemplo button')[2].click());
-if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-	await page.waitForTimeout(750); await jsClick('btn-cerrar-explicacion'); await trabajarSobreCopia(page);
-}
+await abrirEjemploCableado();
 
 /* ================= 3. La barra no hace scroll y los menús se despliegan ================= */
 console.log('\n--- 3. Barra y menús desplegables ---');
@@ -52,17 +81,20 @@ must('la barra NO crea barra de scroll', !barra.scroll);
 must('la barra no recorta a sus hijos', barra.overflow === 'visible');
 
 // La barra tiene que aguantar en TODOS los estados del chip de guardado y a varios anchos.
-// El chip cambia de texto («Guardado» / «Sin descargar» / «Sin guardar») y por tanto de ancho:
+// El chip cambia de texto y ancho; incluir la revisión más larga razonable, no rótulos V7.
 // medirla solo recién cargada, con el texto más corto, deja pasar el desbordamiento real.
 for (const w of [1024, 1152, 1280, 1366, 1440, 1536, 1600, 1745, 1800, 1920]) {
 	await page.setViewportSize({ width: w, height: 900 });
 	await page.waitForTimeout(200);
-	for (const clase of ['', 'sucio', 'fallo']) {
-		const m = await page.evaluate((c) => {
+	for (const [clase, texto] of [
+		['', 'r999 · Guardado local'], ['sucio', 'r999 · Cambios pendientes'],
+		['sucio', 'r999 · Guardando…'], ['fallo', 'r999 · Sin guardar'],
+	]) {
+		const m = await page.evaluate(({ c, texto }) => {
 			const chip = document.getElementById('estado-guardado');
 			const antes = { clase: chip.className, texto: chip.textContent };
 			chip.className = c;
-			chip.textContent = c === 'fallo' ? 'Sin guardar' : c === 'sucio' ? 'Sin descargar' : 'Guardado';
+			chip.textContent = texto;
 			// La app remide los rótulos cuando cambia el estado; la prueba hace lo mismo para medir
 			// la barra como queda de verdad y no a mitad de ajuste.
 			window.qa.ajustarBarra();
@@ -70,7 +102,7 @@ for (const w of [1024, 1152, 1280, 1366, 1440, 1536, 1600, 1745, 1800, 1920]) {
 			const r = { scroll: b.scrollWidth > b.clientWidth + 1, texto: chip.textContent };
 			chip.className = antes.clase; chip.textContent = antes.texto;
 			return r;
-		}, clase);
+		}, { c: clase, texto });
 		must(`la barra aguanta a ${w} px con «${m.texto}»`, !m.scroll);
 	}
 }
@@ -132,26 +164,29 @@ must('el detalle se cierra', !(await page.isVisible('#modal-drc')));
 /* ================= 2. Uniones solo con doble clic ================= */
 console.log('\n--- 2. Uniones de cable: solo con doble clic ---');
 await jsClick('btn-nuevo'); await page.waitForTimeout(250);
-if (await page.isVisible('#modal-dialogo')) { await jsClick('dialogo-ok'); await page.waitForTimeout(350); }
-await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
-if (await page.isVisible('#modal-ejemplos')) {
-	await page.evaluate(() => document.querySelectorAll('.tarjeta-ejemplo button')[2].click());
-if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document.getElementById('dialogo-ok')?.click()); await page.waitForTimeout(300); }
-	await page.waitForTimeout(750); await jsClick('btn-cerrar-explicacion');
-	// De aquí abajo se crean uniones en un cable y se añade una imagen de referencia: se edita.
-	await trabajarSobreCopia(page);
-}
+await page.locator('#modal-dialogo').waitFor({ state: 'visible', timeout: 20_000 });
+await jsClick('dialogo-ok');
+await page.waitForFunction(() => window.qa.proyecto().conductores.length === 0,
+	null, { timeout: 60_000 });
+// De aquí abajo se crean uniones en un cable y se añade una imagen de referencia: se edita.
+await abrirEjemploCableado();
 await jsClick('modo-trabajo'); await page.waitForTimeout(350);
 await jsClick('btn-centrar'); await page.waitForTimeout(500);
 
 const uniones = async (id) => ((await qa('proyecto')).conductores.find((c) => c.id === id)?.trazado ?? []).length;
 const rutas = await qa('rutas');
 let cable;
-for (const r of rutas) {
-	const p = await qa('puntoParaAgarrar', r.id);
-	if (enZona(p)) { cable = { id: r.id, p }; break; }
+for (const zona of [HOLGADA, LIBRE]) {
+	for (const r of rutas) {
+		const p = await puntoAgarreEnLienzo(r.id, undefined, [zona]);
+		if (!p) continue;
+		const lejos = await puntoAgarreEnLienzo(r.id, p, [zona]);
+		if (lejos) { cable = { id: r.id, p }; break; }
+	}
+	if (cable) break;
 }
 must('hay un cable con el que probar', !!cable);
+if (!cable) throw new Error('El ejemplo no ofrece un cable agarrable con dos puntos separados en la zona de prueba.');
 info(`probando con ${cable.id} en (${Math.round(cable.p.x)}, ${Math.round(cable.p.y)})`);
 
 // (a) Arrastrar un cable SIN uniones no debe crear ninguna.
@@ -164,36 +199,35 @@ must('arrastrar el cable NO crea uniones', (await uniones(cable.id)) === antesAr
 	`${antesArrastre} → ${await uniones(cable.id)}`);
 
 // (b) Un solo clic derecho tampoco.
-const p2 = await qa('puntoParaAgarrar', cable.id);
-if (enZona(p2)) {
-	await page.mouse.click(p2.x, p2.y, { button: 'right' }); await page.waitForTimeout(400);
-	must('un solo clic derecho NO crea unión', (await uniones(cable.id)) === antesArrastre,
-		`${antesArrastre} → ${await uniones(cable.id)}`);
-}
+const p2 = await puntoAgarreEnLienzo(cable.id);
+if (!p2) throw new Error('El cable perdió su punto agarrable antes del clic derecho.');
+await page.mouse.click(p2.x, p2.y, { button: 'right' }); await page.waitForTimeout(400);
+must('un solo clic derecho NO crea unión', (await uniones(cable.id)) === antesArrastre,
+	`${antesArrastre} → ${await uniones(cable.id)}`);
 
 // (c) Doble clic izquierdo SÍ.
-const p3 = await qa('puntoParaAgarrar', cable.id);
+const p3 = await puntoAgarreEnLienzo(cable.id);
 must('el cable sigue localizable', enZona(p3));
+if (!p3) throw new Error('El cable perdió su punto agarrable antes del doble clic izquierdo.');
 await page.mouse.dblclick(p3.x, p3.y); await page.waitForTimeout(450);
 const trasDoble = await uniones(cable.id);
 must('doble clic izquierdo crea una unión', trasDoble === antesArrastre + 1, `${antesArrastre} → ${trasDoble}`);
 
 // (d) Doble clic derecho SÍ.
-const p4 = await qa('puntoParaAgarrar', cable.id);
-if (enZona(p4)) {
-	// Dos clics derechos SEGUIDOS. Se despachan los eventos «contextmenu» directamente porque
-	// el ida y vuelta del control remoto del navegador tarda ~700 ms entre clic y clic —más que
-	// cualquier persona— y eso, no el programa, es lo que rompería la prueba.
-	await page.evaluate(([x, y]) => {
-		const lienzo = document.querySelector('#escena canvas');
-		for (let i = 0; i < 2; i++) {
-			lienzo.dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true }));
-		}
-	}, [p4.x, p4.y]);
-	await page.waitForTimeout(500);
-	must('doble clic derecho crea otra unión', (await uniones(cable.id)) === trasDoble + 1,
-		`${trasDoble} → ${await uniones(cable.id)}`);
-}
+const p4 = await puntoAgarreEnLienzo(cable.id);
+if (!p4) throw new Error('El cable perdió su punto agarrable antes del doble clic derecho.');
+// Dos clics derechos SEGUIDOS. Se despachan los eventos «contextmenu» directamente porque
+// el ida y vuelta del control remoto del navegador tarda ~700 ms entre clic y clic —más que
+// cualquier persona— y eso, no el programa, es lo que rompería la prueba.
+await page.evaluate(([x, y]) => {
+	const lienzo = document.querySelector('#escena canvas');
+	for (let i = 0; i < 2; i++) {
+		lienzo.dispatchEvent(new MouseEvent('contextmenu', { clientX: x, clientY: y, bubbles: true, cancelable: true }));
+	}
+}, [p4.x, p4.y]);
+await page.waitForTimeout(500);
+must('doble clic derecho crea otra unión', (await uniones(cable.id)) === trasDoble + 1,
+	`${trasDoble} → ${await uniones(cable.id)}`);
 
 // (e) Y una unión existente sí se puede arrastrar.
 //
@@ -217,15 +251,14 @@ if (enZona(pu)) {
 // Y lo contrario, que es la regla de verdad: lejos de toda unión, el cable NO se deforma.
 {
 	const antes = JSON.stringify((await qa('proyecto')).conductores.find((c) => c.id === cable.id).trazado);
-	const lejos = await qa('puntoParaAgarrar', cable.id);
 	const union = await qa('puntoDeUnion', cable.id, 0);
-	if (enZona(lejos) && union && Math.hypot(lejos.x - union.x, lejos.y - union.y) > 60) {
-		await page.mouse.move(lejos.x, lejos.y); await page.mouse.down(); await page.waitForTimeout(60);
-		for (let k = 1; k <= 6; k++) { await page.mouse.move(lejos.x + 8 * k, lejos.y + 6 * k); await page.waitForTimeout(30); }
-		await page.mouse.up(); await page.waitForTimeout(400);
-		const desp = JSON.stringify((await qa('proyecto')).conductores.find((c) => c.id === cable.id).trazado);
-		must('arrastrar LEJOS de una unión no deforma el cable', desp === antes);
-	}
+	const lejos = await puntoAgarreEnLienzo(cable.id, union);
+	if (!union || !lejos) throw new Error('No existe un punto agarrable separado de la unión para verificar el arrastre.');
+	await page.mouse.move(lejos.x, lejos.y); await page.mouse.down(); await page.waitForTimeout(60);
+	for (let k = 1; k <= 6; k++) { await page.mouse.move(lejos.x + 8 * k, lejos.y + 6 * k); await page.waitForTimeout(30); }
+	await page.mouse.up(); await page.waitForTimeout(400);
+	const desp = JSON.stringify((await qa('proyecto')).conductores.find((c) => c.id === cable.id).trazado);
+	must('arrastrar LEJOS de una unión no deforma el cable', desp === antes);
 }
 
 /* ================= 1. Tapas de canaleta opacas en Visualización ================= */
@@ -334,6 +367,14 @@ must('sin cables fantasma', (await qa('cablesDibujados')) === fin.conductores.le
 	`${await qa('cablesDibujados')}/${fin.conductores.length}`);
 must('sin errores de JavaScript', errs.length === 0, errs.slice(0, 3).join(' | '));
 
+} catch (error) {
+	fallos++;
+	console.error(error?.stack ?? error);
+} finally {
+if (browser) try { await browser.close(); } catch (error) { fallos++; console.error('Cierre Chromium:', error); }
+	server.closeAllConnections?.();
+	try { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
+	catch (error) { fallos++; console.error('Cierre servidor:', error); }
+}
 console.log(fallos === 0 ? '\n=== TODO OK ✔ ===' : `\n=== ${fallos} FALLOS ✗ ===`);
-await browser.close(); server.close();
-process.exit(fallos === 0 ? 0 : 1);
+process.exitCode = fallos === 0 ? 0 : 1;

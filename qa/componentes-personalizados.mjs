@@ -113,6 +113,15 @@ async function crearDesdeFormulario() {
 	await pagina.locator('[data-cp-campo="nombre"]').fill(NOMBRE);
 	await pagina.locator('[data-cp-campo="fabricante"]').fill('QA TableroStudio');
 	await pagina.locator('[data-cp-campo="referencia"]').fill('QA-KM3-220');
+	await pagina.locator('[data-cp="volver"]').click();
+	await pagina.locator('.cp-borrador').waitFor({ state: 'visible' });
+	must('volver a la biblioteca conserva el borrador sin guardar',
+		(await pagina.locator('.cp-borrador').innerText()).includes(NOMBRE));
+	await pagina.getByRole('button', { name: 'Continuar edición' }).click();
+	must('reanudar conserva identidad, fabricante y referencia',
+		(await pagina.locator('[data-cp-campo="nombre"]').inputValue()) === NOMBRE
+		&& (await pagina.locator('[data-cp-campo="fabricante"]').inputValue()) === 'QA TableroStudio'
+		&& (await pagina.locator('[data-cp-campo="referencia"]').inputValue()) === 'QA-KM3-220');
 	await pagina.locator('[data-cp-campo="descripcion"]').fill('Contactor 3P con bobina 220 V y auxiliar conmutado, creado por QA.');
 	await pagina.locator('[data-cp-campo="ancho"]').fill('75');
 	await pagina.locator('[data-cp-campo="alto"]').fill('110');
@@ -173,8 +182,15 @@ async function eliminarEImportar(ruta) {
 	const selectorArchivo = pagina.waitForEvent('filechooser');
 	await pagina.locator('[data-cp="importar"]').click();
 	await (await selectorArchivo).setFiles(ruta);
+	// La definición borrada conserva su identidad/revisión en el archivo histórico. Reutilizar
+	// ese ID como si nunca hubiera existido falsificaría la procedencia de proyectos anteriores.
+	await pagina.locator('#modal-dialogo').waitFor({ state: 'visible' });
+	must('la UI pide confirmar la nueva identidad en vez de reciclar la archivada',
+		/identidad|copia/i.test(await pagina.locator('#dialogo-msg').innerText()));
+	await pagina.locator('#dialogo-ok').click();
 	await tarjeta().waitFor({ state: 'visible' });
-	must('importar por la UI restaura la definición y su PNG', (await qa('componentesPersonalizados')).length === 1);
+	must('importar por la UI crea una copia sin borrar la identidad histórica y conserva su PNG',
+		(await qa('componentesPersonalizados')).length === 1);
 }
 
 async function colocarComponente(definicionId) {
@@ -290,6 +306,20 @@ try {
 
 	console.log('\n--- 1. Crear contactor PNG y confirmar su contrato eléctrico por la UI ---');
 	await crearDesdeFormulario();
+	await pagina.locator('[data-cp="buscar"]').fill('sin coincidencia de QA');
+	await pagina.waitForFunction(() => document.querySelectorAll('#ui-componentes-personalizados .cp-tarjeta').length === 0);
+	must('buscar no inventa componentes ni altera la biblioteca',
+		(await pagina.locator('.cp-vacio').innerText()).includes('No hay componentes'));
+	await pagina.locator('[data-cp="buscar"]').fill('QA-KM3-220');
+	await tarjeta().waitFor({ state: 'visible' });
+	await pagina.locator('[data-cp="perfil"]').selectOption('piloto');
+	await pagina.waitForFunction(() => document.querySelectorAll('#ui-componentes-personalizados .cp-tarjeta').length === 0);
+	must('el filtro de familia excluye un componente de otro perfil', await pagina.locator('.cp-tarjeta').count() === 0);
+	await pagina.locator('[data-cp="perfil"]').selectOption('contactor');
+	await tarjeta().waitFor({ state: 'visible' });
+	must('referencia y familia recuperan el contactor correcto', await pagina.locator('.cp-tarjeta').count() === 1);
+	await pagina.locator('[data-cp="buscar"]').fill('');
+	await pagina.locator('[data-cp="perfil"]').selectOption('');
 	let definiciones = await qa('componentesPersonalizados');
 	const original = definiciones.find((d) => d.nombre === NOMBRE);
 	must('la biblioteca guarda una definición versionada', !!original && original.revision === 1,
@@ -311,7 +341,7 @@ try {
 		definiciones.length === 1 && definiciones[0].id === original.id && definiciones[0].assetId === original.assetId);
 	await eliminarEImportar(paquete);
 	const importado = (await qa('componentesPersonalizados'))[0];
-	must('el roundtrip individual conserva identidad, polos, NA/NC y asset', importado.id === original.id
+	must('el roundtrip individual crea identidad nueva y conserva polos, NA/NC y asset', importado.id !== original.id
 		&& importado.assetId === original.assetId && perfilContactorValido(importado));
 
 	console.log('\n--- 3. Colocar, cablear bobina + auxiliar y energizar ---');
@@ -407,7 +437,7 @@ try {
 			&& idsCircuito.has(c.a.dispositivoId))
 		&& firmaCableado(recargado) === firmaCableadoOriginal, String(recargado.conductores.length));
 	must('la definición reutilizable sigue en Mis Componentes',
-		(await qa('componentesPersonalizados')).some((d) => d.id === original.id && perfilContactorValido(d)));
+		(await qa('componentesPersonalizados')).some((d) => d.id === importado.id && perfilContactorValido(d)));
 
 	await pagina.locator('#btn-energizar').click();
 	await esperarActivos([lamparaNC.id], [personalizado.id, lamparaPolo.id, lamparaNA.id]);
@@ -435,9 +465,9 @@ try {
 	must('el paquete conserva el mapa borne a borne, no solo la cantidad de cables',
 		firmaCableado(proyectoImportado) === firmaCableadoOriginal);
 	must('el paquete instala la definición reutilizable en la biblioteca limpia',
-		bibliotecaImportada.some((d) => d.id === original.id && d.assetId === original.assetId));
+		bibliotecaImportada.some((d) => d.id === importado.id && d.assetId === original.assetId));
 	must('polos, NA y NC sobreviven al paquete de proyecto', perfilContactorValido(instanciaImportada)
-		&& bibliotecaImportada.some((d) => d.id === original.id && perfilContactorValido(d)));
+		&& bibliotecaImportada.some((d) => d.id === importado.id && perfilContactorValido(d)));
 	must('el PNG se hidrata como imagen utilizable en el nuevo navegador',
 		instanciaImportada?.assetId === original.assetId && instanciaImportada.imagen?.startsWith('blob:'));
 	must('la importación no crea geometrías fantasma', await qa('cablesDibujados') === 11,
