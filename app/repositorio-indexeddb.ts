@@ -11,7 +11,7 @@ import type {
 import { ALMACENES_PERSISTENCIA } from '../src/persistencia/tipos.js';
 
 export const NOMBRE_BASE_PROYECTOS = 'tablerostudio-documentos';
-export const VERSION_BASE_PROYECTOS = 3; // V9+: archiva revisiones custom sin alterar los stores V1/V8.
+export const VERSION_BASE_PROYECTOS = 4; // DOC-03: archivo documental independiente de recuperación.
 
 function esperarPeticion<T>(peticion: IDBRequest<T>): Promise<T> {
 	return new Promise((resolve, reject) => {

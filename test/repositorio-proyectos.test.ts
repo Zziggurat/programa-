@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
+import { proyectoParaPersistir } from '../src/componentes/assets.js';
+import { hashSnapshotTecnico } from '../src/datos-tecnicos/hash.js';
 import {
 	crearPaqueteProyecto,
 	instanciarComponentePersonalizado,
@@ -86,11 +88,138 @@ async function paquetePortable(): Promise<PaqueteProyectoPortatil> {
 	return repositorio.exportarPaquete(documento.id);
 }
 
-test('el esquema conserva los almacenes V1/V8 y añade revisiones custom sin sustituirlos', () => {
+test('el esquema conserva V1/V8, revisiones custom y archivo documental separados', () => {
 	assert.deepEqual(ALMACENES_PERSISTENCIA, [
 		'projects', 'assets', 'customComponents', 'snapshots', 'metadata', 'recovery', 'technicalData',
 		'customComponentRevisions',
+		'documentaryRevisions',
 	]);
+});
+
+const HASH_PAQUETE_A = `sha256:${'a'.repeat(64)}`;
+const HASH_PAQUETE_B = `sha256:${'b'.repeat(64)}`;
+const HASH_PAQUETE_C = `sha256:${'d'.repeat(64)}`;
+const HASH_MANIFIESTO = `sha256:${'c'.repeat(64)}`;
+
+test('DOC-03 archiva una revisión persistida exacta, idempotente y aislada de autosave/snapshots', async () => {
+	const { backend, repositorio } = entorno(1);
+	const a = await repositorio.crear({ proyecto: proyectoValido('A') });
+	const b = await repositorio.crear({ proyecto: proyectoValido('B') });
+	const opciones = { projectId: a.id, revisionEsperada: a.revision,
+		proyecto: a.proyecto, sha256Manifiesto: HASH_MANIFIESTO, sha256Paquete: HASH_PAQUETE_A };
+	const preparada = await repositorio.archivarRevisionDocumental(opciones);
+	assert.equal(preparada.estado, 'PREPARADA');
+	assert.equal(preparada.entregaDeclaradaEn, undefined);
+	assert.equal(preparada.sha256Proyecto, hashSnapshotTecnico(a.proyecto));
+	assert.deepEqual(await repositorio.archivarRevisionDocumental(opciones), preparada);
+	assert.equal(await backend.contar('documentaryRevisions'), 1);
+	assert.deepEqual((await repositorio.listarRevisionesDocumentales(b.id)), []);
+
+	const cambiado = structuredClone(a.proyecto);
+	cambiado.datos = { cliente: 'A posterior' };
+	const a2 = await repositorio.guardar(a.id, { revisionEsperada: a.revision, proyecto: cambiado });
+	await repositorio.crearSnapshot(a.id);
+	await repositorio.crearSnapshot(a.id);
+	assert.equal((await repositorio.listarSnapshots(a.id)).length, 1);
+	assert.deepEqual(await repositorio.abrirRevisionDocumental(a.id, 1, HASH_PAQUETE_A), preparada);
+	await assert.rejects(repositorio.archivarRevisionDocumental(opciones), ConflictoRevision);
+	await repositorio.eliminar(a.id, a2.revision);
+	assert.equal((await repositorio.listarRevisionesDocumentales()).length, 1,
+		'el archivo conserva descubribilidad aunque el proyecto editable se elimine');
+	assert.equal((await repositorio.abrirRevisionDocumental(a.id, 1, HASH_PAQUETE_A)).proyecto.nombre, 'A');
+	assert.equal((await repositorio.abrir(b.id)).proyecto.nombre, 'B');
+});
+
+test('DOC-03 rechaza contenido obsoleto, conserva varias emisiones de la misma revisión y revierte fallos', async () => {
+	const { backend, repositorio } = entorno();
+	const a = await repositorio.crear({ proyecto: proyectoValido('A') });
+	const opciones = { projectId: a.id, revisionEsperada: a.revision,
+		proyecto: a.proyecto, sha256Manifiesto: HASH_MANIFIESTO, sha256Paquete: HASH_PAQUETE_A };
+	const editado = structuredClone(a.proyecto);
+	editado.datos = { cliente: 'No guardado' };
+	await assert.rejects(repositorio.archivarRevisionDocumental({ ...opciones, proyecto: editado }),
+		/contenido.*no coincide/i);
+	await assert.rejects(repositorio.archivarRevisionDocumental({ ...opciones, sha256Paquete: 'sin-hash' }),
+		/SHA-256/);
+	assert.equal(await backend.contar('documentaryRevisions'), 0);
+	backend.fallarProximaTransaccion();
+	await assert.rejects(repositorio.archivarRevisionDocumental(opciones), /Fallo de almacenamiento/);
+	assert.equal(await backend.contar('documentaryRevisions'), 0);
+	const primera = await repositorio.archivarRevisionDocumental(opciones);
+	const segunda = await repositorio.archivarRevisionDocumental({ ...opciones, sha256Paquete: HASH_PAQUETE_B });
+	assert.notEqual(primera.id, segunda.id);
+	assert.equal(primera.sha256Proyecto, segunda.sha256Proyecto);
+	assert.equal((await repositorio.listarRevisionesDocumentales(a.id)).length, 2);
+	assert.equal((await repositorio.abrirRevisionDocumental(a.id, 1, HASH_PAQUETE_B)).sha256Paquete,
+		HASH_PAQUETE_B);
+	await assert.rejects(repositorio.archivarRevisionDocumental({ ...opciones, sha256Manifiesto: HASH_PAQUETE_B }),
+		/otro contenido o paquete inmutable/);
+	assert.equal((await repositorio.abrirRevisionDocumental(a.id, 1, HASH_PAQUETE_A)).sha256Paquete,
+		HASH_PAQUETE_A);
+});
+
+test('DOC-03 exige verificar el ZIP exacto para declarar entrega; no modifica la fotografía', async () => {
+	const { repositorio } = entorno();
+	const a = await repositorio.crear({ proyecto: proyectoValido('A') });
+	const preparada = await repositorio.archivarRevisionDocumental({
+		projectId: a.id, revisionEsperada: a.revision, proyecto: a.proyecto,
+		sha256Manifiesto: HASH_MANIFIESTO, sha256Paquete: HASH_PAQUETE_A,
+	});
+	const otraEmision = await repositorio.archivarRevisionDocumental({
+		projectId: a.id, revisionEsperada: a.revision, proyecto: a.proyecto,
+		sha256Manifiesto: HASH_MANIFIESTO, sha256Paquete: HASH_PAQUETE_B,
+	});
+	assert.equal(otraEmision.estado, 'PREPARADA');
+	await assert.rejects(repositorio.confirmarEntregaRevisionDocumental(a.id, 1, HASH_PAQUETE_C),
+		/no coincide/);
+	assert.equal((await repositorio.abrirRevisionDocumental(a.id, 1, HASH_PAQUETE_A)).estado, 'PREPARADA');
+	const confirmada = await repositorio.confirmarEntregaRevisionDocumental(a.id, 1, HASH_PAQUETE_A);
+	assert.equal(confirmada.estado, 'ENTREGA_DECLARADA');
+	assert.ok(confirmada.entregaDeclaradaEn);
+	assert.equal(confirmada.sha256Proyecto, preparada.sha256Proyecto);
+	assert.equal(confirmada.sha256Manifiesto, preparada.sha256Manifiesto);
+	assert.equal(confirmada.sha256Paquete, preparada.sha256Paquete);
+	assert.deepEqual(confirmada.proyecto, preparada.proyecto);
+	assert.equal((await repositorio.abrirRevisionDocumental(a.id, 1, HASH_PAQUETE_B)).estado, 'PREPARADA',
+		'confirmar un ZIP no declara entregado otro ZIP de la misma revisión');
+	assert.deepEqual(await repositorio.confirmarEntregaRevisionDocumental(a.id, 1, HASH_PAQUETE_A), confirmada);
+	assert.deepEqual(await repositorio.archivarRevisionDocumental({
+		projectId: a.id, revisionEsperada: a.revision, proyecto: a.proyecto,
+		sha256Manifiesto: HASH_MANIFIESTO, sha256Paquete: HASH_PAQUETE_A,
+	}), confirmada, 'repetir preparación no degrada una entrega ya declarada');
+});
+
+test('DOC-03 detecta una mutación anómala del proyecto sin incremento de revisión entre emisiones', async () => {
+	const { backend, repositorio } = entorno();
+	const a = await repositorio.crear({ proyecto: proyectoValido('A') });
+	await repositorio.archivarRevisionDocumental({ projectId: a.id, revisionEsperada: a.revision,
+		proyecto: a.proyecto, sha256Manifiesto: HASH_MANIFIESTO, sha256Paquete: HASH_PAQUETE_A });
+	const cambiado = structuredClone(a.proyecto);
+	cambiado.datos = { cliente: 'Mutación sin r2' };
+	await backend.transaccion(['projects'], 'readwrite', async (tx) => {
+		await tx.guardar('projects', a.id, { ...a, proyecto: cambiado });
+	});
+	await assert.rejects(repositorio.archivarRevisionDocumental({
+		projectId: a.id, revisionEsperada: a.revision, proyecto: cambiado,
+		sha256Manifiesto: HASH_MANIFIESTO, sha256Paquete: HASH_PAQUETE_B,
+	}), /otro contenido archivado/);
+	assert.equal(await backend.contar('documentaryRevisions'), 1);
+});
+
+test('DOC-03 compara la proyección persistida, no una imagen hidratada de la UI', async () => {
+	const { repositorio } = entorno();
+	const proyecto = proyectoValido('Con imagen');
+	proyecto.dispositivos[0].assetId = HASH_PAQUETE_A;
+	const documento = await repositorio.crear({ proyecto });
+	const hidratado = structuredClone(documento.proyecto);
+	hidratado.dispositivos[0].imagen = 'blob:imagen-en-sesion';
+	const opciones = { projectId: documento.id, revisionEsperada: documento.revision,
+		sha256Manifiesto: HASH_MANIFIESTO, sha256Paquete: HASH_PAQUETE_A };
+	await assert.rejects(repositorio.archivarRevisionDocumental({ ...opciones, proyecto: hidratado }),
+		ProyectoPersistenciaInvalido);
+	const archivada = await repositorio.archivarRevisionDocumental({ ...opciones,
+		proyecto: proyectoParaPersistir(hidratado) });
+	assert.equal(archivada.proyecto.dispositivos[0].imagen, undefined);
 });
 
 test('dos documentos A/B conservan identidad, contenido y revisión independientes', async () => {

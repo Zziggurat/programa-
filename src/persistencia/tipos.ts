@@ -13,6 +13,7 @@ export const ALMACENES_PERSISTENCIA = [
 	'recovery',
 	'technicalData',
 	'customComponentRevisions',
+	'documentaryRevisions',
 ] as const;
 
 export type AlmacenPersistencia = typeof ALMACENES_PERSISTENCIA[number];
@@ -91,6 +92,35 @@ export interface OpcionesCrearComponentePersonalizado {
 	definicion: ContenidoComponentePersonalizado;
 }
 
+/** Una emisión preparada no prueba que el ZIP se haya entregado ni aprobado. */
+export type EstadoRevisionDocumental = 'PREPARADA' | 'ENTREGA_DECLARADA';
+
+/**
+ * Fotografía independiente de los snapshots de recuperación. El contenido, identidad y hashes
+ * no se reemplazan al cambiar el estado; la declaración de entrega solo agrega fecha y estado.
+ */
+export interface RevisionDocumentalArchivada {
+	id: string;
+	projectId: string;
+	revisionRepositorio: number;
+	preparadaEn: string;
+	estado: EstadoRevisionDocumental;
+	entregaDeclaradaEn?: string;
+	proyecto: Proyecto;
+	sha256Proyecto: string;
+	sha256Manifiesto: string;
+	sha256Paquete: string;
+}
+
+export interface OpcionesArchivarRevisionDocumental {
+	projectId: string;
+	revisionEsperada: number;
+	/** Proyección persistente exacta de la copia que originó el paquete, no la UI hidratada. */
+	proyecto: Proyecto;
+	sha256Manifiesto: string;
+	sha256Paquete: string;
+}
+
 /** Import individual: la imagen y la definición se confirman o se descartan juntas. */
 export interface OpcionesImportarComponenteConAsset extends OpcionesCrearComponentePersonalizado {
 	asset: Pick<AssetPersistido, 'id' | 'mime' | 'bytes'>;
@@ -160,6 +190,16 @@ export interface RepositorioProyectos {
 	crearSnapshot(id: string, motivo?: MotivoSnapshot): Promise<SnapshotProyecto>;
 	listarSnapshots(id: string): Promise<SnapshotProyecto[]>;
 	restaurarSnapshot(id: string, snapshotId: string, revisionEsperada: number): Promise<DocumentoProyecto>;
+	archivarRevisionDocumental(opciones: OpcionesArchivarRevisionDocumental): Promise<RevisionDocumentalArchivada>;
+	/** Sin projectId incluye las revisiones de proyectos posteriormente eliminados. */
+	listarRevisionesDocumentales(projectId?: string): Promise<RevisionDocumentalArchivada[]>;
+	abrirRevisionDocumental(
+		projectId: string, revisionRepositorio: number, sha256Paquete: string,
+	): Promise<RevisionDocumentalArchivada>;
+	/** Confirmación humana local del ZIP exacto; no es aprobación ni prueba de recepción externa. */
+	confirmarEntregaRevisionDocumental(
+		projectId: string, revisionRepositorio: number, sha256PaqueteVerificado: string,
+	): Promise<RevisionDocumentalArchivada>;
 	guardarAsset(mime: string, bytes: Uint8Array): Promise<AssetPersistido>;
 	abrirAsset(id: string): Promise<AssetPersistido | undefined>;
 	obtenerProyectoActivo(): Promise<string | undefined>;

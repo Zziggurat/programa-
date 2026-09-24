@@ -1,5 +1,6 @@
 import { cargarProyecto } from '../modelo/cargar.js';
 import type { Proyecto } from '../modelo/tipos.js';
+import { hashSnapshotTecnico } from '../datos-tecnicos/hash.js';
 import {
 	FORMATO_COMPONENTE_PERSONALIZADO,
 	VERSION_COMPONENTE_PERSONALIZADO,
@@ -22,6 +23,7 @@ import type {
 	MetadataProyectoActivo,
 	MotivoSnapshot,
 	OpcionesActualizarComponentePersonalizado,
+	OpcionesArchivarRevisionDocumental,
 	OpcionesCrearComponentePersonalizado,
 	OpcionesImportarComponenteConAsset,
 	OpcionesCrearProyecto,
@@ -29,6 +31,7 @@ import type {
 	OpcionesRepositorio,
 	RecuperacionLegacy,
 	RepositorioProyectos,
+	RevisionDocumentalArchivada,
 	ResumenProyecto,
 	ResultadoMigracionLegacy,
 	SnapshotProyecto,
@@ -46,6 +49,40 @@ import {
 
 const MIME_ASSET = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const CLAVE_PROYECTO_ACTIVO = 'active-project';
+const HASH_SHA256 = /^sha256:[a-f0-9]{64}$/;
+
+function hashDocumentalValido(valor: string, campo: string): string {
+	if (!HASH_SHA256.test(valor)) {
+		throw new ProyectoPersistenciaInvalido(`${campo} debe ser un SHA-256 hexadecimal canónico.`);
+	}
+	return valor;
+}
+
+/** Una revisión guardada admite varias emisiones con diferente hora/build, cada ZIP inmutable. */
+const claveRevisionDocumental = (projectId: string, revision: number, sha256Paquete: string): string =>
+	JSON.stringify([projectId, revision, sha256Paquete]);
+
+function revisionDocumentalValida(revision: RevisionDocumentalArchivada): RevisionDocumentalArchivada {
+	if (!revision || typeof revision.projectId !== 'string' || !revision.projectId
+		|| !Number.isInteger(revision.revisionRepositorio) || revision.revisionRepositorio < 1
+		|| revision.id !== claveRevisionDocumental(revision.projectId, revision.revisionRepositorio,
+			revision.sha256Paquete)
+		|| typeof revision.preparadaEn !== 'string' || !Number.isFinite(Date.parse(revision.preparadaEn))
+		|| !['PREPARADA', 'ENTREGA_DECLARADA'].includes(revision.estado)
+		|| (revision.estado === 'ENTREGA_DECLARADA' &&
+			(typeof revision.entregaDeclaradaEn !== 'string' || !Number.isFinite(Date.parse(revision.entregaDeclaradaEn))))
+		|| (revision.estado === 'PREPARADA' && revision.entregaDeclaradaEn !== undefined)) {
+		throw new ProyectoPersistenciaInvalido('El archivo de revisión documental contiene identidad o estado inválidos.');
+	}
+	hashDocumentalValido(revision.sha256Proyecto, 'Hash del proyecto');
+	hashDocumentalValido(revision.sha256Manifiesto, 'Hash del manifiesto');
+	hashDocumentalValido(revision.sha256Paquete, 'Hash del paquete');
+	const proyecto = validarProyecto(revision.proyecto).proyecto;
+	if (hashSnapshotTecnico(proyecto) !== revision.sha256Proyecto) {
+		throw new ProyectoPersistenciaInvalido(`El archivo documental ${revision.id} no conserva su contenido original.`);
+	}
+	return { ...revision, proyecto };
+}
 
 function clonar<T>(valor: T): T {
 	return structuredClone(valor);
@@ -496,6 +533,115 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 			};
 			await tx.guardar('projects', id, restaurado);
 			return clonar(restaurado);
+		});
+	}
+
+	/** DOC-03: sólo la revisión exacta persistida puede convertirse en línea base preparada. */
+	async archivarRevisionDocumental(
+		opciones: OpcionesArchivarRevisionDocumental,
+	): Promise<RevisionDocumentalArchivada> {
+		if (!opciones.projectId || !Number.isInteger(opciones.revisionEsperada)
+			|| opciones.revisionEsperada < 1) {
+			throw new ProyectoPersistenciaInvalido('Identidad o revisión documental inválida.');
+		}
+		hashDocumentalValido(opciones.sha256Manifiesto, 'Hash del manifiesto');
+		hashDocumentalValido(opciones.sha256Paquete, 'Hash del paquete');
+		const proyectoEntregado = validarProyecto(opciones.proyecto).proyecto;
+		if (proyectoEntregado.esEjemplo) {
+			throw new ProyectoPersistenciaInvalido('Un ejemplo efímero no puede archivarse como revisión confirmada.');
+		}
+		const sha256Proyecto = hashSnapshotTecnico(proyectoEntregado);
+		const clave = claveRevisionDocumental(opciones.projectId, opciones.revisionEsperada,
+			opciones.sha256Paquete);
+		return this.backend.transaccion(['projects', 'documentaryRevisions'], 'readwrite', async (tx) => {
+			const actual = await this.documento(tx, opciones.projectId);
+			this.comprobarRevision(actual, opciones.revisionEsperada);
+			if (hashSnapshotTecnico(actual.proyecto) !== sha256Proyecto) {
+				throw new ProyectoPersistenciaInvalido(
+					'El contenido que originó el paquete ya no coincide con la revisión persistida.',
+				);
+			}
+			const emisiones = (await tx.listar<RevisionDocumentalArchivada>('documentaryRevisions'))
+				.filter((r) => r.projectId === opciones.projectId
+					&& r.revisionRepositorio === opciones.revisionEsperada)
+				.map(revisionDocumentalValida);
+			if (emisiones.some((r) => r.sha256Proyecto !== sha256Proyecto)) {
+				throw new ProyectoPersistenciaInvalido(
+					`La revisión ${opciones.revisionEsperada} del proyecto ya tiene otro contenido archivado.`,
+				);
+			}
+			const anterior = await tx.obtener<RevisionDocumentalArchivada>('documentaryRevisions', clave);
+			if (anterior) {
+				const validado = revisionDocumentalValida(anterior);
+				if (validado.sha256Manifiesto !== opciones.sha256Manifiesto
+					|| validado.sha256Paquete !== opciones.sha256Paquete) {
+					throw new ProyectoPersistenciaInvalido(
+						`La revisión documental ${clave} ya tiene otro contenido o paquete inmutable.`,
+					);
+				}
+				return clonar(validado);
+			}
+			const revision: RevisionDocumentalArchivada = {
+				id: clave, projectId: opciones.projectId, revisionRepositorio: opciones.revisionEsperada,
+				preparadaEn: this.ahora(), estado: 'PREPARADA', proyecto: clonar(proyectoEntregado),
+				sha256Proyecto, sha256Manifiesto: opciones.sha256Manifiesto,
+				sha256Paquete: opciones.sha256Paquete,
+			};
+			await tx.guardar('documentaryRevisions', clave, revision);
+			return clonar(revision);
+		});
+	}
+
+	async listarRevisionesDocumentales(projectId?: string): Promise<RevisionDocumentalArchivada[]> {
+		return this.backend.transaccion(['documentaryRevisions'], 'readonly', async (tx) => {
+			const todas = await tx.listar<RevisionDocumentalArchivada>('documentaryRevisions');
+			return clonar(todas.filter((r) => projectId === undefined || r.projectId === projectId)
+				.map(revisionDocumentalValida)
+				.sort((a, b) => a.projectId.localeCompare(b.projectId)
+					|| b.revisionRepositorio - a.revisionRepositorio
+					|| b.preparadaEn.localeCompare(a.preparadaEn)
+					|| a.sha256Paquete.localeCompare(b.sha256Paquete)));
+		});
+	}
+
+	async abrirRevisionDocumental(
+		projectId: string, revisionRepositorio: number, sha256Paquete: string,
+	): Promise<RevisionDocumentalArchivada> {
+		hashDocumentalValido(sha256Paquete, 'Hash del paquete');
+		return this.backend.transaccion(['documentaryRevisions'], 'readonly', async (tx) => {
+			const clave = claveRevisionDocumental(projectId, revisionRepositorio, sha256Paquete);
+			const revision = await tx.obtener<RevisionDocumentalArchivada>('documentaryRevisions', clave);
+			if (!revision) throw new ProyectoNoEncontrado(`revision-documental:${clave}`);
+			return clonar(revisionDocumentalValida(revision));
+		});
+	}
+
+	/** Declara entrega local sólo tras volver a cotejar el ZIP; no simula aceptación externa. */
+	async confirmarEntregaRevisionDocumental(
+		projectId: string, revisionRepositorio: number, sha256PaqueteVerificado: string,
+	): Promise<RevisionDocumentalArchivada> {
+		hashDocumentalValido(sha256PaqueteVerificado, 'Hash del paquete verificado');
+		return this.backend.transaccion(['documentaryRevisions'], 'readwrite', async (tx) => {
+			const clave = claveRevisionDocumental(projectId, revisionRepositorio, sha256PaqueteVerificado);
+			const archivada = await tx.obtener<RevisionDocumentalArchivada>('documentaryRevisions', clave);
+			if (!archivada) {
+				const mismaRevision = (await tx.listar<RevisionDocumentalArchivada>('documentaryRevisions'))
+					.some((r) => r.projectId === projectId && r.revisionRepositorio === revisionRepositorio);
+				if (mismaRevision) throw new ProyectoPersistenciaInvalido(
+					'El ZIP seleccionado no coincide con ninguna emisión preparada de esta revisión.',
+				);
+				throw new ProyectoNoEncontrado(`revision-documental:${clave}`);
+			}
+			const valida = revisionDocumentalValida(archivada);
+			if (valida.sha256Paquete !== sha256PaqueteVerificado) {
+				throw new ProyectoPersistenciaInvalido('El ZIP seleccionado no coincide con el paquete de revisión preparado.');
+			}
+			if (valida.estado === 'ENTREGA_DECLARADA') return clonar(valida);
+			const confirmada: RevisionDocumentalArchivada = {
+				...valida, estado: 'ENTREGA_DECLARADA', entregaDeclaradaEn: this.ahora(),
+			};
+			await tx.guardar('documentaryRevisions', clave, confirmada);
+			return clonar(confirmada);
 		});
 	}
 
