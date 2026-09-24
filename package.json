@@ -41,6 +41,8 @@
 	"qa:ingenieria-validacion": "vite build app --mode qa && node qa/ingenieria-validacion.mjs",
 	"qa:ingenieria-escenarios": "vite build app --mode qa && node qa/ingenieria-escenarios.mjs",
 	"qa:ingenieria-documentacion": "vite build app --mode qa && node qa/ingenieria-documentacion.mjs",
+	"qa:paquete-documental-offline": "vite build app --mode qa && node qa/paquete-documental-offline.mjs",
+	"qa:paquete-revision-obsoleto": "vite build app --mode qa && node qa/paquete-revision-obsoleto-m3.mjs",
 	"qa:datos-tecnicos": "vite build app --mode qa && node qa/todas.mjs datos-tecnicos-",
 	"qa:datos-tecnicos:run": "node qa/todas.mjs datos-tecnicos-",
 	"qa:datos-tecnicos:stress": "tsc && node herramientas/medir-datos-tecnicos.mjs",
