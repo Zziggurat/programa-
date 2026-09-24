@@ -2,10 +2,10 @@
 import { chromium } from 'playwright-core';
 import { readFileSync, mkdtempSync, rmSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { inflateSync } from 'node:zlib';
 import { join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
+import { textoPdf } from './lib/texto-pdf.mjs';
 
 const inicio = performance.now();
 const { servidor, url } = await servidorDeQA();
@@ -18,6 +18,7 @@ let browser;
 let fallos = 0;
 let pruebas = 0;
 const erroresJs = [];
+const recursosHttp = [];
 const ok = (nombre, cierto, detalle = '') => {
 	pruebas++;
 	if (!cierto) fallos++;
@@ -25,21 +26,22 @@ const ok = (nombre, cierto, detalle = '') => {
 };
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const bajar = async (page, selector) => {
-	const evento = page.waitForEvent('download', { timeout: 15_000 });
-	await page.locator(selector).click();
-	const descarga = await evento;
-	return readFileSync(await descarga.path());
-};
-const textoPdf = (bytes) => {
-	// Equivalente mínimo de leer-pdf.py sin proceso Python externo (bloqueado en sandbox).
-	const partes = [];
-	for (const match of bytes.toString('latin1').matchAll(/stream\r?\n([\s\S]*?)\r?\nendstream/g)) {
-		const raw = Buffer.from(match[1], 'latin1');
-		try { partes.push(inflateSync(raw).toString('latin1')); }
-		catch { partes.push(raw.toString('latin1')); }
+	// Adjuntar rechazo antes del clic: si auto-scroll tarda, el timeout no queda sin handler.
+	const evento = page.waitForEvent('download', { timeout: 15_000 })
+		.then((descarga) => ({ descarga }), (error) => ({ error }));
+	let falloClic;
+	try { await page.locator(selector).click({ timeout: 15_000 }); }
+	catch (error) { falloClic = error; }
+	const resultado = await evento;
+	if (falloClic || resultado.error) {
+		const aviso = await page.locator('#toast').textContent().catch(() => '');
+		const visible = await page.locator(selector).isVisible().catch(() => false);
+		const deshabilitado = await page.locator(selector).isDisabled().catch(() => false);
+		throw new Error(`${selector}: sin descarga; visible=${visible}, disabled=${deshabilitado}, `
+			+ `aviso=${aviso || '(ninguno)'}`, { cause: falloClic ?? resultado.error });
 	}
-	return Array.from(partes.join('\n').matchAll(/\(((?:[^()\\]|\\.)*)\)\s*T[jJ]/g),
-		(m) => m[1].replaceAll('\\(', '(').replaceAll('\\)', ')')).join(' ');
+	const descarga = resultado.descarga;
+	return readFileSync(await descarga.path());
 };
 const preview = async (page) => page.evaluate(async () => {
 	const iframe = document.querySelector('#dos-vista iframe');
@@ -53,7 +55,10 @@ try {
 	const contexto = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 	const page = await contexto.newPage();
 	page.on('pageerror', (e) => erroresJs.push(e.message));
-	page.on('console', (m) => { if (m.type() === 'error' && !/favicon/i.test(m.text())) erroresJs.push(m.text()); });
+	page.on('console', (m) => { if (m.type() === 'error'
+		&& !/\/favicon\.ico(?:$|[?#])|favicon/i.test(`${m.location().url} ${m.text()}`))
+		erroresJs.push(`${m.text()} [${m.location().url || 'sin URL'}]`); });
+	page.on('response', (r) => { if (r.status() >= 400) recursosHttp.push(`${r.status()} ${r.url()}`); });
 	await page.goto(`${url}/?qa=1&inicio=0`, { waitUntil: 'load' });
 	await esperarEditorListo(page);
 	if (await page.locator('#modal-ayuda').isVisible()) await page.locator('#btn-cerrar-ayuda').click();
@@ -76,6 +81,19 @@ try {
 		html.includes(`<dd>${confirmado.id}</dd>`) && html.includes(`<dd>${confirmado.revision}</dd>`)
 		&& html.includes('<dd>ED-C</dd>') && html.includes('<dd>2024-11-02</dd>')
 		&& html.includes('<dt>Build ID</dt><dd>DEV-'));
+	if (!(await page.locator('#btn-dxf-placa').isVisible())) await page.locator('#btn-exportar').click();
+	const placa = (await bajar(page, '#btn-dxf-placa')).toString('utf8');
+	ok('placa DXF identifica revisión, Build ID y alcance sin falsear metraje',
+		placa.includes(`Project ID ${confirmado.id}`)
+		&& placa.includes(`Revision repositorio ${confirmado.revision}`)
+		&& placa.includes('Build ID') && placa.includes('Alcance: placa de montaje')
+		&& placa.includes('ruta fisica pendiente'));
+	if (!(await page.locator('#btn-etiquetas').isVisible())) await page.locator('#btn-exportar').click();
+	const rotulos = textoPdf(await bajar(page, '#btn-etiquetas'));
+	ok('rótulos PDF mantienen escala e identidad de la revisión confirmada',
+		rotulos.includes(confirmado.id) && rotulos.includes(String(confirmado.revision))
+		&& rotulos.includes('Project ID') && rotulos.includes('Build ID')
+		&& rotulos.includes('100 %'));
 	await page.locator('#btn-pdf').click();
 	await page.waitForFunction(() => /KB/.test(document.getElementById('dos-estado')?.textContent ?? ''),
 		undefined, { timeout: 40_000 });
@@ -124,7 +142,44 @@ try {
 	ok('esquema PDF conserva ID/r y separa cajetín editorial/Build ID',
 		textoEsq.includes(confirmado.id) && textoEsq.includes(String(confirmado.revision))
 		&& textoEsq.includes('ED-C') && textoEsq.includes('REV. ED.')
-		&& textoEsq.includes('Build ID'));
+		&& textoEsq.includes('Build ID')
+		&& textoEsq.includes('Alcance: esquema eléctrico')
+		&& textoEsq.includes('Rutas físicas pendientes del proyecto:')
+		&& textoEsq.includes('Una ruta pendiente no define trayecto, longitud ni material'));
+	const revisionEsquema = await page.evaluate(() => window.qa.esperarPersistencia());
+	const svg = (await bajar(page, '#esq-svg')).toString('utf8');
+	ok('SVG vectorial identifica la revisión confirmada y su límite físico',
+		svg.includes(`Project ID ${revisionEsquema.id}`)
+		&& svg.includes(`Revisión repositorio ${revisionEsquema.revision}`)
+		&& svg.includes('Build ID') && svg.includes('ED-C')
+		&& svg.includes('Rutas físicas pendientes del proyecto:'));
+	// DXF vive en Entregar, no en la barra del esquema superpuesto.
+	await page.locator('#esq-cerrar').click();
+	await page.locator('#btn-exportar').click();
+	const dxf = (await bajar(page, '#btn-dxf-esquema')).toString('utf8');
+	ok('DXF R12 identifica la revisión confirmada sin crear entidades eléctricas',
+		dxf.includes(`Project ID ${revisionEsquema.id}`)
+		&& dxf.includes(`Revision repositorio ${revisionEsquema.revision}`)
+		&& dxf.includes('Build ID') && dxf.includes('ED-C')
+		&& dxf.includes('Rutas fisicas pendientes del proyecto:')
+		&& dxf.includes('999\n'));
+	await page.locator('#hta-ingenieria').click();
+	await page.locator('#ingenieria-validar').click();
+	await page.locator('[data-ing-view="documentacion"]').click();
+	await page.locator('[data-ing-doc="prepare"]').click();
+	await page.locator('[data-ing-doc="json"]:not([disabled])').waitFor({ timeout: 30_000 });
+	const informeJson = JSON.parse((await bajar(page, '[data-ing-doc="json"]')).toString('utf8'));
+	ok('Ingeniería JSON usa la misma identidad de proyecto y revisión confirmada',
+		informeJson.trazabilidad?.procedencia?.estado === 'confirmado'
+		&& informeJson.trazabilidad.procedencia.projectId === revisionEsquema.id
+		&& informeJson.trazabilidad.procedencia.revisionRepositorio === revisionEsquema.revision
+		&& informeJson.alcance?.includes('no certificación normativa'));
+	const ingenieriaCsv = (await bajar(page, '[data-ing-doc="bom"]')).toString('utf8');
+	ok('Ingeniería CSV vacío o poblado conserva procedencia y BOM UTF-8',
+		ingenieriaCsv.charCodeAt(0) === 0xFEFF
+		&& ingenieriaCsv.includes('Estado documental;Project ID;Revisión repositorio;')
+		&& ingenieriaCsv.includes(revisionEsquema.id)
+		&& ingenieriaCsv.includes(String(revisionEsquema.revision)));
 	await contexto.close();
 
 	const contextoEjemplo = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
@@ -147,7 +202,8 @@ try {
 		htmlEjemplo.includes('Ejemplo efímero') && htmlEjemplo.includes('<dd>No asignado</dd>')
 		&& htmlEjemplo.includes('<dd>No asignada</dd>'));
 	await contextoEjemplo.close();
-	ok('sin errores JavaScript', erroresJs.length === 0, erroresJs.slice(0, 2).join(' | '));
+	ok('sin errores JavaScript', erroresJs.length === 0,
+		[...erroresJs.slice(0, 2), ...recursosHttp.slice(0, 3)].join(' | '));
 } catch (e) {
 	fallos++;
 	console.error(e?.stack ?? e);

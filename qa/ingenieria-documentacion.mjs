@@ -19,7 +19,13 @@ async function descargarAccion(accion){const evento=page.waitForEvent('download'
 const tieneBomUtf8=(bytes)=>bytes.length>=3&&bytes[0]===0xef&&bytes[1]===0xbb&&bytes[2]===0xbf;
 try{
 	const e=await servidorDeQA();servidor=e.servidor;browser=await abrirNavegador(chromium);page=await browser.newPage({viewport:{width:1440,height:960},acceptDownloads:true});
-	page.on('pageerror',x=>erroresJS.push(x.message));page.on('console',m=>{if(m.type()==='error')erroresJS.push(`console: ${m.text()}`)});
+	page.on('pageerror',x=>erroresJS.push(x.message));
+	page.on('console',m=>{
+		if(m.type()!=='error')return;
+		const origen=m.location().url;
+		if(/\/favicon\.ico(?:$|[?#])/.test(origen))return;
+		erroresJS.push(`console: ${m.text()} [${origen||'sin URL'}]`);
+	});
 	await page.goto(`${e.url}/?qa=1`,{waitUntil:'domcontentloaded'});await esperarEditorListo(page);await abrirEjemplo();await click('hta-ingenieria');await click('ingenieria-validar');
 	await page.locator('[data-ing-view="documentacion"]').click();await page.locator('[data-ing-doc="prepare"]').click();await page.locator('.ing-doc-preview').waitFor({state:'visible'});
 	const previa=await page.locator('.ing-doc-preview').innerText();

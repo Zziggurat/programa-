@@ -7,11 +7,11 @@
  *   node qa/esquema-dossier.mjs
  */
 import { chromium } from 'playwright-core';
-import { mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
-import { abrirNavegador, ejecutablePython, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { join, resolve, sep, basename } from 'node:path';
+import { tmpdir } from 'node:os';
+import { abrirNavegador, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
+import { textoPdf } from './lib/texto-pdf.mjs';
 
 /**
  * El dossier ya no se descarga de golpe: el botón 📄 abre la VISTA PREVIA, y se descarga desde
@@ -26,27 +26,73 @@ async function abrirVistaPreviaDossier(page) {
 		if (e) e.textContent = '';
 		document.getElementById('btn-pdf').click();
 	});
-	await page.waitForFunction(
-		() => /KB/.test(document.getElementById('dos-estado')?.textContent ?? ''),
-		{ timeout: 40000 },
-	);
+	try {
+		await page.waitForFunction(() => {
+			const estado = document.getElementById('dos-estado')?.textContent ?? '';
+			return /KB/.test(estado) || (estado === ''
+				&& /No se pudo generar el dossier/.test(document.getElementById('dos-vista')?.textContent ?? ''));
+		}, null, { timeout: 40000 });
+		const estado = await page.evaluate(() => ({
+			panelVisible: !document.getElementById('panel-dossier')?.hidden,
+			estado: document.getElementById('dos-estado')?.textContent,
+			vista: document.getElementById('dos-vista')?.textContent?.slice(0, 600),
+		}));
+		if (!/KB/.test(estado.estado ?? '')) throw new Error(`La vista previa falló: ${JSON.stringify(estado)}`);
+	} catch (error) {
+		if (!(error instanceof Error) || !error.message.startsWith('La vista previa falló:')) {
+			const estado = await page.evaluate(() => ({
+				panelVisible: !document.getElementById('panel-dossier')?.hidden,
+				estado: document.getElementById('dos-estado')?.textContent,
+				vista: document.getElementById('dos-vista')?.textContent?.slice(0, 600),
+			}));
+			throw new Error(`La vista previa no terminó: ${JSON.stringify(estado)}`, { cause: error });
+		}
+		throw error;
+	}
 }
 
-const AQUI = dirname(fileURLToPath(import.meta.url));
-const SAL = join(AQUI, '_salida'); mkdirSync(SAL, { recursive: true });
+/** Declara los datos desde Archivo → Datos del proyecto, igual que un usuario. */
+async function guardarDatosDelProyecto(page, campos) {
+	if (await page.locator('#panel-dossier').isVisible()) {
+		await page.locator('#dos-cerrar').click();
+		await page.locator('#panel-dossier').waitFor({ state: 'hidden' });
+	}
+	await page.locator('#btn-archivo').click();
+	await page.locator('#btn-datos-proyecto').click();
+	for (const [id, valor] of Object.entries(campos)) {
+		const campo = page.locator(`#${id}`);
+		if (['pr-montaje', 'pr-uso', 'pr-neutro'].includes(id)) await campo.selectOption(valor);
+		else await campo.fill(valor);
+	}
+	await page.locator('#btn-guardar-proyecto').click();
+	await page.locator('#modal-proyecto').waitFor({ state: 'hidden' });
+}
+
+const SAL = mkdtempSync(join(tmpdir(), 'tablerostudio-esquema-dossier-'));
+// Solo se borra el directorio temporal creado por ESTA ejecución, nunca qa/_salida ni uno ajeno.
+const temporalConfirmado = realpathSync(SAL).startsWith(resolve(tmpdir()) + sep)
+	&& basename(SAL).startsWith('tablerostudio-esquema-dossier-');
+if (!temporalConfirmado) throw new Error(`Ruta temporal fuera del directorio esperado: ${SAL}`);
 const { servidor: server } = await servidorDeQA();
 const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 
-const browser = await abrirNavegador(chromium);
-const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+let browser;
+let page;
 const errs = [];
-page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errs.push(m.text()); });
 
 let fallos = 0;
 const must = (n, c, extra = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${extra ? ' → ' + extra : ''}`); };
 const click = (id) => page.evaluate((i) => { const b = document.getElementById(i); if (!b) throw new Error('no existe #' + i); b.click(); }, id);
 const proyecto = () => page.evaluate(() => window.qa.proyecto());
+
+let fatal;
+try {
+browser = await abrirNavegador(chromium);
+page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
+page.on('console', (m) => { if (m.type() === 'error'
+	&& !/\/favicon\.ico(?:$|[?#])|favicon/i.test(`${m.location().url} ${m.text()}`))
+	errs.push(`${m.text()} [${m.location().url || 'sin URL'}]`); });
 
 await page.goto(url, { waitUntil: 'networkidle' }); await page.waitForTimeout(600);
 await click('btn-cerrar-ayuda'); await page.waitForTimeout(150);
@@ -117,9 +163,16 @@ await page.dispatchEvent('#esq-columnas', 'change');
 await page.waitForTimeout(400);
 
 console.log('\n--- 4. El dossier no afirma lo que nadie ha declarado ---');
-// Se deja el proyecto sin declarar NADA, que es como empieza cualquiera.
-await page.evaluate(() => { window.qa.proyecto().opciones = {}; window.qa.proyecto().datos = {}; });
 await click('esq-cerrar'); await page.waitForTimeout(300);
+// El ejemplo puede traer datos: dejarlos sin declarar por el formulario real, sin mutar el modelo.
+await guardarDatosDelProyecto(page, Object.fromEntries([
+	'pr-cliente', 'pr-obra', 'pr-proyectista', 'pr-revision', 'pr-fecha', 'pr-fabricante',
+	'pr-icc', 'pr-ambiente', 'pr-montaje', 'pr-uso', 'pr-inominal', 'pr-frecuencia',
+	'pr-ip', 'pr-neutro', 'pr-notas',
+].map((id) => [id, ''])));
+const sinDeclarar = await proyecto();
+must('IP vacío queda sin declarar', sinDeclarar.opciones?.gradoIP === undefined);
+must('ficha de datos completamente vacía queda ausente', sinDeclarar.datos === undefined);
 const bajar = async (id) => {
 	const esperado = page.waitForEvent('download', { timeout: 30000 }).catch(() => null);
 	await click(id);
@@ -134,7 +187,7 @@ const pdf = await bajar('dos-descargar');
 must('el dossier se descarga con su nombre completo', !!pdf && /\.pdf$/i.test(pdf.nombre),
 	pdf?.nombre ?? '(no descargó)');
 
-const texto = pdf ? execFileSync(ejecutablePython(), [join(AQUI, 'leer-pdf.py'), pdf.destino]).toString() : '';
+const texto = pdf ? textoPdf(readFileSync(pdf.destino)) : '';
 must('trae la página de procedencia de los datos', texto.includes('Procedencia de los datos'));
 must('lista lo que falta por declarar', /Pendiente de declarar \(\d+\)/.test(texto),
 	(texto.match(/Pendiente de declarar \([^)]*\)/) ?? [''])[0]);
@@ -149,18 +202,15 @@ must('y dice de dónde sale lo que sí está declarado',
 	texto.includes('Declarado y comprobado'));
 
 console.log('\n--- 5. Declarando los datos, el dossier deja de decir «a declarar» ---');
-await page.evaluate(() => {
-	const p = window.qa.proyecto();
-	p.datos = { cliente: 'Aeropuerto', obra: 'Cubierta', proyectista: 'D.', fabricante: 'Taller' };
-	p.opciones = {
-		iccPresuntaKA: 10, temperaturaAmbienteC: 40, montajeGabinete: 'exento',
-		corrienteAsignadaA: 63, frecuenciaHz: 50, gradoIP: 'IP65',
-		regimenNeutro: 'TN-S', usoPrevisto: 'intemperie',
-	};
+await guardarDatosDelProyecto(page, {
+	'pr-cliente': 'Aeropuerto', 'pr-obra': 'Cubierta', 'pr-proyectista': 'D.',
+	'pr-fabricante': 'Taller', 'pr-icc': '10', 'pr-ambiente': '40',
+	'pr-montaje': 'exento', 'pr-inominal': '63', 'pr-frecuencia': '50',
+	'pr-ip': 'IP65', 'pr-neutro': 'TN-S', 'pr-uso': 'intemperie',
 });
 await abrirVistaPreviaDossier(page);
 const pdf2 = await bajar('dos-descargar');
-const texto2 = pdf2 ? execFileSync(ejecutablePython(), [join(AQUI, 'leer-pdf.py'), pdf2.destino]).toString() : '';
+const texto2 = pdf2 ? textoPdf(readFileSync(pdf2.destino)) : '';
 must('ya no queda nada pendiente',
 	texto2.includes('declara todos los datos necesarios'),
 	(texto2.match(/Pendiente de declarar \([^)]*\)/) ?? ['(ninguno)'])[0]);
@@ -170,7 +220,32 @@ must('y el balance térmico ya no marca nada como supuesto', !/SUPUEST/.test(tex
 
 console.log('\n--- 6. Sin errores ---');
 must('ningún error de JavaScript', errs.length === 0, errs.slice(0, 3).join(' | '));
-
-await browser.close(); server.close();
-console.log(`\n=== ${fallos === 0 ? 'TODO OK ✔' : fallos + ' FALLO(S) ✗'} ===`);
-process.exit(fallos === 0 ? 0 : 1);
+} catch (error) {
+	fatal = error;
+	console.error('FATAL en QA esquema/dossier:', error);
+	if (errs.length) console.error('Errores JavaScript:', errs.join(' | '));
+	if (page && String(error).includes('El proyecto cambió mientras se preparaba el documento')) {
+		const diferencias = await page.evaluate(() => {
+			const actual = JSON.parse(JSON.stringify(window.qa.proyecto()));
+			const guardado = JSON.parse(JSON.stringify(window.qa.documentoActivo()?.proyecto ?? null));
+			const halladas = [];
+			const caminar = (a, b, ruta) => {
+				if (halladas.length >= 10 || Object.is(a, b)) return;
+				if (!a || !b || typeof a !== 'object' || typeof b !== 'object') {
+					halladas.push({ ruta, actual: JSON.stringify(a)?.slice(0, 100), guardado: JSON.stringify(b)?.slice(0, 100) });
+					return;
+				}
+				for (const clave of new Set([...Object.keys(a), ...Object.keys(b)])) caminar(a[clave], b[clave], `${ruta}.${clave}`);
+			};
+			caminar(actual, guardado, 'proyecto');
+			return halladas;
+		});
+		console.error('Primeras diferencias modelo/documento confirmado:', diferencias);
+	}
+} finally {
+	try { await browser?.close(); } catch (error) { fatal ??= error; console.error('Chromium no cerró:', error); }
+	await new Promise((resolve) => server.close(resolve));
+	rmSync(SAL, { recursive: true, force: true });
+}
+console.log(`\n=== ${fatal ? 'ERROR FATAL ✗' : fallos === 0 ? 'TODO OK ✔' : fallos + ' FALLO(S) ✗'} ===`);
+process.exitCode = fallos === 0 && !fatal ? 0 : 1;

@@ -33,6 +33,7 @@ console.log('--- campo AMBIENTE vacío ---');
 let r = await guardarCon({'pr-ambiente':'', 'pr-frecuencia':'', 'pr-icc':''});
 must('vacío NO declara 0 °C', r.o.temperaturaAmbienteC === undefined, 'quedó: '+JSON.stringify(r.o.temperaturaAmbienteC));
 must('vacío NO declara 0 Hz', r.o.frecuenciaHz === undefined, 'quedó: '+JSON.stringify(r.o.frecuenciaHz));
+must('IP vacío queda sin declarar', r.o.gradoIP === undefined, 'quedó: '+JSON.stringify(r.o.gradoIP));
 
 console.log('--- ambiente -10 °C (válido) ---');
 r = await guardarCon({'pr-ambiente':'-10'});
@@ -67,6 +68,7 @@ for (const [campo, valor, rot] of [
   ['pr-ambiente','999','999 °C, fuera de rango'],
   ['pr-icc','-5','Icc negativa'],
   ['pr-frecuencia','9000','frecuencia fuera de banda'],
+  ['pr-ip','IP999','grado IP fuera de formato'],
 ]) {
   // El estado se mira JUSTO ANTES de cada intento: lo que se comprueba es que ese intento no
   // cambie nada, no que el proyecto lleve toda la suite congelado.
