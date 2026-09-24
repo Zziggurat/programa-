@@ -14,7 +14,7 @@
  *  - Cada hilo lleva su número de potencial, el mismo en todos los puntos que están unidos.
  *  - Los contactos de un aparato llevan la referencia cruzada de dónde está su bobina.
  */
-import { Dispositivo, Proyecto } from '../modelo/tipos.js';
+import { Dispositivo, Proyecto, RefBorne } from '../modelo/tipos.js';
 import type { ParteRepresentacionEsquema, RepresentacionEsquema } from '../modelo/tipos.js';
 import { rotuloVisibleBorne } from '../modelo/bornes.js';
 import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
@@ -55,6 +55,9 @@ export interface HiloEsq {
 	conductorId: string;
 	numero?: string;
 	nodos: PuntoEsq[];
+	/** Extremos eléctricos reales del mismo conductor, solo para el dibujo de uniones.
+	 * No añade un nodo ni duplica el grafo: la conectividad sigue en `Proyecto.conductores`. */
+	bornes?: { de: RefBorne; a: RefBorne };
 }
 
 /** Una hoja del esquema, lista para pintar. */
@@ -559,7 +562,7 @@ export function montarEsquema(
 		if (ha.hoja === hb.hoja) {
 			const hoja = hojas.find((x) => x.numero === ha.hoja)!;
 			const nodos = rutaHilo(a, b, hoja);
-			hoja.hilos.push({ conductorId: c.id, numero, nodos });
+			hoja.hilos.push({ conductorId: c.id, numero, nodos, bornes: { de: c.de, a: c.a } });
 			// El número va sobre el tramo más largo, que es donde de verdad se lee.
 			if (numero) hoja.referencias.push({ texto: numero, p: puntoMedioDelTramoMasLargo(nodos), tipo: 'hilo' });
 		} else {
@@ -780,7 +783,7 @@ function montarRepresentaciones(
 		const numero = c.numero ?? potenciales.porConductor.get(c.id)?.id;
 		if (origen.hoja.id === destino.hoja.id) {
 			const nodos = rutaHilo(origen.pin, destino.pin, origen.hoja);
-			origen.hoja.hilos.push({ conductorId: c.id, numero, nodos });
+			origen.hoja.hilos.push({ conductorId: c.id, numero, nodos, bornes: { de: c.de, a: c.a } });
 			if (numero) origen.hoja.referencias.push({ texto: numero,
 				p: puntoMedioDelTramoMasLargo(nodos), tipo: 'hilo', conductorId: c.id });
 		} else {

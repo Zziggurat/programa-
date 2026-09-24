@@ -7,6 +7,7 @@
  */
 import { jsPDF } from 'jspdf';
 import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
+import { crucesSinUnion, nudosPorBorne, tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import { descargar } from './dialogos.js';
 import { textoDeUnaLinea } from './pdf-texto.js';
@@ -62,7 +63,7 @@ export interface DatosCajetin {
 
 /** Cajetín con los datos que hacen seguible un plano en obra (mismo diseño que en pantalla). */
 function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number,
-	d: DatosCajetin = {}, procedencia?: ProcedenciaDocumento): void {
+	d: DatosCajetin = {}, procedencia?: ProcedenciaDocumento, rutasPendientes?: number): void {
 	const identidad = resumenProcedenciaDocumento(procedencia);
 	// La franja superior libre lleva la identidad de entrega; el cajetín conserva datos editoriales.
 	doc.setFont('helvetica', 'normal');
@@ -124,6 +125,13 @@ function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number,
 	doc.setFontSize(5.4);
 	doc.setFont('helvetica', 'normal');
 	doc.setTextColor(...SUAVE);
+	const anchoNota = x - MARGEN.izq - 5;
+	textoDeUnaLinea(doc, 'Alcance: esquema eléctrico; no certifica instalación ni fabricación.',
+		MARGEN.izq, y + 5, anchoNota, 6);
+	textoDeUnaLinea(doc, `Rutas físicas pendientes del proyecto: ${rutasPendientes ?? 'no informadas'}.`,
+		MARGEN.izq, y + 9.2, anchoNota, 6);
+	textoDeUnaLinea(doc, 'Una ruta pendiente no define trayecto, longitud ni material.',
+		MARGEN.izq, y + 13.4, anchoNota, 6);
 	// Fuera de la casilla, a la izquierda del cajetín: dentro caía encima de los valores de
 	// DIBUJÓ y FECHA, que ocupan esa misma franja.
 	doc.text('Símbolos IEC 60617 · Conjunto según IEC 61439-1/-2', MARGEN.izq, y + alto - 1.4);
@@ -132,7 +140,7 @@ function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number,
 /** Genera el PDF con todas las hojas y lo descarga. */
 export async function exportarEsquemaPDF(
 	hojas: HojaEsq[], proyecto: string, archivo: string, datos: DatosCajetin = {},
-	procedencia?: ProcedenciaDocumento,
+	procedencia?: ProcedenciaDocumento, rutasPendientes?: number,
 ): Promise<void> {
 	if (hojas.length === 0) throw new Error('el esquema no tiene hojas');
 	const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [hojas[0].anchoMm, hojas[0].altoMm] });
@@ -147,11 +155,16 @@ export async function exportarEsquemaPDF(
 		// Hilos. Sus números los coloca el motor junto al resto del texto (ver más abajo).
 		doc.setDrawColor(...TINTA);
 		doc.setLineWidth(0.3);
+		const cruces = crucesSinUnion(hoja);
+		const nudos = nudosPorBorne(hoja);
 		for (const hilo of hoja.hilos) {
-			for (let k = 0; k < hilo.nodos.length - 1; k++) {
-				doc.line(hilo.nodos[k].x, hilo.nodos[k].y, hilo.nodos[k + 1].x, hilo.nodos[k + 1].y);
+			for (const tramo of tramosVisiblesDeHilo(hilo, cruces, 1, nudos)) {
+				doc.line(tramo.a.x, tramo.a.y, tramo.b.x, tramo.b.y);
 			}
 		}
+		// El punto negro solo marca un borne compartido, nunca una coincidencia XY.
+		doc.setFillColor(...TINTA);
+		for (const { punto } of nudos) doc.circle(punto.x, punto.y, 0.9, 'F');
 
 		// Símbolos con su designación.
 		doc.setDrawColor(...TINTA);
@@ -177,7 +190,7 @@ export async function exportarEsquemaPDF(
 			doc.text(r.texto, r.p.x, r.p.y + (r.tipo === 'hilo' ? 0.6 : 0), { align: 'center' });
 		}
 
-		cajetin(doc, hoja, proyecto, hojas.length, datos, procedencia);
+		cajetin(doc, hoja, proyecto, hojas.length, datos, procedencia, rutasPendientes);
 	});
 
 	descargar(archivo, doc.output('blob'));

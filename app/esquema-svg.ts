@@ -6,10 +6,13 @@
  * exporta a PDF, y el SVG es nítido a cualquier tamaño y se puede volcar a papel tal cual.
  */
 import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
+import { crucesSinUnion, nudosPorBorne, tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
+import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 
-/** Escapa texto para que un nombre con < o & no rompa el SVG. */
+/** Texto XML 1.0 seguro: elimina controles prohibidos y escapa contenido/atributos. */
 function esc(t: string): string {
-	return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+	return t.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g, '')
+		.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 const n = (v: number) => Math.round(v * 100) / 100;
@@ -39,6 +42,10 @@ export interface OpcionesEsquema {
 	/** Cliente, obra, proyectista y revisión: lo que hace seguible un plano en obra. */
 	datos?: { cliente?: string; obra?: string; proyectista?: string; revision?: string; fecha?: string };
 	totalHojas?: number;
+	/** Identidad confirmada del archivo exportado; ausente en el visor interactivo. */
+	procedencia?: ProcedenciaDocumento;
+	/** Total del proyecto, no solo de esta hoja: ninguna conexión pendiente implica metraje. */
+	rutasPendientes?: number;
 	/** Resalta un aparato (el seleccionado en el resto del programa). */
 	resaltado?: string;
 	/** Conductor seleccionado en el editor de esquema. No se usa al exportar. */
@@ -129,20 +136,48 @@ function pintarCajetin(hoja: HojaEsq, o: OpcionesEsquema, tinta: string, suave: 
 		campo(x + PAD, baseRotulo(franja1), 'CLIENTE', d.cliente ?? '', anchoIzq),
 		campo(col2 + PAD, baseRotulo(franja1), 'OBRA', d.obra ?? '', anchoDer),
 		campo(x + PAD, baseRotulo(franja2), 'DIBUJÓ', d.proyectista ?? '', anchoIzq),
-		campo(col2 + PAD, baseRotulo(franja2), 'FECHA', d.fecha ?? '', anchoDer),
+		campo(col2 + PAD, baseRotulo(franja2), 'FECHA ED.', d.fecha ?? '', anchoDer),
 		/*
 		 * REV. y su número. El rótulo va en la franja de arriba y el valor en la de abajo, con la
 		 * raya en medio: el valor iba a 4,6 con la línea base en y+21, y su parte alta caía en
 		 * y+16,5 —POR ENCIMA de la raya de y+17,5—, o sea, dentro de la casilla del rótulo. Ahora
 		 * el rótulo se apoya en la raya por arriba y el número va centrado en SU casilla.
 		 */
-		`<text x="${n(col3 + 17)}" y="${n(franja2 - 0.4 - CUERPO_ROTULO * DESCENDENTE)}" font-size="${CUERPO_ROTULO}" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">REV.</text>`,
+		`<text x="${n(col3 + 17)}" y="${n(franja2 - 0.4 - CUERPO_ROTULO * DESCENDENTE)}" font-size="${CUERPO_ROTULO}" text-anchor="middle" fill="${suave}" font-family="system-ui, sans-serif">REV. ED.</text>`,
 		`<text x="${n(col3 + 17)}" y="${n(franja2 + (altoFranja - 4.6 * (ASCENDENTE + DESCENDENTE)) / 2 + 4.6 * ASCENDENTE)}" font-size="4.6" text-anchor="middle" fill="${tinta}" font-family="system-ui, sans-serif" font-weight="700">${esc(d.revision || '—')}</text>`,
 		// La nota de normas va FUERA de la casilla, a la izquierda del cajetín. Dentro caía justo
 		// encima de los valores de DIBUJÓ y FECHA (la tercera franja ya está ocupada por ellos) y
 		// tapaba el nombre del proyectista, que es de lo poco que nadie puede permitirse no leer.
 		`<text x="${n(MARGEN.izq)}" y="${n(y + alto - 1.2)}" font-size="2.4" fill="${suave}" font-family="system-ui, sans-serif">Símbolos IEC 60617 · Conjunto según IEC 61439-1/-2</text>`,
 	].join('');
+}
+
+/** Banda de identidad de entrega fuera del dibujo; no confunde la revisión editorial con la guardada. */
+function pintarProcedencia(hoja: HojaEsq, o: OpcionesEsquema, tinta: string, suave: string): string {
+	if (!o.procedencia) return '';
+	const identidad = resumenProcedenciaDocumento(o.procedencia);
+	const x = MARGEN.izq;
+	const y = hoja.altoMm - MARGEN.abajo + 1;
+	const ancho = hoja.anchoMm - MARGEN.der - 180 - x - 5;
+	const lineas = [
+		{ y: 5, texto: `${identidad.estado} · Project ID ${identidad.projectId} · Revisión repositorio ${identidad.revisionRepositorio}` },
+		{ y: 9.5, texto: `Generado ${identidad.generadoEn} · Build ID ${identidad.buildId}` },
+	];
+	const pie = [
+		`Alcance: esquema eléctrico; no certifica instalación ni fabricación.`,
+		`Rutas físicas pendientes del proyecto: ${o.rutasPendientes ?? 'no informadas'}.`,
+		`Una ruta pendiente no define trayecto, longitud ni material.`,
+	];
+	return lineas.map((l) => {
+		const v = enCaja(l.texto.replace(/\s+/g, ' '), 2.3, hoja.anchoMm - MARGEN.izq - MARGEN.der);
+		return `<text x="${n(x)}" y="${l.y}" font-size="2.3" fill="${suave}" `
+			+ `font-family="system-ui, sans-serif"${v.attr}>${esc(v.texto)}</text>`;
+	}).join('')
+		+ pie.map((valor, i) => {
+			const v = enCaja(valor, 2.2, ancho);
+			return `<text x="${n(x)}" y="${n(y + 5 + i * 4.2)}" font-size="2.2" fill="${i === 1 ? tinta : suave}" `
+				+ `font-family="system-ui, sans-serif"${v.attr}>${esc(v.texto)}</text>`;
+		}).join('');
 }
 
 /*
@@ -256,10 +291,17 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 		pintarRejilla(hoja, tinta, suave),
 	];
 
+	const cruces = crucesSinUnion(hoja);
+	const nudos = nudosPorBorne(hoja);
 	// Hilos primero: los símbolos van encima y tapan las puntas. Los números NO se colocan
 	// aquí: los coloca el motor junto con el resto del texto, para que nada tape a nada.
 	for (const hilo of hoja.hilos) {
-		const d = hilo.nodos.map((p, i) => `${i ? 'L' : 'M'}${n(p.x)} ${n(p.y)}`).join(' ');
+		// El mismo path recortado sirve de tinta Y de agarre: el hueco no roba clics.
+		const d = cruces.some((c) => c.porDebajo.conductorId === hilo.conductorId)
+			|| nudos.some((nudo) => !nudo.conductores.includes(hilo.conductorId))
+			? tramosVisiblesDeHilo(hilo, cruces, 1, nudos).map((tramo) =>
+				`M${n(tramo.a.x)} ${n(tramo.a.y)} L${n(tramo.b.x)} ${n(tramo.b.y)}`).join(' ')
+			: hilo.nodos.map((p, i) => `${i ? 'L' : 'M'}${n(p.x)} ${n(p.y)}`).join(' ');
 		const seleccionado = hilo.conductorId === o.resaltadoConductor;
 		const id = esc(hilo.conductorId);
 		const agarre = o.interactivo
@@ -271,8 +313,8 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 			+ `stroke-width="${seleccionado ? '1.2' : '0.45'}" stroke-linejoin="round"/>${agarre}</g>`);
 	}
 
-	// Puntos de unión: donde tres o más hilos coinciden se marca el nudo, como en un plano real.
-	for (const p of nudos(hoja)) {
+	// Solo los conductores que comparten un borne REAL forman una unión; XY no conecta.
+	for (const { punto: p } of nudos) {
 		partes.push(`<circle cx="${n(p.x)}" cy="${n(p.y)}" r="0.9" fill="${tinta}"/>`);
 	}
 
@@ -333,22 +375,9 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 		} else partes.push(texto);
 	}
 
-	partes.push(pintarCajetin(hoja, o, tinta, suave));
+	partes.push(pintarCajetin(hoja, o, tinta, suave), pintarProcedencia(hoja, o, tinta, suave));
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${hoja.anchoMm} ${hoja.altoMm}" `
 		+ `width="100%" height="100%" preserveAspectRatio="xMidYMid meet">${partes.join('')}</svg>`;
-}
-
-/** Puntos donde coinciden tres o más extremos de hilo: son uniones eléctricas, no cruces. */
-function nudos(hoja: HojaEsq): { x: number; y: number }[] {
-	const cuenta = new Map<string, { p: { x: number; y: number }; n: number }>();
-	for (const hilo of hoja.hilos) {
-		for (const p of [hilo.nodos[0], hilo.nodos[hilo.nodos.length - 1]]) {
-			const clave = `${Math.round(p.x * 2)}:${Math.round(p.y * 2)}`;
-			const e = cuenta.get(clave);
-			if (e) e.n++; else cuenta.set(clave, { p, n: 1 });
-		}
-	}
-	return [...cuenta.values()].filter((e) => e.n >= 2).map((e) => e.p);
 }
 
 /** Aclara u oscurece un color hexadecimal hacia el gris (para los textos secundarios). */
