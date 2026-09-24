@@ -16,6 +16,7 @@ export type TipoFalloRuntime =
 	| 'fuga-tierra'
 	| 'motor-bloqueado'
 	| 'fallo-sensor'
+	| 'salida-sensor-abierta'
 	| 'circuito-analogico-abierto'
 	| 'senal-fuera-rango'
 	| 'perdida-referencia'
@@ -43,6 +44,7 @@ export const ETIQUETA_FALLO_RUNTIME: Readonly<Record<TipoFalloRuntime, string>> 
 	'fuga-tierra': 'Fuga a tierra simulada',
 	'motor-bloqueado': 'Motor bloqueado',
 	'fallo-sensor': 'Sensor averiado',
+	'salida-sensor-abierta': 'Salida del sensor abierta (ensayo)',
 	'circuito-analogico-abierto': 'Circuito analógico abierto',
 	'senal-fuera-rango': 'Señal fuera de rango',
 	'perdida-referencia': 'Pérdida de referencia',
@@ -68,8 +70,10 @@ export function fallosCompatibles(d: Dispositivo): TipoFalloRuntime[] {
 		return base;
 	}
 	if (perfil.clase === 'sensor') {
-		return perfil.transmisor
+		const opciones: TipoFalloRuntime[] = perfil.transmisor
 			? ['fallo-sensor', 'circuito-analogico-abierto', 'senal-fuera-rango'] : [];
+		if (perfil.contactos.length || perfil.salidaDigital) opciones.push('salida-sensor-abierta');
+		return opciones;
 	}
 	if (perfil.clase === 'controlador' && perfil.entradasAnalogicas?.length) {
 		return ['circuito-analogico-abierto', 'senal-fuera-rango'];

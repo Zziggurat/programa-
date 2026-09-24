@@ -216,6 +216,11 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 	const sensoresAnalogicosPorId = new Map(
 		(e.energizado ? e.resultado?.sensoresAnalogicos ?? [] : []).map((s) => [s.dispositivoId, s]),
 	);
+	const sensoresFallados = new Set(
+		(e.energizado ? e.resultado?.fallos ?? [] : [])
+			.filter((f) => f.tipo === 'fallo-sensor' || f.tipo === 'salida-sensor-abierta')
+			.map((f) => f.dispositivoId),
+	);
 	const actuadoresPorId = new Map(
 		(e.energizado ? e.resultado?.actuadores ?? [] : []).map((a) => [a.dispositivoId, a]),
 	);
@@ -304,9 +309,10 @@ export function animarSimulacion(e: EntradaAnimacion): void {
 
 		/* --- Pilotos, lámparas y testigos: se encienden con su propio color --- */
 		// Una sonda o boya se enciende cuando está ACCIONADA, aunque no consuma nada.
-		const sensorEnFallo = sensorAnalogico !== undefined && sensorAnalogico.senal.calidad !== 'normal';
+		const sensorEnFallo = sensoresFallados.has(id)
+			|| sensorAnalogico !== undefined && sensorAnalogico.senal.calidad !== 'normal';
 		const sensorActivo = e.energizado && perfil?.clase === 'sensor'
-			&& (!!st.activo || !!sensorAnalogico && !sensorEnFallo);
+			&& !sensorEnFallo && (!!st.activo || !!sensorAnalogico);
 		const encendida = (perfil?.clase === 'carga' && perfil.efecto === 'luz' && enMarcha)
 			|| sensorActivo;
 		for (const m of p.lente) {

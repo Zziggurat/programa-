@@ -40,6 +40,20 @@ test('fallos runtime: las opciones dependen del perfil funcional, no de marca, i
 	assert.deepEqual(fallosCompatibles(proteccion('fusible')), ['sobrecarga', 'cortocircuito']);
 });
 
+test('la falla de salida abierta solo se ofrece a sensores con contacto o salida digital', () => {
+	const documental: Dispositivo = { id: 'sin-canal', tipo: 'otro', bornes: [],
+		comportamiento: { version: 1, clase: 'sensor', contactos: [] } };
+	assert.deepEqual(fallosCompatibles(documental), []);
+	const contacto: Dispositivo = { id: 'boya', tipo: 'otro', bornes: [{ id: '1' }, { id: '2' }],
+		comportamiento: { version: 1, clase: 'sensor', contactos: [
+			{ entrada: '1', salida: '2', reposo: 'abierto', funcion: 'auxiliar' },
+		] } };
+	assert.deepEqual(fallosCompatibles(contacto), ['salida-sensor-abierta']);
+	assert.deepEqual(contactosCerrados(contacto, { activo: true }, false), [['1', '2']]);
+	assert.deepEqual(contactosCerrados(contacto,
+		{ activo: true, fallos: ['salida-sensor-abierta'] }, false), []);
+});
+
 test('fallos runtime: activar y quitar una condición no muta ni se serializa en Proyecto', () => {
 	const inicial: { activo: boolean; fallos?: TipoFalloRuntime[] } = { activo: true };
 	const conFallo = cambiarFalloRuntime(inicial, 'sobrecarga', true);

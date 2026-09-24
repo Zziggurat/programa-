@@ -685,6 +685,9 @@ function contactosCerradosBase(d: Dispositivo, estado: EstadoAparato, bobinaMeti
 		return pares;
 	}
 	if (comportamiento?.clase === 'sensor') {
+		// Ensayo de circuito abierto. No afirma que toda avería real falle así: un contacto
+		// soldado requeriría una falla V6 de contacto diferente y explícita.
+		if (tieneFallo(estado, 'salida-sensor-abierta')) return pares;
 		const activo = estado.activo === true;
 		for (const c of comportamiento.contactos) {
 			const cerrado = c.reposo === 'cerrado' ? !activo : activo;
@@ -730,6 +733,7 @@ function contactosCerradosBase(d: Dispositivo, estado: EstadoAparato, bobinaMeti
 
 	// Pulsadores, selectores y sensores: contactos secos que el usuario acciona.
 	if (d.tipo === 'pulsador' || d.tipo === 'selector' || d.tipo === 'sensor') {
+		if (d.tipo === 'sensor' && tieneFallo(estado, 'salida-sensor-abierta')) return pares;
 		const activado = estado.activo === true;
 		const iec = contactosAuxiliaresIEC(d);
 		for (const par of iec) {
@@ -2622,10 +2626,14 @@ function fallosActivos(
 	variadores: readonly EstadoVariador[],
 ): (FalloRuntimeActivo & { dispositivoId: string; designacion: string })[] {
 	const salida: (FalloRuntimeActivo & { dispositivoId: string; designacion: string })[] = [];
-	for (const d of aparatos) for (const tipo of estado[d.id]?.fallos ?? []) {
-		salida.push({
+	for (const d of aparatos) {
+		const perfil = resolverComportamiento(d);
+		for (const tipo of estado[d.id]?.fallos ?? []) salida.push({
 			dispositivoId: d.id, designacion: d.designacion ?? d.id, tipo,
-			origen: 'inyectado', descripcion: `Condición inyectada para el ensayo: ${tipo}.`,
+			origen: 'inyectado', descripcion: tipo === 'salida-sensor-abierta'
+				&& perfil?.clase === 'sensor'
+				? 'Salida de sensor forzada abierta en este ensayo; no se deduce el modo de falla real.'
+				: `Condición inyectada para el ensayo: ${tipo}.`,
 		});
 	}
 	for (const m of motores) if (m.motivoFalla === 'perdida-fase'

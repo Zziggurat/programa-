@@ -14,6 +14,7 @@ import { crearProyecto } from '../src/modelo/proyecto.js';
 import { Conductor, Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { numerarDispositivos } from '../src/motores/numeracion.js';
 import { memoriaLogicaVacia } from '../src/motores/logica.js';
+import { fallosCompatibles } from '../src/motores/fallos-runtime.js';
 import {
 	contactosAuxiliaresIEC, contactosCerrados, memoriaVacia, polosDe, simular,
 	tensionSecundariaDe, tiempoDeDisparo,
@@ -213,6 +214,24 @@ test('con el diferencial abierto la bomba no arranca aunque la boya pida agua', 
 	assert.ok(!gira(r, bomba.designacion!), 'la bomba arranca con el diferencial abierto');
 });
 
+test('una avería inyectada de la boya abre el mando y lleva la bomba a reposo seguro', () => {
+	const p = ejemplo('bomba-boya');
+	const boya = p.dispositivos.find((d) => d.tipo === 'sensor')!;
+	const km = p.dispositivos.find((d) => d.tipo === 'contactor')!;
+	const bomba = p.dispositivos.find((d) => d.tipo === 'motor')!;
+	assert.ok(fallosCompatibles(boya).includes('salida-sensor-abierta'), 'la UI no ofrece el ensayo para una boya');
+	const enMarcha = simular(p, { [boya.id]: { activo: true } });
+	assert.ok(enMarcha.activos.has(km.id));
+	assert.ok(gira(enMarcha, bomba.designacion!));
+	const fallado = simular(p, { [boya.id]: { activo: true, fallos: ['salida-sensor-abierta'] } }, enMarcha.activos);
+	assert.ok(!fallado.activos.has(km.id), 'KM queda alimentado con el circuito de boya averiado');
+	assert.ok(!gira(fallado, bomba.designacion!), 'el motor sigue en marcha tras abrirse el mando');
+	assert.deepEqual(contactosCerrados(boya, { activo: true, fallos: ['salida-sensor-abierta'] }, false), [],
+		'la boya averiada conduce por dentro');
+	assert.ok(fallado.fallos.some((f) => f.dispositivoId === boya.id
+		&& f.tipo === 'salida-sensor-abierta' && f.origen === 'inyectado'));
+});
+
 /* --------------------------------- El piloto --------------------------------- */
 
 test('una lámpara entre fase y retorno se enciende; entre dos fases, no', () => {
@@ -267,6 +286,18 @@ test('un detector PNP no da señal en reposo y sí al detectar', () => {
 		'el detector entrega señal sin recibir su retorno de alimentación');
 	assert.ok(gira(simular(p, { s1: { activo: true } }), '-H1'),
 		'el detector no entrega +24 V por su salida al detectar');
+	assert.ok(!gira(simular(p, { s1: { activo: true, fallos: ['salida-sensor-abierta'] } }), '-H1'),
+		'un detector averiado sigue energizando su salida digital');
+	const importado = structuredClone(p);
+	const s1 = importado.dispositivos.find((d) => d.id === 's1')!;
+	s1.tipo = 'otro';
+	s1.comportamiento = { version: 1, clase: 'sensor', contactos: [],
+		alimentacion: { entrada: '+24', retorno: '0V' }, salidaDigital: { tomaDe: '+24', borne: 'OUT' } };
+	assert.deepEqual(fallosCompatibles(s1), ['salida-sensor-abierta']);
+	assert.ok(gira(simular(importado, { s1: { activo: true } }), '-H1'),
+		'el perfil importado no conserva el detector nativo');
+	assert.ok(!gira(simular(importado, { s1: { activo: true, fallos: ['salida-sensor-abierta'] } }), '-H1'),
+		'el perfil importado ignora la avería inyectada');
 });
 
 /* ============================ INTENSIDADES, FALTAS Y DISPAROS ============================
