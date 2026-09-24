@@ -1,5 +1,6 @@
 /** Lectura defensiva del dibujo M2. No modifica el grafo eléctrico ni crea vistas legacy. */
 import type { Dispositivo, Hoja, RepresentacionEsquema } from './tipos.js';
+import { resolverComportamiento } from './comportamiento.js';
 
 type Avisar = (ruta: string, motivo: string) => void;
 type Par = { entrada: string; salida: string };
@@ -17,7 +18,7 @@ const clavePar = (entrada: string, salida: string): string => JSON.stringify([en
 
 /** Solo los pares declarados por el perfil eléctrico son contactos dibujables como tales. */
 function paresDelPerfil(d: Dispositivo): Par[] {
-	const perfil = d.comportamiento;
+	const perfil = resolverComportamiento(d);
 	if (!perfil) return [];
 	switch (perfil.clase) {
 		case 'contactos-electromagneticos':
@@ -65,7 +66,7 @@ function leerUna(
 		};
 	}
 	if (parte.tipo === 'bobina' && soloClaves(parte, ['tipo'])) {
-		const perfil = d.comportamiento;
+		const perfil = resolverComportamiento(d);
 		if (perfil?.clase !== 'contactos-electromagneticos') {
 			return rechazar('la bobina no estaba declarada en un perfil eléctrico válido');
 		}
@@ -124,7 +125,7 @@ function bornesRepresentados(r: RepresentacionEsquema, d: Dispositivo): string[]
 	switch (r.parte.tipo) {
 		case 'completa': return d.bornes.map((b) => b.id);
 		case 'bobina': {
-			const perfil = d.comportamiento;
+			const perfil = resolverComportamiento(d);
 			return perfil?.clase === 'contactos-electromagneticos'
 				? [perfil.bobina.entrada, perfil.bobina.retorno] : [];
 		}

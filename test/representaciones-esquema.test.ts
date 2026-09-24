@@ -143,9 +143,13 @@ test('pares deben existir como bornes y como funciones declaradas, sin índice n
 	const sinPerfil = proyectoBase();
 	sinPerfil.dispositivos[0].comportamiento = undefined;
 	sinPerfil.esquema = { representaciones: [vistas()[0]] };
-	const r = abrir(sinPerfil);
-	assert.deepEqual(r.proyecto.esquema?.representaciones, []);
-	assert.match(r.diagnosticos[0]?.motivo ?? '', /bobina/);
+	const legado = abrir(sinPerfil);
+	assert.deepEqual(legado.proyecto.esquema?.representaciones, [vistas()[0]],
+		'los bornes IEC legacy resuelven la bobina sin persistir un perfil artificial');
+	sinPerfil.dispositivos[0].bornes = sinPerfil.dispositivos[0].bornes.filter((b) => b.id !== 'A2');
+	const sinBorne = abrir(sinPerfil);
+	assert.deepEqual(sinBorne.proyecto.esquema?.representaciones, []);
+	assert.match(sinBorne.diagnosticos[0]?.motivo ?? '', /bobina/);
 });
 
 test('IDs repetidos y bornes en dos vistas se rechazan sin ganar por posición de archivo', () => {

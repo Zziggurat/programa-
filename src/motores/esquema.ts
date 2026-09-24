@@ -18,6 +18,7 @@ import { Dispositivo, Proyecto } from '../modelo/tipos.js';
 import type { ParteRepresentacionEsquema, RepresentacionEsquema } from '../modelo/tipos.js';
 import { rotuloVisibleBorne } from '../modelo/bornes.js';
 import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
+import { resolverComportamiento } from '../modelo/comportamiento.js';
 import { ResultadoPotenciales } from './potenciales.js';
 
 /* --------------------------------- Geometría --------------------------------- */
@@ -622,7 +623,7 @@ function simboloDeRepresentacion(d: Dispositivo, r: RepresentacionEsquema): Geom
 	if (r.parte.tipo === 'completa') return simboloDe(d);
 	const bornes = new Map(d.bornes.map((b) => [b.id, b]));
 	if (r.parte.tipo === 'bobina') {
-		const perfil = d.comportamiento;
+		const perfil = resolverComportamiento(d);
 		if (perfil?.clase !== 'contactos-electromagneticos') return undefined;
 		const { entrada, retorno } = perfil.bobina;
 		const a = bornes.get(entrada);
@@ -644,7 +645,7 @@ function simboloDeRepresentacion(d: Dispositivo, r: RepresentacionEsquema): Geom
 		};
 	}
 
-	const perfil = d.comportamiento;
+	const perfil = resolverComportamiento(d);
 	if (!perfil || r.parte.pares.length === 0) return undefined;
 	const estadoContacto = (entrada: string, salida: string): boolean | undefined => {
 		const igual = (p: { entrada: string; salida: string }) => p.entrada === entrada && p.salida === salida;
