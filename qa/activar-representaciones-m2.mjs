@@ -41,10 +41,10 @@ try {
 	await page.waitForFunction(() => window.qa.proyecto().nombre === 'QA activación M2');
 	await page.locator('#btn-esquema').click();
 	assert.match(await page.locator('#esq-indicador').textContent(), /Hoja 1 \/ 2/);
-	assert.equal(await page.locator('[data-dispositivo="m1"]').count(), 1);
+	assert.equal(await page.locator('#esquema-hoja .simbolo[data-dispositivo="m1"]').count(), 1);
 	await page.locator('#esq-siguiente').click();
-	assert.equal(await page.locator('[data-dispositivo="km1"]').count(), 1);
-	assert.equal(await page.locator('[data-dispositivo="s1"]').count(), 1);
+	assert.equal(await page.locator('#esquema-hoja .simbolo[data-dispositivo="km1"]').count(), 1);
+	assert.equal(await page.locator('#esquema-hoja .simbolo[data-dispositivo="s1"]').count(), 1);
 	assert.equal(await vistas(), undefined);
 	console.log('OK legado visible en dos hojas antes de activar');
 
@@ -75,12 +75,12 @@ try {
 	assert.ok(convertido.esquema.representaciones.every((r) => r.parte.tipo === 'completa'));
 	await page.keyboard.press('Control+z');
 	await page.waitForFunction(() => window.qa.proyecto().esquema?.representaciones === undefined);
-	assert.equal(await page.locator('[data-dispositivo="km1"]').count(), 1);
+	assert.equal(await page.locator('#esquema-hoja .simbolo[data-dispositivo="km1"]').count(), 1);
 	await page.keyboard.press('Control+y');
 	await page.waitForFunction(() => window.qa.proyecto().esquema?.representaciones?.length === 3);
 	console.log('OK previsualización/cancelación, activación completa y Ctrl+Z/Y');
 
-	await page.locator('[data-dispositivo="km1"]').click();
+	await page.locator('#esquema-hoja .simbolo[data-dispositivo="km1"]').click();
 	assert.ok(await page.locator('#esq-desdoblar').isVisible());
 	await page.locator('#esq-desdoblar').click();
 	for (const nombre of ['bobina', 'polos', 'auxiliares']) {
@@ -118,9 +118,9 @@ try {
 	assert.equal(desdoblado.esquema.representaciones.find((r) => r.dispositivoId === 'km1'
 		&& r.parte.tipo === 'bobina').hojaId, hMando);
 	await page.locator('#esq-anterior').click();
-	assert.equal(await page.locator('[data-dispositivo="km1"]').count(), 1);
+	assert.equal(await page.locator('#esquema-hoja .simbolo[data-dispositivo="km1"]').count(), 1);
 	await page.locator('#esq-siguiente').click();
-	assert.equal(await page.locator('[data-dispositivo="km1"]').count(), 2);
+	assert.equal(await page.locator('#esquema-hoja .simbolo[data-dispositivo="km1"]').count(), 2);
 	await page.keyboard.press('Control+z');
 	await page.waitForFunction(() => window.qa.proyecto().esquema.representaciones
 		.filter((r) => r.dispositivoId === 'km1').length === 1);
