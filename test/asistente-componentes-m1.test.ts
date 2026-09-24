@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 
 import {
 	PASOS_ASISTENTE_COMPONENTE, calcularRecorteImagen, pasoAdyacenteComponente,
-	tamanoPngDerivado, carcasaConservadaEnRevision,
+	tamanoPngDerivado, carcasaConservadaEnRevision, seleccionarPlantillaCarcasa,
 } from '../app/ui-componentes-personalizados.js';
 import { leerComponentePortatil } from '../src/componentes/portatil.js';
 
@@ -55,6 +55,19 @@ test('una revisión fotográfica conserva intacta la carcasa fijada', () => {
 	assert.deepEqual(nueva, original);
 	assert.notStrictEqual(nueva.carcasa, original.carcasa);
 	assert.deepEqual(carcasaConservadaEnRevision(undefined), {});
+});
+
+test('plantilla de carcasa solo cambia por elección explícita, con acabado visible', () => {
+	const original = { carcasa: { plantilla: 'modulo-din', acabado: 'grafito' } } as const;
+	const revision = carcasaConservadaEnRevision(original).carcasa;
+	assert.deepEqual(revision, original.carcasa);
+	const otraPlantilla = seleccionarPlantillaCarcasa(revision, 'caja-industrial');
+	assert.deepEqual(otraPlantilla, { plantilla: 'caja-industrial', acabado: 'grafito' });
+	assert.deepEqual(original.carcasa, { plantilla: 'modulo-din', acabado: 'grafito' });
+	assert.deepEqual(seleccionarPlantillaCarcasa(undefined, 'modulo-din'),
+		{ plantilla: 'modulo-din', acabado: 'gris-claro' });
+	assert.equal(seleccionarPlantillaCarcasa(otraPlantilla, ''), undefined);
+	assert.equal(seleccionarPlantillaCarcasa(undefined, ''), undefined);
 });
 
 const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7xQAAAAASUVORK5CYII=';

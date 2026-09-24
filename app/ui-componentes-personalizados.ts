@@ -12,6 +12,7 @@ import {
 	type TerminalComponentePersonalizado,
 } from '../src/componentes/personalizados.js';
 import { base64ABytes } from '../src/componentes/assets.js';
+import type { CarcasaParametrica } from '../src/componentes/carcasa.js';
 import { crearComponentePortatil, leerComponentePortatilDesdeArchivo } from '../src/componentes/portatil.js';
 import { congelarSubconjunto } from '../src/datos-tecnicos/hash.js';
 import { familiaDispositivo } from '../src/datos-tecnicos/resolver.js';
@@ -151,6 +152,7 @@ interface EstadoEditor {
 	bloquesTerminales?: BloqueTerminales[];
 	parametros: ParametrosConstruccionPerfil;
 	montaje?: MontajeComponente;
+	carcasa?: CarcasaParametrica;
 	fichaTecnica?: DefinicionComponentePersonalizado['fichaTecnica'];
 	/** Selección de UI no aplicada hasta pulsar «Fijar revisión exacta». */
 	candidatoFichaClave?: string;
@@ -256,11 +258,18 @@ function contenidoDe(d: DefinicionComponentePersonalizado): ContenidoComponenteP
 	return contenido;
 }
 
-/** Una revisión fotográfica no borra una plantilla de carcasa fijada previamente. */
+/** Al abrir una revisión se conserva la declaración de carcasa, sin compartir su objeto. */
 export function carcasaConservadaEnRevision(
 	original?: Pick<DefinicionComponentePersonalizado, 'carcasa'>,
 ): Pick<DefinicionComponentePersonalizado, 'carcasa'> {
 	return original?.carcasa ? { carcasa: clonar(original.carcasa) } : {};
+}
+
+/** Elegir una plantilla es explícito; volver a «sin plantilla» restaura el frente legacy. */
+export function seleccionarPlantillaCarcasa(
+	actual: CarcasaParametrica | undefined, plantilla: CarcasaParametrica['plantilla'] | '',
+): CarcasaParametrica | undefined {
+	return plantilla ? { plantilla, acabado: actual?.acabado ?? 'gris-claro' } : undefined;
 }
 
 function parametrosDesde(d: DefinicionComponentePersonalizado): ParametrosConstruccionPerfil {
@@ -325,7 +334,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	const huellaEditor = (e: EstadoEditor): string => JSON.stringify({
 		original: e.original && [e.original.id, e.original.revision], tipo: e.tipo,
 		datos: e.datos, terminales: e.terminales, bloquesTerminales: e.bloquesTerminales,
-		parametros: e.parametros, montaje: e.montaje,
+		parametros: e.parametros, montaje: e.montaje, carcasa: e.carcasa,
 		fichaTecnica: e.fichaTecnica,
 		assetId: e.assetId, assetNuevo: e.assetBytes && [e.assetBytes.byteLength, e.assetMime, e.previewUrl],
 		recorte: e.recorte, recorteAplicado: e.recorteAplicado,
@@ -479,6 +488,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 				},
 				terminales: terminalesParaEditor(d), bloquesTerminales: d.bloquesTerminales && clonar(d.bloquesTerminales),
 				parametros: parametrosDesde(d), montaje: d.montaje && clonar(d.montaje),
+				carcasa: carcasaConservadaEnRevision(d).carcasa,
 				fichaTecnica: d.fichaTecnica && clonar(d.fichaTecnica),
 				anclajesPlacaBorrador: d.montaje?.metodo === 'atornillado-placa' ? clonar(d.montaje.anclajes ?? []) : undefined,
 				assetId: d.assetId, previewUrl,
@@ -528,6 +538,11 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			+ '<button type="button" data-cp="aplicar-recorte">Aplicar recorte y escala</button><div data-cp="estado-recorte" role="status" aria-live="polite"></div>'
 			+ '<p>Vista previa con anclas u/v fijas. Revisa su alineación después de cambiar el encuadre. Aplicar crea un PNG derivado: las próximas ediciones partirán de ese resultado, no del original. Guardar crea una revisión nueva; los aparatos colocados conservan la anterior.</p>'
 			+ '<div class="cp-preview-apariencia" data-cp="preview-apariencia"></div>'
+			+ '<section class="cp-carcasa"><h4>Carcasa visual ilustrativa</h4>'
+			+ '<p>La plantilla dibuja un volumen detrás de la imagen usando las dimensiones declaradas. No cambia perfil eléctrico, bornes, anclas u/v ni método de montaje. «Módulo DIN» no declara por sí solo montaje en riel DIN ni certifica compatibilidad física.</p>'
+			+ '<div class="cp-campos"><label>Plantilla de carcasa<select data-cp="carcasa-plantilla"><option value="">Sin plantilla: frente fotográfico legacy</option><option value="modulo-din">Módulo DIN ilustrativo</option><option value="caja-industrial">Caja industrial ilustrativa</option></select></label>'
+			+ '<label>Acabado<select data-cp="carcasa-acabado"><option value="gris-claro">Gris claro</option><option value="grafito">Grafito</option><option value="negro">Negro</option></select></label></div>'
+			+ '<div data-cp="carcasa-estado" role="status" aria-live="polite"></div></section>'
 			+ '<section class="cp-ficha" data-cp="ficha-tecnica"><h4>Ficha técnica V8 exacta</h4><p>Selecciona una revisión PRODUCTO de la familia funcional y fija también su curva dependiente. El hash prueba integridad, no autenticidad, licencia ni certificación. La selección no modifica los parámetros eléctricos por sí sola.</p><div data-cp="ficha-estado" role="status" aria-live="polite"></div><div data-cp="ficha-contenido"></div></section></section>'
 			+ '<section class="cp-panel cp-paso" data-cp-paso="revision" hidden><h3 tabindex="-1">6. Revisión antes de guardar</h3>'
 			+ '<p>Confirma identidad, perfil, bornes, dimensiones y asset. Guardar crea una revisión de biblioteca; no actualiza automáticamente los aparatos colocados.</p>'
@@ -583,8 +598,20 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			};
 		}
 		el<HTMLButtonElement>(cuerpo, '[data-cp="aplicar-recorte"]').onclick = () => { void aplicarRecorteImagen(); };
+		el<HTMLSelectElement>(cuerpo, '[data-cp="carcasa-plantilla"]').onchange = (evento) => {
+			if (!editor || guardando) return;
+			editor.carcasa = seleccionarPlantillaCarcasa(editor.carcasa,
+				(evento.currentTarget as HTMLSelectElement).value as CarcasaParametrica['plantilla'] | '');
+			pintarControlesCarcasa();
+		};
+		el<HTMLSelectElement>(cuerpo, '[data-cp="carcasa-acabado"]').onchange = (evento) => {
+			if (!editor?.carcasa || guardando) return;
+			editor.carcasa = { ...editor.carcasa,
+				acabado: (evento.currentTarget as HTMLSelectElement).value as CarcasaParametrica['acabado'] };
+			pintarControlesCarcasa();
+		};
 		pintarFidelidad(); pintarPreview(); pintarTerminales(); pintarBloques(); pintarParametros(); pintarMontaje();
-		pintarControlesRecorte(); void pintarApariencia();
+		pintarControlesRecorte(); pintarControlesCarcasa(); void pintarApariencia();
 		el<HTMLButtonElement>(cuerpo, '[data-cp="validar"]').onclick = () => { validarDesdeFormulario(false); };
 		el<HTMLButtonElement>(cuerpo, '[data-cp="guardar"]').onclick = () => { void guardarDesdeFormulario(); };
 		mostrarPasoEditor(editor.paso ?? 'identidad', false);
@@ -606,7 +633,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		el<HTMLElement>(cuerpo, '[data-cp="acciones-revision"]').hidden = paso !== 'revision';
 		el<HTMLElement>(cuerpo, '[data-cp="progreso"]').textContent = `Paso ${indice + 1} de ${PASOS_ASISTENTE_COMPONENTE.length}`;
 		cuerpo.scrollTop = 0;
-		if (paso === 'apariencia') { void actualizarFichaTecnica(); void pintarApariencia(); }
+		if (paso === 'apariencia') { capturarMontaje(); pintarControlesCarcasa(); void actualizarFichaTecnica(); void pintarApariencia(); }
 		if (paso === 'revision') {
 			pintarResumenEditor();
 			const errores = el<HTMLElement>(cuerpo, '[data-cp="errores"]');
@@ -647,6 +674,9 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		fila('Imagen', !mismoRecorte(editor.recorte, editor.recorteAplicado)
 			? 'Recorte pendiente de aplicar antes de guardar'
 			: editor.assetBytes ? 'Nueva imagen pendiente de guardar' : editor.assetId ? 'Asset ya guardado' : 'Falta imagen');
+		fila('Carcasa visual', editor.carcasa
+			? `${editor.carcasa.plantilla === 'modulo-din' ? 'Módulo DIN ilustrativo' : 'Caja industrial ilustrativa'} · acabado ${editor.carcasa.acabado} · no declara montaje`
+			: 'Sin plantilla: frente fotográfico legacy');
 		fila('Montaje', editor.montaje?.metodo === 'riel-din' ? 'Riel DIN declarado; ajuste físico pendiente de evaluar'
 			: editor.montaje?.metodo === 'atornillado-placa'
 				? editor.montaje.anclajes?.length
@@ -680,6 +710,20 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			: aplicandoRecorte === editor ? 'Generando PNG derivado…'
 				: pendiente ? 'El encuadre está pendiente. Aplícalo antes de guardar.'
 					: 'La vista previa coincide con la imagen que se guardará.';
+	}
+
+	function pintarControlesCarcasa(): void {
+		if (!editor) return;
+		const plantilla = el<HTMLSelectElement>(cuerpo, '[data-cp="carcasa-plantilla"]');
+		const acabado = el<HTMLSelectElement>(cuerpo, '[data-cp="carcasa-acabado"]');
+		plantilla.value = editor.carcasa?.plantilla ?? '';
+		acabado.value = editor.carcasa?.acabado ?? 'gris-claro';
+		acabado.disabled = !editor.carcasa || guardando;
+		el<HTMLElement>(cuerpo, '[data-cp="carcasa-estado"]').textContent = !editor.carcasa
+			? 'Sin carcasa paramétrica: se conserva la presentación fotográfica anterior.'
+			: !editor.montaje
+				? 'Compatibilidad de montaje: NO EVALUABLE. La plantilla visual no declara montaje.'
+				: 'El montaje declarado se conserva sin cambios; la compatibilidad física real sigue pendiente de evaluar.';
 	}
 
 	async function fuenteParaRecorte(destino: EstadoEditor): Promise<{ bytes: Uint8Array; mime: string }> {
@@ -1242,7 +1286,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			assetId, terminales: terminalesDesdeEditor(editor.terminales),
 			...(editor.bloquesTerminales?.length ? { bloquesTerminales: clonar(editor.bloquesTerminales) } : {}),
 			...(editor.montaje ? { montaje: clonar(editor.montaje) } : {}),
-			...carcasaConservadaEnRevision(original),
+			...(editor.carcasa ? { carcasa: clonar(editor.carcasa) } : {}),
 			...(editor.fichaTecnica ? { fichaTecnica: clonar(editor.fichaTecnica) } : {}),
 			comportamiento: perfil.comportamiento ?? { version: 1, clase: 'sin-comportamiento', motivo: 'perfil incompleto' }, parametros: p,
 		};
