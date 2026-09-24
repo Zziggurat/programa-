@@ -162,7 +162,10 @@ export function longitudCoincidente3D(
 }
 
 /** Un segmento del recorrido de un cable, con a quién pertenece y en qué tendido entró. */
-interface Barra { id: string; clave: string; radio: number; p0: Punto3; p1: Punto3; trazo: Trazo }
+interface Barra {
+	id: string; clave: string; radio: number; p0: Punto3; p1: Punto3; trazo: Trazo;
+	x0: number; x1: number; y0: number; y1: number; z0: number; z1: number;
+}
 
 /**
  * Si dos cables van al mismo tornillo, el contacto que se produce JUNTO a ese tornillo es
@@ -191,12 +194,15 @@ function esElPropioBorne(a: Trazo, b: Trazo, donde: Punto3): boolean {
  */
 export class RejillaCables {
 	private readonly casillas = new Map<string, Barra[]>();
+	/** Celdas tocadas por cada tendido: permite retirar sus barras, no solo marcarlas obsoletas. */
+	private readonly celdasPorTendido = new Map<string, Set<string>>();
 	/**
 	 * Qué tendidos siguen en pie.
 	 *
 	 * Recolocar un cable obliga a quitarlo de la rejilla, y borrarlo casilla por casilla sale caro.
-	 * En vez de eso cada tendido lleva su clave y aquí se apunta cuál está vigente: las barras del
-	 * tendido viejo siguen en el mapa pero dejan de contar. Poner y quitar salen a coste constante.
+	 * Cada tendido lleva una clave y un índice inverso de celdas. Al repararlo se quitan sus barras
+	 * de esas celdas conservando el orden relativo de las demás: dejar solo una marca de baja
+	 * acumulaba barras fantasma que cada candidato debía saltarse una y otra vez.
 	 */
 	private readonly vigentes = new Set<string>();
 	private version = 0;
@@ -224,11 +230,18 @@ export class RejillaCables {
 	anadir(trazo: Trazo): string {
 		const clave = `${trazo.id}#${this.version++}`;
 		this.vigentes.add(clave);
+		const celdas = new Set<string>();
+		this.celdasPorTendido.set(clave, celdas);
 		for (let n = 0; n < trazo.puntos.length - 1; n++) {
+			const p0 = trazo.puntos[n], p1 = trazo.puntos[n + 1];
 			const barra: Barra = {
-				id: trazo.id, clave, radio: trazo.radio, p0: trazo.puntos[n], p1: trazo.puntos[n + 1], trazo,
+				id: trazo.id, clave, radio: trazo.radio, p0, p1, trazo,
+				x0: Math.min(p0.x, p1.x), x1: Math.max(p0.x, p1.x),
+				y0: Math.min(p0.y, p1.y), y1: Math.max(p0.y, p1.y),
+				z0: Math.min(p0.z, p1.z), z1: Math.max(p0.z, p1.z),
 			};
 			for (const c of this.casillasDe(barra.p0, barra.p1, 0)) {
+				celdas.add(c);
 				const lista = this.casillas.get(c);
 				if (lista) lista.push(barra); else this.casillas.set(c, [barra]);
 			}
@@ -236,8 +249,19 @@ export class RejillaCables {
 		return clave;
 	}
 
-	/** Levanta un tendido para volver a colocarlo en otro sitio. */
-	retirar(clave: string): void { this.vigentes.delete(clave); }
+	/** Levanta un tendido sin alterar el orden de evaluación de las barras que siguen vigentes. */
+	retirar(clave: string): void {
+		if (!this.vigentes.delete(clave)) return;
+		for (const celda of this.celdasPorTendido.get(clave) ?? []) {
+			const lista = this.casillas.get(celda);
+			if (!lista) continue;
+			let escribir = 0;
+			for (const barra of lista) if (barra.clave !== clave) lista[escribir++] = barra;
+			if (escribir) lista.length = escribir;
+			else this.casillas.delete(celda);
+		}
+		this.celdasPorTendido.delete(clave);
+	}
 
 	/**
 	 * El PEOR acercamiento de un candidato contra todo lo ya tendido: el conflicto con menos
@@ -253,6 +277,9 @@ export class RejillaCables {
 		for (let n = 0; n < trazo.puntos.length - 1; n++) {
 			const p0 = trazo.puntos[n];
 			const p1 = trazo.puntos[n + 1];
+			const x0 = Math.min(p0.x, p1.x), x1 = Math.max(p0.x, p1.x);
+			const y0 = Math.min(p0.y, p1.y), y1 = Math.max(p0.y, p1.y);
+			const z0 = Math.min(p0.z, p1.z), z1 = Math.max(p0.z, p1.z);
 			const alcance = trazo.radio + margen + 8;
 			vistas.clear();
 			for (const c of this.casillasDe(p0, p1, alcance)) {
@@ -261,6 +288,13 @@ export class RejillaCables {
 					if (!this.vigentes.has(barra.clave)) continue;   // tendido levantado
 					if (vistas.has(barra)) continue;   // una barra puede estar en varias casillas
 					vistas.add(barra);
+					// Si las cajas de los segmentos se separan más que radios + margen
+					// en cualquier eje, la distancia 3D exacta NO puede dar conflicto.
+					// Estrictamente > conserva la tangencia para el cálculo original.
+					const limite = trazo.radio + barra.radio + margen;
+					if (barra.x0 - x1 > limite || x0 - barra.x1 > limite
+						|| barra.y0 - y1 > limite || y0 - barra.y1 > limite
+						|| barra.z0 - z1 > limite || z0 - barra.z1 > limite) continue;
 					const { d, donde } = distanciaSegmentos(p0, p1, barra.p0, barra.p1);
 					const holgura = d - trazo.radio - barra.radio;
 					if (holgura >= margen) continue;
