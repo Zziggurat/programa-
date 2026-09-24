@@ -60,3 +60,33 @@ test('ID hostil de vista y referencia cruzada se escapan en SVG', () => {
 	assert.doesNotMatch(svg, /data-representacion="vista<&"/);
 	assert.match(svg, /bobina &lt;&amp;&quot;/);
 });
+
+test('solo la vista M2 interactiva expone bornes reales como objetivos de conexión', () => {
+	const conBorne: HojaEsq = { ...hoja, hilos: [], simbolos: [
+		{ dispositivoId: 'xp', representacionId: 'xp-vista', designacion: '-XP',
+			columna: 2, x: 60, y: 80, ancho: 12, alto: 20, trazos: [],
+			pines: new Map([['X<&"', { x: 60, y: 90 }]]) },
+	] };
+	const svg = hojaASvg(conBorne, { interactivo: true, bornesInteractivos: true,
+		resaltadoBorne: { dispositivoId: 'xp', borneId: 'X<&"' } });
+	assert.match(svg, /class="borne-esq" data-dispositivo="xp" data-borne="X&lt;&amp;&quot;"/);
+	assert.match(svg, /aria-label="Cancelar origen borne X&lt;&amp;&quot; de -XP"/);
+	assert.match(svg, /stroke="#f5a623" stroke-width="1"/);
+	assert.doesNotMatch(hojaASvg(conBorne, { interactivo: true }), /class="borne-esq"/,
+		'el esquema legacy no ofrece conexión por pin');
+	assert.doesNotMatch(hojaASvg(conBorne), /class="borne-esq"|tabindex="0"/,
+		'el SVG exportado no lleva zonas de clic');
+});
+
+test('referencia entre hojas seleccionable conserva el ID eléctrico y exporta texto limpio', () => {
+	const conEnlace: HojaEsq = { ...hoja, hilos: [], referencias: [
+		{ tipo: 'enlace', conductorId: 'c<&"', texto: '→ /2.3', p: { x: 90, y: 110 } },
+	] };
+	const svg = hojaASvg(conEnlace, { interactivo: true, resaltadoConductor: 'c<&"' });
+	assert.match(svg, /class="referencia-conductor" data-conductor="c&lt;&amp;&quot;" tabindex="0" role="button"/);
+	assert.match(svg, /Seleccionar conductor c&lt;&amp;&quot;, referencia a otra hoja/);
+	assert.match(svg, /fill="#2ea3ff"/);
+	const exportado = hojaASvg(conEnlace);
+	assert.doesNotMatch(exportado, /referencia-conductor|tabindex="0"|role="button"/);
+	assert.match(exportado, /→ \/2\.3/);
+});

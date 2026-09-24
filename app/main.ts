@@ -30,6 +30,7 @@ import { ArchivoInvalido, cargarProyecto, imagenAdmisible } from '../src/modelo/
 import { abrirVentana, cerrarVentana, cerrarVentanaDeArriba } from './ventanas.js';
 import { aplicarPlantilla, numerarDispositivos } from '../src/motores/numeracion.js';
 import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
+import { montarEsquema } from '../src/motores/esquema.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import {
@@ -70,7 +71,7 @@ import {
 } from './dialogos.js';
 import { instalarDossier } from './ui-dossier.js';
 import { instalarInicio } from './ui-inicio.js';
-import { instalarEsquema } from './ui-esquema.js';
+import { instalarEsquema, proponerConductorPendiente } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
 import { instalarIngenieria, type PanelIngenieria } from './ui-ingenieria.js';
 import { instalarUIDatosTecnicos, type PanelDatosTecnicos } from './ui-datos-tecnicos.js';
@@ -7065,7 +7066,9 @@ window.addEventListener('keydown', (ev) => {
 		const conCtrl = ev.ctrlKey || ev.metaKey;
 		if (ev.key === 'Escape') {
 			ev.preventDefault();
-			if (panelEsq.abierto()) panelEsq.abrir(false); else aplicarVisualizacion(false);
+			if (panelEsq.abierto()) {
+				if (!panelEsq.cancelarConexionPendiente()) panelEsq.abrir(false);
+			} else aplicarVisualizacion(false);
 		} else if (panelEsq.abierto() && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
 			ev.preventDefault();
 			panelEsq.pasarHoja(ev.key === 'ArrowRight' ? 1 : -1);
@@ -7852,6 +7855,23 @@ const panelEsq = instalarEsquema({
 		if (!proyecto.conductores.some((c) => c.id === id)) return false;
 		quitarCable(id);
 		return !proyecto.conductores.some((c) => c.id === id);
+	},
+	conectarPendiente: (de, a, proyectoEsperado) => {
+		if (proyecto !== proyectoEsperado) {
+			avisar('El proyecto cambió; vuelve a elegir los bornes.', 'info');
+			return undefined;
+		}
+		// Se valida de nuevo aquí: el SVG no es la autoridad sobre bornes, vistas ni duplicados.
+		const propuesta = proponerConductorPendiente(
+			proyecto, montarEsquema(proyecto, revision.potenciales), de, a,
+		);
+		if (!propuesta.ok) { avisar(propuesta.motivo, 'info'); return undefined; }
+		if (!capturar()) return undefined;
+		const conductor: Conductor = { id: idUnico('c'), ...propuesta.valor };
+		proyecto.conductores.push(conductor);
+		actualizarConservandoAparatos();
+		avisar(`Conexión ${conductor.id} creada con ruta física pendiente.`, 'ok');
+		return conductor.id;
 	},
 	capturar,
 	marcarSucio,

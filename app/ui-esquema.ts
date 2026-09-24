@@ -38,6 +38,8 @@ export interface ContextoEsquema {
 	puedeEditar: () => boolean;
 	/** El editor central elimina el conductor real y gestiona historial, recálculo y guardado. */
 	desconectarConductor: (conductorId: string) => boolean;
+	/** Crea una sola conexión eléctrica pendiente; el editor central conserva undo y persistencia. */
+	conectarPendiente: (de: RefBorne, a: RefBorne, proyectoEsperado: Proyecto) => string | undefined;
 	/**
 	 * Guarda un punto de deshacer antes de cambiar nada, y DICE SI SE PUEDE CAMBIAR: en un tablero
 	 * de ejemplo dice que no. Quien la llama tiene que mirar el resultado y no tocar nada si es
@@ -64,9 +66,48 @@ export interface PanelEsquema {
 	reajustarZoom: () => void;
 	/** Pasa de hoja (+1 siguiente, -1 anterior). */
 	pasarHoja: (delta: number) => void;
+	/** Consume Escape si había un origen de conexión activo; no cierra el esquema. */
+	cancelarConexionPendiente: () => boolean;
 }
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
+
+export type PropuestaConductorPendiente =
+	| { ok: true; valor: { de: RefBorne; a: RefBorne; estadoRutaFisica: 'pendiente' } }
+	| { ok: false; motivo: string };
+
+/** Un único par de bornes visibles M2, sin materiales ni longitud física implícitos. */
+export function proponerConductorPendiente(
+	documento: Proyecto, hojas: readonly HojaEsq[], de: RefBorne, a: RefBorne,
+): PropuestaConductorPendiente {
+	if (documento.esquema?.representaciones === undefined) {
+		return { ok: false, motivo: 'Activa las vistas M2 antes de conectar desde el esquema.' };
+	}
+	const existe = (ref: RefBorne): boolean => documento.dispositivos.some((d) => d.id === ref.dispositivoId
+		&& d.bornes.some((b) => b.id === ref.borneId));
+	if (!existe(de) || !existe(a)) {
+		return { ok: false, motivo: 'Uno de los bornes ya no existe en el proyecto.' };
+	}
+	if (de.dispositivoId === a.dispositivoId && de.borneId === a.borneId) {
+		return { ok: false, motivo: 'El origen y el destino son el mismo borne.' };
+	}
+	const anclas = (ref: RefBorne): number => hojas.reduce((n, hoja) => n + hoja.simbolos.filter((s) =>
+		s.dispositivoId === ref.dispositivoId && !!s.representacionId && s.pines.has(ref.borneId)).length, 0);
+	if (anclas(de) !== 1 || anclas(a) !== 1) {
+		return { ok: false, motivo: 'Cada borne necesita una única vista visible en el esquema.' };
+	}
+	const igual = (x: RefBorne, y: RefBorne): boolean =>
+		x.dispositivoId === y.dispositivoId && x.borneId === y.borneId;
+	if (documento.conductores.some((c) => (igual(c.de, de) && igual(c.a, a))
+		|| (igual(c.de, a) && igual(c.a, de)))) {
+		return { ok: false, motivo: 'Esos dos bornes ya están conectados.' };
+	}
+	return { ok: true, valor: {
+		de: { dispositivoId: de.dispositivoId, borneId: de.borneId },
+		a: { dispositivoId: a.dispositivoId, borneId: a.borneId },
+		estadoRutaFisica: 'pendiente',
+	} };
+}
 
 export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	const proyecto = ctx.proyecto;
@@ -82,6 +123,9 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let conductorSeleccionado: string | undefined;
 	/** Identidad gráfica M2, distinta de la identidad eléctrica del aparato. */
 	let representacionSeleccionada: string | undefined;
+	/** El primer extremo se mantiene al cambiar de hoja; nunca es un segundo conductor. */
+	let origenConexion: { ref: RefBorne; representacionId: string; hojaId: string;
+		documento: Proyecto } | undefined;
 	/** El formulario vive fuera del inspector, para conservar sus valores al navegar entre hojas. */
 	let documentoFormulario: Proyecto | undefined;
 
@@ -97,9 +141,20 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const c = proyecto().conductores.find((x) => x.id === conductorSeleccionado);
 		const representaciones = proyecto().esquema?.representaciones;
 		const vista = representaciones?.find((x) => x.id === representacionSeleccionada);
-		if (c) {
+		if (origenConexion) {
 			const detalle = document.createElement('span');
-			detalle.textContent = `Conductor ${c.id}: ${describirBorne(c.de)} ↔ ${describirBorne(c.a)}`;
+			detalle.textContent = `Origen: ${describirBorne(origenConexion.ref)} · Elige un borne destino, también en otra hoja. La ruta física quedará pendiente, sin metros ni material declarados.`;
+			const cancelar = document.createElement('button');
+			cancelar.id = 'esq-cancelar-conexion';
+			cancelar.className = 'boton';
+			cancelar.type = 'button';
+			cancelar.textContent = 'Cancelar conexión';
+			cancelar.onclick = () => { origenConexion = undefined; refrescarEsquema(); };
+			ayuda.append(detalle, document.createTextNode(' · '), cancelar);
+		} else if (c) {
+			const detalle = document.createElement('span');
+			detalle.textContent = `Conductor ${c.id}: ${describirBorne(c.de)} ↔ ${describirBorne(c.a)}`
+				+ (c.estadoRutaFisica === 'pendiente' ? ' · ruta física pendiente, sin longitud declarada' : '');
 			const boton = document.createElement('button');
 			boton.id = 'esq-desconectar';
 			boton.className = 'boton';
@@ -112,7 +167,9 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				const documento = proyecto();
 				const actual = documento.conductores.find((x) => x.id === c.id);
 				if (actual !== c) { refrescarEsquema(); return; }
-				const ruta = c.trazado?.length ? ` Tiene ${c.trazado.length} puntos de ruta manual.` : '';
+				const ruta = c.estadoRutaFisica === 'pendiente'
+					? ' Su ruta física aún no se ha definido.'
+					: c.trazado?.length ? ` Tiene ${c.trazado.length} puntos de ruta manual.` : '';
 				const confirmado = await confirmar(
 					`¿Desconectar ${c.id} entre ${describirBorne(c.de)} y ${describirBorne(c.a)}? `
 					+ `Se quitará del esquema, tablero, simulación y listas.${ruta} Ctrl+Z permite deshacer.`,
@@ -370,6 +427,66 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	 */
 	const totalHojas = (): number => Math.max(1, hojasEsquema.length) + 1;
 
+	/** El borne ha de seguir perteneciendo a exactamente una vista, incluso tras navegar o deshacer. */
+	function anclaVigente(ref: RefBorne, representacionId: string, hojaId: string): boolean {
+		const vistas = hojasEsquema.flatMap((hoja) => hoja.simbolos
+			.filter((s) => s.dispositivoId === ref.dispositivoId && s.pines.has(ref.borneId))
+			.map((s) => ({ hojaId: hoja.id, representacionId: s.representacionId })));
+		return vistas.length === 1 && vistas[0].hojaId === hojaId
+			&& vistas[0].representacionId === representacionId;
+	}
+
+	async function elegirBorne(ref: RefBorne, representacionId: string, hojaId: string): Promise<void> {
+		const documento = proyecto();
+		if (!anclaVigente(ref, representacionId, hojaId)) {
+			avisar('Ese borne ya no tiene una vista única. Actualiza el esquema antes de conectar.', 'info');
+			refrescarEsquema();
+			return;
+		}
+		if (!ctx.puedeEditar()) return;
+		const origen = origenConexion;
+		if (!origen || origen.documento !== documento) {
+			origenConexion = { ref: { ...ref }, representacionId, hojaId, documento };
+			conductorSeleccionado = undefined;
+			representacionSeleccionada = undefined;
+			refrescarEsquema();
+			return;
+		}
+		if (origen.ref.dispositivoId === ref.dispositivoId && origen.ref.borneId === ref.borneId) {
+			origenConexion = undefined;
+			refrescarEsquema();
+			return;
+		}
+		const propuesta = proponerConductorPendiente(documento, hojasEsquema, origen.ref, ref);
+		if (!propuesta.ok) { avisar(propuesta.motivo, 'info'); return; }
+		const antes = JSON.stringify(documento);
+		const confirmado = await confirmar(
+			`¿Conectar eléctricamente ${describirBorne(origen.ref)} con ${describirBorne(ref)}? `
+			+ 'Se creará un solo conductor con ruta física pendiente: no se declararán metros, sección, color ni material de cable. Ctrl+Z permite deshacer.',
+			{ ok: 'Conectar' },
+		);
+		if (!confirmado) {
+			if (origenConexion === origen) origenConexion = undefined;
+			refrescarEsquema();
+			return;
+		}
+		if (proyecto() !== documento || JSON.stringify(documento) !== antes || origenConexion !== origen
+			|| !anclaVigente(origen.ref, origen.representacionId, origen.hojaId)
+			|| !anclaVigente(ref, representacionId, hojaId)) {
+			origenConexion = undefined;
+			avisar('El esquema cambió mientras confirmabas. Elige los bornes de nuevo.', 'info');
+			refrescarEsquema();
+			return;
+		}
+		origenConexion = undefined;
+		const id = ctx.conectarPendiente(origen.ref, ref, documento);
+		if (id) {
+			conductorSeleccionado = id;
+			representacionSeleccionada = undefined;
+		}
+		refrescarEsquema();
+	}
+
 	/** Vuelve a montar el esquema desde el modelo actual y lo pinta. */
 	function refrescarEsquema(): void {
 		if (!esquemaAbierto) return;
@@ -380,6 +497,10 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			documentoFormulario = undefined;
 		}
 		hojasEsquema = montarEsquema(proyecto(), ctx.potenciales());
+		if (origenConexion && (origenConexion.documento !== proyecto()
+			|| !anclaVigente(origenConexion.ref, origenConexion.representacionId, origenConexion.hojaId))) {
+			origenConexion = undefined;
+		}
 		if (hojasEsquema.length === 0) {
 			conductorSeleccionado = undefined;
 			representacionSeleccionada = undefined;
@@ -392,7 +513,11 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		}
 		hojaActual = Math.max(0, Math.min(hojaActual, hojasEsquema.length - 1));
 		const hoja = hojasEsquema[hojaActual];
-		if (!hoja.hilos.some((h) => h.conductorId === conductorSeleccionado)) conductorSeleccionado = undefined;
+		if (!hoja.hilos.some((h) => h.conductorId === conductorSeleccionado)
+			&& !hoja.referencias.some((r) => r.tipo === 'enlace' && r.conductorId === conductorSeleccionado)) {
+			conductorSeleccionado = undefined;
+		}
+		const explicito = proyecto().esquema?.representaciones !== undefined;
 		$('esquema-hoja').innerHTML = hojaASvg(hoja, {
 			proyecto: proyecto().nombre,
 			datos: proyecto().datos,
@@ -400,14 +525,15 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			resaltado: conductorSeleccionado ? undefined : ctx.dispositivoSeleccionado(),
 			resaltadoConductor: conductorSeleccionado,
 			resaltadoRepresentacion: conductorSeleccionado ? undefined : representacionSeleccionada,
+			resaltadoBorne: origenConexion?.ref,
 			interactivo: true,
+			bornesInteractivos: explicito,
 		});
 		$('esq-indicador').textContent = `Hoja ${hoja.numero} / ${hojasEsquema.length}`;
 		$('esq-titulo').textContent = hoja.titulo;
 		($('esq-columnas') as HTMLInputElement).value = String(hoja.columnas);
 		// Se dice cuántos aparatos están colocados a mano: si no, «Ordenar solo» parece que no hace
 		// nada cuando no hay nada que soltar, y sorprende cuando sí lo hay.
-		const explicito = proyecto().esquema?.representaciones !== undefined;
 		const aMano = proyecto().dispositivos.filter((d) => d.esquema).length;
 		const auto = $('esq-auto') as HTMLButtonElement;
 		auto.disabled = explicito;
@@ -416,10 +542,11 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		pintarConductorSeleccionado();
 		aplicarZoomEsquema();
 
-		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('.hilo[data-conductor]')) {
+		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('.hilo[data-conductor], .referencia-conductor[data-conductor]')) {
 			const seleccionarConductor = (): void => {
 				const id = g.getAttribute('data-conductor');
 				if (!id || !proyecto().conductores.some((c) => c.id === id)) return;
+				origenConexion = undefined;
 				conductorSeleccionado = id;
 				representacionSeleccionada = undefined;
 				refrescarEsquema();
@@ -432,15 +559,35 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			});
 		}
 
+		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('.borne-esq[data-borne]')) {
+			g.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+			const elegir = (): void => {
+				const dispositivoId = g.getAttribute('data-dispositivo');
+				const borneId = g.getAttribute('data-borne');
+				const representacionId = g.getAttribute('data-representacion');
+				if (dispositivoId && borneId && representacionId) {
+					void elegirBorne({ dispositivoId, borneId }, representacionId, hoja.id);
+				}
+			};
+			g.addEventListener('click', (ev) => { ev.stopPropagation(); elegir(); });
+			g.addEventListener('keydown', (ev) => {
+				if (ev.key !== 'Enter' && ev.key !== ' ') return;
+				ev.preventDefault();
+				ev.stopPropagation();
+				elegir();
+			});
+		}
+
 		// Pinchar un símbolo selecciona ese aparato en todo el programa —el esquema y el 3D son dos
 		// vistas del mismo tablero— y arrastrarlo lo COLOCA donde se suelte.
-		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('[data-dispositivo]')) {
+		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('.simbolo[data-dispositivo]')) {
 			g.addEventListener('pointerdown', (ev) => empezarArrastreEsquema(ev, g));
 			g.addEventListener('keydown', (ev) => {
 				if (ev.key !== 'Enter' && ev.key !== ' ') return;
 				const id = g.getAttribute('data-representacion');
 				if (!id || !proyecto().esquema?.representaciones?.some((r) => r.id === id)) return;
 				ev.preventDefault();
+				origenConexion = undefined;
 				representacionSeleccionada = id;
 				conductorSeleccionado = undefined;
 				const aparato = g.getAttribute('data-dispositivo');
@@ -464,6 +611,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const simbolo = hoja.simbolos.find((s) => s.representacionId === id);
 		if (!d || !simbolo) return;
 		ev.preventDefault();
+		origenConexion = undefined;
 		conductorSeleccionado = undefined;
 		representacionSeleccionada = id;
 		seleccionar(d.id);
@@ -652,6 +800,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		if (abrir) cerrarTodasLasVentanas();
 		esquemaAbierto = abrir;
 		if (!abrir) {
+			origenConexion = undefined;
 			conductorSeleccionado = undefined;
 			representacionSeleccionada = undefined;
 			document.getElementById('esq-desdoblar-formulario')?.remove();
@@ -675,6 +824,13 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	($('esq-acercar') as HTMLButtonElement).onclick = () => { zoomEsquema = Math.min(6, zoomEsquema * 1.3); aplicarZoomEsquema(); };
 	($('esq-alejar') as HTMLButtonElement).onclick = () => { zoomEsquema = Math.max(0.4, zoomEsquema / 1.3); aplicarZoomEsquema(); };
 	($('esq-ajustar') as HTMLButtonElement).onclick = () => { zoomEsquema = 1; aplicarZoomEsquema(); };
+
+	function cancelarConexionPendiente(): boolean {
+		if (!esquemaAbierto || !origenConexion) return false;
+		origenConexion = undefined;
+		refrescarEsquema();
+		return true;
+	}
 
 	function pasarHoja(delta: number): void {
 		hojaActual += delta;
@@ -817,5 +973,6 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		refrescar: refrescarEsquema,
 		reajustarZoom: aplicarZoomEsquema,
 		pasarHoja,
+		cancelarConexionPendiente,
 	};
 }

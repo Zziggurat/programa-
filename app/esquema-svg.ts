@@ -45,8 +45,12 @@ export interface OpcionesEsquema {
 	resaltadoConductor?: string;
 	/** Vista gráfica concreta; varias vistas pueden apuntar al mismo aparato. */
 	resaltadoRepresentacion?: string;
+	/** Borne elegido como origen de una conexión eléctrica aún sin ruta física. */
+	resaltadoBorne?: { dispositivoId: string; borneId: string };
 	/** Añade zonas de clic y navegación por teclado solo a la vista interactiva. */
 	interactivo?: boolean;
+	/** Solo las vistas M2 exponen sus pines como objetivos para conectar. */
+	bornesInteractivos?: boolean;
 }
 
 /**
@@ -290,11 +294,23 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 		const teclado = o.interactivo && s.representacionId
 			? ` tabindex="0" role="button" aria-label="Seleccionar representación ${esc(s.representacionId)} de ${esc(s.designacion)}" style="cursor:move"`
 			: '';
+		const bornes = o.interactivo && o.bornesInteractivos && s.representacionId
+			? [...s.pines].map(([borneId, p]) => {
+				const origen = o.resaltadoBorne?.dispositivoId === s.dispositivoId
+					&& o.resaltadoBorne.borneId === borneId;
+				const color = origen ? '#f5a623' : '#2ea3ff';
+				return `<g class="borne-esq" data-dispositivo="${esc(s.dispositivoId)}" data-borne="${esc(borneId)}" `
+					+ `data-representacion="${esc(s.representacionId!)}" tabindex="0" role="button" `
+					+ `aria-label="${origen ? 'Cancelar origen' : 'Conectar desde'} borne ${esc(borneId)} de ${esc(s.designacion)}" style="cursor:crosshair">`
+					+ `<circle cx="${n(p.x)}" cy="${n(p.y)}" r="4" fill="transparent" pointer-events="all"/>`
+					+ `<circle cx="${n(p.x)}" cy="${n(p.y)}" r="${origen ? '2' : '1.3'}" fill="${papel}" `
+					+ `stroke="${color}" stroke-width="${origen ? '1' : '0.7'}" pointer-events="none"/></g>`;
+			}).join('') : '';
 		partes.push(
 			`<g data-dispositivo="${esc(s.dispositivoId)}"${vista} class="simbolo"${teclado}>${marca}${agarre}`
 			+ s.trazos.map((t) => pintarTrazo(t, tinta)).join('')
 			+ `<text x="${n(s.x - 5)}" y="${n(s.y + s.alto / 2 + 1.2)}" font-size="3.4" text-anchor="end" fill="${tinta}" `
-			+ `font-family="system-ui, sans-serif" font-weight="700">${esc(s.designacion)}</text></g>`,
+			+ `font-family="system-ui, sans-serif" font-weight="700">${esc(s.designacion)}</text>${bornes}</g>`,
 		);
 	}
 
@@ -305,8 +321,16 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 			// El número del hilo va sobre un recuadro de papel para que el hilo no lo cruce.
 			partes.push(`<rect x="${n(r.p.x - anchoCaja / 2)}" y="${n(r.p.y - 2.4)}" width="${n(anchoCaja)}" height="3.6" rx="0.6" fill="${papel}"/>`);
 		}
-		const color = r.tipo === 'hilo' ? tinta : suave;
-		partes.push(`<text x="${n(r.p.x)}" y="${n(r.p.y + (r.tipo === 'hilo' ? 0.5 : 0))}" font-size="2.8" text-anchor="middle" fill="${color}" font-family="system-ui, sans-serif">${esc(r.texto)}</text>`);
+		const seleccionado = r.tipo === 'enlace' && r.conductorId === o.resaltadoConductor;
+		const color = seleccionado ? '#2ea3ff' : r.tipo === 'hilo' ? tinta : suave;
+		const texto = `<text x="${n(r.p.x)}" y="${n(r.p.y + (r.tipo === 'hilo' ? 0.5 : 0))}" font-size="2.8" text-anchor="middle" fill="${color}" font-family="system-ui, sans-serif">${esc(r.texto)}</text>`;
+		if (o.interactivo && r.tipo === 'enlace' && r.conductorId) {
+			const id = esc(r.conductorId);
+			partes.push(`<g class="referencia-conductor" data-conductor="${id}" tabindex="0" role="button" `
+				+ `aria-label="Seleccionar conductor ${id}, referencia a otra hoja" style="cursor:pointer">`
+				+ `<rect x="${n(r.p.x - Math.max(8, anchoCaja + 4) / 2)}" y="${n(r.p.y - 3.5)}" `
+				+ `width="${n(Math.max(8, anchoCaja + 4))}" height="5" fill="transparent" pointer-events="all"/>${texto}</g>`);
+		} else partes.push(texto);
 	}
 
 	partes.push(pintarCajetin(hoja, o, tinta, suave));
