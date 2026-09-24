@@ -2,11 +2,16 @@ import { inspeccionarDatosNoConfiables, validarReferencia } from '../datos-tecni
 import { hashSnapshotTecnico, jsonCanonico } from '../datos-tecnicos/hash.js';
 import { referenciaTecnica, type RevisionTecnica } from '../datos-tecnicos/tipos.js';
 import { aCSV } from '../modelo/csv.js';
+import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../modelo/procedencia-documental.js';
 import type { Proyecto } from '../modelo/tipos.js';
 import { BLOQUEOS_POR_DEFECTO, crearSnapshotDisenoAsistido, evaluarDisenoAsistido, hashPlanDiseno } from './core.js';
 import type { ContextoInformeDiseno, ResultadoDisenoAsistido, SnapshotDisenoAsistido } from './tipos.js';
 
+/** La procedencia confirmada es adicional al contexto V9 previo; el lector conserva compatibilidad. */
+export type ContextoDocumentalDiseno = ContextoInformeDiseno & { procedencia?: ProcedenciaDocumento };
+
 const LIMITE_INFORME = 5_000_000;
+const ALCANCE_DISENO = 'Diseño asistido V9: búsqueda acotada a la BASE y revisiones fijadas; no certificación ni óptimo global' as const;
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const refKey = (r: { tipo: string; catalogoId: string; id: string; revision: number; hash: string }) => `${r.tipo}:${r.catalogoId}:${r.id}:${r.revision}:${r.hash}`;
 
@@ -28,7 +33,8 @@ function hash(v: unknown, ruta: string): asserts v is string {
 export interface InformeDisenoV9 {
 	formato: 'tablerostudio-diseno-asistido';
 	version: 1;
-	contexto?: ContextoInformeDiseno;
+	contexto?: ContextoDocumentalDiseno;
+	alcance?: typeof ALCANCE_DISENO;
 	snapshot: {
 		algoritmo: SnapshotDisenoAsistido['algoritmo'];
 		bloqueosPorDefecto: SnapshotDisenoAsistido['bloqueosPorDefecto'];
@@ -42,10 +48,11 @@ export interface InformeDisenoV9 {
 	};
 }
 
-function informe(snapshot: SnapshotDisenoAsistido, resultado: ResultadoDisenoAsistido, contexto?: ContextoInformeDiseno): InformeDisenoV9 {
+function informe(snapshot: SnapshotDisenoAsistido, resultado: ResultadoDisenoAsistido, contexto?: ContextoDocumentalDiseno): InformeDisenoV9 {
 	if (resultado.snapshotHash !== snapshot.hash) throw new Error('INFORME_SNAPSHOT_INCONSISTENTE');
 	return {
 		formato: 'tablerostudio-diseno-asistido', version: 1,
+		alcance: ALCANCE_DISENO,
 		...(contexto ? { contexto: structuredClone(contexto) } : {}),
 		snapshot: {
 			algoritmo: structuredClone(snapshot.algoritmo), bloqueosPorDefecto:structuredClone(snapshot.bloqueosPorDefecto), hash: snapshot.hash, hashBase: snapshot.hashBase, solicitud: structuredClone(snapshot.solicitud),
@@ -59,7 +66,7 @@ function informe(snapshot: SnapshotDisenoAsistido, resultado: ResultadoDisenoAsi
 }
 
 /** Evidencia acotada: nunca incluye clones de Proyecto ni resultados internos del solver. */
-export function informeDisenoJson(snapshot: SnapshotDisenoAsistido, resultado: ResultadoDisenoAsistido, contexto?: ContextoInformeDiseno): string {
+export function informeDisenoJson(snapshot: SnapshotDisenoAsistido, resultado: ResultadoDisenoAsistido, contexto?: ContextoDocumentalDiseno): string {
 	return jsonCanonico(informe(snapshot, resultado, contexto));
 }
 
@@ -72,12 +79,31 @@ export function leerInformeDisenoJson(textoJson: string): InformeDisenoV9 {
 	let valor: unknown;
 	try { valor = JSON.parse(textoJson); } catch { throw new Error('INFORME_JSON_INVALIDO'); }
 	inspeccionarDatosNoConfiables(valor);
-	const raiz = objeto(valor, '$'); allowlist(raiz, ['formato', 'version', 'contexto', 'snapshot', 'resultado'], '$');
+	const raiz = objeto(valor, '$'); allowlist(raiz, ['formato', 'version', 'contexto', 'alcance', 'snapshot', 'resultado'], '$');
 	if (raiz.formato !== 'tablerostudio-diseno-asistido' || raiz.version !== 1) throw new Error('INFORME_SCHEMA_NO_SOPORTADO');
+	if (raiz.alcance !== undefined && raiz.alcance !== ALCANCE_DISENO) throw new Error('$.alcance: valor no permitido');
 	if (raiz.contexto !== undefined) {
-		const c = objeto(raiz.contexto, '$.contexto'); allowlist(c, ['projectId', 'revision', 'snapshotId', 'buildId', 'generadoEn', 'aplicacion'], '$.contexto');
+		const c = objeto(raiz.contexto, '$.contexto'); allowlist(c, ['projectId', 'revision', 'snapshotId', 'buildId', 'generadoEn', 'aplicacion', 'procedencia'], '$.contexto');
 		for (const k of ['projectId', 'buildId', 'generadoEn']) texto(c[k], `$.contexto.${k}`);
 		if (!Number.isFinite(Date.parse(c.generadoEn as string))) throw new Error('$.contexto.generadoEn: fecha ISO inválida');
+		if (c.procedencia !== undefined) {
+			const p = objeto(c.procedencia, '$.contexto.procedencia');
+			if (p.estado === 'confirmado') {
+				allowlist(p, ['estado', 'projectId', 'revisionRepositorio', 'buildId', 'generadoEn'], '$.contexto.procedencia');
+				for (const k of ['projectId', 'buildId', 'generadoEn']) texto(p[k], `$.contexto.procedencia.${k}`);
+				if (!Number.isSafeInteger(p.revisionRepositorio) || Number(p.revisionRepositorio) < 0
+					|| c.projectId !== p.projectId || c.revision !== p.revisionRepositorio)
+					throw new Error('$.contexto.procedencia: revisión confirmada inconsistente');
+			} else if (p.estado === 'efimero') {
+				allowlist(p, ['estado', 'motivo', 'buildId', 'generadoEn'], '$.contexto.procedencia');
+				if (!['ejemplo', 'sin-repositorio'].includes(String(p.motivo)) || c.revision !== undefined
+					|| c.projectId !== (p.motivo === 'ejemplo' ? 'EJEMPLO_EFIMERO' : 'SIN_REPOSITORIO'))
+					throw new Error('$.contexto.procedencia: documento efímero inconsistente');
+				for (const k of ['buildId', 'generadoEn']) texto(p[k], `$.contexto.procedencia.${k}`);
+			} else throw new Error('$.contexto.procedencia.estado: valor inválido');
+			if (p.buildId !== c.buildId || p.generadoEn !== c.generadoEn
+				|| !Number.isFinite(Date.parse(p.generadoEn as string))) throw new Error('$.contexto.procedencia: fecha o build inconsistente');
+		}
 		if (c.aplicacion !== undefined) {
 			const a = objeto(c.aplicacion, '$.contexto.aplicacion'); allowlist(a, ['estado', 'planId', 'decisionId'], '$.contexto.aplicacion');
 			if (!['NO_APLICADA', 'APLICADA'].includes(String(a.estado))) throw new Error('$.contexto.aplicacion.estado: valor inválido');
@@ -156,15 +182,23 @@ export function reevaluarInformeDisenoImportado(entrada: {
 	};
 }
 
-export function informeDisenoCsv(resultado: ResultadoDisenoAsistido): string {
-	return aCSV([
-		['orden', 'id', 'tipo', 'estado', 'pareto', 'cambios', 'seccion_total_mm2', 'in_a', 'perdida_w', 'icc_a', 'razon_orden', 'limitaciones'],
-		...resultado.resultados.map(r => [r.orden, r.plan.id, r.plan.tipo, r.estado, r.pareto ? 'SI' : 'NO', r.metricas.cambios,
-			r.metricas.seccionTotalMm2, r.metricas.proteccionInA, r.metricas.perdidaW, r.metricas.iccProspectivaA, r.razonOrden, r.limitaciones.join('; ')]),
-	]);
+export function informeDisenoCsv(resultado: ResultadoDisenoAsistido, contexto?: ContextoDocumentalDiseno,
+	snapshot?: SnapshotDisenoAsistido): string {
+	if (snapshot && resultado.snapshotHash !== snapshot.hash) throw new Error('INFORME_SNAPSHOT_INCONSISTENTE');
+	const columnas = ['orden', 'id', 'tipo', 'estado', 'pareto', 'cambios', 'seccion_total_mm2', 'in_a', 'perdida_w', 'icc_a', 'razon_orden', 'limitaciones'];
+	const filas: (string | number | undefined)[][] = resultado.resultados.map(r => [r.orden, r.plan.id, r.plan.tipo, r.estado, r.pareto ? 'SI' : 'NO', r.metricas.cambios,
+		r.metricas.seccionTotalMm2, r.metricas.proteccionInA, r.metricas.perdidaW, r.metricas.iccProspectivaA, r.razonOrden, r.limitaciones.join('; ')]);
+	if (!contexto) return aCSV([columnas, ...filas]);
+	const p = resumenProcedenciaDocumento(contexto.procedencia);
+	const meta = [p.estado, p.projectId, p.revisionRepositorio, contexto.generadoEn, contexto.buildId, ALCANCE_DISENO,
+		resultado.snapshotHash, snapshot?.hashBase ?? 'NO DISPONIBLE'];
+	return aCSV([[...columnas, 'estado_documental', 'project_id', 'revision_repositorio', 'generado_en', 'build_id', 'alcance', 'snapshot_hash', 'base_hash', 'tipo_fila'],
+		...filas.map(f => [...f, ...meta, 'DATO']),
+		...(filas.length ? [] : [[...Array(columnas.length).fill(''), ...meta, 'META']])]);
 }
 
-export function informeDisenoHtml(snapshot: SnapshotDisenoAsistido, resultado: ResultadoDisenoAsistido, contexto?: ContextoInformeDiseno): string {
+export function informeDisenoHtml(snapshot: SnapshotDisenoAsistido, resultado: ResultadoDisenoAsistido, contexto?: ContextoDocumentalDiseno): string {
+	const procedencia = resumenProcedenciaDocumento(contexto?.procedencia);
 	const limiteRefs=200,omitidas=Math.max(0,snapshot.revisiones.length-limiteRefs);
 	const refs = snapshot.revisiones.slice(0,limiteRefs).map(r => `<tr><td>${esc(r.tipo)}</td><td>${esc(r.catalogo.nombre)}</td><td>${esc(r.nombre)}</td><td>${r.revision}</td><td><code>${esc(r.hash)}</code></td><td>${esc(r.procedencia.origen)}</td></tr>`).join('');
 	const n=(v:number|undefined,u='')=>v===undefined?'NO DISPONIBLE':`${new Intl.NumberFormat('es-ES',{maximumFractionDigits:3}).format(v)}${u}`;
@@ -172,7 +206,7 @@ export function informeDisenoHtml(snapshot: SnapshotDisenoAsistido, resultado: R
 	return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Diseño asistido V9</title><style>@page{size:A4 landscape;margin:10mm}body{font:13px system-ui;margin:2rem;color:#17202a;line-height:1.35}table{border-collapse:collapse;width:100%;margin:1rem 0;table-layout:fixed}th,td{border:1px solid #ccd;padding:.42rem;text-align:left;vertical-align:top;overflow-wrap:anywhere}th:nth-child(1){width:2%}th:nth-child(2){width:15%}th:nth-child(3){width:17%}th:nth-child(4){width:9%}th:nth-child(5){width:14%}small{color:#566}code{overflow-wrap:anywhere}ul{margin:.35rem 0;padding-left:1rem}.aviso{padding:.7rem;background:#fff5d6;border-left:4px solid #ba7a00}@media print{body{margin:0;font-size:9pt}h1{margin-top:0}table{font-size:7.5pt;break-inside:auto}tr{break-inside:avoid}}</style></head><body><h1>Diseño asistido V9</h1>
 		<p><b>${esc(snapshot.solicitud.nombre)}</b> · cobertura ${esc(resultado.cobertura)} · ${resultado.evaluados}/${resultado.totalEstimado}</p>
 		<p class="aviso">Mejor alternativa según las preferencias declaradas entre las evaluadas; no es certificación ni óptimo global. ${esc(resultado.motivoCobertura)}</p>
-		<h2>Contexto e intención</h2><dl><dt>Proyecto</dt><dd>${esc(contexto?.projectId ?? 'NO DECLARADO')}</dd><dt>Revisión documental</dt><dd>${esc(contexto?.revision ?? 'NO DECLARADA')}</dd><dt>Fecha explícita</dt><dd>${esc(contexto?.generadoEn ?? 'NO DECLARADA')}</dd><dt>Build ID</dt><dd>${esc(contexto?.buildId ?? 'NO DECLARADO')}</dd><dt>Aplicación</dt><dd>${esc(contexto?.aplicacion?.estado ?? 'NO DECLARADA')}</dd><dt>Objetivo</dt><dd>${esc(snapshot.solicitud.objetivo)}</dd><dt>Circuito</dt><dd>${esc(snapshot.solicitud.circuitoId)}</dd><dt>Conductores autorizados</dt><dd>${esc(snapshot.solicitud.conductores.join(', '))}</dd><dt>Protección autorizada</dt><dd>${esc(snapshot.solicitud.proteccionId ?? 'ninguna')}</dd><dt>Bloqueado</dt><dd>${esc(snapshot.bloqueosPorDefecto.join(', '))}</dd></dl>
+		<h2>Contexto e intención</h2><dl><dt>Estado documental</dt><dd>${esc(procedencia.estado)}</dd><dt>Project ID confirmado</dt><dd>${esc(procedencia.projectId)}</dd><dt>Revisión del repositorio</dt><dd>${esc(procedencia.revisionRepositorio)}</dd><dt>Snapshot de recuperación</dt><dd>${esc(contexto?.snapshotId ?? 'NO DISPONIBLE')}</dd><dt>Fecha explícita</dt><dd>${esc(contexto?.generadoEn ?? 'NO DECLARADA')}</dd><dt>Build ID</dt><dd>${esc(contexto?.buildId ?? 'NO DECLARADO')}</dd><dt>Alcance</dt><dd>${esc(ALCANCE_DISENO)}</dd><dt>Aplicación</dt><dd>${esc(contexto?.aplicacion?.estado ?? 'NO DECLARADA')}</dd><dt>Objetivo</dt><dd>${esc(snapshot.solicitud.objetivo)}</dd><dt>Circuito</dt><dd>${esc(snapshot.solicitud.circuitoId)}</dd><dt>Conductores autorizados</dt><dd>${esc(snapshot.solicitud.conductores.join(', '))}</dd><dt>Protección autorizada</dt><dd>${esc(snapshot.solicitud.proteccionId ?? 'ninguna')}</dd><dt>Bloqueado</dt><dd>${esc(snapshot.bloqueosPorDefecto.join(', '))}</dd></dl>
 		<h2>Método y terminación</h2><p>Cambios permitidos: ${esc(snapshot.solicitud.cambiosPermitidos.join(', '))}. Preferencias: ${esc(snapshot.solicitud.preferencias?.join(' → '))}. Presupuesto: ${esc(JSON.stringify(snapshot.solicitud.presupuesto))}. Generados/evaluados: ${resultado.generados}/${resultado.evaluados}. Duración registrada: ${resultado.duracionMs.toFixed(1)} ms.</p>
 		<h2>Alternativas</h2><table><thead><tr><th>#</th><th>Plan</th><th>Cambios exactos</th><th>Estado</th><th>Métricas</th><th>Orden, datos faltantes y límites</th></tr></thead><tbody>${filas}</tbody></table>
 		<h2>Revisiones fijadas</h2><p>${snapshot.revisiones.length} revisiones forman el manifiesto exacto.${omitidas?` La vista imprimible muestra las primeras ${limiteRefs}; el JSON conserva las ${snapshot.revisiones.length}.`:''}</p><table><thead><tr><th>Tipo</th><th>Catálogo</th><th>Revisión</th><th>r</th><th>Hash</th><th>Procedencia</th></tr></thead><tbody>${refs}</tbody></table>

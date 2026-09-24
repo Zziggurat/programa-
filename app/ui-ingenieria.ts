@@ -7,6 +7,7 @@
 import { perfilCurvaProteccionDispositivo, type ContextoTopologiaFisica } from '../src/fisica/topologia-proyecto.js';
 import { resolverComportamiento } from '../src/modelo/comportamiento.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
+import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import {
 	bomIngenieriaACsv, conductoresIngenieriaACsv, crearInformeIngenieriaV7,
 	informeIngenieriaV7AHtml, informeIngenieriaV7AJson, terminalesIngenieriaACsv,
@@ -47,6 +48,8 @@ export interface ContextoUIIngenieria {
 	revisionesTecnicas?(): Promise<RevisionTecnica[]>;
 	abrirDatosTecnicos?(entidadId?: string): void;
 	trazabilidad(): Promise<{ projectId: string; revision?: string | number; snapshotId?: string }>;
+	/** Confirma flush, identidad y revisión de repositorio; un ejemplo retorna estado efímero. */
+	obtenerProcedencia?(): Promise<ProcedenciaDocumento>;
 	abrirDossierPDF(): void;
 }
 
@@ -113,7 +116,10 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	let slotEscenario: 'A' | 'B' = 'A';
 	let tipoEscenario: 'SECCION_CONDUCTOR' | 'PROTECCION' | 'ASIGNACION_FASE' = 'SECCION_CONDUCTOR';
 	let informe: InformeIngenieriaV7 | undefined;
+	let firmaInforme: { identidad: string; hash: string } | undefined;
+	let firmaAnalisis: string | undefined;
 	let snapshotDiseno: SnapshotDisenoAsistido | undefined;
+	let identidadDiseno: string | undefined;
 	let resultadoDiseno: ResultadoDisenoAsistido | undefined;
 	let revisionesDiseno: RevisionTecnica[] = [];
 	let abortoDiseno: AbortController | undefined;
@@ -127,14 +133,15 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	};
 
 	function asegurar(): Analisis {
-		return analisis ?? validar();
+		return analisis && firmaAnalisis === hashSnapshotTecnico(ctx.proyecto()) ? analisis : validar();
 	}
 
 	function validar(): Analisis {
 		const inicio = performance.now(); const p = ctx.proyecto();
 		analisis = ejecutarIngenieria({ proyecto: p, contextoFisico: contextoDisenoIngenieria(p) });
+		firmaAnalisis = hashSnapshotTecnico(p);
 		circuitoId = analisis.circuitos.some((x) => x.id === circuitoId) ? circuitoId : analisis.circuitos[0]?.id;
-		alternativas = []; definicionesAlternativas = []; informe = undefined; snapshotDiseno = undefined; resultadoDiseno = undefined;
+		alternativas = []; definicionesAlternativas = []; informe = undefined; firmaInforme = undefined; snapshotDiseno = undefined; identidadDiseno = undefined; resultadoDiseno = undefined;
 		pintarEstado(`Snapshot derivado en ${(performance.now() - inicio).toFixed(1)} ms · no persistido`, 'ok');
 		pintar();
 		ctx.avisar(`Ingeniería V7: ${analisis.validacion.resumen.fail} fallos, ${analisis.validacion.resumen.warning} advertencias y ${analisis.validacion.resumen.indeterminate} indeterminadas.`,
@@ -144,7 +151,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 
 	function invalidar(): void {
 		if (!analisis) return;
-		analisis = undefined; alternativas = []; definicionesAlternativas = []; informe = undefined; snapshotDiseno = undefined; resultadoDiseno = undefined; abortoDiseno?.abort();
+		analisis = undefined; firmaAnalisis = undefined; alternativas = []; definicionesAlternativas = []; informe = undefined; firmaInforme = undefined; snapshotDiseno = undefined; identidadDiseno = undefined; resultadoDiseno = undefined; abortoDiseno?.abort();
 		filtroSeveridad = ''; filtroCategoria = ''; filtroCircuito = '';
 		pintarEstado('El proyecto cambió. Ejecuta Validar proyecto para crear un snapshot nuevo.', 'pendiente');
 		pintar();
@@ -338,47 +345,79 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	}
 
 	async function prepararInforme(): Promise<void> {
-		const p = structuredClone(ctx.proyecto()), hash = hashSnapshotTecnico(p), id = ctx.identidadActual();
-		const a = asegurar(); const identidad = await ctx.trazabilidad();
+		const a = asegurar(), p = structuredClone(ctx.proyecto()), hash = hashSnapshotTecnico(p), id = ctx.identidadActual();
+		const procedencia = await ctx.obtenerProcedencia?.();
+		const identidad = procedencia?.estado === 'confirmado'
+			? { projectId: procedencia.projectId, revision: procedencia.revisionRepositorio }
+			: procedencia ? { projectId: procedencia.motivo === 'ejemplo' ? 'EJEMPLO_EFIMERO' : 'SIN_REPOSITORIO' }
+				: await ctx.trazabilidad();
 		if (ctx.identidadActual() !== id || hashSnapshotTecnico(ctx.proyecto()) !== hash) throw new Error('STALE_RESULT: el documento cambió mientras se preparaba el informe.');
 		informe = crearInformeIngenieriaV7({ proyecto: p, analisis: a,
-			trazabilidad: { ...identidad, buildId: buildId(), generadoEn: new Date().toISOString() } });
+			trazabilidad: { ...identidad, buildId: procedencia?.buildId ?? buildId(), generadoEn: procedencia?.generadoEn ?? new Date().toISOString(),
+				...(procedencia ? { procedencia } : {}) } });
+		firmaInforme = { identidad: id, hash };
 		pintar(); ctx.avisar(`Informe V7 preparado · ${informe.trazabilidad.buildId}`, 'ok');
+	}
+
+	function mismaProcedencia(a: ProcedenciaDocumento, b: ProcedenciaDocumento): boolean {
+		return a.estado === 'confirmado' && b.estado === 'confirmado'
+			? a.projectId === b.projectId && a.revisionRepositorio === b.revisionRepositorio && a.buildId === b.buildId
+			: a.estado === 'efimero' && b.estado === 'efimero' && a.motivo === b.motivo && a.buildId === b.buildId;
 	}
 
 	async function documento(accion: string): Promise<void> {
 		if (accion === 'prepare') return prepararInforme();
 		if (accion === 'pdf') { ctx.abrirDossierPDF(); return; }
 		if (!informe) return;
+		const documentoPreparado = informe;
+		if (!firmaInforme || firmaInforme.identidad !== ctx.identidadActual()
+			|| firmaInforme.hash !== hashSnapshotTecnico(ctx.proyecto())) throw new Error('STALE_RESULT: prepara el informe de nuevo tras cambiar el proyecto.');
+		if (informe.trazabilidad.procedencia && ctx.obtenerProcedencia) {
+			const actual = await ctx.obtenerProcedencia();
+			if (informe !== documentoPreparado || !mismaProcedencia(informe.trazabilidad.procedencia, actual)
+				|| firmaInforme.identidad !== ctx.identidadActual()
+				|| firmaInforme.hash !== hashSnapshotTecnico(ctx.proyecto())) throw new Error('STALE_RESULT: la revisión confirmada cambió; prepara el informe de nuevo.');
+		}
 		const base = `${ctx.proyecto().nombre} - ingenieria-v7`;
 		if (accion === 'json') descargar(`${base}.json`, informeIngenieriaV7AJson(informe), 'application/json');
 		if (accion === 'html') {
 			const html = informeIngenieriaV7AHtml(informe); descargar(`${base}.html`, html, 'text/html');
 			const w = window.open('', '_blank'); if (w) { w.opener = null; w.document.open(); w.document.write(html); w.document.close(); }
 		}
-		if (accion === 'bom') descargar(`${base}-bom.csv`, bomIngenieriaACsv(informe.bom), 'text/csv');
-		if (accion === 'wiring') descargar(`${base}-wiring.csv`, conductoresIngenieriaACsv(informe.conductores), 'text/csv');
-		if (accion === 'terminal') descargar(`${base}-terminales.csv`, terminalesIngenieriaACsv(informe.terminales), 'text/csv');
+		if (accion === 'bom') descargar(`${base}-bom.csv`, bomIngenieriaACsv(informe.bom, informe), 'text/csv');
+		if (accion === 'wiring') descargar(`${base}-wiring.csv`, conductoresIngenieriaACsv(informe.conductores, informe), 'text/csv');
+		if (accion === 'terminal') descargar(`${base}-terminales.csv`, terminalesIngenieriaACsv(informe.terminales, informe), 'text/csv');
 		if (accion === 'technical') descargar(`${base}-datos-tecnicos.csv`, datosTecnicosIngenieriaACsv(informe), 'text/csv');
 	}
 
 	async function exportarDiseno(formato: string): Promise<void> {
 		if(!snapshotDiseno||!resultadoDiseno)return;
-		const identidad=await ctx.trazabilidad();
+		const snapshot = snapshotDiseno, resultado = resultadoDiseno;
+		if (identidadDiseno !== ctx.identidadActual() || snapshot.hashBase !== hashSnapshotTecnico(ctx.proyecto()))
+			throw new Error('STALE_RESULT: la BASE cambió; ejecuta otra búsqueda de diseño.');
+		const procedencia = await ctx.obtenerProcedencia?.();
+		const identidad = procedencia?.estado === 'confirmado'
+			? { projectId: procedencia.projectId, revision: procedencia.revisionRepositorio }
+			: procedencia ? { projectId: procedencia.motivo === 'ejemplo' ? 'EJEMPLO_EFIMERO' : 'SIN_REPOSITORIO' }
+				: await ctx.trazabilidad();
+		if (snapshot !== snapshotDiseno || resultado !== resultadoDiseno || identidadDiseno !== ctx.identidadActual()
+			|| snapshot.hashBase !== hashSnapshotTecnico(ctx.proyecto()))
+			throw new Error('STALE_RESULT: el proyecto o las alternativas cambiaron durante la exportación.');
 		const recomendado=resultadoDiseno.resultados.find(r=>r.estado==='FACTIBLE');
-		const contexto={...identidad,buildId:buildId(),generadoEn:new Date().toISOString(),aplicacion:{estado:'NO_APLICADA' as const,...(recomendado?{planId:recomendado.plan.id}:{})}};
+		const contexto={...identidad,buildId:procedencia?.buildId??buildId(),generadoEn:procedencia?.generadoEn??new Date().toISOString(),
+			...(procedencia?{procedencia}:{}),aplicacion:{estado:'NO_APLICADA' as const,...(recomendado?{planId:recomendado.plan.id}:{})}};
 		const base=`${ctx.proyecto().nombre} - diseno-v9`;
-		if(formato==='json')descargar(`${base}.json`,informeDisenoJson(snapshotDiseno,resultadoDiseno,contexto),'application/json');
-		if(formato==='csv')descargar(`${base}.csv`,informeDisenoCsv(resultadoDiseno),'text/csv');
+		if(formato==='json')descargar(`${base}.json`,informeDisenoJson(snapshot,resultado,contexto),'application/json');
+		if(formato==='csv')descargar(`${base}.csv`,informeDisenoCsv(resultado,contexto,snapshot),'text/csv');
 		if(formato==='html'){
-			const html=informeDisenoHtml(snapshotDiseno,resultadoDiseno,contexto);descargar(`${base}.html`,html,'text/html');
+			const html=informeDisenoHtml(snapshot,resultado,contexto);descargar(`${base}.html`,html,'text/html');
 			const w=window.open('','_blank');if(w){w.opener=null;w.document.open();w.document.write(html);w.document.close();}
 		}
 	}
 
 	$('ingenieria-validar').onclick = () => validar();
 	for (const b of document.querySelectorAll<HTMLButtonElement>('[data-ing-view]')) b.onclick = () => {
-		vista = b.dataset.ingView as Vista; if (vista !== 'documentacion') informe = undefined; pintar();
+		vista = b.dataset.ingView as Vista; if (vista !== 'documentacion') { informe = undefined; firmaInforme = undefined; } pintar();
 	};
 	contenido.onchange = (ev) => {
 		const e = ev.target as HTMLSelectElement; const f = e.dataset.ingFilter;
@@ -416,6 +455,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 				const vinculo=p.datosTecnicos?.vinculos.find(v=>v.entidad==='DEVICE'&&v.entidadId===proteccionDiseno);
 				const solicitud:SolicitudDisenoAsistido={version:1,id:`ui:${c.id}`,nombre:`Diseño ${c.nombre}`,objetivo:'CORREGIR_INCUMPLIMIENTOS',permitirDatosSinteticos:contenido.querySelector<HTMLInputElement>('[data-ing-design-synthetic]')?.checked===true,circuitoId:c.id,conductores,proteccionId:proteccionDiseno||undefined,cambiosPermitidos:[...(secciones.length?['SECCION' as const]:[]),...(proteccionDiseno&&refs.length?['PROTECCION' as const]:[])],seccionesPermitidasMm2:secciones,proteccionesPermitidas:refs,condicionesProteccion:vinculo?.condiciones,preferencias:['MENOS_CAMBIOS','MENOR_SECCION_TOTAL','MENOR_IN','MENOR_PERDIDA'],presupuesto:{maxCandidatos,maxMs:30_000,lote:3}};
 				snapshotDiseno=crearSnapshotDisenoAsistido({proyecto:p,solicitud,revisionesDisponibles:revisionesDiseno,contextoFisico:contextoDisenoIngenieria(p),buildId:buildId()});
+				identidadDiseno=ctx.identidadActual();
 				resultadoDiseno=await ejecutarSesionDisenoAsistido(snapshotDiseno,{signal:abortoDiseno.signal,progreso:x=>{progresoDiseno=`${x.fase}: ${x.generados} generados · ${x.evaluados} evaluados · ${Math.max(0,x.totalEstimado-x.generados)} pendientes · ${x.transcurridoMs.toFixed(0)} ms`;actualizarProgresoDiseno();}});
 				progresoDiseno='';abortoDiseno=undefined;pintar();ctx.avisar(`Diseño V9: ${resultadoDiseno.evaluados} alternativas · ${resultadoDiseno.cobertura}.`,'ok');
 			}catch(e){progresoDiseno='';abortoDiseno=undefined;pintar();ctx.avisar(`Diseño asistido: ${(e as Error).message}`,'error');}

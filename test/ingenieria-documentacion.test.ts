@@ -3,6 +3,7 @@ import test from 'node:test';
 import { fixtureCaidaTensionV5 } from '../ejemplo/fixtures-fisica-v5.js';
 import {
 	bomIngenieriaACsv, conductoresIngenieriaACsv, crearInformeIngenieriaV7,
+	datosTecnicosIngenieriaACsv,
 	generarBomIngenieria, generarListaConductoresIngenieria, generarListaTerminalesIngenieria,
 	informeIngenieriaV7AHtml, informeIngenieriaV7AJson, terminalesIngenieriaACsv, totalizarConductores,
 } from '../src/ingenieria/documentacion.js';
@@ -88,6 +89,8 @@ test('ESQ-02: conexión pendiente sigue en lista eléctrica, sin longitud ni can
 	assert.ok(informe.conductores.some((x) => x.id === 'w-pendiente'));
 	assert.equal(informe.totalesConductores.reduce((n, g) => n + g.cantidad, 0), filas.length - 1);
 	assert.match(conductoresIngenieriaACsv(informe.conductores), /w-pendiente[^\n]*NO_DISPONIBLE/);
+	assert.match(conductoresIngenieriaACsv(informe.conductores, informe), /w-pendiente[^\n]*PENDIENTE — sin tendido/);
+	assert.match(informeIngenieriaV7AHtml(informe), /PENDIENTE — sin tendido/);
 });
 
 test('Gate H: borneras enumeran conexiones reales sin inventar nombres eléctricos', () => {
@@ -121,6 +124,44 @@ test('Gate H: HTML autocontenido escapa contenido y publica límites', () => {
 	assert.match(html, /<header class="cabecera">/); assert.match(html, /<section><h2>Resumen<\/h2>/);
 	assert.match(html, /@page\{size:A4/); assert.match(html, /@media print/);
 	assert.match(html, /break-inside:avoid-page/); assert.match(html, /tbody tr:nth-child\(even\)/);
+	assert.match(html, /Sin procedencia confirmada/, 'el contexto legado no se presenta como revisión confirmada');
+});
+
+test('DOC-01: JSON, HTML y cuatro CSV comparten procedencia confirmada, alcance y fecha', () => {
+	const p = fixtureDocumentacion();
+	const procedencia = { estado: 'confirmado' as const, projectId: '=PROYECTO-HOSTIL', revisionRepositorio: 17,
+		buildId: 'BUILD-DOC-01', generadoEn: '2026-09-24T12:00:00.000Z' };
+	const i = crearInformeIngenieriaV7({ proyecto: p, analisis: analizar(p),
+		trazabilidad: { projectId: procedencia.projectId, revision: procedencia.revisionRepositorio,
+			buildId: procedencia.buildId, generadoEn: procedencia.generadoEn, procedencia } });
+	const json = JSON.parse(informeIngenieriaV7AJson(i));
+	assert.deepEqual(json.trazabilidad.procedencia, procedencia);
+	assert.match(json.alcance, /no certificación normativa/);
+	const html = informeIngenieriaV7AHtml(i);
+	assert.match(html, /Revisión confirmada/); assert.match(html, /Revisión de repositorio<\/b><span>17/);
+	assert.match(html, /BUILD-DOC-01/); assert.match(html, /2026-09-24T12:00:00.000Z/);
+	const csvs = [bomIngenieriaACsv(i.bom, i), conductoresIngenieriaACsv(i.conductores, i),
+		terminalesIngenieriaACsv(i.terminales, i), datosTecnicosIngenieriaACsv(i)];
+	for (const csv of csvs) {
+		assert.equal(csv.charCodeAt(0), 0xfeff);
+		assert.match(csv, /Estado documental;Project ID;Revisión repositorio;Generado en;Build ID;Alcance;Tipo fila/);
+		assert.match(csv, /Revisión confirmada;'=PROYECTO-HOSTIL;17;2026-09-24T12:00:00.000Z;BUILD-DOC-01/);
+		assert.match(csv, /Ingeniería V7|Datos técnicos V8/);
+	}
+	assert.match(csvs[3]!, /;META$/, 'un CSV técnico sin resoluciones conserva metadatos sin inventar datos');
+});
+
+test('DOC-01: ejemplo efímero no publica ID ni revisión de repositorio confirmados', () => {
+	const p = fixtureDocumentacion(); p.esEjemplo = true;
+	const procedencia = { estado: 'efimero' as const, motivo: 'ejemplo' as const,
+		buildId: 'BUILD-EJEMPLO', generadoEn: '2026-09-24T12:00:00.000Z' };
+	const i = crearInformeIngenieriaV7({ proyecto: p, analisis: analizar(p), trazabilidad: {
+		projectId: 'EJEMPLO_EFIMERO', buildId: procedencia.buildId, generadoEn: procedencia.generadoEn, procedencia,
+	} });
+	assert.match(informeIngenieriaV7AHtml(i), /Ejemplo efímero/);
+	assert.match(informeIngenieriaV7AHtml(i), /Project ID confirmado<\/b><span>No asignado/);
+	assert.match(bomIngenieriaACsv(i.bom, i), /Ejemplo efímero;No asignado;No asignada/);
+	assert.doesNotMatch(bomIngenieriaACsv(i.bom, i), /EJEMPLO_EFIMERO/);
 });
 
 test('Gate H: los tres CSV descargables declaran UTF-8 por bytes y conservan texto técnico', () => {

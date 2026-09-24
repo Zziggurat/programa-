@@ -27,4 +27,35 @@ test('V9 una falla de almacenamiento no muta BASE',async()=>{const{snapshot}=pre
 test('V9 sesión cede, informa progreso y cancela sin declarar cobertura exhaustiva',async()=>{const{snapshot}=preparar();const ac=new AbortController(),eventos:string[]=[];const r=await ejecutarSesionDisenoAsistido(snapshot,{signal:ac.signal,progreso:p=>{eventos.push(p.fase);if(p.fase==='EVALUANDO')ac.abort();}});assert.equal(r.cobertura,'CANCELADA');assert.ok(r.evaluados>0&&r.evaluados<r.totalEstimado);assert.ok(eventos.includes('EVALUANDO')&&eventos.at(-1)==='TERMINADO');});
 test('V9 presupuesto limitado no se disfraza de exhaustivo',()=>{const x=preparar();x.solicitud.presupuesto!.maxCandidatos=2;const s=crearSnapshotDisenoAsistido({proyecto:x.proyecto,solicitud:x.solicitud,revisionesDisponibles:x.disponibles,contextoFisico:contexto}),r=evaluarDisenoAsistido(s);assert.equal(r.cobertura,'LIMITADA');assert.equal(r.evaluados,2);assert.match(r.motivoCobertura,/Presupuesto/);});
 test('V9 informes JSON/CSV/HTML son portables y escapan contenido no confiable',()=>{const{snapshot}=preparar(),r=evaluarDisenoAsistido(snapshot);snapshot.solicitud.nombre='<img src=x onerror=alert(1)>';const html=informeDisenoHtml(snapshot,r),json=informeDisenoJson(snapshot,r),csv=informeDisenoCsv(r);assert.doesNotMatch(html,/<img/);assert.match(html,/&lt;img/);assert.match(csv,/orden;id/);assert.equal(csv.charCodeAt(0),0xfeff);assert.doesNotThrow(()=>leerInformeDisenoJson(json));assert.throws(()=>leerInformeDisenoJson('{"__proto__":{"x":1}}'),/prohibida|peligrosa|clave/i);});
+test('DOC-01: diseño V9 exporta la misma BASE, snapshot y revisión confirmada en JSON/HTML/CSV',()=>{
+	const {snapshot}=preparar(),r=evaluarDisenoAsistido(snapshot);
+	const procedencia={estado:'confirmado' as const,projectId:'proyecto-v9',revisionRepositorio:9,buildId:'BUILD-DOC-01',generadoEn:'2026-09-24T12:00:00.000Z'};
+	const c={projectId:procedencia.projectId,revision:procedencia.revisionRepositorio,buildId:procedencia.buildId,
+		generadoEn:procedencia.generadoEn,procedencia,aplicacion:{estado:'NO_APLICADA' as const}};
+	const json=informeDisenoJson(snapshot,r,c),html=informeDisenoHtml(snapshot,r,c),csv=informeDisenoCsv(r,c,snapshot);
+	assert.deepEqual(leerInformeDisenoJson(json).contexto?.procedencia,procedencia);
+	assert.match(json,/"alcance"/);assert.match(json,new RegExp(snapshot.hashBase));
+	assert.match(html,/Revisión confirmada/);assert.match(html,/Revisión del repositorio<\/dt><dd>9/);
+	assert.match(html,new RegExp(snapshot.hashBase));assert.match(csv,/estado_documental;project_id;revision_repositorio/);
+	assert.match(csv,/Revisión confirmada;proyecto-v9;9;2026-09-24T12:00:00.000Z;BUILD-DOC-01/);
+	assert.match(csv,new RegExp(snapshot.hashBase));assert.equal(csv.charCodeAt(0),0xfeff);
+	const manipulado=JSON.parse(json);manipulado.contexto.revision=10;
+	assert.throws(()=>leerInformeDisenoJson(JSON.stringify(manipulado)),/revisión confirmada inconsistente/);
+	const alcanceFalso=JSON.parse(json);alcanceFalso.alcance='certificación automática';
+	assert.throws(()=>leerInformeDisenoJson(JSON.stringify(alcanceFalso)),/alcance: valor no permitido/);
+	const resultadoAjeno={...r,snapshotHash:'sha256:'+'0'.repeat(64)};
+	assert.throws(()=>informeDisenoCsv(resultadoAjeno,c,snapshot),/INFORME_SNAPSHOT_INCONSISTENTE/);
+});
+test('DOC-01: ejemplo V9 es efímero también en HTML y CSV, sin revisión inventada',()=>{
+	const {snapshot}=preparar(),r=evaluarDisenoAsistido(snapshot);
+	const procedencia={estado:'efimero' as const,motivo:'ejemplo' as const,buildId:'BUILD-DOC-01',generadoEn:'2026-09-24T12:00:00.000Z'};
+	const c={projectId:'EJEMPLO_EFIMERO',buildId:procedencia.buildId,generadoEn:procedencia.generadoEn,
+		procedencia,aplicacion:{estado:'NO_APLICADA' as const}};
+	const json=informeDisenoJson(snapshot,r,c),html=informeDisenoHtml(snapshot,r,c),csv=informeDisenoCsv(r,c,snapshot);
+	assert.equal(leerInformeDisenoJson(json).contexto?.procedencia?.estado,'efimero');
+	assert.match(html,/Ejemplo efímero/);assert.match(html,/Project ID confirmado<\/dt><dd>No asignado/);
+	assert.match(csv,/Ejemplo efímero;No asignado;No asignada/);assert.doesNotMatch(csv,/EJEMPLO_EFIMERO/);
+	const falso=JSON.parse(json);falso.contexto.projectId='proyecto-permanente';
+	assert.throws(()=>leerInformeDisenoJson(JSON.stringify(falso)),/documento efímero inconsistente/);
+});
 test('V9 un ejemplo se puede evaluar pero exige copia antes de aplicar',()=>{const{proyecto,solicitud,disponibles}=preparar();proyecto.esEjemplo=true;const s=crearSnapshotDisenoAsistido({proyecto,solicitud,revisionesDisponibles:disponibles,contextoFisico:contexto}),r=evaluarDisenoAsistido(s);assert.ok(r.resultados.length);assert.throws(()=>prepararAplicacionDiseno(s,r.resultados.find(x=>x.estado!=='ERROR')!),/COPIAR/);});
