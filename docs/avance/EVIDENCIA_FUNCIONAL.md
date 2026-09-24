@@ -56,6 +56,14 @@ Estados: `YA_EXISTE_POR_VERIFICAR`, `PENDIENTE`, `EN_CURSO`, `IMPLEMENTADO`, `VE
 - M3 DOC-02 (identidad, no paquete): `test/documentacion-multivista-m3.test.ts` 1/1. Tres símbolos del mismo KM ocupan dos hojas y una sola fila de índice/BOM; tres conexiones reales conservan extremos y terminales, mientras un cable interhoja produce dos referencias gráficas sin duplicar material. HTML e Ingeniería concuerdan en conteo. DOC-01 sigue abierto por falta de ID/revisión real en HTML/PDF; DOC-02 completo requiere reunir artefactos de una misma revisión.
 - Integración en `49c9db4`: typecheck app/core, 1530/1530 pruebas Node en 31,15 s, 0 fail/skip, build QA 409 módulos en 7,81 s. Los QA largos M9 y aceptación humana no se repitieron; la evidencia anterior queda en su SHA.
 
+## Evidencia focal nueva — 2026-09-23, ESQ-02/DOC-01
+
+- `2c9c433`: `estadoRutaFisica: 'pendiente'` pertenece a la conexión eléctrica V2, no a una ruta renderizada. El cargador V1 conserva el legacy, el V2 mantiene el discriminante tras guardar/cargar y los estados desconocidos/contradictorios se diagnostican. Tests de ruta, física, DRC, puerta, ficha e Ingeniería focales 24/24 junto con procedencia; el filtro de Ingeniería impide que un snapshot físico ajeno aporte 999 m a una conexión pendiente.
+- `02dfd2c`: importación visible del fixture V2, un cable físico y una conexión pendiente. Inspector/lista/resumen no muestran longitud u ocupación inventadas; cambiar sección prevista no materializa cable. Reapertura conserva estado y sección. `qa/ruta-pendiente-m2.mjs`: 9/9, 0 fallos, 0 errores JS, 9,9 s; servidor y navegador cerrados.
+- `b57fe47`: HTML, dossier PDF y esquema PDF incluyen procedencia confirmada de documento y Build ID, distinguen revisión editorial y muestran ejemplo efímero sin identidad falsa. El PDF deriva numeración sobre copia; el primer preview no cambia bytes del proyecto ni revisión. Descarga y preview comparten SHA exacto; edición exige nueva vista y segundo clic. `qa/procedencia-documental-m3.mjs`: 10/10, 0 fallos, 0 errores JS, 83 s; servidor/Chromium cerrados. Tests focales de procedencia y documento pasaron.
+- Tras los cortes combinados: TypeScript app/core verdes; `node --test --test-reporter=dot dist/test/*.test.js` terminó exit 0; build QA 410 módulos verde. Este resultado no reemplaza campaña histórica de navegador M9, ni inspección humana/GPU física.
+- Límites explícitos: todavía no se puede crear la conexión pendiente desde el esquema; DOC-01 no se extiende aún a SVG/DXF/CSV ni compone un paquete único de revisión. El master spec sigue EN_CURSO y `FUNCTIONAL_COMPLETE` no se declara.
+
 ## Selección por impacto
 
 - M1: modelo/persistencia/componentes/assets y QA multiproyecto/componentes, más entrega offline al tocar portabilidad.

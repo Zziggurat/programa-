@@ -13,8 +13,8 @@
 |---|---|---|
 | M0 · preparación | EN_CURSO | R1 sintético 30/100 en SwiftShader. Reconciliación de mallas 98→10 y tres cortes focales de rejilla conservan 5/5 hashes exactos; reparto Node R1+drag ~4,98 s en una medición reciente y −34,2 % pareado. Nuevo focal de navegador n=1: rutas 11,79→4,76 s entre candidatos distintos y drag host 24,43 s; no es p95 ni GPU física. R1 NO ACEPTADO. |
 | M1 · flujo y componentes | EN_CURSO | Carcasa opcional seleccionable desde el asistente, recorte/escala visibles, ficha exacta, bornes/bloques, adopción A/B y portabilidad. Contrato integrado contactor A/B+PNG r2+paquete limpio probado; QA asistente 19/19, adopción 24/24, carcasa 15/15 y recorrido largo contactor+simulación+importación verde. Falta aceptación visual/humana y campaña M9; no se declara M1 aceptado. |
-| M2 · esquema | EN_CURSO | Vista opt-in: activación legacy todo-o-nada con metadatos de hojas preservados, separación bobina/polos/aux del KM legacy por UI real, una sola red, undo/redo y reapertura (QA 5/5, 0 JS). Ya había desconexión real, selección, arrastre, borrado gráfico, referencias y pendientes. Faltan crear/conectar desde esquema, cruces, renumeración y aceptación multihoja completa; M2 NO aceptado. |
-| M3 · documentación | EN_CURSO | Test multivista: 3 símbolos del KM y 1 aparato/BOM, 3 cables reales, 2 referencias del enlace interhoja. DOC-01 aún carece de procedencia uniforme en HTML/PDF; paquete DOC-02 y longitudes físicas M6 pendientes. |
+| M2 · esquema | EN_CURSO | Vista opt-in y una red; el nuevo contrato V2 distingue conexión eléctrica con ruta física pendiente de cable legacy. Ruteo, física, 3D, canaletas, Ingeniería y resumen no inventan metraje; QA visible 9/9 y reapertura. Faltan conectar desde esquema, cruces, renumeración y aceptación multihoja completa; M2 NO aceptado. |
+| M3 · documentación | EN_CURSO | Test multivista de KM único. HTML, dossier PDF y esquema PDF ya separan ID/revisión confirmados, editorial, fecha y Build ID; preview/descarga byte idénticos y obsolescencia probada en navegador 10/10. DOC-01 sigue parcial: SVG/DXF/CSV y resto del paquete aún no llevan procedencia uniforme; DOC-02 y longitudes M6 pendientes. |
 | M4 · simulación práctica | EN_CURSO | SIM-03: fallo visible de boya, caída de KM y bomba parada (QA 9/9). SIM-10 sección declarada: cambio visible 2,5→6 mm² refresca física energizada y Undo/Redo, QA 8/8 sin JS. Ruta→física espera política de longitud M6; no aceptar SIM-10 completo ni los demás SIM por arrastre. |
 | M5 · montaje/3D | PENDIENTE | Contratos de anclaje y calidad visual requieren evidencia nueva. |
 | M6 · cables | PENDIENTE | Reconstrucción integral autorizada con migración; rutas manuales y topología deben preservarse. |
@@ -25,8 +25,8 @@
 ## Siguiente acción y recuperación
 
 1. Perfilar el coste residual R1 de rutas y confirmar respuesta en GPU física; el focal de navegador n=1 sigue demasiado lento y no acredita UX aceptable.
-2. M2: separar persistentemente conexión eléctrica de ruta física pendiente antes del gesto «conectar» del esquema; nunca contabilizar metros/materiales automáticos no diseñados.
-3. M3 DOC-01: propagar ID/revisión confirmados a HTML y PDFs; DOC-02 requiere un paquete coherente, no otro motor de cálculo.
+2. M2: usar el contrato persistente de ruta pendiente para el gesto visible «conectar» entre bornes reales del esquema, con cancelación/undo/reapertura, sin crear metros automáticos.
+3. M3: extender DOC-01 a SVG/DXF/CSV y demás entregables antes de aceptarlo; DOC-02 requiere un paquete coherente, no otro motor de cálculo.
 4. Cerrar evidencia M1 de producto y revisión humana de apariencia/montaje; no sustituirla por tests o capturas automatizadas.
 5. M4: continuar SIM-01…10; la sección en vivo está cubierta, pero SIM-10 longitud de ruta espera la política de M6.
 
@@ -46,6 +46,13 @@ Esta campaña no incluye publicación automática del plano privado, arquitectur
 - SIM-10 sección en vivo: `qa/seccion-en-vivo-m4.mjs` usa ejemplo y copia visibles, cambia 2,5→6 mm² en el inspector con el circuito energizado, comprueba R `0,137928→0,05747 Ω` y Undo/Redo; 8/8, 0 JS, 35,5 s, browser/servidor cerrados. El primer recorrido descubrió que Undo restauraba documento pero no snapshot eléctrico; quedó corregido, no silenciado. El cálculo de longitud a partir de ruta física sigue pendiente.
 - M3: `test/documentacion-multivista-m3.test.ts` comprueba tres vistas de un contactor, una identidad/BOM, tres conexiones, dos referencias gráficas del enlace interhoja y exactitud de terminales en Ingeniería; 1/1 focal. No demuestra todavía procedencia uniforme ni paquete documental único.
 - App/core TypeScript verdes; batería integrada posterior a esos tres commits: 1530/1530 en 31,15 s, 0 fallos y 0 skipped. Build QA 409 módulos en 7,81 s. El gate histórico completo M9 no se ha ejecutado sobre este HEAD.
+
+## Checkpoint de continuidad — 2026-09-23, frontera M2/M3
+
+- Rama `roadmap/1.0-functional` respaldada en `origin/roadmap/1.0-functional` hasta `b57fe47ddd65d8e4bff985478e2ef874dc165f60`; `origin/main` sigue en V9 `4c2924c`. Commits de este corte: `2c9c433` contrato físico de ruta pendiente, `02dfd2c` presentación y QA de navegador, `b57fe47` procedencia de HTML/PDF. El checkpoint documental previo `4d2731f` también quedó respaldado. No se promovió a `main`.
+- ESQ-02: archivo V2 opt-in conserva conectividad eléctrica sin trazado físico, metros, ocupación, material ni malla 3D; ausencia del campo conserva proyectos V1. Un valor hostil o contradicción con trazado/longitud se diagnostica y congela guardado hasta revisión, no se degrada silenciosamente. Pruebas focales de modelo/Ingeniería 24/24; `qa/ruta-pendiente-m2.mjs` por UI de importación/inspector/reapertura 9/9 en 9,9 s, 0 JS. **Todavía no existe el gesto de conectar desde el esquema.**
+- DOC-01 focal: HTML, dossier PDF y esquema PDF usan Project ID y revisión del repositorio solo tras `flush` confirmado; ejemplos quedan efímeros. La numeración PDF opera en copia. El dossier descarga exactamente el Blob mostrado; edición, cambio de identidad o revisión invalidan preview. `qa/procedencia-documental-m3.mjs` 10/10 en 83 s, 0 JS, browser/servidor cerrados. SVG/DXF/CSV y paquete documental completo **NO VERIFICADOS** para esta procedencia; DOC-01 sigue EN_CURSO.
+- Typechecks app/core y batería Node integrada con exit 0 tras el corte; build QA 410 módulos verde. La campaña histórica M9, GPU física, aceptación visual humana y `FUNCTIONAL_COMPLETE` siguen pendientes.
 
 ## Checkpoint de continuidad — 2026-09-23 noche
 
