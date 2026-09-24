@@ -17,6 +17,8 @@ export interface GrupoBomCanonico {
 	referencia?: string;
 	perfil?: string;
 	modeloFisico?: string[];
+	/** Motivo legible de la partida; procede de los mismos nominales que forman su clave. */
+	varianteDeclarada: string;
 	cantidad: number;
 	designaciones: string[];
 }
@@ -38,29 +40,73 @@ function variantePerfil(d: Dispositivo): readonly unknown[] | null {
 }
 
 /** Solo magnitudes declaradas como características del equipo; no bornes, consignas ni impedancias del circuito. */
-function varianteProducto(d: Dispositivo): readonly unknown[] {
+type CampoVariante = readonly [etiqueta: string, valor: unknown, unidad?: string];
+
+function camposVariante(d: Dispositivo): { placa: CampoVariante[]; fisica: (CampoVariante[] | null)[] } {
 	const f = d.fisica;
-	return [
-		d.tipo, d.fabricante?.trim() ?? '', d.referencia?.trim() ?? '', variantePerfil(d),
-		[d.tensionNominal, d.corrienteNominal, d.polos, d.tensionSecundariaV,
-			d.poderCorteKA, d.curvaDisparo, d.sensibilidadMA, d.claseDiferencial,
-			d.rangoRegulacionA, d.colorSenal],
-		f?.fuente ? [f.fuente.sistema, f.fuente.tensionNominalV, f.fuente.frecuenciaHz] : null,
-		f?.carga ? [f.carga.modelo, f.carga.trifasica, f.carga.pW, f.carga.qVar,
-			f.carga.corrienteA, f.carga.rOhm, f.carga.xOhm] : null,
-		f?.transformador ? [f.transformador.primarioV, f.transformador.secundarioV,
-			f.transformador.potenciaVA, f.transformador.frecuenciaHz] : null,
-		f?.proteccion ? [f.proteccion.inA, f.proteccion.curva,
-			f.proteccion.capacidadCorte?.icnKA, f.proteccion.capacidadCorte?.icuKA,
-			f.proteccion.capacidadCorte?.icsKA] : null,
-		f?.diferencial ? [f.diferencial.corrienteResidualNominalA] : null,
-		f?.motor ? [f.motor.potenciaMecanicaNominalW, f.motor.tensionNominalV,
-			f.motor.frecuenciaHz, f.motor.fases, f.motor.corrienteNominalA,
-			f.motor.rpmNominal, f.motor.polos] : null,
-		f?.vfd ? [f.vfd.tensionEntradaNominalV, f.vfd.fasesEntrada, f.vfd.potenciaNominalW,
-			f.vfd.frecuenciaBaseHz, f.vfd.frecuenciaMaxHz, f.vfd.tensionSalidaMaxV,
-			f.vfd.corrienteNominalA] : null,
-	];
+	return {
+		placa: [
+			['Tensión nominal', d.tensionNominal, 'V'], ['Corriente nominal', d.corrienteNominal, 'A'],
+			['Polos', d.polos], ['Tensión secundaria', d.tensionSecundariaV, 'V'],
+			['Poder de corte', d.poderCorteKA, 'kA'], ['Curva', d.curvaDisparo],
+			['Sensibilidad', d.sensibilidadMA, 'mA'], ['Clase diferencial', d.claseDiferencial],
+			['Regulación', d.rangoRegulacionA, 'A'], ['Color señal', d.colorSenal],
+		],
+		fisica: [
+			f?.fuente ? [['Sistema fuente', f.fuente.sistema], ['Tensión fuente', f.fuente.tensionNominalV, 'V'], ['Frecuencia fuente', f.fuente.frecuenciaHz, 'Hz']] : null,
+			f?.carga ? [['Modelo carga', f.carga.modelo], ['Trifásica', f.carga.trifasica], ['P carga', f.carga.pW, 'W'], ['Q carga', f.carga.qVar, 'var'],
+				['I carga', f.carga.corrienteA, 'A'], ['R carga', f.carga.rOhm, 'Ω'], ['X carga', f.carga.xOhm, 'Ω']] : null,
+			f?.transformador ? [['Primario', f.transformador.primarioV, 'V'], ['Secundario', f.transformador.secundarioV, 'V'],
+				['Potencia transformador', f.transformador.potenciaVA, 'VA'], ['Frecuencia transformador', f.transformador.frecuenciaHz, 'Hz']] : null,
+			f?.proteccion ? [['In protección', f.proteccion.inA, 'A'], ['Curva protección', f.proteccion.curva],
+				['Icn', f.proteccion.capacidadCorte?.icnKA, 'kA'], ['Icu', f.proteccion.capacidadCorte?.icuKA, 'kA'],
+				['Ics', f.proteccion.capacidadCorte?.icsKA, 'kA']] : null,
+			f?.diferencial ? [['IΔn', f.diferencial.corrienteResidualNominalA, 'A']] : null,
+			f?.motor ? [['Potencia motor', f.motor.potenciaMecanicaNominalW, 'W'], ['Tensión motor', f.motor.tensionNominalV, 'V'],
+				['Frecuencia motor', f.motor.frecuenciaHz, 'Hz'], ['Fases motor', f.motor.fases],
+				['I motor', f.motor.corrienteNominalA, 'A'], ['Velocidad motor', f.motor.rpmNominal, 'rpm'], ['Polos motor', f.motor.polos]] : null,
+			f?.vfd ? [['Entrada VFD', f.vfd.tensionEntradaNominalV, 'V'], ['Fases entrada VFD', f.vfd.fasesEntrada],
+				['Potencia VFD', f.vfd.potenciaNominalW, 'W'], ['Frecuencia base VFD', f.vfd.frecuenciaBaseHz, 'Hz'],
+				['Frecuencia máxima VFD', f.vfd.frecuenciaMaxHz, 'Hz'], ['Salida VFD', f.vfd.tensionSalidaMaxV, 'V'],
+				['I VFD', f.vfd.corrienteNominalA, 'A']] : null,
+		],
+	};
+}
+
+function varianteProducto(d: Dispositivo): readonly unknown[] {
+	const { placa, fisica } = camposVariante(d);
+	return [d.tipo, d.fabricante?.trim() ?? '', d.referencia?.trim() ?? '', variantePerfil(d),
+		placa.map((c) => c[1]), ...fisica.map((grupo) => grupo?.map((c) => c[1]) ?? null)];
+}
+
+function textoValor(valor: unknown): string {
+	if (Array.isArray(valor)) return valor.map(textoValor).join('–');
+	if (typeof valor === 'boolean') return valor ? 'sí' : 'no';
+	return String(valor);
+}
+
+function resumenPerfil(d: Dispositivo): string | undefined {
+	const perfil = variantePerfil(d);
+	if (!perfil) return undefined;
+	if (perfil[0] === 'proteccion') return `Perfil: protección${perfil[1] ? ` ${perfil[1]}` : ''}, ${perfil[3]} polos, ${perfil[2] ? 'rearmable' : 'no rearmable'}`;
+	if (perfil[0] === 'mando') return `Perfil: mando ${perfil[1]}, ${perfil[2]} posiciones`;
+	if (perfil[0] === 'carga') return `Perfil: carga ${perfil[1]}, ${perfil[2]} fases mínimas`;
+	if (perfil[0] === 'sensor') return `Perfil: sensor, salida digital ${perfil[1] ? 'sí' : 'no'}, transmisor ${perfil[2] ? 'sí' : 'no'}`;
+	if (perfil[0] === 'contactos-electromagneticos') return `Perfil: contactor, ${perfil[1]} polos y ${perfil[2]} contactos`;
+	return `Perfil: ${perfil[0]}`;
+}
+
+function varianteDeclarada(d: Dispositivo, referencias: readonly string[]): string {
+	const { placa, fisica } = camposVariante(d);
+	const propio = d.componentePersonalizado;
+	const identidad = propio ? `Componente propio ${propio.definicionId}, revisión ${propio.revision}`
+		: d.fabricante?.trim() && d.referencia?.trim() ? `Artículo comercial ${d.fabricante.trim()} / ${d.referencia.trim()}`
+		: referencias.length ? `Producto técnico congelado (${referencias.length} referencia${referencias.length === 1 ? '' : 's'})`
+		: 'Instancia sin identidad de compra: partida no consolidada';
+	const datos = [placa, ...fisica.filter((g): g is CampoVariante[] => g !== null)]
+		.flat().filter((campo) => campo[1] !== undefined && campo[1] !== null)
+		.map(([etiqueta, valor, unidad]) => `${etiqueta}: ${textoValor(valor)}${unidad ? ` ${unidad}` : ''}`);
+	return [identidad, `Tipo: ${d.tipo}`, resumenPerfil(d), ...datos].filter(Boolean).join(' · ');
 }
 
 function referenciasTecnicas(proyecto: Proyecto): Map<string, string[]> {
@@ -95,7 +141,8 @@ export function proyectarBomCanonica(proyecto: Proyecto): GrupoBomCanonico[] {
 	const grupos = new Map<string, GrupoBomCanonico>();
 	for (const d of [...proyecto.dispositivos].sort((a, b) => comparar(a.id, b.id))) {
 		if (d.tipo === 'cable') continue;
-		const clave = JSON.stringify([identidad(d, tecnicas.get(d.id) ?? []), varianteProducto(d)]);
+		const referencias = tecnicas.get(d.id) ?? [];
+		const clave = JSON.stringify([identidad(d, referencias), varianteProducto(d)]);
 		const existente = grupos.get(clave);
 		if (existente) {
 			existente.cantidad++;
@@ -114,6 +161,7 @@ export function proyectarBomCanonica(proyecto: Proyecto): GrupoBomCanonico[] {
 				.map(([k]) => k).sort(comparar) : [];
 		grupos.set(clave, {
 			clave, tipo: d.tipo, descripcion: d.descripcion ?? '',
+			varianteDeclarada: varianteDeclarada(d, referencias),
 			...(d.fabricante ? { fabricante: d.fabricante } : {}),
 			...(d.referencia ? { referencia: d.referencia } : {}),
 			...(d.comportamiento?.clase ? { perfil: d.comportamiento.clase } : {}),

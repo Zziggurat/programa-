@@ -32,6 +32,7 @@ export interface FilaBomIngenieria {
 	referencia?: string;
 	perfil?: string;
 	modeloFisico?: string[];
+	varianteDeclarada: string;
 }
 
 export interface FilaConductorIngenieria {
@@ -270,15 +271,15 @@ export function informeIngenieriaV7AHtml(i: InformeIngenieriaV7): string {
 	${seccion('Conductores', tabla(['ID','De','Terminal','A','Terminal','Ruta física','mm²','m','Origen','Circuitos'], i.conductores.map((x) => [x.id,x.deDispositivo,x.deTerminal,x.aDispositivo,x.aTerminal,x.estadoRutaFisica === 'pendiente' ? 'PENDIENTE — sin tendido' : 'Ruta física disponible',n(x.seccionMm2),n(x.longitudM),x.origenLongitud,x.circuitos.join(', ')])))}
 	${seccion('Protecciones y coordinación', tabla(['Equipo','I (A)','In (A)','Región','Icu/Icn (kA)'], i.protecciones.map((x) => [x.dispositivoId,n(x.corrienteA),n(x.inA),x.region,n(x.capacidadCorte?.icuKA ?? x.capacidadCorte?.icnKA)])) + tabla(['Circuito','Arriba','Abajo','Clasificación','Explicación'], i.coordinacion.map((x) => [x.circuitId,x.aguasArriba.dispositivoId,x.aguasAbajo.dispositivoId,x.clasificacion,x.explicacion])))}
 	${seccion('Balance de fases', tabla(['Fuente','Desequilibrio I (%)','Desequilibrio V (%)','IN (A)','Métrica'], i.balances.map((x) => [x.fuenteId,n(x.desequilibrioCorrientePct),n(x.desequilibrioTensionPct),n(x.corrienteNeutroA),x.metrica])))}
-	${seccion('BOM', tabla(['Cant.','Tipo','Descripción','Fabricante','Referencia','Perfil/modelo','Designaciones'], i.bom.map((x) => [x.cantidad,x.tipo,x.descripcion,x.fabricante,x.referencia,[x.perfil,...(x.modeloFisico??[])].filter(Boolean).join(' / '),x.designaciones.join(', ')])))}
+	${seccion('BOM', tabla(['Cant.','Tipo','Descripción','Fabricante','Referencia','Variante declarada','Designaciones'], i.bom.map((x) => [x.cantidad,x.tipo,x.descripcion,x.fabricante,x.referencia,x.varianteDeclarada,x.designaciones.join(', ')])))}
 	${seccion('Terminales', tabla(['Bornero','Borne','Tipo','Conexiones','Circuitos'], i.terminales.map((x) => [x.designacion,x.borneId,x.tipo,x.conexiones.map((c) => `${c.conductorId}: ${c.dispositivoId}:${c.borneId}`).join(' / '),x.circuitos.join(', ')])))}
 	${seccion('Diagnósticos V6 relevantes', tabla(['Código','Mensaje','Elementos'], i.diagnosticosV6.map((x) => [x.codigo,x.mensaje,x.elementos?.join(', ')])))}
 	<aside class="limit"><strong>Limitaciones</strong><ul>${i.limitaciones.map((x) => `<li>${esc(x)}</li>`).join('')}</ul><p>${esc(i.leyenda)}</p></aside><footer class="pie">Generado por TableroStudio · Build ${esc(i.trazabilidad.buildId)}</footer></body></html>`;
 }
 
 export const bomIngenieriaACsv = (filas: readonly FilaBomIngenieria[], informe?: InformeIngenieriaV7) => aCSV(filasCsvConProcedencia(
-	['Cantidad','Tipo','Descripción','Fabricante','Referencia','Perfil','Modelo físico','Designaciones'],
-	filas.map((x) => [x.cantidad,x.tipo,x.descripcion,x.fabricante,x.referencia,x.perfil,x.modeloFisico?.join(' / '),x.designaciones.join(', ')]),
+	['Cantidad','Tipo','Descripción','Fabricante','Referencia','Perfil','Modelo físico','Variante declarada','Designaciones'],
+	filas.map((x) => [x.cantidad,x.tipo,x.descripcion,x.fabricante,x.referencia,x.perfil,x.modeloFisico?.join(' / '),x.varianteDeclarada,x.designaciones.join(', ')]),
 	informe, 'BOM Ingeniería V7: cantidades del snapshot, no lista de compra certificada'));
 export const conductoresIngenieriaACsv = (filas: readonly FilaConductorIngenieria[], informe?: InformeIngenieriaV7) => aCSV(filasCsvConProcedencia(
 	['ID','Número','De dispositivo','De terminal','A dispositivo','A terminal','Sección mm²','Color','Material','Longitud m','Provenance','Circuitos','Ruta física'],

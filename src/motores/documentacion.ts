@@ -24,6 +24,7 @@ export interface FilaBOM {
 	descripcion: string;
 	fabricante: string;
 	referencia: string;
+	varianteDeclarada: string;
 	designaciones: string[];
 }
 
@@ -31,6 +32,7 @@ export function generarBOM(proyecto: Proyecto): FilaBOM[] {
 	return proyectarBomCanonica(proyecto).map((grupo) => ({
 		cantidad: grupo.cantidad, descripcion: grupo.descripcion,
 		fabricante: grupo.fabricante ?? '', referencia: grupo.referencia ?? '',
+		varianteDeclarada: grupo.varianteDeclarada,
 		designaciones: grupo.designaciones,
 	}));
 }
@@ -71,8 +73,8 @@ export { aCSV };
 
 export function bomACSV(bom: FilaBOM[]): string {
 	return aCSV([
-		['Cantidad', 'Descripción', 'Fabricante', 'Referencia', 'Designaciones'],
-		...bom.map((f) => [f.cantidad, f.descripcion, f.fabricante, f.referencia, f.designaciones.join(', ')]),
+		['Cantidad', 'Descripción', 'Fabricante', 'Referencia', 'Variante declarada', 'Designaciones'],
+		...bom.map((f) => [f.cantidad, f.descripcion, f.fabricante, f.referencia, f.varianteDeclarada, f.designaciones.join(', ')]),
 	]);
 }
 
@@ -134,8 +136,8 @@ export function generarInformeHTML(d: Dossier, procedencia?: ProcedenciaDocument
 ${tabla(['Severidad', 'Regla', 'Detalle'], d.hallazgos.map((h) => [h.severidad, h.regla, h.mensaje]))}`);
 
 	secciones.push(`<h2>2. Lista de materiales</h2>
-${tabla(['Cant.', 'Descripción', 'Fabricante', 'Referencia', 'Designaciones'],
-		bom.map((f) => [f.cantidad, f.descripcion, f.fabricante, f.referencia, f.designaciones.join(', ')]))}`);
+${tabla(['Cant.', 'Descripción', 'Fabricante', 'Referencia', 'Variante declarada', 'Designaciones'],
+		bom.map((f) => [f.cantidad, f.descripcion, f.fabricante, f.referencia, f.varianteDeclarada, f.designaciones.join(', ')]))}`);
 
 	secciones.push(`<h2>3. Índice de dispositivos</h2>
 ${tabla(['Designación', 'Descripción', 'Posición'],

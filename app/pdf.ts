@@ -811,7 +811,11 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 		});
 		filas.push(['', totalUnidades, 'TOTAL DE UNIDADES', '', '', '']);
 		tabla(['#', 'Cant.', 'Descripción', 'Fabricante', 'Referencia', 'Marcado'], filas,
-			{ 0: 8, 1: 12, 3: 30, 4: 30 });
+			{ 0: 8, 1: 12, 2: anchoPag - 24 - 121, 3: 30, 4: 30, 5: 41 });
+		// El detalle puede ser largo. Una tabla de dos columnas conserva legibilidad A4
+		// sin comprimir descripción y designaciones de la lista de compra.
+		tabla(['#', 'Identidad y variante declarada'], bom.map((f, i) => [i + 1, f.varianteDeclarada]),
+			{ 0: 12, 1: anchoPag - 36 });
 	}
 
 	/* --------------------- 4. Índice de aparatos --------------------- */

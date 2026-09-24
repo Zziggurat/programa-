@@ -3,8 +3,8 @@ import test from 'node:test';
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import type { Dispositivo, Proyecto } from '../src/modelo/tipos.js';
 import { proyectarBomCanonica } from '../src/motores/bom.js';
-import { generarBOM } from '../src/motores/documentacion.js';
-import { generarBomIngenieria } from '../src/ingenieria/documentacion.js';
+import { bomACSV, generarBOM } from '../src/motores/documentacion.js';
+import { bomIngenieriaACsv, generarBomIngenieria } from '../src/ingenieria/documentacion.js';
 
 const equipo = (id: string, cambios: Partial<Dispositivo> = {}): Dispositivo => ({
 	id, tipo: 'disyuntor', designacion: `-${id}`, descripcion: 'Protección', bornes: [],
@@ -130,4 +130,22 @@ test('DOC-02: una configuración de circuito no divide un mismo artículo con pl
 			tensionNominalV: 24, referencia: 'GND', fases: [{ borne: 'L+', fase: 'POSITIVO' }], rOhm: 0.2 } } }),
 	);
 	assert.deepEqual(cantidades(p), [[2], [2], [2]]);
+});
+
+test('DOC-02: las filas separadas del mismo SKU explican sus nominales en ambos BOM', () => {
+	const base = { fabricante: 'F', referencia: 'Q-16' };
+	const p = proyecto(
+		equipo('q1', { ...base, corrienteNominal: 16, fisica: { version: 1, proteccion: { inA: 16 } } }),
+		equipo('q2', { ...base, corrienteNominal: 20, fisica: { version: 1, proteccion: { inA: 20 } } }),
+	);
+	const canonica = proyectarBomCanonica(p);
+	assert.equal(canonica.length, 2);
+	assert.match(canonica.find((f) => f.designaciones.includes('-q1'))!.varianteDeclarada,
+		/Corriente nominal: 16 A.*In protección: 16 A/);
+	assert.match(canonica.find((f) => f.designaciones.includes('-q2'))!.varianteDeclarada,
+		/Corriente nominal: 20 A.*In protección: 20 A/);
+	assert.match(bomACSV(generarBOM(p)), /Variante declarada.*Corriente nominal: 16 A/s);
+	assert.match(bomIngenieriaACsv(generarBomIngenieria(p)), /Variante declarada.*Corriente nominal: 20 A/s);
+	assert.deepEqual(proyectarBomCanonica({ ...p, dispositivos: [...p.dispositivos].reverse() }), canonica);
+	assert.deepEqual(proyectarBomCanonica(JSON.parse(JSON.stringify(p)) as Proyecto), canonica);
 });
