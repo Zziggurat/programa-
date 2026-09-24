@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { bornesGenericos } from '../app/dispositivos3d.js';
 import { Dispositivo } from '../src/modelo/tipos.js';
+import { rotuloVisibleBorne } from '../src/modelo/bornes.js';
 
 const leer = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), 'utf8');
 
@@ -39,10 +40,14 @@ test('la numeración de una regleta sigue el orden de su definición', () => {
 		'la borna número tres de la regleta es la tercera empezando por la izquierda');
 });
 
-test('la serigrafía se dibuja con el identificador del borne, no con un contador', () => {
+test('la serigrafía usa el rótulo declarado sin perder el ID eléctrico del borne', () => {
 	const modelos = leer('app/dispositivos3d.ts');
-	assert.match(modelos, /marca\(p\.id,/,
-		'el texto de la marca sale de borne.id: cualquier otra cosa sería un número inventado');
+	assert.equal(rotuloVisibleBorne({ id: 'A1' }), 'A1');
+	assert.equal(rotuloVisibleBorne({ id: 'A1', rotulo: 'Bobina +' }), 'Bobina +');
+	assert.ok(/new Map\(d\.bornes\.map\(\(b\) => \[b\.id, rotuloVisibleBorne\(b\)\]\)\)/.test(modelos),
+		'el texto visible debe vincularse al ID estable, no a la posición del borne');
+	assert.ok(/marca\(rotulos\.get\(p\.id\) \?\? p\.id,/.test(modelos),
+		'si no hay rótulo visible, la serigrafía conserva el ID eléctrico');
 });
 
 test('las marcas no interceptan el ratón', () => {
