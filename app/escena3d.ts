@@ -2042,12 +2042,11 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		reserva: Reserva[];
 		radio: number;
 		codo: number;
-		sueloMin: (x: number, y: number, z: number) => number;
 		/** Canaletas que el usuario eligió a mano: para este cable no son obstáculo. */
 		aMano: Set<string>;
 		/** El peinado trae profundidad en todos sus puntos: se dibuja tal cual, sin corregir. */
 		literal: boolean;
-		sueloDe: (suyos: Set<string>) => (x: number, y: number, z: number) => number;
+		sueloDe: (suyos: Set<string>, nodos: Punto3[]) => (x: number, y: number, z: number) => number;
 		suyosDe: (c: Candidato) => Set<string>;
 		de: Anclaje;
 		a: Anclaje;
@@ -2111,7 +2110,22 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		 * invasiones de diente que quedaban: el cable no estaba en una ranura equivocada, estaba
 		 * atravesando plástico macizo a media altura.
 		 */
-		const sueloDe = (suyos: Set<string>) => (x: number, y: number, alturaAqui: number): number => {
+		const sueloDe = (suyos: Set<string>, nodos: Punto3[]) => {
+			let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+			for (const n of nodos) {
+				x0 = Math.min(x0, n.x); x1 = Math.max(x1, n.x);
+				y0 = Math.min(y0, n.y); y1 = Math.max(y1, n.y);
+			}
+			// El suavizado Bézier y el muestreo lineal no salen de la envolvente convexa de
+			// los nodos. Solo se descartan sólidos que ningún punto del candidato puede tocar.
+			// Una tolerancia microscópica conserva también los límites con error de redondeo.
+			const margenIndice = MARGEN + 1e-6;
+			const candidatas = Number.isFinite(x0 + x1 + y0 + y1)
+				? solidas.filter((c) => !Number.isFinite(c.x0 + c.x1 + c.y0 + c.y1)
+					|| (c.x0 - margenIndice <= x1 && c.x1 + margenIndice >= x0
+						&& c.y0 - margenIndice <= y1 && c.y1 + margenIndice >= y0))
+				: solidas;
+			return (x: number, y: number, alturaAqui: number): number => {
 			/*
 			 * Dentro de su propio ducto no hay suelo… si de verdad va por dentro. Dos matices que
 			 * costaron sendas invasiones medidas:
@@ -2124,22 +2138,22 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 			 *     un trozo de su recorrido puede volver a cruzarlo más allá, por encima; ahí la
 			 *     exención le dejaba pasar a media tapa en vez de por encima de ella.
 			 */
-			for (const c of solidas) {
+			for (const c of candidatas) {
 				if (!c.ducto || !suyos.has(c.ducto)) continue;
 				if (x < c.x0 || x > c.x1 || y < c.y0 || y > c.y1) continue;
 				if (alturaAqui <= c.alto - TAPA - radio) return 0;
 			}
 			let z = 0;
-			for (const c of solidas) {
+			for (const c of candidatas) {
 				if (c.ducto && suyos.has(c.ducto)) continue;
 				if (x < c.x0 - MARGEN || x > c.x1 + MARGEN || y < c.y0 - MARGEN || y > c.y1 + MARGEN) continue;
 				if (!c.ducto && mios.includes(c.id)) continue;
 				z = Math.max(z, c.alto + radio + HOLGURA_CABLE);
 			}
 			return z;
+			};
 		};
 		const NINGUNO = new Set<string>();
-		const sueloMin = sueloDe(NINGUNO);
 		/** Los ductos por los que pasa un candidato, sacados de lo que reserva. */
 		const suyosDe = (cand: Candidato): Set<string> =>
 			new Set(cand.reserva.map((r) => r.tramo.split('|')[0]));
@@ -2302,8 +2316,8 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 				const puntos = tenderCable(
 					cand.nodos, codo,
 					literal ? undefined
-						: cand.ductos ? sueloDe(suyosDe(cand))
-							: (ductosAMano.size ? sueloDe(ductosAMano) : sueloMin),
+						: sueloDe(cand.ductos ? suyosDe(cand)
+							: ductosAMano.size ? ductosAMano : NINGUNO, cand.nodos),
 				);
 				const trazo: Trazo = { id: conductor.id, radio, puntos, bornes, extremos: [p.de, p.a] };
 				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, rendirse(cand, mejorNota));
@@ -2323,7 +2337,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 					mejor = {
 						conductorId: conductor.id, trazo, nodos: cand.nodos, reserva: cand.reserva,
 						z: puntos[Math.floor(puntos.length / 2)].z,
-						clave: '', generar, radio, codo, sueloMin, sueloDe, suyosDe, aMano: ductosAMano, literal, de: p.de, a: p.a,
+						clave: '', generar, radio, codo, sueloDe, suyosDe, aMano: ductosAMano, literal, de: p.de, a: p.a,
 					};
 				}
 				// Suficientemente bueno: no choca con nadie. Los candidatos vienen ordenados de
@@ -2376,7 +2390,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 			const suyos = cand.ductos ? puesto.suyosDe(cand) : puesto.aMano;
 			const puntos = tenderCable(
 				cand.nodos, puesto.codo,
-				puesto.literal ? undefined : (suyos.size ? puesto.sueloDe(suyos) : puesto.sueloMin),
+				puesto.literal ? undefined : puesto.sueloDe(suyos, cand.nodos),
 			);
 			const trazo: Trazo = {
 				id: puesto.conductorId, radio: puesto.radio, puntos,
