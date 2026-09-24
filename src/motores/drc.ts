@@ -58,6 +58,10 @@ export function verificarProyecto(
 	// Las imágenes de referencia son puramente visuales: no se verifican eléctricamente.
 	const aparatos = proyecto.dispositivos.filter((d) => !esReferenciaVisualInerte(d));
 	const conductorDe = new Map(proyecto.conductores.map((c) => [c.id, c]));
+	// También se llama a este motor sin pasar por `revisarTablero`: un mapa de contexto externo
+	// no puede convertir una conexión con ruta pendiente en un cable medido.
+	const longitudMmDe = (c: Conductor): number | undefined =>
+		c.estadoRutaFisica === 'pendiente' ? undefined : fisico.longitudesMm?.get(c.id);
 
 	// R1 — Designaciones duplicadas.
 	const vistas = new Map<string, string>();
@@ -450,7 +454,7 @@ export function verificarProyecto(
 		 */
 		const LARGO_MAX_DERIVACION_MM = 3000;
 		const acabaEnSuPropiaProteccion = (c: Conductor, inArriba: number): boolean => {
-			const largo = fisico.longitudesMm?.get(c.id);
+			const largo = longitudMmDe(c);
 			if (largo === undefined || largo > LARGO_MAX_DERIVACION_MM) return false;
 			return [c.de.dispositivoId, c.a.dispositivoId].some((id) => {
 				const d = proyecto.dispositivos.find((x) => x.id === id);
@@ -536,7 +540,7 @@ export function verificarProyecto(
 	// reales; sin ellas no se inventa un número (más vale callar que mentir en un cálculo).
 	if (fisico.longitudesMm?.size) {
 		for (const c of proyecto.conductores) {
-			const largoMm = fisico.longitudesMm.get(c.id);
+			const largoMm = longitudMmDe(c);
 			if (!c.seccion || !largoMm) continue;
 			// Corriente e información de fases: de la protección o del consumo del potencial.
 			const pot = potenciales.porConductor.get(c.id);

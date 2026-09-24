@@ -153,7 +153,8 @@ export function conductoresFisicosDePuerta(proyecto: Proyecto): {
 	mando: Conductor[]; proteccion: Conductor[];
 } {
 	const enHoja = proyecto.conductores.filter(
-		(c) => enLaPuerta(proyecto, c.de.dispositivoId) || enLaPuerta(proyecto, c.a.dispositivoId),
+		(c) => c.estadoRutaFisica !== 'pendiente'
+			&& (enLaPuerta(proyecto, c.de.dispositivoId) || enLaPuerta(proyecto, c.a.dispositivoId)),
 	).slice().sort((a, b) => {
 		const ka = claveConductor(a), kb = claveConductor(b);
 		return ka < kb ? -1 : ka > kb ? 1 : 0;

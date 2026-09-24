@@ -60,6 +60,36 @@ test('Gate H: lista de conductores conserva extremos, circuito, longitud y proce
 	assert.match(conductoresIngenieriaACsv(filas), /w-q-x/);
 });
 
+test('ESQ-02: conexión pendiente sigue en lista eléctrica, sin longitud ni cantidad de material', () => {
+	const p = fixtureDocumentacion();
+	const base = p.conductores.find((c) => c.id === 'w-q-x')!;
+	p.conductores.push({ ...structuredClone(base), id: 'w-pendiente',
+		de: { dispositivoId: 'q1', borneId: '1' }, a: { dispositivoId: 'x1', borneId: '1' },
+		fisica: { material: 'COBRE' }, estadoRutaFisica: 'pendiente' });
+	const a = analizar(p);
+	const fisico = a.fisica.conductores.get('w-q-x')!;
+	assert.ok(fisico);
+	// Incluso un snapshot de runtime obsoleto/externo no puede atribuirle metros.
+	a.fisica.conductores.set('w-pendiente', { ...fisico, conductorId: 'w-pendiente',
+		longitudM: 999, origenLongitud: 'INYECTADO' });
+	const filas = generarListaConductoresIngenieria(p, a);
+	const pendiente = filas.find((x) => x.id === 'w-pendiente')!;
+	assert.deepEqual([pendiente.deDispositivo, pendiente.deTerminal, pendiente.aDispositivo, pendiente.aTerminal],
+		['q1', '1', 'x1', '1']);
+	assert.equal(pendiente.estadoRutaFisica, 'pendiente');
+	assert.equal(pendiente.longitudM, undefined);
+	assert.equal(pendiente.origenLongitud, 'NO_DISPONIBLE');
+	const total = totalizarConductores(filas);
+	assert.equal(total.reduce((n, g) => n + g.cantidad, 0), filas.length - 1);
+	const marron = total.find((x) => x.color === 'marrón' && x.seccionMm2 === 2.5)!;
+	assert.equal(marron.cantidad, 3);
+	assert.equal(marron.longitudTotalM, 40);
+	const informe = crearInformeIngenieriaV7({ proyecto: p, analisis: a, trazabilidad });
+	assert.ok(informe.conductores.some((x) => x.id === 'w-pendiente'));
+	assert.equal(informe.totalesConductores.reduce((n, g) => n + g.cantidad, 0), filas.length - 1);
+	assert.match(conductoresIngenieriaACsv(informe.conductores), /w-pendiente[^\n]*NO_DISPONIBLE/);
+});
+
 test('Gate H: borneras enumeran conexiones reales sin inventar nombres eléctricos', () => {
 	const p = fixtureDocumentacion(); const filas = generarListaTerminalesIngenieria(p, analizar(p));
 	assert.deepEqual(filas, [{ borneroId: 'x1', designacion: '-X1', borneId: '1', tipo: 'L', conexiones: [

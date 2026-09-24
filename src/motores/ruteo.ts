@@ -215,6 +215,9 @@ export function rutearConductores(proyecto: Proyecto): ResultadoRuteo {
 	let conductoresDeCampo = 0;
 
 	for (const conductor of proyecto.conductores) {
+		// La conectividad existe en el esquema, pero no se ha decidido un recorrido físico.
+		// No proyectarla sobre canaletas ni contabilizar sección o longitud por proximidad.
+		if (conductor.estadoRutaFisica === 'pendiente') continue;
 		// Los conductores hacia aparatos de campo salen del gabinete: su longitud no se
 		// puede calcular desde la placa de montaje, así que no se rutean.
 		if (esCampo.get(conductor.de.dispositivoId) || esCampo.get(conductor.a.dispositivoId)) {

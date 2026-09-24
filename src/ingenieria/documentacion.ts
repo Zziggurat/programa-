@@ -37,6 +37,8 @@ export interface FilaConductorIngenieria {
 	deTerminal: string;
 	aDispositivo: string;
 	aTerminal: string;
+	/** Vínculo eléctrico sin tendido físico: permanece en la lista, no en el subtotal de cable. */
+	estadoRutaFisica?: 'pendiente';
 	seccionMm2?: number;
 	color?: string;
 	material?: string;
@@ -134,9 +136,12 @@ export function generarBomIngenieria(proyecto: Proyecto): FilaBomIngenieria[] {
 
 export function generarListaConductoresIngenieria(proyecto: Proyecto, analisis: AnalisisIngenieria): FilaConductorIngenieria[] {
 	return [...proyecto.conductores].sort((a, b) => a.id.localeCompare(b.id)).map((c) => {
-		const f = analisis.fisica.conductores.get(c.id);
+		// El snapshot físico puede venir de otro runtime: el discriminante persistente manda.
+		const pendiente = c.estadoRutaFisica === 'pendiente';
+		const f = pendiente ? undefined : analisis.fisica.conductores.get(c.id);
 		return { id: c.id, numero: c.numero ?? c.id, deDispositivo: c.de.dispositivoId, deTerminal: c.de.borneId,
-			aDispositivo: c.a.dispositivoId, aTerminal: c.a.borneId, seccionMm2: c.seccion, color: c.color,
+			aDispositivo: c.a.dispositivoId, aTerminal: c.a.borneId,
+			...(pendiente ? { estadoRutaFisica: 'pendiente' as const } : {}), seccionMm2: c.seccion, color: c.color,
 			material: c.fisica?.material, longitudM: f?.longitudM,
 			origenLongitud: f?.origenLongitud ?? 'NO_DISPONIBLE',
 			circuitos: analisis.circuitos.filter((x) => x.conductores.includes(c.id)).map((x) => x.id).sort(),
@@ -147,6 +152,7 @@ export function generarListaConductoresIngenieria(proyecto: Proyecto, analisis: 
 export function totalizarConductores(filas: readonly FilaConductorIngenieria[]): TotalConductoresIngenieria[] {
 	const grupos = new Map<string, { fila: TotalConductoresIngenieria; longitudes: number[]; completos: boolean }>();
 	for (const f of filas) {
+		if (f.estadoRutaFisica === 'pendiente') continue;
 		const clave = JSON.stringify([f.material ?? '', f.seccionMm2 ?? null, f.color ?? '', f.origenLongitud]);
 		const g = grupos.get(clave) ?? { fila: { material: f.material ?? '', seccionMm2: f.seccionMm2, color: f.color,
 			origenLongitud: f.origenLongitud, cantidad: 0 }, longitudes: [], completos: true };

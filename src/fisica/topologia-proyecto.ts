@@ -412,15 +412,19 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 	const datosContactos = new Map<string, { dispositivoId: string; terminales: [string, string]; origen: OrigenDatoFisico }>();
 	const ramasMedidasDiferencial = new Map<string, { ramaId: string; signo: 1 | -1 }[]>();
 	const ramas: RamaRedFisica[] = proyecto.conductores.flatMap((c): RamaRedFisica[] => {
+		const rutaPendiente = c.estadoRutaFisica === 'pendiente';
 		const de = proyecto.dispositivos.find((d) => d.id === c.de.dispositivoId)?.posicion;
 		const a = proyecto.dispositivos.find((d) => d.id === c.a.dispositivoId)?.posicion;
-		const estimacionM = de && a ? Math.hypot(de.x - a.x, de.y - a.y) / 1000 : undefined;
-		const declarada = contexto.longitudesM?.get(c.id);
-		const longitud = declarada ?? resolverLongitudConductor(c.fisica, undefined, estimacionM);
+		const estimacionM = !rutaPendiente && de && a ? Math.hypot(de.x - a.x, de.y - a.y) / 1000 : undefined;
+		const declarada = rutaPendiente ? undefined : contexto.longitudesM?.get(c.id);
+		const longitud = rutaPendiente
+			? { metros: 0, origen: 'NO_MODELADO' as const }
+			: declarada ?? resolverLongitudConductor(c.fisica, undefined, estimacionM);
 		const seccionMm2 = contexto.seccionesMm2?.get(c.id) ?? c.seccion;
-		if (conductoresTecnicosPendientes.has(c.id) || !(seccionMm2 && seccionMm2 > 0) || longitud.metros <= 0) {
+		if (rutaPendiente || conductoresTecnicosPendientes.has(c.id) || !(seccionMm2 && seccionMm2 > 0) || longitud.metros <= 0) {
 			diagnosticos.push({ codigo: 'CONFIGURACION_INVALIDA', mensaje: conductoresTecnicosPendientes.has(c.id)
 				? `Cable ${c.id}: datos técnicos no resueltos; impedancia NO_MODELADA, no se recupera material/temperatura legacy.`
+				: rutaPendiente ? `Conexión ${c.id}: ruta física pendiente; longitud e impedancia NO_MODELADAS.`
 				: `Cable ${c.id} sin seccion o longitud fisica fiable`, elementos: [c.id] });
 			return [{ id: `conductor:${c.id}`, de: clave(c.de.dispositivoId, c.de.borneId), a: clave(c.a.dispositivoId, c.a.borneId),
 				zOhm: Z_CONTACTO_OHM, tipo: 'CONDUCTOR' as const, conductorId: c.id, origen: 'NO_MODELADO' as const }];

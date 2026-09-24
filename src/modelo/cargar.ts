@@ -24,7 +24,7 @@ import { leerRepresentacionesEsquema } from './representaciones-esquema.js';
 import type { ConfiguracionProgramaPLC, EtiquetaPLC } from './programa-plc.js';
 
 /** Versión de formato que escribe este programa. */
-export const VERSION_FORMATO = 1;
+export const VERSION_FORMATO = 2;
 
 export interface ResultadoCarga {
 	proyecto: Proyecto;
@@ -187,8 +187,9 @@ export function cargarProyecto(json: string): ResultadoCarga {
 
 	const arreglos: string[] = [];
 	diagnosticos = [];
-	// Aquí irán las migraciones: `if (version < 2) { …; arreglos.push('…'); }`. Se dejan
-	// encadenadas para que un proyecto viejo suba de versión en versión hasta la actual.
+	// V1 no conoce `estadoRutaFisica`: la ausencia conserva exactamente su ruteo automático.
+	// V2 protege las conexiones pendientes frente a una versión antigua que las dibujaría como
+	// cable físico. No hay que reescribir conductores legacy al migrar.
 
 	if (!esObjeto(bruto.gabinete)) throw new ArchivoInvalido('Al proyecto le falta el gabinete.');
 	const gabinete = leerGabinete(bruto.gabinete, arreglos);
@@ -1085,9 +1086,22 @@ function leerConductores(
 			huerfanos++;
 			continue;
 		}
+		// Un discriminante desconocido no puede degradarse a legacy: eso inventaría una ruta.
+		if (c.estadoRutaFisica !== undefined && c.estadoRutaFisica !== 'pendiente') {
+			anotar(`conductores[${c.id}].estadoRutaFisica`, 'estado de ruta física desconocido; se omitió la conexión');
+			continue;
+		}
+		// La ruta pendiente es incompatible con un peinado o una longitud ya declarados. Se
+		// omite el registro entero para no perder silenciosamente ni la conexión ni la medición.
+		if (c.estadoRutaFisica === 'pendiente' && (c.trazado !== undefined
+			|| (esObjeto(c.fisica) && c.fisica.longitudManualM !== undefined))) {
+			anotar(`conductores[${c.id}]`, 'ruta física pendiente incompatible con trazado o longitud manual; se omitió la conexión');
+			continue;
+		}
 		vistos.add(c.id as string);
 		salida.push({
 			...(c as unknown as Conductor),
+			...(c.estadoRutaFisica === 'pendiente' ? { estadoRutaFisica: 'pendiente' as const } : {}),
 			// Una sección que no es un número deja al DRC sin poder comparar nada: mejor «sin
 			// declarar», que el programa sabe avisarlo, que un 0 inventado o un NaN silencioso.
 			seccion: enRango(c.seccion, 0, 1000),

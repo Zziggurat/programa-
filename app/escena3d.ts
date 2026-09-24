@@ -364,6 +364,7 @@ export function construirBornes(proyecto: Proyecto, aEscena: Escenario['aEscena'
 	// Así de un vistazo se ve qué queda por cablear, como al revisar un tablero de verdad.
 	const usados = new Set<string>();
 	for (const c of proyecto.conductores) {
+		if (c.estadoRutaFisica === 'pendiente') continue;
 		usados.add(`${c.de.dispositivoId}:${c.de.borneId}`);
 		usados.add(`${c.a.dispositivoId}:${c.a.borneId}`);
 	}
@@ -1200,6 +1201,7 @@ export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, bor
 	 */
 	const puntas: { clave: string; x: number; y: number; radio: number }[] = [];
 	for (const c of proyecto.conductores) {
+		if (c.estadoRutaFisica === 'pendiente') continue;
 		const radio = radioDeCable(c.seccion);
 		for (const extremo of [c.de, c.a]) {
 			const a = anclajeBorne(proyecto, extremo.dispositivoId, extremo.borneId);
@@ -1271,6 +1273,7 @@ export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, bor
 	const hondo = new Map<string, number>();
 	const porAparato = new Map<string, { clave: string; borne: string; radio: number }[]>();
 	for (const c of proyecto.conductores) {
+		if (c.estadoRutaFisica === 'pendiente') continue;
 		const radio = radioDeCable(c.seccion);
 		for (const extremo of [c.de, c.a]) {
 			const l = porAparato.get(extremo.dispositivoId) ?? [];
@@ -1311,7 +1314,7 @@ const BANDA_SALIENTE = 13;
 export function salidasDeCable(
 	proyecto: Proyecto,
 	conductor: Conductor,
-	abanico = abanicoDeSalida(proyecto),
+	abanico?: ReturnType<typeof abanicoDeSalida>,
 ): {
 	de: Anclaje; a: Anclaje;
 	/** Fin de la zona perpendicular que usa la geometría final. */
@@ -1319,6 +1322,7 @@ export function salidasDeCable(
 	/** Punto de abanico sobre la cara, usado para elegir corredores sin desplazar la topología. */
 	accesoA: Punto3; accesoB: Punto3;
 } | undefined {
+	if (conductor.estadoRutaFisica === 'pendiente') return undefined;
 	/*
 	 * UN PUENTE ENTRE DOS APARATOS DE LA PUERTA NO TIENE RECORRIDO POR EL ARMARIO.
 	 *
@@ -1329,6 +1333,7 @@ export function salidasDeCable(
 	if (enLaPuerta(proyecto, conductor.de.dispositivoId) && enLaPuerta(proyecto, conductor.a.dispositivoId)) {
 		return undefined;
 	}
+	const repartir = abanico ?? abanicoDeSalida(proyecto);
 	const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
 	const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
 	if (!a || !b) return undefined; // solo si falta el aparato entero (se limpia al eliminarlo)
@@ -1342,8 +1347,9 @@ export function salidasDeCable(
 	 */
 	const perpendicular = (dispositivoId: string, borneId: string, ancla: Anclaje): { dx: number; dy: number } => {
 		const compartido = proyecto.conductores.reduce((n, c) => n
-			+ Number((c.de.dispositivoId === dispositivoId && c.de.borneId === borneId)
-				|| (c.a.dispositivoId === dispositivoId && c.a.borneId === borneId)), 0);
+			+ Number(c.estadoRutaFisica !== 'pendiente'
+				&& ((c.de.dispositivoId === dispositivoId && c.de.borneId === borneId)
+				|| (c.a.dispositivoId === dispositivoId && c.a.borneId === borneId))), 0);
 		if (compartido < 2) return { dx: 0, dy: 0 };
 		const largo = radioCodo(radio);
 		const col = proyecto.gabinete?.colocaciones.find((q) => q.dispositivoId === dispositivoId);
@@ -1365,8 +1371,8 @@ export function salidasDeCable(
 			? { dx: Math.sign(dx || 1) * largo, dy: 0 }
 			: { dx: 0, dy: Math.sign(dy || 1) * largo };
 	};
-	const fanA = abanico(conductor.de.dispositivoId, conductor.de.borneId, conductor.id);
-	const fanB = abanico(conductor.a.dispositivoId, conductor.a.borneId, conductor.id);
+	const fanA = repartir(conductor.de.dispositivoId, conductor.de.borneId, conductor.id);
+	const fanB = repartir(conductor.a.dispositivoId, conductor.a.borneId, conductor.id);
 	const rectaA = perpendicular(conductor.de.dispositivoId, conductor.de.borneId, a);
 	const rectaB = perpendicular(conductor.a.dispositivoId, conductor.a.borneId, b);
 	const accesoA = { x: a.x + fanA.dx, y: a.y, z: a.z + fanA.dz };
@@ -1389,12 +1395,16 @@ export function salidasDeCable(
  * para el total de cable que enseña el panel. Vive aquí y no en los motores porque la geometría
  * del trazado es de la vista: depende de dónde quedó cada aparato, de por dónde abre el cable
  * para no fundirse con sus vecinos y de los puntos de quiebre que haya movido quien dibuja.
+ * La firma numérica legacy devuelve 0 para una ruta pendiente como sentinel interno; para
+ * distinguir «sin medición» de un cable medido, se debe consultar `longitudesDibujadasMm`, que
+ * omite por completo ese id. Los paneles que llamen a esta función deben mirar el discriminante.
  */
 export function largoDibujadoMm(
 	proyecto: Proyecto,
 	conductor: Conductor,
-	abanico = abanicoDeSalida(proyecto),
+	abanico?: ReturnType<typeof abanicoDeSalida>,
 ): number {
+	if (conductor.estadoRutaFisica === 'pendiente') return 0;
 	const p = salidasDeCable(proyecto, conductor, abanico);
 	if (!p) return 0;
 	const orto = orthogonalize([p.salidaA, ...(conductor.trazado ?? []), p.salidaB]);
@@ -1412,7 +1422,9 @@ export function largoDibujadoMm(
  */
 export function longitudesDibujadasMm(proyecto: Proyecto): Map<string, number> {
 	const abanico = abanicoDeSalida(proyecto);
-	return new Map(proyecto.conductores.map((c) => [c.id, largoDibujadoMm(proyecto, c, abanico)]));
+	return new Map(proyecto.conductores
+		.filter((c) => c.estadoRutaFisica !== 'pendiente')
+		.map((c) => [c.id, largoDibujadoMm(proyecto, c, abanico)]));
 }
 
 /** Radio del tubo de un conductor. Lo comparten el dibujo, el reparto y las pruebas. */
@@ -1472,7 +1484,7 @@ function firmaDelRuteo(proyecto: Proyecto): string {
 	const ordenar = <T>(lista: T[] | undefined, clave: (elemento: T) => string): T[] | undefined =>
 		lista?.slice().sort((a, b) => clave(a).localeCompare(clave(b)));
 	return JSON.stringify([
-		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado]),
+		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado, c.estadoRutaFisica]),
 		ordenar(g?.colocaciones, (c) => c.dispositivoId)?.map((c) => [c.dispositivoId, c.x, c.y, c.ancho, c.alto, c.z]),
 		ordenar(g?.canaletas, (c) => c.id)?.map((c) => [c.id, c.x, c.y, c.largo, c.orientacion, c.ancho, c.alto]),
 		ordenar(g?.rieles, (r) => r.id ?? `${r.x}|${r.y}|${r.orientacion}`)?.map((r) => [r.id, r.x, r.y, r.largo, r.orientacion]),
@@ -2075,6 +2087,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 	 * ocupación incremental amplificaba ese primer desempate hasta mover todo el mazo.
 	 */
 	const orden = proyecto.conductores
+		.filter((c) => c.estadoRutaFisica !== 'pendiente')
 		.map((c) => ({ c }))
 		.sort((p, q) => radioDeCable(q.c.seccion) - radioDeCable(p.c.seccion)
 			|| p.c.id.localeCompare(q.c.id));

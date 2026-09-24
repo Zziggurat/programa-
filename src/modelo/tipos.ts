@@ -327,6 +327,12 @@ export interface Conductor {
 	id: string;
 	de: RefBorne;
 	a: RefBorne;
+	/**
+	 * Conexión eléctrica existente cuyo recorrido físico aún no se ha decidido. Sin este campo,
+	 * los proyectos anteriores conservan el ruteo automático de siempre. Una conexión pendiente
+	 * no declara trazado manual ni longitud física, y no ocupa canaletas ni aporta metraje.
+	 */
+	estadoRutaFisica?: 'pendiente';
 	/** Sección en mm². */
 	seccion?: number;
 	/** Material, longitud o reactancia declarados para la capa fisica V5. */
@@ -641,7 +647,8 @@ export interface Proyecto {
 	 */
 	esEjemplo?: boolean;
 	formato: 'tablero-studio';
-	version: 1;
+	/** V1 legacy se acepta al leer; V2 distingue conexión eléctrica de ruta física pendiente. */
+	version: 1 | 2;
 	nombre: string;
 	/** Cliente, obra, proyectista y revisión (cajetín del plano y portada del dossier). */
 	datos?: DatosProyecto;

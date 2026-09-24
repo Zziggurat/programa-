@@ -36,6 +36,7 @@ export interface RecuentoFamilia {
 export interface RecuentoSeccion {
 	/** Sección en mm²; `undefined` si el conductor no la tiene definida. */
 	seccion?: number;
+	/** Solo conductores cuyo tendido físico no está marcado como pendiente. */
 	cantidad: number;
 	longitudMm: number;
 	/**
@@ -62,7 +63,14 @@ export interface FichaTablero {
 		deCampo: number;
 		porFamilia: RecuentoFamilia[];
 	};
-	conductores: { total: number; longitudTotalMm: number; porSeccion: RecuentoSeccion[] };
+	conductores: {
+		/** Todas las conexiones eléctricas, con o sin recorrido físico. */
+		total: number;
+		/** Conexiones aún sin recorrido: no figuran como cable tendido ni material por sección. */
+		pendientesRuta: number;
+		longitudTotalMm: number;
+		porSeccion: RecuentoSeccion[];
+	};
 	/** Tensiones de trabajo presentes en el tablero, de mayor a menor. */
 	tensiones: number[];
 	/** Porcentaje de la placa cubierto por aparatos, rieles y canaletas (0..100). */
@@ -114,7 +122,11 @@ export function generarFichaTablero(proyecto: Proyecto, ruteo?: ResultadoRuteo):
 	const longitudDe = new Map(ruteo?.rutas.map((r) => [r.conductorId, r.longitudMm]) ?? []);
 	const secciones = new Map<string, RecuentoSeccion>();
 	let longitudTotalMm = 0;
+	let pendientesRuta = 0;
 	for (const c of proyecto.conductores) {
+		// El enlace existe eléctricamente, pero no hay cantidad de cable por sección que pedir.
+		// Incluso una ruta aportada por un caller externo no puede saltarse este discriminante.
+		if (c.estadoRutaFisica === 'pendiente') { pendientesRuta++; continue; }
 		const ruta = longitudDe.get(c.id);
 		longitudTotalMm += ruta ?? 0;
 		const clave = String(c.seccion ?? '');
@@ -156,7 +168,7 @@ export function generarFichaTablero(proyecto: Proyecto, ruteo?: ResultadoRuteo):
 			deCampo: aparatos.filter((d) => !colocados.has(d.id)).length,
 			porFamilia,
 		},
-		conductores: { total: proyecto.conductores.length, longitudTotalMm, porSeccion },
+		conductores: { total: proyecto.conductores.length, pendientesRuta, longitudTotalMm, porSeccion },
 		tensiones: [...new Set(aparatos.map((d) => d.tensionNominal).filter((v): v is number => !!v))]
 			.sort((a, b) => b - a),
 		ocupacionPlacaPct: Math.round(ocupacionPlacaPct),
