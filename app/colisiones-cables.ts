@@ -165,6 +165,8 @@ export function longitudCoincidente3D(
 interface Barra {
 	id: string; clave: string; radio: number; p0: Punto3; p1: Punto3; trazo: Trazo;
 	x0: number; x1: number; y0: number; y1: number; z0: number; z1: number;
+	/** Última consulta/segmento que la evaluó; la barra puede figurar en varias celdas. */
+	vistoEn: number;
 }
 
 /**
@@ -206,6 +208,7 @@ export class RejillaCables {
 	 */
 	private readonly vigentes = new Set<string>();
 	private version = 0;
+	private visita = 0;
 
 	constructor(private readonly lado = 24) {}
 
@@ -239,6 +242,7 @@ export class RejillaCables {
 				x0: Math.min(p0.x, p1.x), x1: Math.max(p0.x, p1.x),
 				y0: Math.min(p0.y, p1.y), y1: Math.max(p0.y, p1.y),
 				z0: Math.min(p0.z, p1.z), z1: Math.max(p0.z, p1.z),
+				vistoEn: 0,
 			};
 			for (const c of this.casillasDe(barra.p0, barra.p1, 0)) {
 				celdas.add(c);
@@ -273,21 +277,27 @@ export class RejillaCables {
 	 */
 	peorConflicto(trazo: Trazo, margen: number, rendirse = -Infinity): Conflicto | undefined {
 		let peor: Conflicto | undefined;
-		const vistas = new Set<Barra>();
 		for (let n = 0; n < trazo.puntos.length - 1; n++) {
+			// Un sello por segmento equivale al Set que antes se vaciaba aquí. Cuando el
+			// contador deja de poder representar enteros consecutivos, se limpian las
+			// marcas vivas antes de reutilizar el 1; ocurre como máximo una vez por 2^53 consultas.
+			if (this.visita === Number.MAX_SAFE_INTEGER) {
+				for (const lista of this.casillas.values()) for (const barra of lista) barra.vistoEn = 0;
+				this.visita = 0;
+			}
+			const visita = ++this.visita;
 			const p0 = trazo.puntos[n];
 			const p1 = trazo.puntos[n + 1];
 			const x0 = Math.min(p0.x, p1.x), x1 = Math.max(p0.x, p1.x);
 			const y0 = Math.min(p0.y, p1.y), y1 = Math.max(p0.y, p1.y);
 			const z0 = Math.min(p0.z, p1.z), z1 = Math.max(p0.z, p1.z);
 			const alcance = trazo.radio + margen + 8;
-			vistas.clear();
 			for (const c of this.casillasDe(p0, p1, alcance)) {
 				for (const barra of this.casillas.get(c) ?? []) {
 					if (barra.id === trazo.id) continue;
-					if (!this.vigentes.has(barra.clave)) continue;   // tendido levantado
-					if (vistas.has(barra)) continue;   // una barra puede estar en varias casillas
-					vistas.add(barra);
+					// `retirar` ya extrae físicamente el tendido; no quedan barras inactivas.
+					if (barra.vistoEn === visita) continue;
+					barra.vistoEn = visita;
 					// Si las cajas de los segmentos se separan más que radios + margen
 					// en cualquier eje, la distancia 3D exacta NO puede dar conflicto.
 					// Estrictamente > conserva la tangencia para el cálculo original.

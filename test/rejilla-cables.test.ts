@@ -71,3 +71,25 @@ test('cajas 3D que se solapan no ocultan el cruce real de dos segmentos', () => 
 	assert.equal(cruce.holgura, -3);
 	assert.deepEqual(cruce.donde, { x: 50, y: 0, z: 50 });
 });
+
+test('sello multicíelda se renueva entre consultas, al reemplazar tendidos y al desbordar', () => {
+	const rejilla = new RejillaCables(12); // una barra de 100 mm atraviesa varias celdas
+	const clave = rejilla.anadir(trazo('a', 0));
+	const consulta = trazo('consulta', 2);
+	const esperado = rejilla.peorConflicto(consulta, 1.2);
+	assert.ok(esperado);
+	for (let i = 0; i < 5; i++) assert.deepEqual(rejilla.peorConflicto(consulta, 1.2), esperado);
+	rejilla.retirar(clave);
+	assert.equal(rejilla.peorConflicto(consulta, 1.2), undefined);
+	rejilla.anadir(trazo('a', 0));
+	assert.deepEqual(rejilla.peorConflicto(consulta, 1.2), esperado);
+	const interna = rejilla as unknown as {
+		visita: number;
+		casillas: Map<string, { vistoEn: number }[]>;
+	};
+	// Peor caso: marcas viejas iguales al valor que reaparecerá tras volver a 1.
+	for (const lista of interna.casillas.values()) for (const barra of lista) barra.vistoEn = 1;
+	interna.visita = Number.MAX_SAFE_INTEGER;
+	assert.deepEqual(rejilla.peorConflicto(consulta, 1.2), esperado);
+	assert.equal(interna.visita, 1);
+});
