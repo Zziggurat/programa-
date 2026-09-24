@@ -403,6 +403,15 @@ test('el testigo de un sensor importado sigue el estado canónico y vuelve a rep
 	assert.equal(material.emissiveIntensity, 0);
 	animarSimulacion({ ...entrada, estado: { [sensor.id]: { activo: true } }, energizado: true });
 	assert.ok(material.emissiveIntensity > 0, 'el sensor importado activo no encendió su testigo');
+	animarSimulacion({ ...entrada,
+		resultado: resultado({ fallos: [{ dispositivoId: sensor.id, designacion: '-B1',
+			tipo: 'salida-sensor-abierta', origen: 'inyectado', descripcion: 'Ensayo de salida abierta' }] }),
+		estado: { [sensor.id]: { activo: true } }, energizado: true });
+	assert.equal(material.emissive.getHex(), 0xd32f2f,
+		'el testigo no refleja el fallo del resultado canónico');
+	animarSimulacion({ ...entrada, estado: { [sensor.id]: { activo: true } }, energizado: true });
+	assert.notEqual(material.emissive.getHex(), 0xd32f2f,
+		'el testigo mantiene un fallo visual después de desaparecer del resultado');
 	animarSimulacion({ ...entrada, estado: { [sensor.id]: { activo: true } }, energizado: false });
 	assert.equal(material.emissiveIntensity, 0, 'el testigo conservó estado visual al desenergizar');
 });
