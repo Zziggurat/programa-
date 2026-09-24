@@ -15,7 +15,7 @@ async function abrirEjemplo(){
 	if(await page.locator('#modal-dialogo').isVisible().catch(()=>false))await click('dialogo-ok');await page.waitForFunction(()=>window.qa.proyecto().nombre==='Fixture V7 — proyecto sano',null,{timeout:30000});
 	if(await page.locator('#modal-explicacion').isVisible().catch(()=>false))await click('btn-cerrar-explicacion');
 }
-async function descargarAccion(accion){const evento=page.waitForEvent('download');await page.locator(`[data-ing-doc="${accion}"]`).click();const d=await evento;const ruta=await d.path();const bytes=ruta?readFileSync(ruta):Buffer.alloc(0);return{bytes,text:bytes.toString('utf8')}}
+async function descargarAccion(accion,timeout=30000){const evento=page.waitForEvent('download',{timeout});await page.locator(`[data-ing-doc="${accion}"]`).click();const d=await evento;const ruta=await d.path();const bytes=ruta?readFileSync(ruta):Buffer.alloc(0);return{bytes,text:bytes.toString('utf8')}}
 const tieneBomUtf8=(bytes)=>bytes.length>=3&&bytes[0]===0xef&&bytes[1]===0xbb&&bytes[2]===0xbf;
 try{
 	const e=await servidorDeQA();servidor=e.servidor;browser=await abrirNavegador(chromium);page=await browser.newPage({viewport:{width:1440,height:960},acceptDownloads:true});
@@ -41,6 +41,12 @@ try{
 	comprobar('acentos técnicos sobreviven la descarga UTF-8',/Descripción/.test(bom.text)&&/Número.*Sección/s.test(wiring.text)&&/Designación/.test(terminal.text));
 	const html=await descargarAccion('html');comprobar('HTML técnico es autocontenido, trazable, escapado y declara límites',/<!doctype html>/i.test(html.text)&&/DEV-1\.0\.0/.test(html.text)&&/Protección &amp; distribución/.test(html.text)&&!/Protección & distribución/.test(html.text)&&/No constituye certificación normativa/.test(html.text)&&!/<script\b|https?:\/\//i.test(html.text));
 	comprobar('HTML incluye layout técnico y reglas A4 sin recursos externos',/<header class="cabecera">/.test(html.text)&&/<section><h2>Resumen<\/h2>/.test(html.text)&&/@page\{size:A4/.test(html.text)&&/@media print/.test(html.text)&&/break-inside:avoid-page/.test(html.text));
+	const paquete=await descargarAccion('paquete',120000);
+	comprobar('la UI entrega ZIP estándar con manifiesto y revisión del ejemplo efímero',
+		paquete.bytes.subarray(0,4).equals(Buffer.from([0x50,0x4b,0x03,0x04]))
+		&&paquete.bytes.includes(Buffer.from('tablerostudio-paquete-documental'))
+		&&paquete.bytes.includes(Buffer.from('EJEMPLO_EFIMERO'))
+		&&paquete.bytes.includes(Buffer.from('listas/senales-io.csv')));
 	comprobar('no hubo errores JavaScript',erroresJS.length===0,erroresJS.slice(0,4).join(' | '));
 }catch(error){fallos++;console.error(`ERROR NO CONTROLADO: ${error?.stack??error}`)}finally{
 	try{await page?.close()}catch(e){fallos++;console.error(e)}try{await browser?.close()}catch(e){fallos++;console.error(e)}if(servidor)try{servidor.closeAllConnections?.();await new Promise((ok,no)=>servidor.close(e=>e?no(e):ok()))}catch(e){fallos++;console.error(e)}
