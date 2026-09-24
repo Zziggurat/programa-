@@ -3154,7 +3154,9 @@ function pintarPaneles(): void {
 			.filter(Boolean).join(' · ')
 		: 'DRC sin hallazgos';
 
-	const total = proyecto.conductores.reduce((s, c) => s + longitudCableMm(c), 0);
+	const sinRuta = proyecto.conductores.filter((c) => c.estadoRutaFisica === 'pendiente');
+	const conRuta = proyecto.conductores.filter((c) => c.estadoRutaFisica !== 'pendiente');
+	const total = conRuta.reduce((s, c) => s + longitudCableMm(c), 0);
 	const nc = proyecto.conductores.length;
 	/*
 	 * EL RECUENTO VA POR CLASES, y no es un adorno del resumen: son cuatro trabajos distintos.
@@ -3162,14 +3164,18 @@ function pintarPaneles(): void {
 	 * de campo lo trae el instalador y muere en una bornera, y la protección va por su cuenta.
 	 * Un total de metros que los mezcla no le sirve a ninguno de los tres.
 	 */
-	const porClase = recuentoPorClase(proyecto);
+	const porClase = recuentoPorClase({ ...proyecto, conductores: conRuta });
 	const reparto = (Object.keys(NOMBRE_CLASE) as (keyof typeof NOMBRE_CLASE)[])
 		.filter((k) => porClase[k] > 0)
 		.map((k) => `${porClase[k]} ${NOMBRE_CLASE[k].toLowerCase()}`)
 		.join(' · ');
 	$('resumen-cables').textContent = nc === 0
 		? 'Todavía no hay cables.'
-		: `${nc} ${nc === 1 ? 'conductor' : 'conductores'} · ~${(total / 1000).toFixed(1)} m de cable`
+		: (sinRuta.length
+			? `${nc} conexiones eléctricas · ${conRuta.length} con ruta física`
+				+ (conRuta.length ? ` · ~${(total / 1000).toFixed(1)} m de cable` : '')
+				+ `\n${sinRuta.length} ${sinRuta.length === 1 ? 'conexión' : 'conexiones'} sin ruta física · sin metraje ni ocupación`
+			: `${nc} ${nc === 1 ? 'conductor' : 'conductores'} · ~${(total / 1000).toFixed(1)} m de cable`)
 			+ (reparto ? `\n${reparto}` : '');
 
 	pintarListaCables();
@@ -3234,7 +3240,8 @@ function pintarListaCables(): void {
 	for (const c of proyecto.conductores) {
 		const li = document.createElement('li');
 		li.className = c.id === idSel ? 'seleccionado' : '';
-		const estado = c.trazado?.length ? `a mano (${c.trazado.length})` : 'directo';
+		const estado = c.estadoRutaFisica === 'pendiente' ? 'ruta física pendiente'
+			: c.trazado?.length ? `a mano (${c.trazado.length})` : 'directo';
 		const colorCss = c.color ? hexColor(colorDeCable(c.color, 0x888888)) : '#888';
 		li.innerHTML = `<span class="via" style="background:${colorCss}"></span>
 			<span class="num">${escaparHtml(String(c.numero ?? '—'))}</span>
@@ -3349,7 +3356,9 @@ function pintarFichaDeLoElegido(): void {
 		(c) => c.de.dispositivoId === d.id || c.a.dispositivoId === d.id,
 	);
 	const propios = revision.hallazgos.filter((h) => h.dispositivoId === d.id);
-	const metros = cablesDelAparato.reduce((s, c) => s + longitudCableMm(c), 0);
+	const pendientesDelAparato = cablesDelAparato.filter((c) => c.estadoRutaFisica === 'pendiente').length;
+	const metros = cablesDelAparato.filter((c) => c.estadoRutaFisica !== 'pendiente')
+		.reduce((s, c) => s + longitudCableMm(c), 0);
 
 	const otrosAparatos = proyecto.dispositivos.filter((x) => x.id !== d.id);
 
@@ -3375,7 +3384,7 @@ function pintarFichaDeLoElegido(): void {
 		? `<h2>Hallazgos DRC</h2><ul>${propios.map((h) => `<li class="hallazgo ${escaparHtml(h.severidad)}">${escaparHtml(h.mensaje)}</li>`).join('')}</ul>`
 		: '';
 	const bloqueCableado = esEditor ? '' : `
-		<h2>Cables conectados ${metros ? `· ${(metros / 1000).toFixed(2)} m` : ''}</h2>
+		<h2>Cables conectados ${metros ? `· ${(metros / 1000).toFixed(2)} m con ruta` : ''}${pendientesDelAparato ? ` · ${pendientesDelAparato} sin ruta física` : ''}</h2>
 		<div id="cables-aparato">${cablesDelAparato.length === 0 ? '<div class="sub">Sin cables todavía</div>' : ''}</div>
 		<div class="sub" style="margin:8px 0;padding:8px;background:var(--panel-2);border-radius:8px">💡 <b>Lo más fácil:</b> toca un <b>borne</b> (punto naranja) de un aparato y luego otro en el tablero, y el cable se conecta solo. O usa el formulario de abajo.</div>
 		<h2>Conectar cable nuevo</h2>
@@ -3553,7 +3562,8 @@ function pintarFichaDeLoElegido(): void {
 			// se toca a mano y llega por correo. Van escapados, como todo lo que no escribimos aquí.
 			fila.innerHTML = `<span class="num">${escaparHtml(String(c.numero ?? '—'))}</span>
 				<span>${escaparHtml(propio.borneId)} → ${escaparHtml(etiquetaDe(otro.dispositivoId))}`
-				+ `:${escaparHtml(otro.borneId)}${c.seccion ? ` · ${escaparHtml(String(c.seccion))} mm²` : ''}</span>
+				+ `:${escaparHtml(otro.borneId)}${c.seccion ? ` · ${escaparHtml(String(c.seccion))} mm²` : ''}`
+				+ `${c.estadoRutaFisica === 'pendiente' ? ' · ruta física pendiente' : ''}</span>
 				<button class="quitar" title="Quitar cable">✕</button>`;
 			(fila.querySelector('.quitar') as HTMLButtonElement).onclick = () => {
 				if (!capturar()) return;
@@ -3915,19 +3925,22 @@ function pintarPanelCable(id: string): void {
 	const panel = $('panel-der');
 	const c = proyecto.conductores.find((x) => x.id === id);
 	if (!c) { panel.style.display = 'none'; return; }
+	const pendiente = c.estadoRutaFisica === 'pendiente';
 	const manual = !!c.trazado?.length;
 
 	panel.style.display = 'block';
 	panel.innerHTML = `
-		<h1>Cable ${c.numero ?? ''}</h1>
+		<h1>${pendiente ? 'Conexión' : 'Cable'} ${c.numero ?? ''}</h1>
 		<div class="sub">${escaparHtml(`${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}`)}</div>
 		<dl>
-			<dt>Recorrido</dt><dd>${manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : '↳ directo (en L, automático)'}</dd>
-			<dt>Clase</dt><dd>${escaparHtml(NOMBRE_CLASE[claseDeConductor(proyecto, c)])}${c.clase ? '' : ' <span class="pista">(deducida)</span>'}</dd>
+			<dt>Recorrido</dt><dd>${pendiente ? 'Ruta física pendiente · sin metraje ni canaleta asignada'
+				: manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : '↳ directo (en L, automático)'}</dd>
+			<dt>${pendiente ? 'Clase prevista' : 'Clase'}</dt><dd>${escaparHtml(NOMBRE_CLASE[claseDeConductor(proyecto, c)])}${c.clase ? '' : ' <span class="pista">(deducida)</span>'}</dd>
 		</dl>
+		${pendiente ? '<p class="sub">La conexión existe en el circuito, pero su tendido físico aún no está diseñado. Metraje y material de corte: no determinados.</p>' : ''}
 		<div class="form-cable" style="margin-top:10px">
-			<select id="cbl-seccion">${SECCIONES.map((s) => `<option value="${s}" ${s === c.seccion ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
-			<select id="cbl-color">${COLORES.map((col) => `<option ${col === c.color ? 'selected' : ''}>${col}</option>`).join('')}</select>
+			<select id="cbl-seccion"><option value="" ${c.seccion === undefined ? 'selected' : ''}>Sección por definir</option>${SECCIONES.map((s) => `<option value="${s}" ${s === c.seccion ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
+			<select id="cbl-color"><option value="" ${c.color === undefined ? 'selected' : ''}>Color por definir</option>${COLORES.map((col) => `<option ${col === c.color ? 'selected' : ''}>${col}</option>`).join('')}</select>
 			<select id="cbl-clase" title="Cómo se tiende este cable. Lo normal es dejar que lo deduzca de dónde están sus extremos.">
 				<option value="">Clase automática</option>
 				${(Object.keys(NOMBRE_CLASE) as (keyof typeof NOMBRE_CLASE)[]).map((k) =>
@@ -3941,12 +3954,13 @@ function pintarPanelCable(id: string): void {
 	`;
 	(panel.querySelector('#cbl-seccion') as HTMLSelectElement).onchange = (e) => {
 		if (!capturar()) return;
-		c.seccion = Number((e.target as HTMLSelectElement).value);
+		const v = (e.target as HTMLSelectElement).value;
+		c.seccion = v ? Number(v) : undefined;
 		recalcular(); reconstruirCables(); panelSim.recalcular(); pintarPaneles();
 	};
 	(panel.querySelector('#cbl-color') as HTMLSelectElement).onchange = (e) => {
 		if (!capturar()) return;
-		c.color = (e.target as HTMLSelectElement).value;
+		c.color = (e.target as HTMLSelectElement).value || undefined;
 		reconstruirCables();
 		marcarSucio();   // cambiar el color no recalcula nada, pero SÍ hay que guardarlo
 	};
