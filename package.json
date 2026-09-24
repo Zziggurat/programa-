@@ -29,6 +29,7 @@
 	"qa:activar-representaciones-m2": "vite build app --mode qa && node qa/activar-representaciones-m2.mjs",
     "qa:simulacion": "vite build app --mode qa && node qa/todas.mjs simulacion-industrial",
 	"qa:bomba-fallo-m4": "vite build app --mode qa && node qa/bomba-fallo-m4.mjs",
+	"qa:seccion-en-vivo-m4": "vite build app --mode qa && node qa/seccion-en-vivo-m4.mjs",
 	"qa:automatizacion": "vite build app --mode qa && node qa/todas.mjs automatizacion-plc",
 	"qa:fisica": "vite build app --mode qa && node qa/todas.mjs fisica-electrica",
 	"qa:equipos": "vite build app --mode qa && node qa/todas.mjs equipos-v6",

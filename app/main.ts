@@ -2567,6 +2567,8 @@ function trasCambiarProyecto(): void {
 	pintarPaneles();
 	pintarEstructura();
 	pintarSeleccion();
+	// Undo/redo sustituye el objeto Proyecto: el snapshot eléctrico anterior deja de ser válido.
+	panelSim.recalcular();
 	actualizarBotonesHistorial();
 	pintarChipEjemplo();
 }
@@ -3940,7 +3942,7 @@ function pintarPanelCable(id: string): void {
 	(panel.querySelector('#cbl-seccion') as HTMLSelectElement).onchange = (e) => {
 		if (!capturar()) return;
 		c.seccion = Number((e.target as HTMLSelectElement).value);
-		recalcular(); reconstruirCables(); pintarPaneles();
+		recalcular(); reconstruirCables(); panelSim.recalcular(); pintarPaneles();
 	};
 	(panel.querySelector('#cbl-color') as HTMLSelectElement).onchange = (e) => {
 		if (!capturar()) return;
