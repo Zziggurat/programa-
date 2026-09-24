@@ -11,11 +11,11 @@
 
 | Hito | Estado | Frontera actual |
 |---|---|---|
-| M0 · preparación | EN_CURSO | Censo focal y escena sintética R1 de 30 aparatos/100 conductores medidos con SwiftShader; evidencia en `EVIDENCIA_FUNCIONAL.md`. Rendimiento R1 NO ACEPTADO: drag p95 histórico 38,63 s y reapertura p95 34,6 s. La reconciliación posterior reduce 98→10 tubos para 10 rutas cambiadas, pero `pointerup` sigue ~11,85 s: ~11,79 s son del repartidor global. Falta optimización de routing medida y GPU física. |
-| M1 · flujo y componentes | EN_CURSO | Búsqueda/estado documental, historial y adopción explícita A/B 24/24. Asistente, montaje, ficha V8 exacta, puertos y bloques físicos desde UI. Carcasa paramétrica versionada en modelo/render/paquetes; recorte y escala visibles con PNG derivado, bornes u/v fijos y QA 8/8. Falta exponer la elección de carcasa en el asistente y cerrar aceptación integral; no se acepta M1 todavía. |
-| M2 · esquema | EN_CURSO | Desconexión de conductor real verificada. Modelo opt-in de hojas estables y vistas múltiples por aparato sin duplicar red; selección, arrastre, undo/redo, borrado solo gráfico, referencias y pendientes visibles con QA focal 6/6. Faltan creación/conexión desde esquema, cruces, renumeración, herramientas diarias y aceptación multihoja completa; M2 NO aceptado. |
+| M0 · preparación | EN_CURSO | R1 sintético 30/100 en SwiftShader. Reconciliación de mallas 98→10 y tres cortes focales de rejilla conservan 5/5 hashes exactos; reparto Node R1+drag ~4,98 s en una medición reciente y −34,2 % pareado en el último corte. No confundirlo con latencia de navegador: drag p95 histórico 38,63 s, reapertura 34,6 s. R1 NO ACEPTADO; faltan benchmark de interacción posterior y GPU física. |
+| M1 · flujo y componentes | EN_CURSO | Carcasa opcional seleccionable desde el asistente, recorte/escala visibles, ficha exacta, bornes/bloques, adopción A/B y portabilidad. Contrato integrado contactor A/B+PNG r2+paquete limpio probado; QA asistente 19/19, adopción 24/24, carcasa 15/15 y recorrido largo contactor+simulación+importación verde. Falta aceptación visual/humana y campaña M9; no se declara M1 aceptado. |
+| M2 · esquema | EN_CURSO | Vista opt-in: activación legacy todo-o-nada con metadatos de hojas preservados, separación bobina/polos/aux del KM legacy por UI real, una sola red, undo/redo y reapertura (QA 5/5, 0 JS). Ya había desconexión real, selección, arrastre, borrado gráfico, referencias y pendientes. Faltan crear/conectar desde esquema, cruces, renumeración y aceptación multihoja completa; M2 NO aceptado. |
 | M3 · documentación | PENDIENTE | Reutilizar dossier e Ingeniería; integrar rutas físicas tras M6. |
-| M4 · simulación práctica | PENDIENTE | Motores V2–V9 existentes; cerrar solo casos objetivo no acreditados. |
+| M4 · simulación práctica | EN_CURSO | SIM-03: ensayo visible de salida abierta de boya, caída de KM por cableado y bomba parada; QA 9/9, 0 JS, y test visual desde ResultadoSimulacion. Los demás SIM-01…10 no se aceptan por arrastre. SIM-10 ruta→física sigue pendiente de política de longitud M6; sección declarada ya afecta impedancia al recalcular. |
 | M5 · montaje/3D | PENDIENTE | Contratos de anclaje y calidad visual requieren evidencia nueva. |
 | M6 · cables | PENDIENTE | Reconstrucción integral autorizada con migración; rutas manuales y topología deben preservarse. |
 | M7 · CAD/mundo | PENDIENTE | DWG privado disponible; licencia/revisión del derivado publicado sin acreditar. |
@@ -24,10 +24,10 @@
 
 ## Siguiente acción y recuperación
 
-1. Exponer la elección de carcasa paramétrica ya versionada en el asistente y cerrar CMP-04/M1 con su aceptación integral; preservar recorte, ficha técnica, puertos y portabilidad.
-2. Diagnosticar y reducir el coste del reparto global R1 conservando ocupación/carriles y rutas deterministas; la reconciliación de mallas ya reduce geometrías, pero no acredita latencia aceptable. Mantener benchmark completo fuera del gate y validar aparte en GPU física.
-3. Ampliar M2 desde las vistas múltiples ya persistidas: crear/editar conexiones mediante herramientas visibles, distinguir cruces y cerrar referencias/renumeración y exportación. No inventar longitudes físicas.
-4. M4 tiene una brecha focal identificada para SIM-03: la prueba actual cubre boya y bomba normales, pero no falla de sensor y reposo seguro. No se implementó ni se declaró aceptado en este checkpoint.
+1. Repetir benchmark R1 de navegador sobre el nuevo repartidor, separar handler/routing/render y mantener GPU física como validación pendiente; 5/5 rutas exactas no equivalen a UX aceptada.
+2. Ampliar M2 desde las vistas ya activables: crear/editar conexiones mediante herramientas visibles, distinguir cruces y cerrar referencias/renumeración y exportación. No inventar longitudes físicas.
+3. Cerrar evidencia M1 de producto y revisión humana de apariencia/montaje; no sustituirla por el contrato unitario ni por QA separado.
+4. M4: continuar la matriz SIM-01…10 con casos focales. No conectar directamente malla visual con longitud eléctrica: SIM-10 espera la política de ruta/longitud de M6.
 
 ## Checkpoint de reanudación — 2026-09-23
 
@@ -37,3 +37,10 @@
 - **No se ejecutó campaña completa de pruebas ni CI sobre este nuevo HEAD.** Estas comprobaciones focales no equivalen a aceptación M1, M2, M0 ni `FUNCTIONAL_COMPLETE`.
 
 Esta campaña no incluye publicación automática del plano privado, arquitectura global, Project Breaker ni una release 1.0. Ninguna aceptación humana se presume realizada.
+
+## Checkpoint de continuidad — 2026-09-23 noche
+
+- Rama `roadmap/1.0-functional`; `main` permanece en V9. Cortes locales nuevos desde `962bcc5`: `9289fb9` carcasa UI, `d59c87f` salida abierta de sensor, `12a79f3` y `d1f2041` rejilla, `dec2567`/`4262b37` aceptación M1, `0712c8e` test visual, `b552b95`/`4072c0d` activación M2 y `7e0bdb1` test de rótulos. Registrar SHA de respaldo remoto tras el push de la rama; no promover a main.
+- Typecheck app/core verdes; 1529/1529 pruebas en 25,57 s, 0 fallos/omitidas. Build QA: 409 módulos en 6,46 s. Primera pasada completa roja por test estático obsoleto de serigrafía, corregido sin cambiar producto; la repetición íntegra es la evidencia válida.
+- QA M4 boya 9/9 en 29,64 s, 0 errores JS; QA M2 5/5, QA asistente 19/19, adopción 24/24 y carcasa 15/15, 0 errores JS. El recorrido largo `qa/componentes-personalizados.mjs` pasó `TODO OK`: contactos polo/NA/NC, 11 cables, guardado/reapertura, paquete en navegador limpio y equivalencia nativa hasta el contrato que el nativo declara; 0 errores JS. No se ejecutó todavía todo el gate histórico M9 sobre este HEAD.
+- `qa/rejilla-equivalencia-r1.mjs`: 5/5 escenarios idénticos (28/23/59/98/98 rutas); R1+drag 4,98 s en Node en este equipo. La mejora de CPU no acredita respuesta de arrastre ni certifica comportamiento en GPU física. No queda ningún proceso QA intencionalmente en ejecución.
