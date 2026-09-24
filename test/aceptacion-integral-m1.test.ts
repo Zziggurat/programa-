@@ -158,7 +158,7 @@ test('M1 integrado: contactor A/B, foto r2, adopción solo A y paquete técnico 
 	const sinRevisionTecnica = structuredClone(paquete);
 	sinRevisionTecnica.componentes[0].fichaTecnica!.revisiones = [];
 	assert.throws(() => leerPaqueteProyecto(JSON.stringify(sinRevisionTecnica)),
-		/MISSING|dependencia exacta/, 'un paquete sin su producto técnico no es portable');
+		/ficha técnica.*producto exacto/, 'un paquete sin su producto técnico no es portable');
 	const destino = repositorioLimpio();
 	const importado = await destino.importarPaquete(leerPaqueteProyecto(JSON.stringify(paquete)));
 	assert.deepEqual(topologia(importado.proyecto), firmaCables);
