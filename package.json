@@ -26,6 +26,7 @@
 	"qa:adopcion-componentes-m1": "vite build app --mode qa && node qa/adopcion-componentes-m1.mjs",
 	"qa:ficha-componente-m1": "vite build app --mode qa && node qa/ficha-componente-m1.mjs",
 	"qa:esquema-desconexion-m2": "vite build app --mode qa && node qa/esquema-desconexion-m2.mjs",
+	"qa:activar-representaciones-m2": "vite build app --mode qa && node qa/activar-representaciones-m2.mjs",
     "qa:simulacion": "vite build app --mode qa && node qa/todas.mjs simulacion-industrial",
 	"qa:bomba-fallo-m4": "vite build app --mode qa && node qa/bomba-fallo-m4.mjs",
 	"qa:automatizacion": "vite build app --mode qa && node qa/todas.mjs automatizacion-plc",

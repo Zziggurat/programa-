@@ -9,11 +9,16 @@
  * No importa nada de `main.ts`: lo que necesita del editor entra por `ContextoEsquema`.
  */
 import { Proyecto, RefBorne } from '../src/modelo/tipos.js';
+import { resolverComportamiento } from '../src/modelo/comportamiento.js';
 import { cerrarTodasLasVentanas } from './ventanas.js';
 import { ResultadoPotenciales } from '../src/motores/potenciales.js';
 import {
-	anchoColumna, filaDeAltura, HOJA_A3, HojaEsq, MARGEN, montarEsquema,
+	anchoColumna, FILAS_ESQ, filaDeAltura, HOJA_A3, HojaEsq, MARGEN, montarEsquema,
 } from '../src/motores/esquema.js';
+import {
+	planActivacionRepresentaciones, planDesdoblamientoRepresentacion,
+	planPartesDesdoblamiento, type DestinosDesdoblamiento,
+} from '../src/motores/crear-representaciones-esquema.js';
 import { hojaASvg } from './esquema-svg.js';
 import { exportarEsquemaPDF } from './esquema-pdf.js';
 import { dxfDeEsquema } from './exportaciones.js';
@@ -73,6 +78,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let conductorSeleccionado: string | undefined;
 	/** Identidad gráfica M2, distinta de la identidad eléctrica del aparato. */
 	let representacionSeleccionada: string | undefined;
+	/** El formulario vive fuera del inspector, para conservar sus valores al navegar entre hojas. */
+	let documentoFormulario: Proyecto | undefined;
 
 	const describirBorne = (ref: RefBorne): string => {
 		const d = proyecto().dispositivos.find((x) => x.id === ref.dispositivoId);
@@ -160,6 +167,15 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				avisar(`Vista ${vista.id} borrada; ${d?.designacion ?? vista.dispositivoId} permanece en el proyecto.`, 'ok');
 			};
 			ayuda.append(detalle, document.createTextNode(' · '), boton);
+			if (vista.parte.tipo === 'completa' && d && resolverComportamiento(d)?.clase === 'contactos-electromagneticos') {
+				const desdoblar = document.createElement('button');
+				desdoblar.id = 'esq-desdoblar';
+				desdoblar.className = 'boton';
+				desdoblar.type = 'button';
+				desdoblar.textContent = 'Desdoblar funciones';
+				desdoblar.onclick = () => abrirFormularioDesdoblamiento(vista.id);
+				ayuda.append(document.createTextNode(' · '), desdoblar);
+			}
 		} else {
 			conductorSeleccionado = undefined;
 			representacionSeleccionada = undefined;
@@ -183,6 +199,165 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			panel.append(titulo, lista);
 			ayuda.append(panel);
 		}
+		if (representaciones === undefined) {
+			const activar = document.createElement('button');
+			activar.id = 'esq-activar-vistas';
+			activar.className = 'boton';
+			activar.type = 'button';
+			activar.textContent = 'Activar vistas editables';
+			activar.onclick = () => { void activarRepresentacionesLegacy(); };
+			ayuda.append(document.createTextNode(' · '), activar);
+		}
+	}
+
+	async function activarRepresentacionesLegacy(): Promise<void> {
+		if (!ctx.puedeEditar()) return;
+		const documento = proyecto();
+		const plan = planActivacionRepresentaciones(documento, ctx.potenciales());
+		if (!plan.ok) { avisar(plan.motivo, 'info'); return; }
+		const antes = JSON.stringify(documento);
+		const folios = plan.valor.foliosVisibles.map((h) => {
+			const cambioVisible = !h.nueva && (h.titulo !== h.tituloLegacy || h.columnas !== h.columnasLegacy)
+				? ` (dibujo anterior: «${h.tituloLegacy}», ${h.columnasLegacy} columnas)` : '';
+			return `Hoja ${h.numero} «${h.titulo}» [${h.id}], ${h.columnas} columnas: ${h.simbolos} vista(s)`
+				+ `${h.nueva ? ', folio nuevo' : ', folio existente'}${cambioVisible}`;
+		});
+		const confirmado = await confirmar(
+			`¿Activar vistas M2 en este esquema? Se conservarán ${plan.valor.representaciones.length} aparatos como vistas completas `
+			+ `en ${plan.valor.foliosVisibles.length} hoja(s):\n${folios.join('\n')}`
+			+ (plan.valor.hojasConservadasSinDibujo
+				? `\n${plan.valor.hojasConservadasSinDibujo} hoja(s) adicionales seguirán en el proyecto.` : '')
+			+ `\nLos ${documento.conductores.length} conductores y todos los aparatos permanecen intactos. Ctrl+Z deshace la activación.`,
+			{ ok: 'Activar vistas' },
+		);
+		if (!confirmado) return;
+		if (proyecto() !== documento || JSON.stringify(documento) !== antes) {
+			avisar('El proyecto cambió mientras confirmabas; vuelve a revisar la conversión.', 'info');
+			return;
+		}
+		if (!capturar()) return;
+		documento.hojas = plan.valor.hojas;
+		documento.esquema = { ...documento.esquema, representaciones: plan.valor.representaciones };
+		const idHojaActual = plan.valor.foliosVisibles[hojaActual]?.id;
+		marcarSucio();
+		actualizarTodo();
+		hojaActual = Math.max(0, hojasEsquema.findIndex((h) => h.id === idHojaActual));
+		refrescarEsquema();
+		avisar(`${plan.valor.representaciones.length} vistas activadas sin cambiar el circuito.`, 'ok');
+	}
+
+	function abrirFormularioDesdoblamiento(vistaId: string): void {
+		const documento = proyecto();
+		const plan = planPartesDesdoblamiento(documento, vistaId);
+		if (!plan.ok) { avisar(plan.motivo, 'info'); return; }
+		const anterior = $('esq-desdoblar-formulario');
+		if (anterior) {
+			const mismo = anterior.dataset.vistaId === vistaId;
+			anterior.remove();
+			documentoFormulario = undefined;
+			if (mismo) return;
+		}
+		const caja = document.createElement('div');
+		caja.id = 'esq-desdoblar-formulario';
+		caja.dataset.vistaId = vistaId;
+		caja.style.padding = '8px 12px';
+		caja.style.background = 'var(--panel)';
+		const instrucciones = document.createElement('p');
+		instrucciones.textContent = `Desdoblar ${vistaId}: elige hoja y casilla para cada función; puedes recorrer las hojas sin perder estos valores.`;
+		caja.append(instrucciones);
+		const ordenadas = [...documento.hojas].sort((a, b) => a.numero - b.numero || a.id.localeCompare(b.id));
+		const casillas = new Set((documento.esquema?.representaciones ?? [])
+			.filter((r) => r.id !== vistaId)
+			.map((r) => JSON.stringify([r.hojaId, r.posicion.columna, r.posicion.fila])));
+		const elegirCasilla = (hojaId: string, columna: number, fila: number): { columna: number; fila: number } => {
+			const h = documento.hojas.find((item) => item.id === hojaId)!;
+			const max = Math.max(4, Math.min(20, h.columnas ?? documento.esquema?.columnasPorHoja ?? 10));
+			for (let desplazamiento = 0; desplazamiento < max * FILAS_ESQ; desplazamiento++) {
+				const indice = ((fila - 1) * max + columna - 1 + desplazamiento) % (max * FILAS_ESQ);
+				const col = (indice % max) + 1;
+				const fil = Math.floor(indice / max) + 1;
+				const clave = JSON.stringify([hojaId, col, fil]);
+				if (!casillas.has(clave)) { casillas.add(clave); return { columna: col, fila: fil }; }
+			}
+			return { columna, fila };
+		};
+		const filas: { funcion: 'bobina' | 'polos' | 'auxiliares'; hoja: HTMLSelectElement;
+			columna: HTMLInputElement; fila: HTMLInputElement }[] = [];
+		for (const parte of plan.valor.partes) {
+			const fila = document.createElement('div');
+			const etiqueta = document.createElement('label');
+			etiqueta.textContent = `${parte.funcion} (${parte.bornes.join(', ')}) · `;
+			const hoja = document.createElement('select');
+			hoja.id = `esq-desdoblar-hoja-${parte.funcion}`;
+			for (const h of ordenadas) {
+				const opcion = document.createElement('option');
+				opcion.value = h.id;
+				opcion.textContent = `${h.numero} · ${h.titulo}`;
+				hoja.append(opcion);
+			}
+			hoja.value = plan.valor.origen.hojaId;
+			const sugerida = elegirCasilla(hoja.value,
+				plan.valor.origen.posicion.columna, plan.valor.origen.posicion.fila);
+			const columna = document.createElement('input');
+			columna.id = `esq-desdoblar-columna-${parte.funcion}`;
+			columna.type = 'number'; columna.min = '1'; columna.max = '20';
+			columna.style.width = '4em';
+			columna.value = String(sugerida.columna);
+			const numeroFila = document.createElement('input');
+			numeroFila.id = `esq-desdoblar-fila-${parte.funcion}`;
+			numeroFila.type = 'number'; numeroFila.min = '1'; numeroFila.max = String(FILAS_ESQ);
+			numeroFila.style.width = '4em';
+			numeroFila.value = String(sugerida.fila);
+			etiqueta.append(hoja, document.createTextNode(' col. '), columna,
+				document.createTextNode(' fila '), numeroFila);
+			fila.append(etiqueta);
+			caja.append(fila);
+			filas.push({ funcion: parte.funcion, hoja, columna, fila: numeroFila });
+		}
+		const aplicar = document.createElement('button');
+		aplicar.id = 'esq-desdoblar-aplicar';
+		aplicar.className = 'boton primario';
+		aplicar.type = 'button';
+		aplicar.textContent = 'Previsualizar y desdoblar';
+		aplicar.onclick = async () => {
+			if (!ctx.puedeEditar()) return;
+			const destinos: DestinosDesdoblamiento = {};
+			for (const f of filas) destinos[f.funcion] = { hojaId: f.hoja.value,
+				columna: Number(f.columna.value), fila: Number(f.fila.value) };
+			const reemplazo = planDesdoblamientoRepresentacion(documento, vistaId, destinos);
+			if (!reemplazo.ok) { avisar(reemplazo.motivo, 'info'); return; }
+			const antes = JSON.stringify(documento);
+			const ubicaciones = reemplazo.valor.map((r, i) => {
+				const h = documento.hojas.find((item) => item.id === r.hojaId)!;
+				return `${plan.valor.partes[i].funcion}: ${h.numero} «${h.titulo}», ${r.posicion.columna}.${r.posicion.fila}`;
+			});
+			const confirmado = await confirmar(
+				`¿Reemplazar la vista completa ${vistaId} por ${reemplazo.valor.length} vistas funcionales?\n`
+				+ ubicaciones.join('\n')
+				+ `\nEl aparato y los ${documento.conductores.length} conductores no se duplican ni se borran. Ctrl+Z deshace todo.`,
+				{ ok: 'Desdoblar' },
+			);
+			if (!confirmado) return;
+			if (proyecto() !== documento || JSON.stringify(documento) !== antes) {
+				avisar('El proyecto cambió mientras confirmabas; revisa las posiciones otra vez.', 'info');
+				return;
+			}
+			const lista = documento.esquema?.representaciones;
+			const indice = lista?.findIndex((r) => r.id === vistaId) ?? -1;
+			if (!lista || indice < 0 || !capturar()) return;
+			lista.splice(indice, 1, ...reemplazo.valor);
+			caja.remove();
+			documentoFormulario = undefined;
+			representacionSeleccionada = reemplazo.valor[0]?.id;
+			hojaActual = Math.max(0, hojasEsquema.findIndex((h) => h.id === reemplazo.valor[0]?.hojaId));
+			marcarSucio();
+			actualizarTodo();
+			refrescarEsquema();
+			avisar(`${reemplazo.valor.length} vistas funcionales creadas para el mismo aparato.`, 'ok');
+		};
+		caja.append(aplicar);
+		documentoFormulario = documento;
+		$('panel-esquema').append(caja);
 	}
 
 	/**
@@ -194,6 +369,12 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	/** Vuelve a montar el esquema desde el modelo actual y lo pinta. */
 	function refrescarEsquema(): void {
 		if (!esquemaAbierto) return;
+		const formulario = document.getElementById('esq-desdoblar-formulario');
+		if (formulario && (documentoFormulario !== proyecto()
+			|| !proyecto().esquema?.representaciones?.some((r) => r.id === formulario.dataset.vistaId))) {
+			formulario.remove();
+			documentoFormulario = undefined;
+		}
 		hojasEsquema = montarEsquema(proyecto(), ctx.potenciales());
 		if (hojasEsquema.length === 0) {
 			conductorSeleccionado = undefined;
@@ -469,6 +650,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		if (!abrir) {
 			conductorSeleccionado = undefined;
 			representacionSeleccionada = undefined;
+			document.getElementById('esq-desdoblar-formulario')?.remove();
+			documentoFormulario = undefined;
 		}
 		($('panel-esquema') as HTMLElement).hidden = !abrir;
 		$('btn-esquema').classList.toggle('activo', abrir);
