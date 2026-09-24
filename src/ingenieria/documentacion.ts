@@ -9,6 +9,7 @@ import type { EngineeringIssue } from './validacion.js';
 import { resolverCriteriosTecnicos } from '../datos-tecnicos/criterios.js';
 import { resolverAmpacidadTecnica } from '../datos-tecnicos/ampacidad.js';
 import { referenciaTecnica } from '../datos-tecnicos/tipos.js';
+import { proyectarBomCanonica } from '../motores/bom.js';
 
 type AnalisisIngenieria = ReturnType<typeof ejecutarIngenieria>;
 
@@ -111,31 +112,8 @@ export interface InformeIngenieriaV7 {
 const unico = (v: readonly string[]) => [...new Set(v)].sort((a, b) => a.localeCompare(b));
 const clonar = <T>(v: T): T => structuredClone(v);
 
-function perfilDe(proyecto: Proyecto, id: string): string | undefined {
-	return proyecto.dispositivos.find((d) => d.id === id)?.comportamiento?.clase;
-}
-
-function modelosFisicos(d: Proyecto['dispositivos'][number]): string[] | undefined {
-	if (!d.fisica) return undefined;
-	const r = Object.entries(d.fisica).filter(([k, v]) => k !== 'version' && v !== undefined).map(([k]) => k).sort();
-	return r.length ? r : undefined;
-}
-
 export function generarBomIngenieria(proyecto: Proyecto): FilaBomIngenieria[] {
-	const grupos = new Map<string, FilaBomIngenieria>();
-	for (const d of [...proyecto.dispositivos].sort((a, b) => a.id.localeCompare(b.id))) {
-		if (d.tipo === 'cable') continue;
-		const perfil = perfilDe(proyecto, d.id); const fisicos = modelosFisicos(d);
-		const clave = JSON.stringify([d.tipo, d.descripcion ?? '', d.fabricante ?? '', d.referencia ?? '', perfil ?? '', fisicos ?? []]);
-		const fila = grupos.get(clave) ?? { tipo: d.tipo, descripcion: d.descripcion ?? '', cantidad: 0,
-			designaciones: [], ...(d.fabricante ? { fabricante: d.fabricante } : {}),
-			...(d.referencia ? { referencia: d.referencia } : {}), ...(perfil ? { perfil } : {}),
-			...(fisicos ? { modeloFisico: fisicos } : {}) };
-		fila.cantidad++; fila.designaciones.push(d.designacion ?? d.id); grupos.set(clave, fila);
-	}
-	return [...grupos.values()].map((x) => ({ ...x, designaciones: [...x.designaciones].sort((a, b) => a.localeCompare(b)) }))
-		.sort((a, b) => a.tipo.localeCompare(b.tipo) || (a.fabricante ?? '').localeCompare(b.fabricante ?? '')
-			|| (a.referencia ?? '').localeCompare(b.referencia ?? '') || a.descripcion.localeCompare(b.descripcion));
+	return proyectarBomCanonica(proyecto).map(({ clave: _clave, ...grupo }) => grupo);
 }
 
 export function generarListaConductoresIngenieria(proyecto: Proyecto, analisis: AnalisisIngenieria): FilaConductorIngenieria[] {

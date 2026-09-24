@@ -3,7 +3,7 @@
  *
  * Sigue la idea de la base de datos de proyección de QElectroTech (projectdatabase.cpp):
  * los documentos son consultas sobre el modelo, no dibujos. Genera:
- *  - Lista de materiales (BOM) agrupada por referencia de fabricante.
+ *  - Lista de materiales (BOM) agrupada por identidad de producto persistente.
  *  - Lista de conductores (número, origen, destino, sección, color, longitud ruteada).
  *  - Exportadores CSV y un informe HTML completo.
  */
@@ -17,6 +17,7 @@ import { ResultadoPotenciales } from './potenciales.js';
 import { ResultadoReferencias } from './referencias.js';
 import { ResultadoRuteo } from './ruteo.js';
 import { ResultadoSincronizacion } from './sincronizacion.js';
+import { proyectarBomCanonica } from './bom.js';
 
 export interface FilaBOM {
 	cantidad: number;
@@ -27,24 +28,11 @@ export interface FilaBOM {
 }
 
 export function generarBOM(proyecto: Proyecto): FilaBOM[] {
-	const grupos = new Map<string, FilaBOM>();
-	for (const d of proyecto.dispositivos) {
-		if (d.tipo === 'cable') continue;
-		const clave = `${d.fabricante ?? ''}|${d.referencia ?? ''}|${d.descripcion ?? ''}`;
-		const fila = grupos.get(clave) ?? {
-			cantidad: 0,
-			descripcion: d.descripcion ?? '',
-			fabricante: d.fabricante ?? '',
-			referencia: d.referencia ?? '',
-			designaciones: [],
-		};
-		fila.cantidad += 1;
-		fila.designaciones.push(d.designacion ?? d.id);
-		grupos.set(clave, fila);
-	}
-	return [...grupos.values()].sort(
-		(a, b) => a.fabricante.localeCompare(b.fabricante) || a.referencia.localeCompare(b.referencia),
-	);
+	return proyectarBomCanonica(proyecto).map((grupo) => ({
+		cantidad: grupo.cantidad, descripcion: grupo.descripcion,
+		fabricante: grupo.fabricante ?? '', referencia: grupo.referencia ?? '',
+		designaciones: grupo.designaciones,
+	}));
 }
 
 export interface FilaConductor {
