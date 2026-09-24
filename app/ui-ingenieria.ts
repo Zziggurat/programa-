@@ -5,7 +5,7 @@
  * ScenarioEngine y PhysicsEngine. Tampoco persiste issues ni resultados derivados.
  */
 import { perfilCurvaProteccionDispositivo, type ContextoTopologiaFisica } from '../src/fisica/topologia-proyecto.js';
-import { resolverComportamiento } from '../src/modelo/comportamiento.js';
+import { contextoEstaticoIngenieria } from '../src/ingenieria/contexto-estatico.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
 import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import {
@@ -51,6 +51,8 @@ export interface ContextoUIIngenieria {
 	/** Confirma flush, identidad y revisión de repositorio; un ejemplo retorna estado efímero. */
 	obtenerProcedencia?(): Promise<ProcedenciaDocumento>;
 	abrirDossierPDF(): void;
+	/** Congela una sola revisión y entrega los documentos relacionados en un ZIP offline. */
+	descargarPaqueteDocumental?(): Promise<void>;
 }
 
 export interface PanelIngenieria {
@@ -66,14 +68,7 @@ const numero = (v: number | undefined, unidad = ''): string => v === undefined |
 
 /** Condición de cálculo explícita; no representa el runtime ni se guarda en Proyecto. */
 export function contextoDisenoIngenieria(proyecto: Proyecto): ContextoTopologiaFisica {
-	const conexionesCerradas = new Map<string, readonly (readonly [string, string])[]>();
-	for (const d of [...proyecto.dispositivos].sort((a, b) => a.id.localeCompare(b.id))) {
-		const p = resolverComportamiento(d); let pares: readonly { entrada: string; salida: string }[] = [];
-		if (p?.clase === 'proteccion' || p?.clase === 'contactos-electromagneticos') pares = p.polos;
-		else if (p?.clase === 'pasivo') pares = p.conexiones;
-		if (pares.length) conexionesCerradas.set(d.id, pares.map((x) => [x.entrada, x.salida] as const));
-	}
-	return { conexionesCerradas };
+	return contextoEstaticoIngenieria(proyecto);
 }
 
 function buildId(): string {
@@ -308,6 +303,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	function vistaDocumentacion(): string {
 		return `<section data-ing-documentation><p>Los entregables consumen el mismo snapshot de Ingeniería; la UI no reconstruye BOM, cableado ni borneras.</p>
 			<div class="botonera"><button class="boton primario" data-ing-doc="prepare">Preparar informe</button>
+			<button class="boton" data-ing-doc="paquete" ${ctx.descargarPaqueteDocumental ? '' : 'disabled'}>Paquete de revisión ZIP</button>
 			<button class="boton" data-ing-doc="json" ${informe ? '' : 'disabled'}>JSON</button><button class="boton" data-ing-doc="html" ${informe ? '' : 'disabled'}>HTML / imprimir</button>
 			<button class="boton" data-ing-doc="bom" ${informe ? '' : 'disabled'}>BOM CSV</button><button class="boton" data-ing-doc="wiring" ${informe ? '' : 'disabled'}>Wiring CSV</button>
 			<button class="boton" data-ing-doc="terminal" ${informe ? '' : 'disabled'}>Terminales CSV</button><button class="boton" data-ing-doc="technical" ${informe?.datosTecnicos ? '' : 'disabled'}>Datos técnicos CSV</button><button class="boton" data-ing-doc="pdf">Dossier PDF existente</button></div>
@@ -368,6 +364,10 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	async function documento(accion: string): Promise<void> {
 		if (accion === 'prepare') return prepararInforme();
 		if (accion === 'pdf') { ctx.abrirDossierPDF(); return; }
+		if (accion === 'paquete') {
+			if (!ctx.descargarPaqueteDocumental) throw new Error('La exportación de paquete no está disponible.');
+			return ctx.descargarPaqueteDocumental();
+		}
 		if (!informe) return;
 		const documentoPreparado = informe;
 		if (!firmaInforme || firmaInforme.identidad !== ctx.identidadActual()

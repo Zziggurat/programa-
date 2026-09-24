@@ -137,11 +137,11 @@ function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number,
 	doc.text('Símbolos IEC 60617 · Conjunto según IEC 61439-1/-2', MARGEN.izq, y + alto - 1.4);
 }
 
-/** Genera el PDF con todas las hojas y lo descarga. */
-export async function exportarEsquemaPDF(
-	hojas: HojaEsq[], proyecto: string, archivo: string, datos: DatosCajetin = {},
+/** Genera el mismo PDF vectorial que la descarga individual, sin efectos de interfaz. */
+export function esquemaComoBlob(
+	hojas: HojaEsq[], proyecto: string, datos: DatosCajetin = {},
 	procedencia?: ProcedenciaDocumento, rutasPendientes?: number,
-): Promise<void> {
+): Blob {
 	if (hojas.length === 0) throw new Error('el esquema no tiene hojas');
 	const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [hojas[0].anchoMm, hojas[0].altoMm] });
 	const identidad = resumenProcedenciaDocumento(procedencia);
@@ -193,6 +193,14 @@ export async function exportarEsquemaPDF(
 		cajetin(doc, hoja, proyecto, hojas.length, datos, procedencia, rutasPendientes);
 	});
 
-	descargar(archivo, doc.output('blob'));
+	return doc.output('blob') as Blob;
+}
+
+/** Genera el PDF con todas las hojas y lo descarga. */
+export async function exportarEsquemaPDF(
+	hojas: HojaEsq[], proyecto: string, archivo: string, datos: DatosCajetin = {},
+	procedencia?: ProcedenciaDocumento, rutasPendientes?: number,
+): Promise<void> {
+	descargar(archivo, esquemaComoBlob(hojas, proyecto, datos, procedencia, rutasPendientes));
 }
 

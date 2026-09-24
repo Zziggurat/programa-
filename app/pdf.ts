@@ -12,7 +12,7 @@
  *   8 Borneros · 9 Verificación eléctrica
  */
 import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 
 import { Proyecto } from '../src/modelo/tipos.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';

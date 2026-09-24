@@ -74,6 +74,8 @@ import { instalarInicio } from './ui-inicio.js';
 import { instalarEsquema, proponerConductorPendiente } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
 import { instalarIngenieria, type PanelIngenieria } from './ui-ingenieria.js';
+import { crearZipDeRevisionDocumental } from '../src/modelo/manifiesto-paquete-documental.js';
+import { crearArchivosPaqueteDocumental } from './paquete-documental.js';
 import { instalarUIDatosTecnicos, type PanelDatosTecnicos } from './ui-datos-tecnicos.js';
 import { animarSimulacion } from './animacion-sim.js';
 import { dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
@@ -312,6 +314,43 @@ async function copiaParaEntregable(): Promise<{ copia: Proyecto; procedencia: Pr
 		throw new Error('El proyecto cambió mientras se preparaba el documento. Vuelve a exportarlo.');
 	}
 	return { copia, procedencia };
+}
+
+let preparandoPaqueteDocumental = false;
+/** Un único proyecto y una única revisión confirmada para todos los archivos del ZIP. */
+async function descargarPaqueteDocumental(): Promise<void> {
+	if (preparandoPaqueteDocumental) throw new Error('Ya se está preparando un paquete documental.');
+	preparandoPaqueteDocumental = true;
+	try {
+		const origen = proyecto;
+		const firma = JSON.stringify(proyecto);
+		const { copia, procedencia } = await copiaParaEntregable();
+		const archivos = await crearArchivosPaqueteDocumental(copia, procedencia);
+		const { zip, manifiesto } = await crearZipDeRevisionDocumental({
+			proyecto: copia.nombre, procedencia, archivos,
+			limitaciones: [
+				'Borrador de ingeniería: no certifica normas ni aprueba fabricación.',
+				'Las rutas físicas pendientes no definen metraje ni material.',
+				'Una decisión V9 histórica no recrea por sí sola un resultado de búsqueda.',
+				'Los hashes SHA-256 comprueban integridad de bytes, no autenticidad ni firma.',
+			],
+		});
+		const vigente = await obtenerProcedenciaDocumental();
+		const identidad = (p: ProcedenciaDocumento): string => p.estado === 'confirmado'
+			? JSON.stringify([p.estado, p.projectId, p.revisionRepositorio, p.buildId])
+			: JSON.stringify([p.estado, p.motivo, p.buildId]);
+		if (origen !== proyecto || firma !== JSON.stringify(proyecto)
+			|| identidad(vigente) !== identidad(procedencia)) {
+			throw new Error('El proyecto o la revisión cambió durante el paquete. Genera uno nuevo.');
+		}
+		const sufijo = procedencia.estado === 'confirmado'
+			? `r${procedencia.revisionRepositorio}` : 'efimero';
+		descargar(`${copia.nombre} - paquete-electrico-${sufijo}.zip`,
+			new Blob([Uint8Array.from(zip)], { type: 'application/zip' }), 'application/zip');
+		avisar(`Paquete documental preparado: ${manifiesto.archivos.length} archivos de una sola revisión.`, 'ok');
+	} finally {
+		preparandoPaqueteDocumental = false;
+	}
 }
 
 /**
@@ -7475,6 +7514,7 @@ const panelDossier = instalarDossier({
 panelIngenieria = instalarIngenieria({
 	proyecto: () => proyecto,
 	obtenerProcedencia: obtenerProcedenciaDocumental,
+	descargarPaqueteDocumental,
 	identidadActual: () => gestorDocumentos?.estaMostrandoEjemplo() ? 'EJEMPLO' : gestorDocumentos?.documentoActivo()?.id ?? 'SIN_REPOSITORIO',
 	prepararAplicacion: prepararAplicacionTecnica,
 	revisionesTecnicas: () => listarRevisionesTecnicas(),
