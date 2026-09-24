@@ -28,6 +28,7 @@
 	"qa:esquema-desconexion-m2": "vite build app --mode qa && node qa/esquema-desconexion-m2.mjs",
 	"qa:activar-representaciones-m2": "vite build app --mode qa && node qa/activar-representaciones-m2.mjs",
 	"qa:ruta-pendiente-m2": "vite build app --mode qa && node qa/ruta-pendiente-m2.mjs",
+	"qa:procedencia-documental-m3": "vite build app --mode qa && node qa/procedencia-documental-m3.mjs",
     "qa:simulacion": "vite build app --mode qa && node qa/todas.mjs simulacion-industrial",
 	"qa:bomba-fallo-m4": "vite build app --mode qa && node qa/bomba-fallo-m4.mjs",
 	"qa:seccion-en-vivo-m4": "vite build app --mode qa && node qa/seccion-en-vivo-m4.mjs",

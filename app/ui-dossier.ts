@@ -16,6 +16,8 @@
  * permite leer este archivo entero sin tener el editor delante.
  */
 import { Proyecto } from '../src/modelo/tipos.js';
+import { vistaPreviaVigente, type ProcedenciaDocumento,
+	type VistaPreviaDocumento } from '../src/modelo/procedencia-documental.js';
 import {
 	AjustesDossier, BloqueDossier, COLOR_POR_DEFECTO, FUENTES, PAPELES, PapelDossier,
 	SECCIONES_DOSSIER, TAMANOS, TrozoTexto, saleSeccion, seccionesOrdenadas,
@@ -39,6 +41,8 @@ export interface ContextoDossier {
 	capturar: () => boolean;
 	/** Una foto del tablero como se ve ahora: en 3D o en alzado 2D. La saca la escena. */
 	fotoDelTablero: (en2D: boolean) => string;
+	/** Espera el guardado si hay repositorio; un ejemplo sigue siendo efímero. */
+	obtenerProcedencia: () => Promise<ProcedenciaDocumento>;
 }
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -53,36 +57,51 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 	const proyecto = ctx.proyecto;
 
 	let urlDossier: string | undefined;
-	let generandoDossier = false;
+	let vistaPrevia: VistaPreviaDocumento | undefined;
+	let generacionDossier: Promise<VistaPreviaDocumento | undefined> | undefined;
 
 	function ajustesDossier(): AjustesDossier {
+		return proyecto().dossier ?? {};
+	}
+
+	function asegurarAjustesDossier(): AjustesDossier {
 		const p = proyecto();
-		if (!p.dossier) p.dossier = {};
-		return p.dossier;
+		return p.dossier ?? (p.dossier = {});
 	}
 
 	/** Vuelve a generar el PDF y lo enseña. Se llama cada vez que se toca algo del editor. */
-	async function refrescarDossier(): Promise<void> {
-		if (generandoDossier) return;
-		generandoDossier = true;
-		$('dos-estado').textContent = 'Generando…';
-		try {
-			const { dossierComoBlob } = await import('./pdf.js');
-			// Un respiro para que el navegador pinte el «Generando…» antes de bloquearse con el PDF.
-			await new Promise((r) => setTimeout(r, 0));
-			const blob = dossierComoBlob(proyecto());
-	        if (urlDossier) URL.revokeObjectURL(urlDossier);
-			urlDossier = URL.createObjectURL(blob);
-			// `#toolbar=1` deja los controles del visor; `#view=FitH` abre la página entera a lo ancho.
-			$('dos-vista').innerHTML = `<iframe src="${urlDossier}#view=FitH" title="Vista previa del dossier"></iframe>`;
-			$('dos-estado').textContent = `${Math.round(blob.size / 1024)} KB`;
-		} catch (e) {
-			$('dos-vista').innerHTML = '<div class="cargando">No se pudo generar el dossier: '
-				+ escaparHtml((e as Error).message) + '</div>';
-			$('dos-estado').textContent = '';
-		} finally {
-			generandoDossier = false;
-		}
+	function refrescarDossier(): Promise<VistaPreviaDocumento | undefined> {
+		// Si cambió el editor durante un flush, la siguiente petición se genera al terminar la anterior.
+		if (generacionDossier) return generacionDossier.then(() => refrescarDossier());
+		generacionDossier = (async () => {
+			$('dos-estado').textContent = 'Generando…';
+			vistaPrevia = undefined;
+			try {
+				const { dossierComoBlob } = await import('./pdf.js');
+				const firma = JSON.stringify(proyecto());
+				const copia = structuredClone(proyecto());
+				const procedencia = await ctx.obtenerProcedencia();
+				if (firma !== JSON.stringify(proyecto())) throw new Error('El proyecto cambió durante el guardado. Actualiza la vista previa.');
+				// Un respiro para que el navegador pinte el «Generando…» antes de bloquearse con el PDF.
+				await new Promise((r) => setTimeout(r, 0));
+				if (firma !== JSON.stringify(proyecto())) throw new Error('El proyecto cambió durante la generación. Actualiza la vista previa.');
+				if (($('panel-dossier') as HTMLElement).hidden) return undefined;
+				const blob = dossierComoBlob(copia, procedencia);
+				const preparada = { blob, nombre: copia.nombre, firma, procedencia };
+				if (urlDossier) URL.revokeObjectURL(urlDossier);
+				urlDossier = URL.createObjectURL(blob);
+				$('dos-vista').innerHTML = `<iframe src="${urlDossier}#view=FitH" title="Vista previa del dossier"></iframe>`;
+				$('dos-estado').textContent = `${Math.round(blob.size / 1024)} KB`;
+				vistaPrevia = preparada;
+				return preparada;
+			} catch (e) {
+				$('dos-vista').innerHTML = '<div class="cargando">No se pudo generar el dossier: '
+					+ escaparHtml((e as Error).message) + '</div>';
+				$('dos-estado').textContent = '';
+				return undefined;
+			}
+		})().finally(() => { generacionDossier = undefined; });
+		return generacionDossier;
 	}
 
 	/** Repinta el editor lateral y vuelve a generar el PDF. */
@@ -107,7 +126,9 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 		}).join('');
 		for (const c of $('dos-secciones').querySelectorAll<HTMLInputElement>('[data-sec]')) {
 			c.onchange = () => {
-				a.secciones = { ...a.secciones, [c.dataset.sec!]: c.checked };
+				if (!capturar()) return;
+				const editable = asegurarAjustesDossier();
+				editable.secciones = { ...editable.secciones, [c.dataset.sec!]: c.checked };
 				actualizarDossier();
 			};
 		}
@@ -119,7 +140,7 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 			const ids = orden.map((sec) => sec.id);
 			const [id] = ids.splice(desde, 1);
 			ids.splice(hasta, 0, id);
-			a.orden = ids;
+			asegurarAjustesDossier().orden = ids;
 			actualizarDossier();
 		};
 		for (const b of $('dos-secciones').querySelectorAll<HTMLButtonElement>('[data-sube]')) {
@@ -159,7 +180,7 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 	/** Cambia algo de la identidad y regenera. `capturar` deja el cambio en el deshacer. */
 	function tocarIdentidad(cambio: (a: AjustesDossier) => void): void {
 		if (!capturar()) return;
-		cambio(ajustesDossier());
+		cambio(asegurarAjustesDossier());
 		actualizarDossier();
 	}
 
@@ -379,7 +400,7 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 	/** Añade un bloque nuevo al final y repinta. */
 	function anadirBloque(b: Omit<BloqueDossier, 'id'>): void {
 		if (!capturar()) return;
-		const a = ajustesDossier();
+		const a = asegurarAjustesDossier();
 		a.bloques = [...(a.bloques ?? []), { ...b, id: idUnico('b') }];
 		actualizarDossier();
 	}
@@ -402,6 +423,7 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 		($('panel-dossier') as HTMLElement).hidden = !abrir;
 		if (!abrir) {
 			if (urlDossier) { URL.revokeObjectURL(urlDossier); urlDossier = undefined; }
+			vistaPrevia = undefined;
 			$('dos-vista').innerHTML = '<div class="cargando">Generando el dossier…</div>';
 			return;
 		}
@@ -414,8 +436,21 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 	($('dos-refrescar') as HTMLButtonElement).onclick = () => { void refrescarDossier(); };
 	($('dos-descargar') as HTMLButtonElement).onclick = async () => {
 		try {
-			const { exportarPDF } = await import('./pdf.js');
-			exportarPDF(proyecto());
+			const estabaGenerando = !!generacionDossier;
+			if (generacionDossier) await generacionDossier;
+			const procedenciaActual = await ctx.obtenerProcedencia();
+			let preparado = vistaPreviaVigente(vistaPrevia, JSON.stringify(proyecto()), procedenciaActual);
+			if (!preparado) {
+				preparado = await refrescarDossier();
+				if (!preparado) throw new Error('No hay una vista previa vigente para descargar.');
+				avisar('Vista previa actualizada: revísala y pulsa Descargar de nuevo.', 'info');
+				return;
+			}
+			if (estabaGenerando) {
+				avisar('Vista previa lista: revísala y pulsa Descargar de nuevo.', 'info');
+				return;
+			}
+			descargar(`${preparado.nombre} - dossier.pdf`, preparado.blob);
 			avisar('Dossier descargado', 'ok');
 		} catch (e) {
 			avisar('No se pudo generar el PDF: ' + (e as Error).message, 'error');

@@ -9,6 +9,7 @@
  */
 import { aCSV } from '../modelo/csv.js';
 import { Proyecto } from '../modelo/tipos.js';
+import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../modelo/procedencia-documental.js';
 import { extremoTexto } from '../modelo/proyecto.js';
 import { Hallazgo } from './drc.js';
 import { PlanBornero } from './bornes.js';
@@ -53,6 +54,7 @@ export interface FilaConductor {
 	seccion: string;
 	color: string;
 	longitudMm?: number;
+	pendienteRuta?: boolean;
 }
 
 export function generarListaConductores(
@@ -67,7 +69,8 @@ export function generarListaConductores(
 			a: extremoTexto(proyecto, c.a),
 			seccion: c.seccion !== undefined ? `${c.seccion} mm²` : '',
 			color: c.color ?? '',
-			longitudMm: longitudDe.get(c.id),
+			longitudMm: c.estadoRutaFisica === 'pendiente' ? undefined : longitudDe.get(c.id),
+			pendienteRuta: c.estadoRutaFisica === 'pendiente' || undefined,
 		}))
 		.sort((a, b) => a.numero.localeCompare(b.numero, undefined, { numeric: true }));
 }
@@ -128,8 +131,9 @@ function tabla(cabeceras: string[], filas: (string | number | undefined)[][]): s
 }
 
 /** Informe HTML autocontenido con toda la documentación del proyecto. */
-export function generarInformeHTML(d: Dossier): string {
+export function generarInformeHTML(d: Dossier, procedencia?: ProcedenciaDocumento): string {
 	const { proyecto } = d;
+	const identidad = resumenProcedenciaDocumento(procedencia);
 	const bom = generarBOM(proyecto);
 	const conductores = generarListaConductores(proyecto, d.ruteo);
 	const errores = d.hallazgos.filter((h) => h.severidad === 'error');
@@ -158,8 +162,9 @@ ${tabla(['Designación', 'Descripción', 'Posición'],
 ${tabla(['Maestro', 'Posición', 'Contacto', 'Tipo', 'Posición'], filasXref)}`);
 
 	secciones.push(`<h2>5. Lista de conductores</h2>
-${tabla(['Número', 'De', 'A', 'Sección', 'Color', 'Longitud (mm)'],
-		conductores.map((f) => [f.numero, f.de, f.a, f.seccion, f.color, f.longitudMm]))}`);
+${tabla(['Número', 'De', 'A', 'Sección', 'Color', 'Longitud (mm)', 'Estado físico'],
+		conductores.map((f) => [f.numero, f.de, f.a, f.seccion, f.color, f.longitudMm,
+			f.pendienteRuta ? 'Ruta física pendiente' : f.longitudMm === undefined ? 'Sin longitud calculada' : 'Con ruta']))}`);
 
 	for (const plan of d.planesBorneros) {
 		secciones.push(`<h3>Plan de bornero ${esc(plan.designacion)}</h3>
@@ -200,5 +205,13 @@ ${sync.sincronizado ? '' : tabla(['Problema', 'Dispositivos'], [
 </style>
 <h1>${esc(proyecto.nombre)} — Dossier técnico</h1>
 <p>Generado por TableroStudio. Hojas: ${proyecto.hojas.length}. Dispositivos: ${proyecto.dispositivos.length}. Conductores: ${proyecto.conductores.length}.</p>
+<dl><dt>Estado documental</dt><dd>${esc(identidad.estado)}</dd>
+<dt>Project ID</dt><dd>${esc(identidad.projectId)}</dd>
+<dt>Revisión del repositorio</dt><dd>${esc(identidad.revisionRepositorio)}</dd>
+<dt>Revisión editorial</dt><dd>${esc(proyecto.datos?.revision ?? 'No declarada')}</dd>
+<dt>Fecha editorial</dt><dd>${esc(proyecto.datos?.fecha ?? 'No declarada')}</dd>
+<dt>Generado</dt><dd>${esc(identidad.generadoEn)}</dd>
+<dt>Build ID</dt><dd>${esc(identidad.buildId)}</dd>
+<dt>Alcance y límites</dt><dd>Informe HTML de revisión eléctrica, materiales y conexiones del proyecto visible. No constituye certificación ni aprobación de fabricación.</dd></dl>
 ${secciones.join('\n')}`;
 }

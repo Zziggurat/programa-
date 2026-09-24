@@ -15,6 +15,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 import { Proyecto } from '../src/modelo/tipos.js';
+import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { revisarTablero } from '../src/motores/revision.js';
 import { fondoDe } from '../src/motores/ficha-tablero.js';
@@ -23,6 +24,7 @@ import { longitudesDibujadasMm } from './escena3d.js';
 import { declarado, opcionesDe } from '../src/modelo/proyecto.js';
 import { CONTROLADORES } from './controladores.js';
 import { descargar } from './dialogos.js';
+import { textoDeUnaLinea } from './pdf-texto.js';
 import {
 	BloqueDossier, EstiloTrozo, aWinAnsi, bloquesEn, colorDossier, repartirEnLineas, saleSeccion,
 	seccionesOrdenadas, tintaSobre,
@@ -176,7 +178,10 @@ function reordenarPaginas(doc: jsPDF, orden: number[]): void {
  * Separado de `exportarPDF()` para que la vista previa pueda enseñarlo antes de que nadie lo
  * guarde: el documento que se ve es exactamente el que se descarga, porque es el mismo.
  */
-export function construirDossier(proyecto: Proyecto): jsPDF {
+export function construirDossier(proyectoOriginal: Proyecto, procedencia?: ProcedenciaDocumento): jsPDF {
+	// La numeración del documento es una derivación de presentación: jamás altera los bytes del
+	// proyecto que confirmó el repositorio ni la instancia que sigue abierta en el editor.
+	const proyecto = structuredClone(proyectoOriginal);
 	// Recalcular todo para que el PDF refleje el estado actual del tablero. Sale de UNA sola
 	// revisión y con las MISMAS longitudes de cable que usa la pantalla: cuando cada uno hacía su
 	// propia cadena, el papel medía los hilos por el ruteo teórico de las canaletas y la pantalla
@@ -191,6 +196,7 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	const conductores = revision.listaConductores;
 	const planes = revision.planesBorneros;
 	const datos = proyecto.datos ?? {};
+	const identidad = resumenProcedenciaDocumento(procedencia);
 	const opciones = opcionesDe(proyecto);
 
 	// Papel y color los pone quien firma: en Chile lo corriente es Carta, y el azul del programa no
@@ -207,7 +213,8 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	const LIMITE = altoPag - 15;
 	const PIE_Y = altoPag - 7;
 	const empresa = ajustes?.empresa ?? {};
-	const fecha = new Date().toLocaleDateString('es-CL', { year: 'numeric', month: 'long', day: 'numeric' });
+	doc.setProperties({ title: `${proyecto.nombre} — dossier técnico`,
+		creator: `TableroStudio · ${identidad.buildId}`, subject: identidad.estado });
 
 	/*
 	 * TODO lo que se escriba en este documento pasa antes por `aWinAnsi`.
@@ -453,10 +460,11 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 	doc.setFontSize(9);
 	const pie = [
 		datos.proyectista ? `Proyectista: ${datos.proyectista}` : '',
-		datos.revision ? `Revisión ${datos.revision}` : '',
-		datos.fecha || fecha,
+		datos.revision ? `Rev. editorial ${datos.revision}` : '',
+		`Generado ${identidad.generadoEn.slice(0, 10)}`,
+		identidad.estado,
 	].filter(Boolean).join('  ·  ');
-	doc.text(pie, 20, lineaCliente ? 59 : 54);
+	textoDeUnaLinea(doc, pie, 20, lineaCliente ? 59 : 54, anchoPag - 40, 8);
 
 	// Quién entrega el documento, justo bajo la banda: es la primera pregunta de quien lo recibe.
 	doc.setTextColor(0);
@@ -560,6 +568,17 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 		12, y, { maxWidth: anchoPag - 24 },
 	);
 	y += 18;
+	tabla(['Identidad documental', 'Dato'], [
+		['Estado', identidad.estado],
+		['Project ID', identidad.projectId],
+		['Revisión del repositorio', identidad.revisionRepositorio],
+		['Revisión editorial', datos.revision ?? 'No declarada'],
+		['Fecha editorial', datos.fecha ?? 'No declarada'],
+		['Generado', identidad.generadoEn],
+		['Build ID', identidad.buildId],
+		['Derivación de presentación', 'Numeración de aparatos y conductores recalculada al generar el PDF; el proyecto confirmado no se modifica.'],
+		['Alcance y límites', 'Dossier del proyecto visible; no constituye certificación ni aprobación de fabricación.'],
+	], { 0: 55 });
 
 	const faltantes: [string, string][] = [];
 	const anotar = (campo: string, falta: boolean, consecuencia: string): void => {
@@ -608,10 +627,11 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 
 	// Y lo que sí está declarado, con su procedencia, para que se lea de un vistazo.
 	const declarados: [string, string][] = [
-		['Aparatos y conexiones', `${ficha.aparatos.total} aparatos y ${ficha.conductores.total} conexiones dibujadas`],
+		['Aparatos y conexiones', `${ficha.aparatos.total} aparatos y ${ficha.conductores.total} conexiones eléctricas`
+			+ (ficha.conductores.pendientesRuta ? `; ${ficha.conductores.pendientesRuta} con ruta física pendiente` : '')],
 		['Medidas de la placa', ficha.placa ? `${mm(ficha.placa.ancho)} × ${mm(ficha.placa.alto)}, del propio tablero` : 'sin gabinete definido'],
-		['Longitudes de cable', `${metros(ficha.conductores.longitudTotalMm)}, del ruteo real por canaleta con `
-			+ `${Math.round(opciones.reservaCable * 100)} % de reserva`],
+		['Longitudes de cable con ruta', `${metros(ficha.conductores.longitudTotalMm)}, del ruteo físico disponible con `
+			+ `${Math.round(opciones.reservaCable * 100)} % de reserva; excluye conexiones sin ruta física`],
 		['Verificación eléctrica', errores
 			? `${errores} error(es) y ${avisos} aviso(s) — ver el apartado de verificación`
 			: `sin errores${avisos ? `, ${avisos} aviso(s)` : ''}`],
@@ -656,8 +676,9 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 		['Llenado máximo de canaleta', ficha.canaletas.cantidad ? `${ficha.canaletas.llenadoMaxPct} % del máximo admisible` : '—'],
 		['Aparatos en la placa', String(ficha.aparatos.enPlaca)],
 		['Aparatos de campo (fuera del tablero)', String(ficha.aparatos.deCampo)],
-		['Conductores', String(ficha.conductores.total)],
-		['Longitud total de cable', metros(ficha.conductores.longitudTotalMm)],
+		['Conexiones eléctricas', String(ficha.conductores.total)],
+		['Conexiones sin ruta física', String(ficha.conductores.pendientesRuta)],
+		['Longitud de cable con ruta', metros(ficha.conductores.longitudTotalMm)],
 		['Tensiones de trabajo', ficha.tensiones.length ? ficha.tensiones.map((v) => `${v} V`).join(' · ') : '—'],
 		['Fondo libre tras el aparato más profundo', ficha.holguraFondoMm !== undefined ? mm(ficha.holguraFondoMm) : '—'],
 		['Referencias de material distintas', String(bom.length)],
@@ -849,16 +870,16 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 
 	/* --------------------- 5. Lista de conductores --------------------- */
 	doc.addPage();
-	cabecera('5. Lista de conductores');
+		cabecera('5. Lista de conexiones y conductores');
 	marcar('conductores');
 	if (conductores.length === 0) {
 		doc.setFontSize(10);
 		doc.text('El proyecto no tiene conductores.', 12, y);
 	} else {
-		tabla(['Nº', 'Desde', 'Hacia', 'Sección', 'Color', 'Longitud'],
-			conductores.map((c) => [c.numero, c.de, c.a, c.seccion || '—', c.color || '—',
-				c.longitudMm ? metros(c.longitudMm) : '—']),
-			{ 0: 14, 3: 20, 5: 22 });
+			tabla(['Nº', 'Desde', 'Hacia', 'Sección', 'Color', 'Estado físico / longitud'],
+				conductores.map((c) => [c.numero, c.de, c.a, c.seccion || '—', c.color || '—',
+					c.pendienteRuta ? 'Ruta física pendiente' : c.longitudMm ? metros(c.longitudMm) : 'Sin longitud calculada']),
+				{ 0: 14, 3: 20, 5: 30 });
 	}
 
 	/* --------------------- 6. Referencias cruzadas --------------------- */
@@ -1146,20 +1167,22 @@ export function construirDossier(proyecto: Proyecto): jsPDF {
 		doc.setTextColor(...GRIS);
 		doc.text(`Página ${i} de ${paginas}`, anchoPag - 12, PIE_Y, { align: 'right' });
 		// Al pie, quién firma delante del proyecto: una hoja suelta tiene que decir de quién es.
-		doc.text([empresa.nombre, `${proyecto.nombre} — dossier técnico`].filter(Boolean).join(' · '),
-			12, PIE_Y, { maxWidth: anchoPag - 50 });
+		const idPie = procedencia?.estado === 'confirmado'
+			? `${procedencia.projectId} r${procedencia.revisionRepositorio}` : identidad.estado;
+		textoDeUnaLinea(doc, [empresa.nombre, `${proyecto.nombre} — dossier técnico`, idPie,
+			`Build ${identidad.buildId}`].filter(Boolean).join(' · '), 12, PIE_Y, anchoPag - 70, 7);
 	}
 
 	return doc;
 }
 
 /** El dossier como PDF listo para enseñar en la vista previa. */
-export function dossierComoBlob(proyecto: Proyecto): Blob {
-	return construirDossier(proyecto).output('blob') as Blob;
+export function dossierComoBlob(proyecto: Proyecto, procedencia?: ProcedenciaDocumento): Blob {
+	return construirDossier(proyecto, procedencia).output('blob') as Blob;
 }
 
-export function exportarPDF(proyecto: Proyecto): void {
+export function exportarPDF(proyecto: Proyecto, procedencia?: ProcedenciaDocumento): void {
 	// Se descarga con el mismo camino que todo lo demás, y no con `doc.save()`, para que el nombre
 	// pase por la limpieza: un acento en el título dejaba el PDF guardado como «download».
-	descargar(`${proyecto.nombre} - dossier.pdf`, dossierComoBlob(proyecto));
+	descargar(`${proyecto.nombre} - dossier.pdf`, dossierComoBlob(proyecto, procedencia));
 }

@@ -7,6 +7,7 @@
  */
 import { jsPDF } from 'jspdf';
 import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
+import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import { descargar } from './dialogos.js';
 import { textoDeUnaLinea } from './pdf-texto.js';
 
@@ -60,7 +61,16 @@ export interface DatosCajetin {
 }
 
 /** Cajetín con los datos que hacen seguible un plano en obra (mismo diseño que en pantalla). */
-function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number, d: DatosCajetin = {}): void {
+function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number,
+	d: DatosCajetin = {}, procedencia?: ProcedenciaDocumento): void {
+	const identidad = resumenProcedenciaDocumento(procedencia);
+	// La franja superior libre lleva la identidad de entrega; el cajetín conserva datos editoriales.
+	doc.setFont('helvetica', 'normal');
+	doc.setTextColor(...SUAVE);
+	textoDeUnaLinea(doc, `${identidad.estado} · Project ID ${identidad.projectId} · Revisión repositorio ${identidad.revisionRepositorio}`,
+		MARGEN.izq, 5, hoja.anchoMm - MARGEN.izq - MARGEN.der, 6);
+	textoDeUnaLinea(doc, `Generado ${identidad.generadoEn} · Build ID ${identidad.buildId}`,
+		MARGEN.izq, 9.5, hoja.anchoMm - MARGEN.izq - MARGEN.der, 6);
 	const ancho = 180;
 	const alto = 26;
 	const x = hoja.anchoMm - MARGEN.der - ancho;
@@ -103,10 +113,10 @@ function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number, d: 
 	campo(x + 3, y + 12.4, 'CLIENTE', d.cliente ?? '', 88);
 	campo(col2 + 3, y + 12.4, 'OBRA', d.obra ?? '', 74);
 	campo(x + 3, y + 21, 'DIBUJÓ', d.proyectista ?? '', 88);
-	campo(col2 + 3, y + 21, 'FECHA', d.fecha ?? '', 74);
+	campo(col2 + 3, y + 21, 'FECHA ED.', d.fecha ?? '', 74);
 	doc.setFontSize(5.4);
 	doc.setTextColor(...SUAVE);
-	doc.text('REV.', col3 + 17, y + 15.5, { align: 'center' });
+	doc.text('REV. ED.', col3 + 17, y + 15.5, { align: 'center' });
 	doc.setFontSize(11);
 	doc.setFont('helvetica', 'bold');
 	doc.setTextColor(...TINTA);
@@ -122,9 +132,13 @@ function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number, d: 
 /** Genera el PDF con todas las hojas y lo descarga. */
 export async function exportarEsquemaPDF(
 	hojas: HojaEsq[], proyecto: string, archivo: string, datos: DatosCajetin = {},
+	procedencia?: ProcedenciaDocumento,
 ): Promise<void> {
 	if (hojas.length === 0) throw new Error('el esquema no tiene hojas');
 	const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [hojas[0].anchoMm, hojas[0].altoMm] });
+	const identidad = resumenProcedenciaDocumento(procedencia);
+	doc.setProperties({ title: `${proyecto} — esquema eléctrico`,
+		creator: `TableroStudio · ${identidad.buildId}`, subject: identidad.estado });
 
 	hojas.forEach((hoja, i) => {
 		if (i > 0) doc.addPage([hoja.anchoMm, hoja.altoMm], 'landscape');
@@ -163,7 +177,7 @@ export async function exportarEsquemaPDF(
 			doc.text(r.texto, r.p.x, r.p.y + (r.tipo === 'hilo' ? 0.6 : 0), { align: 'center' });
 		}
 
-		cajetin(doc, hoja, proyecto, hojas.length, datos);
+		cajetin(doc, hoja, proyecto, hojas.length, datos, procedencia);
 	});
 
 	descargar(archivo, doc.output('blob'));

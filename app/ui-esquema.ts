@@ -9,9 +9,11 @@
  * No importa nada de `main.ts`: lo que necesita del editor entra por `ContextoEsquema`.
  */
 import { Proyecto, RefBorne } from '../src/modelo/tipos.js';
+import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import { resolverComportamiento } from '../src/modelo/comportamiento.js';
 import { cerrarTodasLasVentanas } from './ventanas.js';
 import { ResultadoPotenciales } from '../src/motores/potenciales.js';
+import { calcularPotenciales } from '../src/motores/potenciales.js';
 import {
 	anchoColumna, FILAS_ESQ, filaDeAltura, HOJA_A3, HojaEsq, MARGEN, montarEsquema,
 } from '../src/motores/esquema.js';
@@ -46,6 +48,8 @@ export interface ContextoEsquema {
 	actualizarTodo: () => void;
 	/** Nombre base de archivo del proyecto, ya saneado. */
 	nombreArchivo: () => string;
+	/** ID y revisión solo después del guardado confirmado; los ejemplos quedan efímeros. */
+	obtenerProcedencia: () => Promise<ProcedenciaDocumento>;
 	/** Cierra la capa de Visualización: las dos capas no pueden convivir. */
 	cerrarVisualizacion: () => void;
 }
@@ -759,9 +763,14 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		btn.disabled = true;
 		const antes = btn.textContent;
 		btn.textContent = 'Generando…';
-		try {
-			await exportarEsquemaPDF(hojasEsquema, proyecto().nombre, `${nombreArchivo()}-esquema.pdf`, proyecto().datos ?? {});
-			avisar(`Esquema exportado (${hojasEsquema.length} hoja${hojasEsquema.length > 1 ? 's' : ''})`, 'ok');
+	try {
+			const firma = JSON.stringify(proyecto());
+			const copia = structuredClone(proyecto());
+			const procedencia = await ctx.obtenerProcedencia();
+			if (firma !== JSON.stringify(proyecto())) throw new Error('El proyecto cambió mientras se preparaba el esquema. Vuelve a exportarlo.');
+			const hojas = montarEsquema(copia, calcularPotenciales(copia));
+			await exportarEsquemaPDF(hojas, copia.nombre, `${nombreArchivo()}-esquema.pdf`, copia.datos ?? {}, procedencia);
+			avisar(`Esquema exportado (${hojas.length} hoja${hojas.length > 1 ? 's' : ''})`, 'ok');
 		} catch (e) {
 			avisar(`No se pudo exportar el esquema: ${(e as Error).message}`, 'error');
 		} finally {

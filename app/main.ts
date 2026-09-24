@@ -31,6 +31,7 @@ import { abrirVentana, cerrarVentana, cerrarVentanaDeArriba } from './ventanas.j
 import { aplicarPlantilla, numerarDispositivos } from '../src/motores/numeracion.js';
 import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
+import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
@@ -98,9 +99,11 @@ import { abrirAdopcionComponente } from './ui-adopcion-componente.js';
 import type { PreparacionAdopcionComponente } from '../src/componentes/adopcion.js';
 import type { RepositorioProyectos } from '../src/persistencia/tipos.js';
 import type { RevisionTecnica } from '../src/datos-tecnicos/tipos.js';
+import { jsonCanonico } from '../src/datos-tecnicos/hash.js';
 
 /** Bandera que inyecta el empaquetador: true solo en el build para las pruebas (QA=1). */
 declare const __QA__: boolean;
+declare const __VERSION__: string;
 
 type Modo = 'editor' | 'trabajo';
 let modo: Modo = 'editor';
@@ -274,6 +277,29 @@ function terminarBloqueoDePersistencia(): void {
 let usarFallbackLegacy = false;
 /** Congelado = hay algo guardado que no se ha podido leer y que NO se puede pisar todavía. */
 let guardadoCongelado = !!cargaInicial.problema?.crudo;
+
+/** La revisión del repositorio solo se publica después del guardado confirmado. */
+async function obtenerProcedenciaDocumental(): Promise<ProcedenciaDocumento> {
+	await persistenciaLista;
+	const buildId = (window as Window & { __TABLEROSTUDIO_BUILD_ID__?: string }).__TABLEROSTUDIO_BUILD_ID__
+		?? `DEV-${__VERSION__}`;
+	const base = () => ({ buildId, generadoEn: new Date().toISOString() });
+	if (proyecto.esEjemplo || gestorDocumentos?.estaMostrandoEjemplo()) {
+		return { estado: 'efimero', motivo: 'ejemplo', ...base() };
+	}
+	if (!gestorDocumentos) return { estado: 'efimero', motivo: 'sin-repositorio', ...base() };
+	const idAntes = gestorDocumentos.documentoActivo()?.id;
+	const contenidoAntes = jsonCanonico(proyectoParaPersistir(proyecto));
+	await gestorDocumentos.flush();
+	const documento = gestorDocumentos.documentoActivo();
+	if (!documento || documento.id !== idAntes || gestorDocumentos.estaMostrandoEjemplo()
+		|| jsonCanonico(proyectoParaPersistir(proyecto)) !== contenidoAntes
+		|| jsonCanonico(documento.proyecto) !== contenidoAntes) {
+		throw new Error('El proyecto cambió mientras se preparaba el documento. Vuelve a exportarlo.');
+	}
+	return { estado: 'confirmado', projectId: documento.id,
+		revisionRepositorio: documento.revision, ...base() };
+}
 
 /**
  * Todo lo que el programa sabe del tablero que hay en pantalla. Lo calcula `revisarTablero()`, que
@@ -7335,11 +7361,16 @@ async function importarArchivoProyecto(archivo: File): Promise<void> {
 	entrada.value = '';
 };
 
-($('btn-dossier') as HTMLButtonElement).onclick = () => {
+($('btn-dossier') as HTMLButtonElement).onclick = () => { void (async () => {
 	// El informe sale de la MISMA revisión que se ve en pantalla: antes recalculaba los potenciales
 	// por su cuenta y podía contar una historia distinta de la del panel.
-	descargar(`${proyecto.nombre} - dossier.html`, generarInformeHTML(revision), 'text/html');
-};
+	const firma = JSON.stringify(proyectoParaPersistir(proyecto));
+	const procedencia = await obtenerProcedenciaDocumental();
+	if (firma !== JSON.stringify(proyectoParaPersistir(proyecto))) {
+		throw new Error('El proyecto cambió mientras se preparaba el dossier. Vuelve a exportarlo.');
+	}
+	descargar(`${proyecto.nombre} - dossier.html`, generarInformeHTML(revision, procedencia), 'text/html');
+})().catch((error) => avisar(`No se pudo exportar el dossier HTML: ${nombreDeError(error)}`, 'error')); };
 
 /**
  * El cuadro donde se escribe el PROGRAMA de un controlador.
@@ -7422,6 +7453,7 @@ const panelDossier = instalarDossier({
 	marcarSucio,
 	capturar,
 	fotoDelTablero,
+	obtenerProcedencia: obtenerProcedenciaDocumental,
 });
 ($('btn-pdf') as HTMLButtonElement).onclick = () => panelDossier.abrir(true);
 
@@ -7825,6 +7857,7 @@ const panelEsq = instalarEsquema({
 	marcarSucio,
 	actualizarTodo,
 	nombreArchivo,
+	obtenerProcedencia: obtenerProcedenciaDocumental,
 	cerrarVisualizacion: () => { if (visualizacion) aplicarVisualizacion(false); },
 });
 
