@@ -416,7 +416,16 @@ try {
 	if (focal && controlFocal) {
 		// En Editor los cables son deliberadamente no seleccionables. El rail visible
 		// activa Trabajo mediante Cablear; las pastillas antiguas de modo están ocultas.
-		await pagina.locator('#hta-conectar').click({ timeout: 10_000 });
+		// Un clic humano no necesita la espera implícita de navegación de locator.click:
+		// el cambio de modo recompone la escena R1 y esa espera puede agotarse después
+		// de que el botón ya recibió el gesto. La precondición se comprueba explícitamente.
+		const botonCablear = pagina.locator('#hta-conectar');
+		await botonCablear.waitFor({ state: 'visible', timeout: 10_000 });
+		if (!await botonCablear.isEnabled()) throw new Error('Cablear no está habilitado');
+		const cajaCablear = await botonCablear.boundingBox();
+		if (!cajaCablear) throw new Error('Cablear no tiene área visible para el clic humano');
+		await pagina.mouse.click(cajaCablear.x + cajaCablear.width / 2,
+			cajaCablear.y + cajaCablear.height / 2);
 		await pagina.waitForFunction(() => document.body.classList.contains('modo-trabajo'),
 			null, { timeout: 10_000 });
 		const puntoCable = await pagina.evaluate(() => {
