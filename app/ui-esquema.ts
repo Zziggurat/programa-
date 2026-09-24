@@ -109,6 +109,26 @@ export function proponerConductorPendiente(
 	} };
 }
 
+/** Toma hoja y procedencia de la misma identidad, antes/después del flush asíncrono del repositorio. */
+export async function prepararHojaDocumental(
+	ctx: Pick<ContextoEsquema, 'proyecto' | 'nombreArchivo' | 'obtenerProcedencia'>,
+	indice: number,
+) {
+	const actual = ctx.proyecto();
+	const firma = JSON.stringify(actual);
+	const copia = structuredClone(actual);
+	const base = ctx.nombreArchivo();
+	const procedencia = await ctx.obtenerProcedencia();
+	if (ctx.proyecto() !== actual || JSON.stringify(ctx.proyecto()) !== firma) {
+		throw new Error('El proyecto cambió mientras se preparaba el esquema. Vuelve a exportarlo.');
+	}
+	const hojas = montarEsquema(copia, calcularPotenciales(copia));
+	const hoja = hojas[Math.min(indice, hojas.length - 1)];
+	if (!hoja) throw new Error('Todavía no hay esquema que exportar.');
+	return { hoja, copia, base, procedencia, totalHojas: hojas.length,
+		rutasPendientes: copia.conductores.filter((c) => c.estadoRutaFisica === 'pendiente').length };
+}
+
 export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	const proyecto = ctx.proyecto;
 	const { capturar, marcarSucio, actualizarTodo, seleccionar, nombreArchivo } = ctx;
@@ -912,7 +932,6 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	};
 
 	/* ---------------------- Lo que sale de aquí: PDF, SVG y DXF ---------------------- */
-
 	($('esq-pdf') as HTMLButtonElement).onclick = async () => {
 		if (hojasEsquema.length === 0) { avisar('No hay esquema que exportar todavía.', 'info'); return; }
 		const btn = $('esq-pdf') as HTMLButtonElement;
@@ -920,12 +939,15 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const antes = btn.textContent;
 		btn.textContent = 'Generando…';
 	try {
-			const firma = JSON.stringify(proyecto());
-			const copia = structuredClone(proyecto());
+			const actual = proyecto();
+			const firma = JSON.stringify(actual);
+			const copia = structuredClone(actual);
 			const procedencia = await ctx.obtenerProcedencia();
-			if (firma !== JSON.stringify(proyecto())) throw new Error('El proyecto cambió mientras se preparaba el esquema. Vuelve a exportarlo.');
+			if (proyecto() !== actual || firma !== JSON.stringify(proyecto()))
+				throw new Error('El proyecto cambió mientras se preparaba el esquema. Vuelve a exportarlo.');
 			const hojas = montarEsquema(copia, calcularPotenciales(copia));
-			await exportarEsquemaPDF(hojas, copia.nombre, `${nombreArchivo()}-esquema.pdf`, copia.datos ?? {}, procedencia);
+			await exportarEsquemaPDF(hojas, copia.nombre, `${nombreArchivo()}-esquema.pdf`, copia.datos ?? {},
+				procedencia, copia.conductores.filter((c) => c.estadoRutaFisica === 'pendiente').length);
 			avisar(`Esquema exportado (${hojas.length} hoja${hojas.length > 1 ? 's' : ''})`, 'ok');
 		} catch (e) {
 			avisar(`No se pudo exportar el esquema: ${(e as Error).message}`, 'error');
@@ -935,21 +957,24 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		}
 	};
 
-	($('esq-svg') as HTMLButtonElement).onclick = () => {
-		const hoja = hojasEsquema[hojaActual];
-		if (!hoja) { avisar('No hay ninguna hoja que descargar.', 'info'); return; }
-		// Se descarga en tinta negra sobre papel blanco: es lo que se imprime y se archiva.
-		descargar(
-			`${nombreArchivo()}-esquema-${hoja.numero}.svg`,
-			hojaASvg(hoja, { proyecto: proyecto().nombre, datos: proyecto().datos, totalHojas: hojasEsquema.length }),
-			'image/svg+xml',
-		);
-		avisar(`Hoja ${hoja.numero} descargada en SVG`, 'ok');
+	($('esq-svg') as HTMLButtonElement).onclick = async () => {
+		const btn = $('esq-svg') as HTMLButtonElement;
+		btn.disabled = true;
+		try {
+			const { hoja, copia, base, procedencia, totalHojas, rutasPendientes } = await prepararHojaDocumental(ctx, hojaActual);
+			// SVG vectorial de la copia ya confirmada, nunca de las hojas montadas antes del flush.
+			descargar(`${base}-esquema-${hoja.numero}.svg`, hojaASvg(hoja, {
+				proyecto: copia.nombre, datos: copia.datos, totalHojas, procedencia, rutasPendientes,
+			}), 'image/svg+xml');
+			avisar(`Hoja ${hoja.numero} descargada en SVG`, 'ok');
+		} catch (e) {
+			avisar(`No se pudo exportar el SVG: ${(e as Error).message}`, 'error');
+		} finally { btn.disabled = false; }
 	};
 
-	($('btn-dxf-esquema') as HTMLButtonElement).onclick = () => {
+	($('btn-dxf-esquema') as HTMLButtonElement).onclick = async () => {
 		/*
-		 * SIEMPRE DESDE EL PROYECTO DE AHORA, no desde lo que quedó montado.
+		 * SIEMPRE DESDE LA COPIA CONFIRMADA, no desde lo que quedó montado.
 		 *
 		 * Segunda auditoría, TS2-P2-02. Ponía `hojasEsquema.length ? hojasEsquema : montar…`, o
 		 * sea: si el esquema se había abierto ALGUNA VEZ se reutilizaban aquellas hojas, aunque
@@ -960,11 +985,17 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		 * Montarlo cuesta un instante y el usuario acaba de pedir un archivo: el precio de
 		 * hacerlo siempre es nada, y el de no hacerlo es entregar un plano que no es el tablero.
 		 */
-		const hojas = montarEsquema(proyecto(), ctx.potenciales());
-		const hoja = hojas[Math.min(hojaActual, hojas.length - 1)];
-		if (!hoja) { avisar('Todavía no hay esquema que exportar.', 'info'); return; }
-		descargar(`${nombreArchivo()}-esquema-${hoja.numero}.dxf`, dxfDeEsquema(hoja), 'image/vnd.dxf');
-		avisar(`Hoja ${hoja.numero} del esquema exportada a DXF`, 'ok');
+		const btn = $('btn-dxf-esquema') as HTMLButtonElement;
+		btn.disabled = true;
+		try {
+			const { hoja, copia, base, procedencia, totalHojas, rutasPendientes } = await prepararHojaDocumental(ctx, hojaActual);
+			descargar(`${base}-esquema-${hoja.numero}.dxf`, dxfDeEsquema(hoja, {
+				proyecto: copia.nombre, datos: copia.datos, totalHojas, procedencia, rutasPendientes,
+			}), 'image/vnd.dxf');
+			avisar(`Hoja ${hoja.numero} del esquema exportada a DXF`, 'ok');
+		} catch (e) {
+			avisar(`No se pudo exportar el DXF: ${(e as Error).message}`, 'error');
+		} finally { btn.disabled = false; }
 	};
 
 	return {

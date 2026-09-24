@@ -78,13 +78,14 @@ export function instalarDossier(ctx: ContextoDossier): { abrir: (abrir: boolean)
 			vistaPrevia = undefined;
 			try {
 				const { dossierComoBlob } = await import('./pdf.js');
-				const firma = JSON.stringify(proyecto());
-				const copia = structuredClone(proyecto());
+				const actual = proyecto();
+				const firma = JSON.stringify(actual);
+				const copia = structuredClone(actual);
 				const procedencia = await ctx.obtenerProcedencia();
-				if (firma !== JSON.stringify(proyecto())) throw new Error('El proyecto cambió durante el guardado. Actualiza la vista previa.');
+				if (proyecto() !== actual || firma !== JSON.stringify(proyecto())) throw new Error('El proyecto cambió durante el guardado. Actualiza la vista previa.');
 				// Un respiro para que el navegador pinte el «Generando…» antes de bloquearse con el PDF.
 				await new Promise((r) => setTimeout(r, 0));
-				if (firma !== JSON.stringify(proyecto())) throw new Error('El proyecto cambió durante la generación. Actualiza la vista previa.');
+				if (proyecto() !== actual || firma !== JSON.stringify(proyecto())) throw new Error('El proyecto cambió durante la generación. Actualiza la vista previa.');
 				if (($('panel-dossier') as HTMLElement).hidden) return undefined;
 				const blob = dossierComoBlob(copia, procedencia);
 				const preparada = { blob, nombre: copia.nombre, firma, procedencia };

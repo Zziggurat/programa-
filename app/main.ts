@@ -302,6 +302,18 @@ async function obtenerProcedenciaDocumental(): Promise<ProcedenciaDocumento> {
 		revisionRepositorio: documento.revision, ...base() };
 }
 
+/** Congela el contenido antes de confirmar la revisión; nunca mezcla dos estados en un entregable. */
+async function copiaParaEntregable(): Promise<{ copia: Proyecto; procedencia: ProcedenciaDocumento }> {
+	const actual = proyecto;
+	const firma = JSON.stringify(proyecto);
+	const copia = structuredClone(proyecto);
+	const procedencia = await obtenerProcedenciaDocumental();
+	if (proyecto !== actual || firma !== JSON.stringify(proyecto)) {
+		throw new Error('El proyecto cambió mientras se preparaba el documento. Vuelve a exportarlo.');
+	}
+	return { copia, procedencia };
+}
+
 /**
  * Todo lo que el programa sabe del tablero que hay en pantalla. Lo calcula `revisarTablero()`, que
  * es el único sitio que conoce el orden en que se encadenan los motores: aquí solo se guarda el
@@ -7462,6 +7474,7 @@ const panelDossier = instalarDossier({
 
 panelIngenieria = instalarIngenieria({
 	proyecto: () => proyecto,
+	obtenerProcedencia: obtenerProcedenciaDocumental,
 	identidadActual: () => gestorDocumentos?.estaMostrandoEjemplo() ? 'EJEMPLO' : gestorDocumentos?.documentoActivo()?.id ?? 'SIN_REPOSITORIO',
 	prepararAplicacion: prepararAplicacionTecnica,
 	revisionesTecnicas: () => listarRevisionesTecnicas(),
@@ -8089,23 +8102,26 @@ function renumerar(d: Dispositivo): Dispositivo {
 
 /* ------------------------ Entregables: rótulos y DXF ------------------------ */
 
-($('btn-etiquetas') as HTMLButtonElement).onclick = () => {
+($('btn-etiquetas') as HTMLButtonElement).onclick = () => { void (async () => {
 	try {
-		exportarEtiquetasPDF(proyecto, revision.potenciales, `${nombreArchivo()}-rotulos.pdf`);
+		const { copia, procedencia } = await copiaParaEntregable();
+		exportarEtiquetasPDF(copia, revisarTablero(copia).potenciales,
+			`${nombreArchivo()}-rotulos.pdf`, procedencia);
 		avisar('Rótulos exportados — imprímelos al 100 %, sin ajustar a la página', 'ok');
 	} catch (e) {
 		avisar(`No se pudieron generar los rótulos: ${(e as Error).message}`, 'error');
 	}
-};
+})(); };
 
-($('btn-dxf-placa') as HTMLButtonElement).onclick = () => {
+($('btn-dxf-placa') as HTMLButtonElement).onclick = () => { void (async () => {
 	try {
-		descargar(`${nombreArchivo()}-placa.dxf`, dxfDePlaca(proyecto), 'image/vnd.dxf');
+		const { copia, procedencia } = await copiaParaEntregable();
+		descargar(`${nombreArchivo()}-placa.dxf`, dxfDePlaca(copia, procedencia), 'image/vnd.dxf');
 		avisar('Placa de montaje exportada a DXF', 'ok');
 	} catch (e) {
 		avisar(`No se pudo exportar el DXF: ${(e as Error).message}`, 'error');
 	}
-};
+})(); };
 
 /**
  * Menús desplegables de la barra. Agrupar en menús es lo que permite que los botones
@@ -8392,6 +8408,11 @@ function guardarDatosProyecto(): void {
 	const ambiente = numero('pr-ambiente', 'Temperatura ambiente', -40, 80, ' °C');
 	const inominal = numero('pr-inominal', 'Corriente asignada', 0, 10000, ' A');
 	const frecuencia = numero('pr-frecuencia', 'Frecuencia', 0, 400, ' Hz');
+	const ipCrudo = ($('pr-ip') as HTMLInputElement).value.trim();
+	const gradoIP = ipCrudo ? ipCrudo.toUpperCase() : undefined;
+	if (gradoIP && !/^IP[0-6][0-9K]$/.test(gradoIP)) {
+		malos.push({ id: 'pr-ip', nombre: 'Grado IP', motivo: `«${ipCrudo}» debe tener la forma IPxy` });
+	}
 	if (malos.length) {
 		for (const m of malos) ($(m.id) as HTMLInputElement).setAttribute('aria-invalid', 'true');
 		($(malos[0].id) as HTMLInputElement).focus();
@@ -8400,7 +8421,7 @@ function guardarDatosProyecto(): void {
 		return;   // la ventana se queda abierta y el proyecto, intacto
 	}
 	if (!capturar()) return;
-	proyecto.datos = {
+	const datos: NonNullable<Proyecto['datos']> = {
 		cliente: texto('pr-cliente'),
 		obra: texto('pr-obra'),
 		proyectista: texto('pr-proyectista'),
@@ -8409,6 +8430,9 @@ function guardarDatosProyecto(): void {
 		fabricante: texto('pr-fabricante'),
 		notas: ($('pr-notas') as HTMLTextAreaElement).value.trim() || undefined,
 	};
+	// El cargador representa una ficha totalmente vacía como ausencia. Conservar aquí
+	// `datos: {}` haría que la copia visible y la revisión confirmada fueran distintas.
+	proyecto.datos = Object.values(datos).some((valor) => valor !== undefined) ? datos : undefined;
 	// Lo que se deja en blanco queda SIN DECLARAR (undefined), no relleno con el valor por
 	// defecto: es lo que permite que el dossier distinga «lo decidió el proyectista» de «lo
 	// supuso el programa», y que la placa de características diga «a declarar» donde toca.
@@ -8421,7 +8445,7 @@ function guardarDatosProyecto(): void {
 		temperaturaAmbienteC: ambiente,
 		corrienteAsignadaA: inominal ?? 0,
 		frecuenciaHz: frecuencia,
-		gradoIP: ($('pr-ip') as HTMLInputElement).value.trim(),
+		gradoIP,
 		montajeGabinete: montaje ? (montaje as OpcionesProyecto['montajeGabinete']) : undefined,
 		regimenNeutro: ($('pr-neutro') as HTMLSelectElement).value as OpcionesProyecto['regimenNeutro'],
 		usoPrevisto: ($('pr-uso') as HTMLSelectElement).value as OpcionesProyecto['usoPrevisto'],
