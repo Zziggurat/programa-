@@ -49,15 +49,17 @@ async function seleccionarInstancia() {
 	await pagina.locator('#lista-dispositivos li').filter({ hasText: NOMBRE }).first().click();
 }
 async function subirImagen(bytes, paso = 'bornes') {
-	const selector = paso === 'apariencia' ? '[data-cp="preview-apariencia"] img' : '[data-cp="preview"] img';
 	const entrada = paso === 'apariencia' ? '[data-cp="imagen-apariencia"]' : '[data-cp="imagen"]';
-	const previa = await pagina.locator(selector).getAttribute('src').catch(() => null);
+	// Apariencia ahora es canvas (PNG derivado); la URL de la fuente en Bornes permite esperar
+	// que la carga asíncrona cambie de verdad antes de comprobar ese lienzo.
+	const previa = await pagina.locator('[data-cp="preview"] img').getAttribute('src').catch(() => null);
 	const chooser = pagina.waitForEvent('filechooser');
 	await pagina.locator(entrada).click();
 	await (await chooser).setFiles({ name: 'piloto-adopcion.png', mimeType: 'image/png', buffer: bytes });
-	await pagina.locator(selector).waitFor({ state: 'visible' });
 	if (previa) await pagina.waitForFunction((antes) =>
-		document.querySelector(antes.selector)?.getAttribute('src') !== antes.src, { selector, src: previa });
+		document.querySelector('[data-cp="preview"] img')?.getAttribute('src') !== antes, previa);
+	await pagina.locator(paso === 'apariencia' ? '[data-cp="preview-apariencia"] canvas'
+		: '[data-cp="preview"] img').waitFor({ state: 'visible' });
 }
 
 try {

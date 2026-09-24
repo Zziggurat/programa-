@@ -94,10 +94,20 @@ try {
 		&& await pagina.locator('[data-cp-anclaje="0"] [data-cp-anclaje-campo="diametro"]').inputValue() === '3');
 	await pagina.locator('[data-cp="siguiente"]').click();
 	await comprobarPaso('apariencia');
-	await pagina.locator('[data-cp="preview-apariencia"] img').waitFor({ state: 'visible' });
-	comprobar('apariencia muestra la misma imagen seleccionada en Bornes',
-		(await pagina.locator('[data-cp="preview-apariencia"] img').getAttribute('src'))
-		=== (await pagina.locator('[data-cp="preview"] img').getAttribute('src')));
+	await pagina.locator('[data-cp="preview-apariencia"] canvas').waitFor({ state: 'visible' });
+	comprobar('apariencia dibuja la imagen seleccionada y mantiene las anclas u/v',
+		await pagina.evaluate(() => {
+			const panel = document.querySelector('#ui-componentes-personalizados');
+			const canvas = panel?.querySelector('[data-cp="preview-apariencia"] canvas');
+			const fuente = panel?.querySelector('[data-cp="preview"] img');
+			const anclas = (selector) => [...(panel?.querySelectorAll(selector) ?? [])]
+				.map((marca) => [marca.style.left, marca.style.top]);
+			if (!canvas || !fuente || !canvas.width || !canvas.height) return false;
+			const pixeles = canvas.getContext('2d')?.getImageData(0, 0, canvas.width, canvas.height).data;
+			return !!pixeles && pixeles.some((valor, indice) => indice % 4 === 3 && valor > 0)
+				&& JSON.stringify(anclas('[data-cp="preview"] .cp-marca'))
+					=== JSON.stringify(anclas('[data-cp="preview-apariencia"] .cp-marca'));
+		}));
 	comprobar('ficha técnica opcional no vinculada indica límite de autenticidad sin simular certificación',
 		/Sin ficha técnica vinculada/.test(await pasoVisible().innerText())
 		&& /hash prueba integridad, no autenticidad, licencia ni certificación/i.test(await pasoVisible().innerText()));
