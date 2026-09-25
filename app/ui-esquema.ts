@@ -20,6 +20,8 @@ import {
 import { aplicarMovimientoRepresentacion, previsualizarMovimientoRepresentacion,
 	type PlanMovimientoRepresentacion, type PosicionMovimientoRepresentacion,
 } from '../src/motores/mover-representacion-esquema.js';
+import { aplicarGiroRepresentacion, previsualizarGiroRepresentacion,
+} from '../src/motores/girar-representacion-esquema.js';
 import { aplicarAlineacionRepresentaciones, previsualizarAlineacionRepresentaciones,
 } from '../src/motores/alinear-representaciones-esquema.js';
 import {
@@ -197,10 +199,13 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				&& c.montaje !== 'puerta').length === 1;
 		const copiar = $('esq-copiar-vista') as HTMLButtonElement;
 		const pegar = $('esq-pegar-vista') as HTMLButtonElement;
+		const girar = $('esq-girar-vista') as HTMLButtonElement;
 		const estado = $('esq-copia-estado');
-		copiar.hidden = pegar.hidden = !explicito;
+		copiar.hidden = pegar.hidden = girar.hidden = !explicito;
 		copiar.disabled = !copiables || !!documento.esEjemplo;
 		pegar.disabled = !vistaCopiada || !!documento.esEjemplo;
+		girar.disabled = !seleccion || !!documento.esEjemplo;
+		girar.textContent = seleccion?.giro === 180 ? 'Restituir giro 0°' : 'Girar vista 180°';
 		estado.hidden = !explicito || !vistaCopiada;
 		estado.textContent = vistaCopiada ? `Copia preparada: ${vistaCopiada.vistaId} · sin cables` : '';
 	}
@@ -1860,6 +1865,22 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			hojaSeleccionadaId = nuevaVista.hojaId;
 		}
 		refrescarEsquema();
+	};
+	($('esq-girar-vista') as HTMLButtonElement).onclick = () => {
+		if (!esquemaAbierto || !ctx.puedeEditar() || !representacionSeleccionada) return;
+		const documento = proyecto();
+		const plan = previsualizarGiroRepresentacion(documento, representacionSeleccionada);
+		if (!plan.ok) { avisar(plan.motivo, 'error'); return; }
+		if (!capturar()) return;
+		if (!aplicarGiroRepresentacion(documento, plan)) {
+			ctx.descartarCapturaSiIgual();
+			avisar('La vista cambió antes del giro; vuelve a seleccionarla.', 'info');
+			return;
+		}
+		marcarSucio();
+		actualizarTodo();
+		refrescarEsquema();
+		avisar(`Vista ${plan.vistaId}: orientación ${plan.giroNuevo}°. El aparato 3D no cambió.`, 'ok');
 	};
 	($('esq-renumerar') as HTMLButtonElement).onclick = async () => {
 		if (!ctx.puedeEditar()) return;

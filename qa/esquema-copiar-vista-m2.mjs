@@ -108,19 +108,57 @@ try {
 		reabierto.dispositivos.some((d) => d.id === copia.id)
 		&& reabierto.esquema.representaciones.filter((r) => r.dispositivoId === copia.id).length === 1
 		&& JSON.stringify(reabierto.conductores) === JSON.stringify(antes.conductores));
+	await pagina.locator('#btn-esquema').click();
+	if (await pagina.locator('#esquema-hoja .simbolo[data-representacion="ps-vista"]').count() === 0)
+		await pagina.locator('#esq-anterior').click();
+	await pagina.locator('#esquema-hoja .simbolo[data-representacion="ps-vista"] rect[fill="transparent"]')
+		.click({ position: { x: 4, y: 4 } });
+	const pin = () => pagina.locator('#esquema-hoja .borne-esq[data-representacion="ps-vista"][data-borne="+24"] circle').first()
+		.evaluate((el) => ({ x: Number(el.getAttribute('cx')), y: Number(el.getAttribute('cy')) }));
+	const pin0 = await pin(), giroUndo = await historial();
+	await pagina.locator('#esq-girar-vista').click();
+	const pin180 = await pin();
+	comprobar('giro visible de 180° invierte el anclaje sin cambiar el circuito',
+		(await proyecto()).esquema.representaciones.find((r) => r.id === 'ps-vista')?.giro === 180
+		&& (pin180.x !== pin0.x || pin180.y !== pin0.y)
+		&& JSON.stringify((await proyecto()).conductores) === JSON.stringify(antes.conductores)
+		&& await historial() === giroUndo + 1);
+	await pagina.locator('#esq-ajustar').focus();
+	await pagina.keyboard.press('Control+z');
+	await pagina.waitForFunction(() => window.qa.proyecto().esquema.representaciones
+		.find((r) => r.id === 'ps-vista')?.giro === undefined);
+	comprobar('Undo del giro restaura pin y orientación histórica',
+		JSON.stringify(await pin()) === JSON.stringify(pin0) && await historial() === giroUndo);
+	await pagina.keyboard.press('Control+y');
+	await pagina.waitForFunction(() => window.qa.proyecto().esquema.representaciones
+		.find((r) => r.id === 'ps-vista')?.giro === 180);
+	comprobar('Redo del giro conserva la identidad eléctrica',
+		JSON.stringify(await pin()) === JSON.stringify(pin180)
+		&& JSON.stringify((await proyecto()).conductores) === JSON.stringify(antes.conductores));
+	await pagina.evaluate(() => window.qa.esperarPersistencia());
+	await pagina.reload({ waitUntil: 'domcontentloaded' });
+	await esperarEditorListo(pagina);
+	comprobar('giro persiste en el folio correcto al reabrir',
+		(await proyecto()).esquema.representaciones.find((r) => r.id === 'ps-vista')?.giro === 180);
 	comprobar('cero errores JavaScript', erroresJS.length === 0);
-	console.log(`ESQ-05 copiar aparato: ${casos}/${casos}, 0 JS; ${((Date.now() - inicio) / 1000).toFixed(1)} s`);
+	console.log(`ESQ-05: ${casos} comprobaciones terminadas; cerrando recursos`);
 } catch (error) {
 	console.error(error);
 	if (erroresJS.length) console.error('Errores JS:', erroresJS);
 	process.exitCode = 1;
 } finally {
-	try { await pagina?.close(); }
+	console.log('Limpieza QA: cerrando página');
+	try { await pagina?.close(); console.log('Limpieza QA: página cerrada'); }
 	catch (error) { console.error('No se cerró la página:', error); process.exitCode = 1; }
-	try { await navegador?.close(); }
+	console.log('Limpieza QA: cerrando Chromium');
+	try { await navegador?.close(); console.log('Limpieza QA: Chromium cerrado'); }
 	catch (error) { console.error('No se cerró Chromium:', error); process.exitCode = 1; }
+	console.log('Limpieza QA: cerrando servidor');
 	try {
 		servidor?.closeAllConnections?.();
 		if (servidor) await new Promise((resolve, reject) => servidor.close((error) => error ? reject(error) : resolve()));
+		console.log('Limpieza QA: servidor cerrado');
 	} catch (error) { console.error('No se cerró el servidor:', error); process.exitCode = 1; }
 }
+if (!process.exitCode) console.log(`ESQ-05 copiar y girar vista: ${casos}/${casos}, 0 JS; `
+	+ `${((Date.now() - inicio) / 1000).toFixed(1)} s incluyendo limpieza`);
