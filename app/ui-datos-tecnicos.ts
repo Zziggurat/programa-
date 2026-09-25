@@ -350,6 +350,10 @@ export function instalarUIDatosTecnicos(ctx: ContextoDatosTecnicos): PanelDatosT
             mensaje('Revisión publicada. Los vínculos existentes no cambiaron.');
         }
         if (a === 'vincular') {
+            // La biblioteca inicia un vínculo nuevo. El ID que conservaba otra vista (por
+            // ejemplo, un conductor de Instalación) no es una elección para este producto.
+            // Abrir un vínculo por ID desde el inspector sigue preservando y verificando ese ID.
+            entidadId = '';
             vista = 'vinculo';
             pintar();
         }

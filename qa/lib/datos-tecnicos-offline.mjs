@@ -23,7 +23,10 @@ export async function comprobarDatosTecnicosOffline(page, must, buildId) {
     must('V8 offline criterio versionado disponible', await m.locator('[data-dt-input="criterio"]').inputValue() !== '');
     await b('biblioteca').click();
     await m.locator('[data-dt-select]').filter({ hasText: 'Protección de prueba 25 A' }).filter({ hasText: /r2 · PRODUCTO/ }).click();
-    await b('vincular').click(); await m.locator('[data-dt-input="entidad"]').selectOption('q1');
+    await b('vincular').click();
+    const entidad = m.locator('[data-dt-input="entidad"]');
+    if (await entidad.count() !== 1) throw new Error(`V8 offline: falta el selector de entidad tras Vincular: ${await m.locator('.dt-cuerpo').innerText()}`);
+    await entidad.selectOption('q1');
     await b('preview-vinculo').click(); await b('aplicar-preview').waitFor();
     must('V8 offline revisión r2 se compara sin aplicar', /BASE todavía intacta/.test(await m.innerText()) && /0[,.]1 kA/.test(await m.innerText()));
     await b('cancelar-preview').click(); await b('biblioteca').click();
