@@ -77,7 +77,7 @@ async function seleccionarConductor(id) {
 }
 
 async function moverVista(id, columnas) {
-	const puntos = await page.locator(`[data-representacion="${id}"]`).evaluate((g, salto) => {
+	const puntos = await page.locator(`.simbolo[data-representacion="${id}"]`).evaluate((g, salto) => {
 		const rect = g.querySelector('rect[fill="transparent"]');
 		const matriz = g.ownerSVGElement?.getScreenCTM();
 		const svg = g.ownerSVGElement;
@@ -108,9 +108,9 @@ try {
 	await page.waitForFunction(() => window.qa.proyecto().nombre === 'QA vistas M2');
 	await page.locator('#btn-esquema').click();
 	assert.match(await page.locator('#esq-indicador').textContent(), /Hoja 1 \/ 2/);
-	assert.equal(await page.locator('[data-representacion="km1-polos"]').count(), 1);
-	assert.equal(await page.locator('[data-representacion="km1-bobina"]').count(), 0);
-	await page.locator('[data-representacion="km1-polos"]').click();
+	assert.equal(await page.locator('.simbolo[data-representacion="km1-polos"]').count(), 1);
+	assert.equal(await page.locator('.simbolo[data-representacion="km1-bobina"]').count(), 0);
+	await page.locator('.simbolo[data-representacion="km1-polos"]').click();
 	assert.match(await page.locator('#esq-ayuda').textContent(), /Vista km1-polos.*Referencias: bobina \/2\.3/);
 	assert.ok(await page.locator('#esq-borrar-representacion').isVisible());
 	assert.equal(await page.locator('.hilo[data-conductor="c-potencia"]').count(), 1);
@@ -121,7 +121,7 @@ try {
 	console.log('OK inspector de conductor existente conservado');
 
 	await page.locator('#esq-siguiente').click();
-	await page.locator('[data-representacion="km1-bobina"]').click();
+	await page.locator('.simbolo[data-representacion="km1-bobina"]').click();
 	assert.match(await page.locator('#esq-ayuda').textContent(), /Vista km1-bobina/);
 	await page.evaluate(() => { window.qa.proyecto().esEjemplo = true; });
 	await page.locator('#esq-borrar-representacion').click();
@@ -144,7 +144,7 @@ try {
 		.find((r) => r.id === 'km1-bobina')?.posicion.columna === 4);
 	console.log('OK arrastre de vista, persistencia en modelo y Ctrl+Z/Y');
 
-	await page.locator('[data-representacion="km1-aux"]').click();
+	await page.locator('.simbolo[data-representacion="km1-aux"]').click();
 	await page.locator('#esq-borrar-representacion').click();
 	assert.ok(await page.locator('#modal-dialogo').isVisible());
 	assert.match(await page.locator('#dialogo-msg').textContent(), /aparato y sus conductores seguirán/);
