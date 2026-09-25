@@ -38,6 +38,8 @@ export interface ContextoEsquema {
 	puedeEditar: () => boolean;
 	/** El editor central elimina el conductor real y gestiona historial, recálculo y guardado. */
 	desconectarConductor: (conductorId: string) => boolean;
+	/** Elimina el aparato eléctrico real, sus conexiones y vistas tras mostrar el alcance. */
+	eliminarDispositivo: (dispositivoId: string) => Promise<void>;
 	/** Crea una sola conexión eléctrica pendiente; el editor central conserva undo y persistencia. */
 	conectarPendiente: (de: RefBorne, a: RefBorne, proyectoEsperado: Proyecto) => string | undefined;
 	/**
@@ -248,6 +250,30 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				avisar(`Vista ${vista.id} borrada; ${d?.designacion ?? vista.dispositivoId} permanece en el proyecto.`, 'ok');
 			};
 			ayuda.append(detalle, document.createTextNode(' · '), boton);
+			if (d) {
+				const borrarAparato = document.createElement('button');
+				borrarAparato.id = 'esq-eliminar-dispositivo';
+				borrarAparato.className = 'boton peligro';
+				borrarAparato.type = 'button';
+				borrarAparato.textContent = 'Eliminar aparato…';
+				borrarAparato.setAttribute('aria-label', `Eliminar aparato eléctrico ${d.designacion ?? d.id} y sus dependencias`);
+				borrarAparato.onclick = async () => {
+					if (!ctx.puedeEditar()) return;
+					const documento = proyecto();
+					if (documento.esquema?.representaciones?.find((x) => x.id === vista.id) !== vista
+						|| !documento.dispositivos.some((x) => x.id === d.id)) {
+						refrescarEsquema();
+						return;
+					}
+					await ctx.eliminarDispositivo(d.id);
+					if (proyecto() === documento && !documento.dispositivos.some((x) => x.id === d.id)) {
+						representacionSeleccionada = undefined;
+						conductorSeleccionado = undefined;
+					}
+					refrescarEsquema();
+				};
+				ayuda.append(document.createTextNode(' · '), borrarAparato);
+			}
 			if (vista.parte.tipo === 'completa' && d && resolverComportamiento(d)?.clase === 'contactos-electromagneticos') {
 				const desdoblar = document.createElement('button');
 				desdoblar.id = 'esq-desdoblar';

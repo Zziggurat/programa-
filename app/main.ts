@@ -29,6 +29,8 @@ import { resolverComportamiento } from '../src/modelo/comportamiento.js';
 import { ArchivoInvalido, cargarProyecto, imagenAdmisible } from '../src/modelo/cargar.js';
 import { abrirVentana, cerrarVentana, cerrarVentanaDeArriba } from './ventanas.js';
 import { aplicarPlantilla, numerarDispositivos } from '../src/motores/numeracion.js';
+import { aplicarEliminacionDispositivos, planificarEliminacionDispositivos,
+	type PlanEliminacionDispositivos } from '../src/motores/eliminar-dispositivos.js';
 import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
 import { montarEsquema } from '../src/motores/esquema.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
@@ -3209,22 +3211,55 @@ function extenderRielPara(col: { x: number; y: number; ancho: number; alto: numb
 	return riel.id;
 }
 
-async function eliminarDispositivo(id: string): Promise<void> {
-	if (!sePuedeEditar()) return;   // antes de preguntar: ver `sePuedeEditar`
-	const nombre = etiquetaDe(id);
-	if (!(await confirmar(`¿Eliminar ${nombre} y sus cables?`, { ok: 'Eliminar', peligro: true }))) return;
+/** ESQ-04: mismo alcance eléctrico al borrar desde inspector 3D, multiselección o esquema. */
+function descripcionEliminacion(plan: PlanEliminacionDispositivos): string {
+	const lista = (valores: readonly string[]) => valores.length ? valores.join(', ') : 'ninguno';
+	const datos = [
+		`${plan.vinculosTecnicos.length} vínculo(s) técnico(s): ${lista(plan.vinculosTecnicos.map((v) => `${v.entidad}:${v.entidadId}`))}`,
+		`${plan.instalacionesTecnicas.length} instalación(es): ${lista(plan.instalacionesTecnicas.map((i) => i.conductorId))}`,
+		`${plan.prospectivasTecnicas.length} prospectiva(s): ${lista(plan.prospectivasTecnicas.map((p) => p.proteccionId))}`,
+		`${plan.rolesDependientes.length} rol(es) dependiente(s): ${lista(plan.rolesDependientes.map((r) => r.dispositivoId))}`,
+		`${plan.metadatosCircuitoAfectados.length} metadato(s) de circuito: ${lista(plan.metadatosCircuitoAfectados.map((m) => m.circuitoId))}`,
+	];
+	return [
+		`¿Eliminar ${plan.aparatos.map((d) => `${d.designacion} [${d.id}]`).join(', ')} del proyecto?`,
+		`Conexiones que desaparecerán (${plan.conductores.length}): ${lista(plan.conductores.map((c) => `${c.id} (${c.de} ↔ ${c.a})`))}`,
+		`Vistas que desaparecerán (${plan.representaciones.length}): ${lista(plan.representaciones.map((r) => `${r.id} / ${r.hojaId}`))}`,
+		`Hojas afectadas (${plan.hojasAfectadas.length}): ${lista(plan.hojasAfectadas.map((h) => `${h.numero} · ${h.titulo} [${h.id}]`))}. Las hojas permanecen.`,
+		`Datos afectados: ${datos.join('; ')}.`,
+		plan.decisionesHistoricasAfectadas.length
+			? `Decisiones históricas conservadas que citan estas entidades: ${lista(plan.decisionesHistoricasAfectadas)}.`
+			: '',
+		'Ctrl+Z restaura la operación completa. «Borrar vista» conserva el aparato y sus conexiones.',
+	].filter(Boolean).join('\n\n');
+}
+
+async function eliminarAparatos(ids: readonly string[]): Promise<void> {
+	if (!sePuedeEditar()) return; // antes de preguntar, también para ejemplos de solo lectura
+	const documento = proyecto;
+	let plan: PlanEliminacionDispositivos;
+	try { plan = planificarEliminacionDispositivos(documento, ids); }
+	catch (error) { avisar(error instanceof Error ? error.message : 'No se pudo preparar la eliminación.', 'error'); return; }
+	if (!(await confirmar(descripcionEliminacion(plan), { ok: 'Eliminar aparato y dependencias', peligro: true }))) return;
+	if (proyecto !== documento || !sePuedeEditar()) {
+		avisar('El proyecto cambió mientras confirmabas. Revisa de nuevo la eliminación.', 'info');
+		return;
+	}
 	if (!capturar()) return;
-	proyecto.dispositivos = proyecto.dispositivos.filter((d) => d.id !== id);
-	proyecto.conductores = proyecto.conductores.filter(
-		(c) => c.de.dispositivoId !== id && c.a.dispositivoId !== id,
-	);
-	const g = proyecto.gabinete!;
-	g.colocaciones = g.colocaciones.filter((c) => c.dispositivoId !== id);
-	const grupo = grupoDe(id);
-	if (grupo) { escenario.dispositivos.remove(grupo); liberar(grupo); }
-	seleccionar(undefined);
-	actualizarConservandoAparatos();
-	avisar(`${nombre} eliminado · Ctrl+Z para deshacer`);
+	try { aplicarEliminacionDispositivos(documento, plan); }
+	catch (error) {
+		descartarCapturaSiIgual();
+		avisar(error instanceof Error ? error.message : 'La eliminación no se aplicó.', 'error');
+		return;
+	}
+	seleccionExtra = [];
+	aplicarSeleccion(undefined);
+	actualizarTodo();
+	avisar(`${plan.aparatos.length} aparato(s) eliminados · Ctrl+Z para deshacer`, 'ok');
+}
+
+async function eliminarDispositivo(id: string): Promise<void> {
+	await eliminarAparatos([id]);
 }
 
 /* --------------------------- Paneles laterales --------------------------- */
@@ -4583,26 +4618,8 @@ function moverAcompanantes(dx: number, dy: number): void {
 
 /** Borra de una vez todos los aparatos seleccionados, con una sola confirmación. */
 async function eliminarSeleccionados(): Promise<void> {
-	if (!sePuedeEditar()) return;
 	const ids = aparatosSeleccionados();
-	if (ids.length <= 1) { if (ids[0]) await eliminarDispositivo(ids[0]); return; }
-	const cables = proyecto.conductores.filter(
-		(c) => ids.includes(c.de.dispositivoId) || ids.includes(c.a.dispositivoId),
-	).length;
-	const detalle = cables ? ` y sus ${cables} cables` : '';
-	if (!(await confirmar(`¿Eliminar ${ids.length} aparatos${detalle}?`, { ok: 'Eliminar', peligro: true }))) return;
-	if (!capturar()) return;
-	const fuera = new Set(ids);
-	proyecto.dispositivos = proyecto.dispositivos.filter((d) => !fuera.has(d.id));
-	proyecto.conductores = proyecto.conductores.filter(
-		(c) => !fuera.has(c.de.dispositivoId) && !fuera.has(c.a.dispositivoId),
-	);
-	const g = proyecto.gabinete!;
-	g.colocaciones = g.colocaciones.filter((c) => !fuera.has(c.dispositivoId));
-	seleccionExtra = [];
-	aplicarSeleccion(undefined);
-	actualizarTodo();
-	avisar(`${ids.length} aparatos eliminados`, 'ok');
+	if (ids.length) await eliminarAparatos(ids);
 }
 
 /** Cómo se puede ordenar un grupo de aparatos, igual que en cualquier programa de dibujo. */
@@ -7994,6 +8011,7 @@ const panelEsq = instalarEsquema({
 	dispositivoSeleccionado: () => (sel?.tipo === 'dispositivo' ? sel.id : undefined),
 	seleccionar,
 	puedeEditar: sePuedeEditar,
+	eliminarDispositivo,
 	desconectarConductor: (id) => {
 		if (!proyecto.conductores.some((c) => c.id === id)) return false;
 		quitarCable(id);

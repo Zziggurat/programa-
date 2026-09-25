@@ -1256,7 +1256,7 @@
 	/* Diálogo in-app (confirm/prompt propios) */
 	#modal-dialogo { position: fixed; inset: 0; z-index: var(--capa-dialogo); background: #0009; display: flex; align-items: center; justify-content: center; padding: 20px; }
 	#modal-dialogo .caja-dialogo { background: var(--panel); border: 1px solid var(--borde); border-radius: 14px; padding: 22px 24px; max-width: 420px; width: 100%; box-shadow: 0 18px 60px #000a; }
-	#dialogo-msg { font-size: 14px; line-height: 1.5; margin-bottom: 14px; }
+	#dialogo-msg { font-size: 14px; line-height: 1.5; margin-bottom: 14px; white-space: pre-line; overflow-wrap: anywhere; max-height: 60vh; overflow-y: auto; }
 	#dialogo-input { width: 100%; margin-bottom: 14px; background: var(--panel-2); border: 1px solid var(--borde); color: var(--texto); border-radius: 8px; padding: 8px 10px; font-size: 14px; }
 	.dialogo-botones { display: flex; gap: 8px; justify-content: flex-end; }
 	.dialogo-botones .boton { padding: 7px 16px; }
