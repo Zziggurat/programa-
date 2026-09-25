@@ -10,6 +10,7 @@ import { calcularPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
 import { verificarProyecto } from '../src/motores/drc.js';
 import { aCSV, bomACSV, generarBOM, generarListaConductores } from '../src/motores/documentacion.js';
+import { celdaSegura } from '../src/modelo/csv.js';
 import { rutearConductores } from '../src/motores/ruteo.js';
 
 const sinBom = (texto: string) => texto.startsWith('\uFEFF') ? texto.slice(1) : texto;
@@ -65,6 +66,23 @@ test('CSV: una celda que empieza por = no se ejecuta al abrir la hoja', () => {
 test('CSV: un número con signo sigue siendo un número, no texto', () => {
 	// Neutralizar de más rompería las columnas de cotas y longitudes, que salen negativas.
 	assert.equal(sinBom(aCSV([[-5, 3.5, '-12', '+3,5', '-1.2e3']])), '-5;3.5;-12;+3,5;-1.2e3');
+	assert.equal(sinBom(aCSV([['+.5', '-.5', ' +2', ' -3,5']])), '+.5;-.5; +2; -3,5');
+});
+
+test('DOC-07: prefijos invisibles y variantes Unicode no activan fórmulas', () => {
+	const peligrosos = [' =1+1', '\t=1+1', '\r=1+1', '\n=1+1', '\u0000=1+1',
+		'\ufeff=1+1', '\u00a0@SUM(A1)', '＝1+1', '＋SUM(A1)'];
+	for (const valor of peligrosos) {
+		assert.equal(celdaSegura(valor), `'${valor}`, `No se neutralizó ${JSON.stringify(valor)}`);
+	}
+	assert.equal(celdaSegura('  texto normal'), '  texto normal');
+	assert.equal(celdaSegura('texto =1+1'), 'texto =1+1');
+});
+
+test('DOC-07: CR, LF, separador y comillas quedan dentro de la celda CSV', () => {
+	assert.equal(sinBom(aCSV([['normal\r=HYPERLINK("x")', 'uno;dos', 'a\nb']])),
+		'"normal\r=HYPERLINK(""x"")";"uno;dos";"a\nb"');
+	assert.equal(sinBom(aCSV([['\r=1+1']])), '"\'\r=1+1"');
 });
 
 test('CSV: el texto normal no se toca', () => {

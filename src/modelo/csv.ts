@@ -13,10 +13,12 @@
  * `+` y `-` están porque también arrancan fórmula (`-2+3` da 1), y `@` porque es como se llama a
  * una función en el Excel viejo.
  */
-const ARRANQUE_DE_FORMULA = /^[=+\-@]/;
+const ARRANQUE_DE_FORMULA = /^[=+\-@＝＋－＠]/;
 
-/** Los separadores que algunas versiones de Excel tragan antes de mirar el primer carácter. */
-const ARRANQUE_INVISIBLE = /^[\t\r]/;
+/** Sólo para inspección: algunas hojas ignoran estos prefijos antes de interpretar la fórmula. */
+const PREFIJO_IGNORABLE = /^[\u0000-\u0020\u007f\u00a0\ufeff]*/;
+const ARRANQUE_INVISIBLE = /^[\t\r\n\u0000]/;
+const NUMERO_DECIMAL = /^[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][+-]?\d+)?$/;
 
 /** Marca UTF-8 que Excel para Windows necesita al abrir un CSV directamente. */
 export const BOM_UTF8 = '\uFEFF';
@@ -34,9 +36,11 @@ export const BOM_UTF8 = '\uFEFF';
  * se convierte, al abrir el parte que se manda por correo, en un enlace que se lleva el contenido
  * de la hoja. Y `=cmd|'/c calc'!A1` es el clásico de los DDE.
  *
- * La regla es la que recomienda OWASP: si la celda empieza por uno de esos caracteres, se le pone
- * delante un apóstrofo. La hoja de cálculo lo entiende como «esto es texto» y NO lo muestra, así
- * que la celda se lee exactamente igual que antes; lo único que cambia es que ya no se ejecuta.
+ * Se antepone un apóstrofo si el primer contenido significativo puede ser fórmula, sin recortar
+ * ni cambiar el valor fuente. También se protege un control inicial que un importador pudiera
+ * interpretar como separador. No hay un escape universal entre Excel, Calc y otros importadores:
+ * el apóstrofo puede verse en algunos de ellos y una hoja que se reexporta debe tratarse de nuevo
+ * como entrada no fiable. Esta política conserva el CSV como intercambio de texto legible.
  *
  * Un número normal (`-5`, `+3`) sí lleva signo, y por eso se deja pasar: lo que se neutraliza es
  * lo que empieza por signo y NO es un número.
@@ -46,8 +50,11 @@ export function celdaSegura(valor: string | number | undefined): string {
 	const s = String(valor);
 	if (s === '') return '';
 	// Un número de verdad no es una fórmula: «-5», «+3,5» y «-1.2e3» se quedan como están.
-	if (typeof valor === 'number' || /^[+-]?\d+([.,]\d+)?([eE][+-]?\d+)?$/.test(s)) return s;
-	return ARRANQUE_DE_FORMULA.test(s) || ARRANQUE_INVISIBLE.test(s) ? `'${s}` : s;
+	if (typeof valor === 'number' || NUMERO_DECIMAL.test(s)) return s;
+	const contenido = s.replace(PREFIJO_IGNORABLE, '');
+	const prefijo = s.slice(0, s.length - contenido.length);
+	if (/^ +$/.test(prefijo) && NUMERO_DECIMAL.test(contenido)) return s;
+	return ARRANQUE_DE_FORMULA.test(contenido) || ARRANQUE_INVISIBLE.test(s) ? `'${s}` : s;
 }
 
 /**
@@ -60,7 +67,7 @@ export function aCSV(filas: (string | number | undefined)[][]): string {
 		.map((fila) => fila
 			.map((celda) => {
 				const s = celdaSegura(celda);
-				return /[";\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
+				return /[";\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
 			})
 			.join(';'))
 		.join('\n');
