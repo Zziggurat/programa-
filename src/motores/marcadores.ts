@@ -22,6 +22,8 @@ export interface Marcador {
 	lado?: 'de' | 'a';
 	dispositivoId: string;
 	borneId?: string;
+	/** Regleta independiente o terminal integrado en otro aparato; permite filtrar antes de imprimir. */
+	ubicacionBorne?: 'BORNERA' | 'APARATO';
 	campos: Record<CampoMarcador, string>;
 	campoPrincipal: CampoMarcador;
 	campoSecundario?: CampoMarcador;
@@ -64,9 +66,14 @@ export function prepararMarcadores(proyecto: Proyecto, opciones: OpcionesMarcado
 			campos: { identificador: designacion, designacion, borne: '',
 				destinoDispositivo: '', destinoBorne: '',
 				numeroConductor: '', descripcion: d.descripcion ?? '' } });
-		if (d.tipo === 'bornero') for (const b of [...d.bornes].sort((a, c) => orden(a.id, c.id))) {
-			incluir({ tipo: 'borne', entidadId: `${d.id}::${b.id}`, dispositivoId: d.id, borneId: b.id,
-				campos: { identificador: b.id, designacion, borne: b.id,
+		// Un marcador por borne físico declarado, también para PLC, contactor, protección, etc.
+		// No se itera por conductor ni por vista: varios hilos sobre el mismo borne no duplican etiquetas.
+		for (const b of [...d.bornes].sort((a, c) => orden(a.id, c.id))) {
+			const rotulo = b.rotulo || b.id;
+			incluir({ tipo: 'borne', entidadId: JSON.stringify([d.id, b.id]),
+				dispositivoId: d.id, borneId: b.id,
+				ubicacionBorne: d.tipo === 'bornero' ? 'BORNERA' : 'APARATO',
+				campos: { identificador: b.id, designacion, borne: rotulo,
 					destinoDispositivo: '', destinoBorne: '',
 					numeroConductor: '', descripcion: '' } });
 		}

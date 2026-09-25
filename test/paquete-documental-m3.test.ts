@@ -72,6 +72,10 @@ test('DOC-02 compone un único snapshot sin duplicar un aparato multivista ni un
 	assert.equal(filaPendiente[12], '', 'sin corte verificado');
 	assert.match(longitudes, /Propuesta de corte estimada \(mm\)/);
 	const marcadores = texto('listas/marcadores.csv');
+	assert.match(marcadores, /Borne ID;Ubicación borne;Identificador/);
+	assert.match(marcadores, /;APARATO;A1;/,
+		'el CSV distingue terminal de aparato de bornera sin derivarlo de la imagen');
+	assert.match(marcadores, /;BORNERA;1;/);
 	assert.match(marcadores, /Campo principal;Texto principal;Campo secundario;Texto secundario;Cantidad/);
 	assert.equal((marcadores.match(/extremo-conductor;w1;/g) ?? []).length, 2,
 		'el paquete lleva una etiqueta por cada extremo real del conductor');

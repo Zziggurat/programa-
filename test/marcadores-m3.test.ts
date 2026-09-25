@@ -40,7 +40,28 @@ test('DOC-04: cada hilo produce dos marcadores distintos con el mismo identifica
 	}
 	assert.deepEqual(tiraDeExtremosConductores(p).etiquetas.map((e) => e.principal), ['41', '41', '42', '42']);
 	assert.equal(marcadores.filter((m) => m.tipo === 'aparato').length, 2);
-	assert.equal(marcadores.filter((m) => m.tipo === 'borne').length, 2);
+	const bornes = marcadores.filter((m) => m.tipo === 'borne');
+	assert.equal(bornes.length, 4, 'incluye bornes del contactor, no solo de la regleta');
+	assert.equal(bornes.filter((m) => m.ubicacionBorne === 'BORNERA').length, 2);
+	assert.equal(bornes.filter((m) => m.ubicacionBorne === 'APARATO').length, 2);
+	assert.deepEqual(bornes.filter((m) => m.dispositivoId === 'km1').map((m) => m.borneId), ['A1', 'A2']);
+});
+
+test('DOC-04: el borne de aparato usa rótulo visible sin perder ID y no se multiplica por hilos', () => {
+	const p = proyectoDeRotulos();
+	p.dispositivos[1].bornes[0].rotulo = 'Bobina +';
+	p.conductores.push({ id: 'w3', de: { dispositivoId: 'x1', borneId: '2' },
+		a: { dispositivoId: 'km1', borneId: 'A1' } });
+	const marcadores = prepararMarcadores(p);
+	const borne = marcadores.find((m) => m.tipo === 'borne' && m.dispositivoId === 'km1' && m.borneId === 'A1');
+	assert.ok(borne);
+	assert.equal(borne.ubicacionBorne, 'APARATO');
+	assert.equal(borne.campos.identificador, 'A1', 'el ID eléctrico sigue separado del texto visible');
+	assert.equal(borne.principal, 'Bobina +');
+	assert.equal(marcadores.filter((m) => m.tipo === 'borne' && m.dispositivoId === 'km1' && m.borneId === 'A1').length, 1);
+	assert.equal(marcadores.filter((m) => m.tipo === 'extremo-conductor').length, 6);
+	assert.equal(tiraDeExtremosConductores(p).etiquetas.length, 6,
+		'la tira PDF no imprime automáticamente las etiquetas de todos los bornes');
 });
 
 test('DOC-04: orden de arrays y vistas no cambian marcadores físicos', () => {
