@@ -108,6 +108,7 @@ import {
 	type DefinicionComponentePersonalizado,
 } from '../src/componentes/personalizados.js';
 import { buscarColocacionPlaca, evaluarCompatibilidadMontaje } from '../src/componentes/montaje.js';
+import { planMedidasRiel } from '../src/motores/medidas-riel.js';
 import { abrirAdopcionComponente } from './ui-adopcion-componente.js';
 import type { PreparacionAdopcionComponente } from '../src/componentes/adopcion.js';
 import type { RepositorioProyectos } from '../src/persistencia/tipos.js';
@@ -4135,11 +4136,11 @@ function pintarPanelEstructura(s: Seleccion): void {
 
 		<button class="boton primario" id="e-girar" style="width:100%;margin:10px 0 4px">🔄 Girar a ${esV ? 'horizontal' : 'vertical'}</button>
 
-		<div class="sub" style="margin-top:8px">Arrástrala para moverla, o tira de las esferas de los extremos para alargarla. También puedes ajustar los cm:</div>
+		<div class="sub" style="margin-top:8px">Arrástrala para moverla, o tira de las esferas de los extremos para alargarla. Coordenadas en mm desde la esquina superior izquierda de la placa; los aparatos anclados acompañan al riel.</div>
 		<dl>
-			<dt>Posición X</dt><dd><input type="number" id="e-x" value="${(obj.x / 10).toFixed(1)}" step="0.5"> cm</dd>
-			<dt>Posición Y</dt><dd><input type="number" id="e-y" value="${(obj.y / 10).toFixed(1)}" step="0.5"> cm</dd>
-			<dt>Largo</dt><dd><input type="number" id="e-largo" value="${(obj.largo / 10).toFixed(1)}" step="0.5"> cm</dd>
+			<dt>Posición X</dt><dd><input type="number" id="e-x" value="${obj.x}" step="any"> mm</dd>
+			<dt>Posición Y</dt><dd><input type="number" id="e-y" value="${obj.y}" step="any"> mm</dd>
+			<dt>Largo</dt><dd><input type="number" id="e-largo" value="${obj.largo}" step="any"> mm</dd>
 			${esCanaleta ? `<dt>Ancho del canal</dt><dd><input type="number" id="e-ancho" value="${can!.ancho}" step="5"> mm</dd>` : ''}
 		</dl>
 		<div class="botonera">
@@ -4158,16 +4159,51 @@ function pintarPanelEstructura(s: Seleccion): void {
 		pintarPanelEstructura(s); // refrescar el propio panel (texto del botón)
 	};
 	(panel.querySelector('#e-aplicar') as HTMLButtonElement).onclick = () => {
-		if (!capturar()) return;
-		obj.x = Math.round(Number((panel.querySelector('#e-x') as HTMLInputElement).value) * 10);
-		obj.y = Math.round(Number((panel.querySelector('#e-y') as HTMLInputElement).value) * 10);
-		obj.largo = Math.max(60, Math.round(Number((panel.querySelector('#e-largo') as HTMLInputElement).value) * 10));
-		if (can) {
-			can.ancho = Math.max(15, Number((panel.querySelector('#e-ancho') as HTMLInputElement).value));
-			can.alto = can.ancho >= 60 ? 80 : 60;
+		if (!sePuedeEditar()) return;
+		if (proyecto.gabinete !== g || (can ? !g.canaletas.includes(can) : !g.rieles.includes(obj as typeof g.rieles[number]))) {
+			avisar('La estructura cambió; selecciónala de nuevo antes de aplicar medidas.', 'info');
+			return;
 		}
-		actualizarTodo();
+		const leer = (id: string): number | undefined => {
+			const campo = panel.querySelector<HTMLInputElement>(`#${id}`);
+			return campo && campo.value.trim() !== '' && Number.isFinite(Number(campo.value))
+				? Number(campo.value) : undefined;
+		};
+		const x = leer('e-x'), y = leer('e-y'), largo = leer('e-largo');
+		if (x === undefined || y === undefined || largo === undefined) {
+			avisar('Completa X, Y y largo con medidas finitas en milímetros.', 'error');
+			return;
+		}
+		if (can) {
+			const ancho = leer('e-ancho');
+			if (ancho === undefined || x < 0 || y < 0 || largo < 60 || ancho < 15
+				|| x + (esV ? ancho : largo) > g.ancho || y + (esV ? largo : ancho) > g.alto) {
+				avisar('La canaleta debe caber completa en la placa; largo mínimo 60 mm y ancho mínimo 15 mm.', 'error');
+				return;
+			}
+			if (can.x === x && can.y === y && can.largo === largo && can.ancho === ancho) return;
+			try {
+				mutarProyecto(() => {
+					Object.assign(can, { x, y, largo, ancho, alto: ancho >= 60 ? 80 : 60 });
+				});
+			} catch (fallo) { avisar(`No se aplicaron las medidas: ${String(fallo)}`, 'error'); return; }
+		} else {
+			const plan = planMedidasRiel(g, proyecto.dispositivos, s.id, { x, y, largo });
+			if (!plan.ok) { avisar(plan.motivo, 'error'); return; }
+			if (!plan.valor.cambio) return;
+			try {
+				mutarProyecto(() => {
+					Object.assign(obj, plan.valor.medidas);
+					for (const a of plan.valor.aparatos) {
+						const col = g.colocaciones.find((c) => c.dispositivoId === a.dispositivoId && c.rielId === s.id);
+						if (!col) throw new Error(`Ya no existe el anclaje de ${a.dispositivoId}.`);
+						col.x = a.x; col.y = a.y;
+					}
+				});
+			} catch (fallo) { avisar(`No se aplicaron las medidas: ${String(fallo)}`, 'error'); return; }
+		}
 		pintarEstructura();
+		pintarPanelEstructura(s);
 	};
 	(panel.querySelector('#e-eliminar') as HTMLButtonElement).onclick = () => eliminarEstructura(s);
 }
@@ -4249,9 +4285,9 @@ function pintarEstructura(): void {
 	) => items.map((r) => `
 		<div class="fila-estructura" data-tipo="${tipo}" data-id="${escaparHtml(r.id)}">
 			<span class="id">${escaparHtml(r.id)}</span>
-			<input type="number" data-campo="x" value="${Math.round(r.x)}">
-			<input type="number" data-campo="y" value="${Math.round(r.y)}">
-			<input type="number" data-campo="largo" value="${Math.round(r.largo)}">
+			<input type="number" step="any" data-campo="x" value="${r.x}">
+			<input type="number" step="any" data-campo="y" value="${r.y}">
+			<input type="number" step="any" data-campo="largo" value="${r.largo}">
 			<button title="Quitar" data-quitar>✕</button>
 		</div>`).join('');
 
@@ -4303,9 +4339,11 @@ function siguienteId(prefijo: string, existentes: { id: string }[]): string {
 	return `${prefijo}${n}`;
 }
 
-function aplicarEstructura(): void {
-	if (!capturar()) return;
+/** Cambio agrupado: si una medida invalida anclajes, mutarProyecto revierte toda la ficha. */
+function aplicarEstructuraCambio(): void {
 	const g = proyecto.gabinete!;
+	const rielesAntes = new Map(g.rieles.map((r) => [r.id, { x: r.x, y: r.y, largo: r.largo }]));
+	const anchoAntes = g.ancho, altoAntes = g.alto;
 	// 0. Caja envolvente (dimensiones propias, independientes de la placa).
 	const seccionBond = Math.min(Math.max(Number(($('bonding-seccion') as HTMLInputElement).value) || 6, 1), 35);
 	g.caja = {
@@ -4339,8 +4377,12 @@ function aplicarEstructura(): void {
 	// 1. Leer las filas editadas.
 	for (const fila of document.querySelectorAll('.fila-estructura')) {
 		const el = fila as HTMLElement;
-		const leer = (campo: string) =>
-			Number((el.querySelector(`[data-campo="${campo}"]`) as HTMLInputElement).value) || 0;
+		const leer = (campo: string): number => {
+			const texto = el.querySelector<HTMLInputElement>(`[data-campo="${campo}"]`)?.value.trim();
+			if (!texto || !Number.isFinite(Number(texto)))
+				throw new Error(`${el.dataset.id}: ${campo} debe ser una medida numérica finita.`);
+			return Number(texto);
+		};
 		if (el.dataset.tipo === 'entrada') {
 			const e = (g.entradas ?? []).find((k) => k.id === el.dataset.id);
 			if (!e) continue;
@@ -4353,9 +4395,10 @@ function aplicarEstructura(): void {
 			? g.rieles.find((r) => r.id === el.dataset.id)
 			: g.canaletas.find((c) => c.id === el.dataset.id);
 		if (destino) {
-			destino.x = leer('x');
-			destino.y = leer('y');
-			destino.largo = Math.max(60, leer('largo'));
+			const x = leer('x'), y = leer('y'), largo = leer('largo');
+			if (x < 0 || y < 0 || largo < 60)
+				throw new Error(`${destino.id}: X/Y no negativos y largo mínimo 60 mm.`);
+			Object.assign(destino, { x, y, largo });
 		}
 	}
 	// 2. Dimensiones de placa (se estira la estructura con el cambio de tamaño).
@@ -4378,10 +4421,27 @@ function aplicarEstructura(): void {
 		can.ancho = anchoCanaleta;
 		can.alto = altoCanaleta;
 	}
-	// 4. Mantener los aparatos dentro de la placa.
+	// 4. El anclaje mecánico acompaña al riel también desde esta lista, no solo desde el inspector.
 	for (const col of g.colocaciones) {
+		const riel = col.rielId ? g.rieles.find((r) => r.id === col.rielId) : undefined;
+		const antes = col.rielId ? rielesAntes.get(col.rielId) : undefined;
+		if (riel && antes) {
+			col.x += riel.x - antes.x;
+			col.y += riel.y - antes.y;
+			continue;
+		}
+		// Las piezas sin anclaje DIN mantienen la política previa de ajuste al redimensionar.
 		col.x = Math.min(Math.max(col.x, 0), Math.max(0, g.ancho - col.ancho));
 		col.y = Math.min(Math.max(col.y, 0), Math.max(0, g.alto - col.alto));
+	}
+	for (const riel of g.rieles) {
+		const antes = rielesAntes.get(riel.id);
+		if (!antes || (!g.colocaciones.some((c) => c.rielId === riel.id))) continue;
+		if (antes.x === riel.x && antes.y === riel.y && antes.largo === riel.largo
+			&& anchoAntes === g.ancho && altoAntes === g.alto) continue;
+		const plan = planMedidasRiel(g, proyecto.dispositivos, riel.id,
+			{ x: riel.x, y: riel.y, largo: riel.largo });
+		if (!plan.ok) throw new Error(`${riel.id}: ${plan.motivo}`);
 	}
 	/*
 	 * 5. LA CAJA NO PUEDE SER MÁS PEQUEÑA QUE LO QUE TIENE QUE CONTENER, Y LA FICHA TIENE QUE
@@ -4396,9 +4456,18 @@ function aplicarEstructura(): void {
 	// Se corrigen LAS MEDIDAS, no la caja entera: reescribirla de cero borraba de qué lado abre la
 	// puerta cada vez que se tocaba una cota, y con ella se iba también la trenza de masa.
 	g.caja = { ...g.caja, ancho: efectiva.ancho, alto: efectiva.alto, profundidad: efectiva.profundidad };
-	actualizarTodo();
-	pintarEstructura();
-	encuadrar();
+}
+
+function aplicarEstructura(): void {
+	if (!sePuedeEditar()) return;
+	try {
+		mutarProyecto(aplicarEstructuraCambio);
+		pintarEstructura();
+		encuadrar();
+	} catch (fallo) {
+		avisar(`No se aplicó la estructura: ${String(fallo)}`, 'error');
+		pintarEstructura();
+	}
 }
 
 ($('aplicar-dim') as HTMLButtonElement).onclick = aplicarEstructura;
@@ -9602,6 +9671,13 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 						const x = vertical ? e.x + d : e.x + t;
 						const y = vertical ? e.y + t : e.y + d;
 						const p = aPantalla(escenario.aEscena(x, y, z));
+						// Al seleccionarlo aparecen los tiradores: no devolver un píxel que
+						// redimensionaría el perfil en vez de moverlo con sus aparatos.
+						if (escenario.handles.children.some((h) => {
+							if (!h.userData.handle) return false;
+							const q = aPantalla(h.position);
+							return Math.hypot(p.x - q.x, p.y - q.y) <= AGARRE_HANDLE_PX;
+						})) continue;
 						// Solo vale si en ese píxel lo primero que se ve es el propio perfil.
 						puntero.set(((p.x - r.left) / r.width) * 2 - 1, -((p.y - r.top) / r.height) * 2 + 1);
 						raycaster.setFromCamera(puntero, camaraViva());
