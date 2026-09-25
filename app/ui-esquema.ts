@@ -15,7 +15,7 @@ import { cerrarTodasLasVentanas } from './ventanas.js';
 import { ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { calcularPotenciales } from '../src/motores/potenciales.js';
 import {
-	anchoColumna, alturaDeFila, FILAS_ESQ, filaDeAltura, HOJA_A3, HojaEsq, MARGEN, montarEsquema,
+	anchoColumna, alturaDeFila, FILAS_ESQ, filaDeAltura, HojaEsq, MARGEN, montarEsquema,
 } from '../src/motores/esquema.js';
 import { aplicarMovimientoRepresentacion, previsualizarMovimientoRepresentacion,
 	type PlanMovimientoRepresentacion, type PosicionMovimientoRepresentacion,
@@ -970,6 +970,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				+ 'Coloca aparatos y conéctalos, y el esquema se dibuja solo.</div>';
 			$('esq-indicador').textContent = 'Sin hojas';
 			$('esq-titulo').textContent = '';
+			$('esq-formato-actual').textContent = '';
 			pintarConductorSeleccionado();
 			pintarEstadoEsquema();
 			pintarPanelFolios();
@@ -998,6 +999,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		});
 		$('esq-indicador').textContent = `Hoja ${hoja.numero} / ${hojasEsquema.length}`;
 		$('esq-titulo').textContent = hoja.titulo;
+		$('esq-formato-actual').textContent = `${proyecto().hojas.find((h) => h.id === hoja.id)?.formatoPapel ?? 'A3'} apaisado`;
 		($('esq-columnas') as HTMLInputElement).value = String(hoja.columnas);
 		// Se dice cuántos aparatos están colocados a mano: si no, «Ordenar solo» parece que no hace
 		// nada cuando no hay nada que soltar, y sorprende cuando sí lo hay.
@@ -1097,9 +1099,10 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		};
 		const punteroId = ev.pointerId;
 		const aviso = $('esq-movimiento-aviso');
+		const papel = { ancho: hoja.anchoMm, alto: hoja.altoMm };
 		const inicial: PosicionMovimientoRepresentacion = {
 			hojaId: hoja.id, columna: simbolo.columna,
-			fila: filaDeAltura(simbolo.y + simbolo.alto / 2),
+			fila: filaDeAltura(simbolo.y + simbolo.alto / 2, papel),
 		};
 		const indiceHoja = hojaActual;
 		let movido = false;
@@ -1130,9 +1133,9 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				|| cy < caja.top || cy > caja.bottom) return undefined;
 			const xmm = ((cx - caja.left) / caja.width) * hoja.anchoMm;
 			const ymm = ((cy - caja.top) / caja.height) * hoja.altoMm;
-			const mediaFila = (alturaDeFila(2) - alturaDeFila(1)) / 2;
-			if (ymm < alturaDeFila(1) - mediaFila || ymm > alturaDeFila(FILAS_ESQ) + mediaFila) return undefined;
-			const enHoja = Math.floor((xmm - MARGEN.izq) / anchoColumna(HOJA_A3, hoja.columnas));
+			const mediaFila = (alturaDeFila(2, papel) - alturaDeFila(1, papel)) / 2;
+			if (ymm < alturaDeFila(1, papel) - mediaFila || ymm > alturaDeFila(FILAS_ESQ, papel) + mediaFila) return undefined;
+			const enHoja = Math.floor((xmm - MARGEN.izq) / anchoColumna(papel, hoja.columnas));
 			let indice = indiceHoja;
 			let columna = enHoja + 1;
 			if (columna < 1) {
@@ -1144,7 +1147,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				if (indice >= hojasEsquema.length) return undefined;
 				columna = 1;
 			}
-			return { hojaId: hojasEsquema[indice].id, columna, fila: filaDeAltura(ymm) };
+			return { hojaId: hojasEsquema[indice].id, columna, fila: filaDeAltura(ymm, papel) };
 		};
 		const pintarDestino = (destino: PosicionMovimientoRepresentacion | undefined): void => {
 			if (!destino || !planPendiente?.ok || destino.hojaId !== hoja.id) {
@@ -1164,9 +1167,9 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				guia.setAttribute('stroke-dasharray', '2 1.5');
 				actual.append(guia);
 			}
-			const paso = anchoColumna(HOJA_A3, hoja.columnas);
+			const paso = anchoColumna(papel, hoja.columnas);
 			guia.setAttribute('x', String(MARGEN.izq + (destino.columna - 0.5) * paso - Math.min(paso - 2, simbolo.ancho + 4) / 2));
-			guia.setAttribute('y', String(alturaDeFila(destino.fila) - (simbolo.alto + 4) / 2));
+			guia.setAttribute('y', String(alturaDeFila(destino.fila, papel) - (simbolo.alto + 4) / 2));
 			guia.setAttribute('width', String(Math.min(paso - 2, simbolo.ancho + 4)));
 			guia.setAttribute('height', String(simbolo.alto + 4));
 		};
@@ -1278,6 +1281,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const antes = d.esquema ? { ...d.esquema } : undefined;
 		let movido = false;
 		let destino = antes;
+		const papel = { ancho: hoja.anchoMm, alto: hoja.altoMm };
 
 		/** Píxeles de pantalla → columna y fila de la rejilla del esquema. */
 		const rejillaEn = (cx: number, cy: number): { columna: number; fila: number } | undefined => {
@@ -1290,7 +1294,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			if (caja.width < 1 || caja.height < 1) return undefined;
 			const xmm = ((cx - caja.left) / caja.width) * hoja.anchoMm;
 			const ymm = ((cy - caja.top) / caja.height) * hoja.altoMm;
-			const paso = anchoColumna(HOJA_A3, hoja.columnas);
+			const paso = anchoColumna(papel, hoja.columnas);
 			const enHoja = Math.floor((xmm - MARGEN.izq) / paso);
 			/*
 			 * La columna es GLOBAL: la hoja 2 empieza donde acaba la 1, y por eso arrastrar más
@@ -1312,7 +1316,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			const ultima = totalHojas() * hoja.columnas;
 			return {
 				columna: Math.max(1, Math.min(ultima, global)),
-				fila: filaDeAltura(ymm),
+				fila: filaDeAltura(ymm, papel),
 			};
 		};
 
@@ -1472,7 +1476,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			ir.type = 'button';
 			ir.className = 'boton';
 			ir.dataset.hojaId = h.id;
-			ir.textContent = `Hoja ${h.numero}: ${h.titulo} · ${h.clase ?? 'sin clase'} · ${h.columnas ?? documento.esquema?.columnasPorHoja ?? 10} col. [${h.id}]`;
+			ir.textContent = `Hoja ${h.numero}: ${h.titulo} · ${h.clase ?? 'sin clase'} · ${h.formatoPapel ?? 'A3'} ${h.formatoPapel === undefined ? '(heredado)' : '(fijado)'} · ${h.columnas ?? documento.esquema?.columnasPorHoja ?? 10} col. [${h.id}]`;
 			ir.onclick = () => {
 				const teniaFoco = document.activeElement === ir;
 				const indice = hojasEsquema.findIndex((hoja) => hoja.id === h.id);
@@ -1489,6 +1493,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		}
 		($('esq-folio-titulo') as HTMLInputElement).value = folio?.titulo ?? '';
 		($('esq-folio-clase') as HTMLSelectElement).value = folio?.clase ?? '';
+		($('esq-folio-formato') as HTMLSelectElement).value = folio?.formatoPapel ?? '';
 		const columnas = $('esq-folio-columnas') as HTMLInputElement;
 		columnas.value = folio?.columnas === undefined ? '' : String(folio.columnas);
 		columnas.placeholder = `Heredar (${documento.esquema?.columnasPorHoja ?? 10})`;
@@ -1526,7 +1531,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const antesPorId = new Map(plan.hojasAntes.map((h) => [h.id, h]));
 		const despuesPorId = new Map(plan.hojasDespues.map((h) => [h.id, h]));
 		const resumir = (h: (typeof plan.hojasAntes)[number] | undefined) => !h ? '—'
-			: `#${h.numero} «${h.titulo}» · ${h.clase ?? 'sin clase'} · ${h.columnas} col. ${h.columnasDeclaradas === undefined ? '(heredadas)' : '(fijadas)'}`;
+			: `#${h.numero} «${h.titulo}» · ${h.clase ?? 'sin clase'} · ${h.formatoPapel} ${h.formatoPapelDeclarado === undefined ? '(heredado)' : '(fijado)'} · ${h.columnas} col. ${h.columnasDeclaradas === undefined ? '(heredadas)' : '(fijadas)'}`;
 		const idsCambiados = [...new Set([...antesPorId.keys(), ...despuesPorId.keys()])]
 			.filter((id) => JSON.stringify(antesPorId.get(id)) !== JSON.stringify(despuesPorId.get(id)))
 			.sort((a, b) => (despuesPorId.get(a)?.numero ?? antesPorId.get(a)?.numero ?? 0)
@@ -1572,19 +1577,25 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	($('esq-folio-crear') as HTMLButtonElement).onclick = () => {
 		const titulo = ($('esq-folio-nuevo-titulo') as HTMLInputElement).value;
 		const clase = ($('esq-folio-nueva-clase') as HTMLSelectElement).value as ClaseHojaEsquema | '';
+		const formatoPapel = ($('esq-folio-nuevo-formato') as HTMLSelectElement).value as '' | 'A3' | 'A2';
 		const valor = ($('esq-folio-nuevas-columnas') as HTMLInputElement).value;
 		void gestionarHoja({ tipo: 'crear', id: `hoja-${crypto.randomUUID()}`, titulo,
-			...(clase ? { clase } : {}), ...(valor ? { columnas: Number(valor) } : {}) });
+			...(clase ? { clase } : {}), ...(formatoPapel ? { formatoPapel } : {}),
+			...(valor ? { columnas: Number(valor) } : {}) });
 	};
 	($('esq-folio-guardar') as HTMLButtonElement).onclick = () => {
 		const id = hojasEsquema[hojaActual]?.id;
 		if (!id) return;
 		const titulo = ($('esq-folio-titulo') as HTMLInputElement).value;
 		const clase = ($('esq-folio-clase') as HTMLSelectElement).value as ClaseHojaEsquema | '';
+		const formatoPapel = ($('esq-folio-formato') as HTMLSelectElement).value as '' | 'A3' | 'A2';
 		const valor = ($('esq-folio-columnas') as HTMLInputElement).value;
-		const declaradas = proyecto().hojas.find((h) => h.id === id)?.columnas;
+		const actual = proyecto().hojas.find((h) => h.id === id);
+		const declaradas = actual?.columnas;
 		const cambioColumnas = valor ? Number(valor) : declaradas === undefined ? undefined : null;
+		const cambioFormato = formatoPapel || (actual?.formatoPapel === undefined ? undefined : null);
 		void gestionarHoja({ tipo: 'editar', id, titulo, clase: clase || null,
+			...(cambioFormato === undefined ? {} : { formatoPapel: cambioFormato }),
 			...(cambioColumnas === undefined ? {} : { columnas: cambioColumnas }) });
 	};
 	for (const [id, direccion] of [['esq-folio-subir', 'subir'], ['esq-folio-bajar', 'bajar']] as const) {
