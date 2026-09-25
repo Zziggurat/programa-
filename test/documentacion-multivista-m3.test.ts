@@ -69,7 +69,7 @@ test('DOC-02: tres vistas de un contactor no duplican BOM ni cables en la red do
 	const bomHtml = html.split('<h2>2. Lista de materiales</h2>')[1]
 		?.split('<h2>3. Índice de dispositivos</h2>')[0];
 	const conductoresHtml = html.split('<h2>5. Lista de conductores</h2>')[1]
-		?.split('<h3>Plan de bornero')[0];
+		?.split('<h3>Desglose de longitudes por conductor</h3>')[0];
 	assert.ok(bomHtml && conductoresHtml);
 	assert.equal((bomHtml.match(/-KM1/g) ?? []).length, 1, 'la BOM HTML contiene un contactor');
 	assert.equal((conductoresHtml.match(/<tr>/g) ?? []).length, 4, 'cabecera y tres cables reales');

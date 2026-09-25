@@ -53,7 +53,7 @@ test('DOC-02: 3×/4× de obra son metros de manguera, no siete metrajes de hilo 
 	assert.deepEqual(informe.totalesConductores, [], 'sin ruta física no se suma un falso metraje de cable');
 	assert.equal((contenido('listas/conductores.csv').match(/^w[1-7];/gm) ?? []).length, 7);
 	assert.match(contenido('listas/conductores.csv'),
-		/Conductores individuales, no metros de manguera multiconductor/);
+		/Longitud m corresponde a la política eléctrica de Ingeniería, no a un corte verificado ni a metros de manguera multiconductora/);
 	assert.ok(archivos.every((archivo) => !/mangueras|tiradas/i.test(archivo.ruta)),
 		'el levantamiento de cubierta no pertenece a esta revisión de Proyecto');
 });
