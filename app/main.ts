@@ -109,6 +109,7 @@ import {
 } from '../src/componentes/personalizados.js';
 import { buscarColocacionPlaca, evaluarCompatibilidadMontaje } from '../src/componentes/montaje.js';
 import { planMedidasRiel } from '../src/motores/medidas-riel.js';
+import { planPosicionAparato } from '../src/motores/posicion-aparato.js';
 import { abrirAdopcionComponente } from './ui-adopcion-componente.js';
 import type { PreparacionAdopcionComponente } from '../src/componentes/adopcion.js';
 import type { RepositorioProyectos } from '../src/persistencia/tipos.js';
@@ -3762,6 +3763,16 @@ function pintarFichaDeLoElegido(): void {
 			${compatibilidadPersonal?.motivos.length ? `<p class="sub">${escaparHtml(compatibilidadPersonal.motivos.join(' '))}</p>` : ''}
 			<p id="estado-revision-personal" class="sub" role="status">Consultando biblioteca…</p>
 		</section>` : '';
+	const rielDeCol = col?.rielId ? proyecto.gabinete!.rieles.find((r) => r.id === col.rielId) : undefined;
+	const bloquePosicion = esEditor && col && col.montaje !== 'puerta' ? `
+		<h2>Posición de montaje</h2>
+		<div class="sub">X/Y en mm desde la esquina superior izquierda de la placa.
+			${rielDeCol ? `Anclado a ${escaparHtml(rielDeCol.id)}: solo se mueve por el eje ${rielDeCol.orientacion === 'v' ? 'Y' : 'X'}.` : 'Sin anclaje DIN; no se asigna uno por proximidad.'}</div>
+		<div class="ficha-aparato">
+			<label>X (mm)<input id="pos-aparato-x" type="number" step="any" value="${col.x}"></label>
+			<label>Y (mm)<input id="pos-aparato-y" type="number" step="any" value="${col.y}"></label>
+		</div>
+		<button class="boton" id="pos-aparato-aplicar" style="width:100%;margin-top:6px">Aplicar posición</button>` : '';
 
 	panel.style.display = 'block';
 	panel.innerHTML = `
@@ -3770,11 +3781,12 @@ function pintarFichaDeLoElegido(): void {
 			<span style="opacity:.7">· ${esEditor ? '🔧 editor' : '🔌 trabajo'}</span></div>
 		<dl>
 			${esImagen ? '' : `<dt>Referencia</dt><dd>${escaparHtml(d.fabricante ?? '—')} ${escaparHtml(d.referencia ?? '')}</dd>`}
-			${col ? `<dt>Posición en placa</dt><dd>x ${Math.round(col.x)} mm · y ${Math.round(col.y)} mm · ${col.ancho}×${col.alto} mm</dd>` : ''}
+			${col ? `<dt>Posición ${col.montaje === 'puerta' ? 'en puerta' : 'en placa'}</dt><dd>x ${col.x} mm · y ${col.y} mm · ${col.ancho}×${col.alto} mm</dd>` : ''}
 			${d.tensionNominal !== undefined ? `<dt>Tensión</dt><dd><span class="chip-volt" style="background:${hexColor(colorVoltaje(d.tensionNominal))}">${d.tensionNominal} V</span></dd>` : ''}
 			${esImagen ? '' : `<dt>Posición en esquema</dt><dd>${revision.posicionesEsquema.get(d.id) ?? '—'}</dd>`}
 		</dl>
 		${bloqueRevisionPersonal}
+		${bloquePosicion}
 		${bloqueComoSeConecta}
 		${bloqueTension}
 		${bloquePines}
@@ -3782,6 +3794,28 @@ function pintarFichaDeLoElegido(): void {
 		${bloqueCableado}
 		${bloqueAcciones}
 	`;
+	(panel.querySelector('#pos-aparato-aplicar') as HTMLButtonElement | null)?.addEventListener('click', () => {
+		if (!col || !sePuedeEditar()) return;
+		if (proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === d.id) !== col
+			|| proyecto.dispositivos.find((item) => item.id === d.id) !== d) {
+			avisar('La colocación cambió; selecciona de nuevo el aparato.', 'info'); return;
+		}
+		const leer = (id: string): number | undefined => {
+			const texto = panel.querySelector<HTMLInputElement>(`#${id}`)?.value.trim();
+			return texto && Number.isFinite(Number(texto)) ? Number(texto) : undefined;
+		};
+		const x = leer('pos-aparato-x'), y = leer('pos-aparato-y');
+		if (x === undefined || y === undefined) {
+			avisar('Completa X/Y con milímetros finitos.', 'error'); return;
+		}
+		const plan = planPosicionAparato(proyecto.gabinete!, proyecto.dispositivos, d.id, { x, y });
+		if (!plan.ok) { avisar(plan.motivo, 'error'); return; }
+		if (!plan.valor.cambio) return;
+		try {
+			mutarProyecto(() => { col.x = plan.valor.x; col.y = plan.valor.y; });
+		} catch (fallo) { avisar(`No se aplicó la posición: ${String(fallo)}`, 'error'); return; }
+		pintarSeleccion();
+	});
 	if (d.componentePersonalizado) {
 		const marcador = panel.querySelector<HTMLElement>('#estado-revision-personal')!;
 		const origen = d.componentePersonalizado;
@@ -4150,11 +4184,24 @@ function pintarPanelEstructura(s: Seleccion): void {
 	`;
 	// Girar (H↔V) al instante.
 	(panel.querySelector('#e-girar') as HTMLButtonElement).onclick = () => {
-		if (!capturar()) return;
+		if (!sePuedeEditar()) return;
+		if (proyecto.gabinete !== g || (can ? !g.canaletas.includes(can) : !g.rieles.includes(obj as typeof g.rieles[number]))) {
+			avisar('La estructura cambió; selecciónala de nuevo antes de girar.', 'info'); return;
+		}
 		const nueva: 'h' | 'v' = esV ? 'h' : 'v';
-		if (can) can.orientacion = nueva;
-		else (obj as typeof g.rieles[number]).orientacion = nueva;
-		actualizarTodo();
+		if (!can && g.colocaciones.some((c) => c.rielId === s.id)) {
+			avisar('Este riel tiene aparatos anclados. El modelo aún no puede girar sus cuerpos y bornes; el giro se bloqueó sin moverlos.', 'error');
+			return;
+		}
+		const ancho = can?.ancho ?? 0;
+		if (obj.x + (nueva === 'v' ? ancho : obj.largo) > g.ancho
+			|| obj.y + (nueva === 'v' ? obj.largo : ancho) > g.alto) {
+			avisar('La estructura girada saldría de la placa.', 'error'); return;
+		}
+		try {
+			mutarProyecto(() => { if (can) can.orientacion = nueva;
+				else (obj as typeof g.rieles[number]).orientacion = nueva; });
+		} catch (fallo) { avisar(`No se giró la estructura: ${String(fallo)}`, 'error'); return; }
 		pintarEstructura();
 		pintarPanelEstructura(s); // refrescar el propio panel (texto del botón)
 	};
