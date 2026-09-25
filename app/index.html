@@ -1324,6 +1324,13 @@
 	#esq-folios-panel input[type="text"] { width: min(35vw, 280px); }
 	#esq-folios-panel input[type="number"] { width: 78px; }
 	#esq-folios-borrar-motivo { color: var(--texto-suave); }
+	#esq-movimiento-aviso { position: absolute; bottom: 36px; left: 50%; transform: translateX(-50%);
+		z-index: 2; max-width: calc(100% - 24px); padding: 6px 12px; pointer-events: none;
+		font-size: 12px; line-height: 1.35; border-radius: 6px; box-shadow: 0 4px 16px #0008;
+		background: #17354b; color: #d4edff; border: 1px solid #3673a0; }
+	#esq-movimiento-aviso[data-estado="invalido"] { background: #4a2522; color: #ffd5cd; border-color: #9f5148; }
+	#esq-movimiento-aviso[data-estado="sin-cambio"] { background: #2e3137; color: var(--texto-suave); border-color: var(--borde); }
+	#esq-movimiento-aviso[hidden] { display: none; }
 	#esquema-lienzo { flex: 1; overflow: auto; padding: 18px; display: flex; align-items: flex-start; justify-content: center; }
 	#esquema-hoja { box-shadow: 0 10px 40px #0009; border-radius: 3px; overflow: hidden; line-height: 0; }
 	#esquema-hoja .simbolo { cursor: grab; }
@@ -1581,6 +1588,7 @@
 			<button class="boton primario" id="esq-folio-crear" type="button">Previsualizar hoja nueva</button>
 		</div>
 	</section>
+	<div id="esq-movimiento-aviso" role="status" aria-live="polite" hidden></div>
 	<div id="esquema-lienzo"><div id="esquema-hoja"></div></div>
 	<div id="esq-ayuda"><b>Arrastra</b> cualquier símbolo para colocarlo donde quieras · los hilos lo siguen</div>
 </section>

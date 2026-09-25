@@ -15,8 +15,11 @@ import { cerrarTodasLasVentanas } from './ventanas.js';
 import { ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { calcularPotenciales } from '../src/motores/potenciales.js';
 import {
-	anchoColumna, FILAS_ESQ, filaDeAltura, HOJA_A3, HojaEsq, MARGEN, montarEsquema,
+	anchoColumna, alturaDeFila, FILAS_ESQ, filaDeAltura, HOJA_A3, HojaEsq, MARGEN, montarEsquema,
 } from '../src/motores/esquema.js';
+import { aplicarMovimientoRepresentacion, previsualizarMovimientoRepresentacion,
+	type PlanMovimientoRepresentacion, type PosicionMovimientoRepresentacion,
+} from '../src/motores/mover-representacion-esquema.js';
 import {
 	planActivacionRepresentaciones, planDesdoblamientoRepresentacion,
 	planPartesDesdoblamiento, planReponerRepresentacion, type DestinosDesdoblamiento,
@@ -177,6 +180,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	/** El índice se calcula al abrirse; el arrastre normal no hace análisis semántico adicional. */
 	let referenciasAbiertas = false;
 	let arrastrandoVista = false;
+	/** Un solo gesto M2 activo; cerrar el esquema también retira sus listeners globales. */
+	let cancelarArrastreM2: (() => void) | undefined;
 	type OpcionLocalizacion = {
 		tipo: EntidadLocalizableEsquema['tipo']; id: string; hojaId: string;
 		representacionId?: string; etiqueta: string;
@@ -1065,6 +1070,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 
 	/** Mueve la vista M2 por su ID gráfico; ni el aparato ni sus cables cambian. */
 	function empezarArrastreRepresentacion(ev: PointerEvent, g: SVGGElement): void {
+		if (cancelarArrastreM2) { ev.preventDefault(); return; }
 		const id = g.getAttribute('data-representacion');
 		const hoja = hojasEsquema[hojaActual];
 		const documento = proyecto();
@@ -1080,74 +1086,166 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		representacionSeleccionada = id;
 		seleccionar(d.id);
 		pintarConductorSeleccionado();
+		if (!ctx.puedeEditar()) return;
 
-		const inicialVisible = {
+		let svg = $('esquema-hoja').querySelector<SVGSVGElement>('svg');
+		if (!svg) return;
+		const svgVigente = (): SVGSVGElement | null => {
+			// Una selección externa puede remontar la hoja durante el gesto; no medir un SVG desacoplado.
+			if (!svg?.isConnected) svg = $('esquema-hoja').querySelector<SVGSVGElement>('svg');
+			return svg;
+		};
+		const punteroId = ev.pointerId;
+		const aviso = $('esq-movimiento-aviso');
+		const inicial: PosicionMovimientoRepresentacion = {
 			hojaId: hoja.id, columna: simbolo.columna,
 			fila: filaDeAltura(simbolo.y + simbolo.alto / 2),
 		};
-		let destino = inicialVisible;
-		let capturado = false;
+		const indiceHoja = hojaActual;
+		let movido = false;
+		let claveAnterior = '';
+		let planPendiente: PlanMovimientoRepresentacion | undefined;
+		let guia: SVGRectElement | undefined;
+		const mismoOrigen = (r: PosicionMovimientoRepresentacion): boolean =>
+			r.hojaId === inicial.hojaId && r.columna === inicial.columna && r.fila === inicial.fila;
 		const limpiar = (): void => {
 			window.removeEventListener('pointermove', alMover);
 			window.removeEventListener('pointerup', alSoltar);
-			window.removeEventListener('pointercancel', alSoltar);
+			window.removeEventListener('pointercancel', alCancelarPuntero);
+			window.removeEventListener('keydown', alTecla, true);
+			window.removeEventListener('blur', alCancelar);
 			$('esquema-hoja').classList.remove('arrastrando');
 			arrastrandoVista = false;
+			cancelarArrastreM2 = undefined;
+			aviso.hidden = true;
+			guia?.remove();
 		};
-		const rejillaEn = (cx: number, cy: number): typeof destino | undefined => {
-			const svg = $('esquema-hoja').querySelector('svg');
-			if (!svg) return undefined;
-			const caja = svg.getBoundingClientRect();
-			if (caja.width < 1 || caja.height < 1) return undefined;
+		const vigente = (): boolean => proyecto() === documento && !!esquemaAbierto
+			&& documento.esquema?.representaciones === lista;
+		const rejillaEn = (cx: number, cy: number): PosicionMovimientoRepresentacion | undefined => {
+			const actual = svgVigente();
+			if (!actual) return undefined;
+			const caja = actual.getBoundingClientRect();
+			if (caja.width < 1 || caja.height < 1 || cx < caja.left || cx > caja.right
+				|| cy < caja.top || cy > caja.bottom) return undefined;
 			const xmm = ((cx - caja.left) / caja.width) * hoja.anchoMm;
 			const ymm = ((cy - caja.top) / caja.height) * hoja.altoMm;
+			const mediaFila = (alturaDeFila(2) - alturaDeFila(1)) / 2;
+			if (ymm < alturaDeFila(1) - mediaFila || ymm > alturaDeFila(FILAS_ESQ) + mediaFila) return undefined;
 			const enHoja = Math.floor((xmm - MARGEN.izq) / anchoColumna(HOJA_A3, hoja.columnas));
-			let indice = hojaActual;
+			let indice = indiceHoja;
 			let columna = enHoja + 1;
 			if (columna < 1) {
-				indice = Math.max(0, hojaActual - 1);
-				columna = indice === hojaActual ? 1 : hojasEsquema[indice].columnas;
+				indice--;
+				if (indice < 0) return undefined;
+				columna = hojasEsquema[indice].columnas;
 			} else if (columna > hoja.columnas) {
-				indice = Math.min(hojasEsquema.length - 1, hojaActual + 1);
-				columna = indice === hojaActual ? hoja.columnas : 1;
+				indice++;
+				if (indice >= hojasEsquema.length) return undefined;
+				columna = 1;
 			}
 			return { hojaId: hojasEsquema[indice].id, columna, fila: filaDeAltura(ymm) };
 		};
-		const alMover = (e: PointerEvent): void => {
-			if (proyecto() !== documento || documento.esquema?.representaciones?.find((r) => r.id === id) !== vista) {
-				limpiar();
+		const pintarDestino = (destino: PosicionMovimientoRepresentacion | undefined): void => {
+			if (!destino || !planPendiente?.ok || destino.hojaId !== hoja.id) {
+				guia?.remove();
+				guia = undefined;
 				return;
 			}
-			const siguiente = rejillaEn(e.clientX, e.clientY);
-			if (!siguiente) return;
-			if (!capturado && siguiente.hojaId === inicialVisible.hojaId
-				&& siguiente.columna === inicialVisible.columna && siguiente.fila === inicialVisible.fila) return;
-			if (siguiente.hojaId === destino.hojaId && siguiente.columna === destino.columna
-				&& siguiente.fila === destino.fila) return;
-			if (!capturado) {
-				if (!capturar()) { limpiar(); refrescarEsquema(); return; }
-				capturado = true;
-				arrastrandoVista = true;
-				$('esquema-hoja').classList.add('arrastrando');
+			const actual = svgVigente();
+			if (!actual) return;
+			if (guia && guia.ownerSVGElement !== actual) { guia.remove(); guia = undefined; }
+			if (!guia) {
+				guia = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+				guia.classList.add('guia-suelta');
+				guia.setAttribute('fill', '#268cd022');
+				guia.setAttribute('stroke', '#1679bd');
+				guia.setAttribute('stroke-width', '0.9');
+				guia.setAttribute('stroke-dasharray', '2 1.5');
+				actual.append(guia);
 			}
-			destino = siguiente;
-			vista.hojaId = siguiente.hojaId;
-			vista.posicion = { columna: siguiente.columna, fila: siguiente.fila };
-			refrescarEsquema();
+			const paso = anchoColumna(HOJA_A3, hoja.columnas);
+			guia.setAttribute('x', String(MARGEN.izq + (destino.columna - 0.5) * paso - Math.min(paso - 2, simbolo.ancho + 4) / 2));
+			guia.setAttribute('y', String(alturaDeFila(destino.fila) - (simbolo.alto + 4) / 2));
+			guia.setAttribute('width', String(Math.min(paso - 2, simbolo.ancho + 4)));
+			guia.setAttribute('height', String(simbolo.alto + 4));
 		};
-		const alSoltar = (): void => {
+		const proponer = (cx: number, cy: number): void => {
+			// Un clic con leve temblor no es un traslado, incluso si el rótulo del símbolo
+			// sobresale del centro de la casilla y sus píxeles caen fuera de la rejilla.
+			if (!movido && Math.hypot(cx - ev.clientX, cy - ev.clientY) < 4) return;
+			const destino = rejillaEn(cx, cy);
+			const clave = destino ? `${destino.hojaId}:${destino.columna}:${destino.fila}` : 'fuera';
+			if (clave === claveAnterior) return;
+			claveAnterior = clave;
+			if (destino && mismoOrigen(destino) && !movido) return;
+			movido = true;
+			arrastrandoVista = true;
+			$('esquema-hoja').classList.add('arrastrando');
+			planPendiente = destino
+				? previsualizarMovimientoRepresentacion(documento, id!, destino)
+				: { ok: false, motivo: 'Suelta la vista dentro de una casilla de hoja.' };
+			aviso.hidden = false;
+			if (!planPendiente.ok) {
+				aviso.dataset.estado = 'invalido';
+				aviso.textContent = `Destino no disponible: ${planPendiente.motivo}`;
+			} else if (planPendiente.noOp) {
+				aviso.dataset.estado = 'sin-cambio';
+				aviso.textContent = 'Casilla de origen: soltar aquí no modifica el esquema.';
+			} else {
+				aviso.dataset.estado = 'valido';
+				const folio = hojasEsquema.find((h) => h.id === destino!.hojaId);
+				aviso.textContent = `Destino libre: hoja ${folio?.numero ?? destino!.hojaId}, casilla ${destino!.columna}.${destino!.fila}. Suelta para colocar.`;
+			}
+			pintarDestino(destino);
+		};
+		const alMover = (e: PointerEvent): void => {
+			if (e.pointerId !== punteroId) return;
+			if (!vigente()) { limpiar(); return; }
+			proponer(e.clientX, e.clientY);
+		};
+		const alCancelar = (): void => { limpiar(); if (esquemaAbierto) refrescarEsquema(); };
+		const alCancelarPuntero = (e: PointerEvent): void => {
+			if (e.pointerId === punteroId) alCancelar();
+		};
+		const alTecla = (e: KeyboardEvent): void => {
+			if (e.key !== 'Escape') return;
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			alCancelar();
+		};
+		const alSoltar = (e: PointerEvent): void => {
+			if (e.pointerId !== punteroId) return;
+			if (!vigente()) { limpiar(); return; }
+			// El último pointermove no está garantizado: se valida la casilla de las coordenadas del soltar.
+			proponer(e.clientX, e.clientY);
+			const plan = planPendiente;
 			limpiar();
-			if (!capturado) { refrescarEsquema(); return; }
-			hojaActual = Math.max(0, hojasEsquema.findIndex((h) => h.id === destino.hojaId));
-			hojaSeleccionadaId = destino.hojaId;
+			if (!movido || !plan?.ok || plan.noOp) {
+				refrescarEsquema();
+				if (movido && plan && !plan.ok) avisar(plan.motivo, 'info');
+				return;
+			}
+			if (!capturar()) { refrescarEsquema(); return; }
+			try { aplicarMovimientoRepresentacion(documento, plan); }
+			catch (error) {
+				ctx.descartarCapturaSiIgual();
+				refrescarEsquema();
+				avisar(error instanceof Error ? error.message : 'La casilla cambió; vuelve a mover la vista.', 'error');
+				return;
+			}
+			hojaSeleccionadaId = plan.destino.hojaId;
 			marcarSucio();
 			actualizarTodo();
 			refrescarEsquema();
-			avisar(`Vista ${id} colocada en hoja ${destino.hojaId}, casilla ${destino.columna}.${destino.fila}`, 'ok');
+			avisar(`Vista ${id} colocada en hoja ${plan.destino.hojaId}, casilla ${plan.destino.columna}.${plan.destino.fila}`, 'ok');
 		};
 		window.addEventListener('pointermove', alMover);
 		window.addEventListener('pointerup', alSoltar);
-		window.addEventListener('pointercancel', alSoltar);
+		window.addEventListener('pointercancel', alCancelarPuntero);
+		window.addEventListener('keydown', alTecla, true);
+		window.addEventListener('blur', alCancelar);
+		cancelarArrastreM2 = alCancelar;
 	}
 
 	/**
@@ -1271,6 +1369,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		if (abrir) cerrarTodasLasVentanas();
 		esquemaAbierto = abrir;
 		if (!abrir) {
+			cancelarArrastreM2?.();
 			$('esq-folios-panel').hidden = true;
 			if (refrescoEstadoPendiente) window.cancelAnimationFrame(refrescoEstadoPendiente);
 			refrescoEstadoPendiente = 0;

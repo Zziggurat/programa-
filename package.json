@@ -35,6 +35,7 @@
 	"qa:esquema-conexion-pendiente-m2": "vite build app --mode qa && node qa/esquema-conexion-pendiente-m2.mjs",
 	"qa:esquema-estado-m2": "vite build app --mode qa && node qa/esquema-estado-m2.mjs",
 	"qa:esquema-folios-m2": "vite build app --mode qa && node qa/esquema-folios-m2.mjs",
+	"qa:esquema-mover-vistas-m2": "vite build app --mode qa && node qa/esquema-mover-vistas-m2.mjs",
 	"qa:procedencia-documental-m3": "vite build app --mode qa && node qa/procedencia-documental-m3.mjs",
     "qa:simulacion": "vite build app --mode qa && node qa/todas.mjs simulacion-industrial",
 	"qa:bomba-fallo-m4": "vite build app --mode qa && node qa/bomba-fallo-m4.mjs",
