@@ -62,6 +62,9 @@ try {
 		&& await pagina.locator('#e-y').inputValue() === String(r0.y)
 		&& /mm desde la esquina superior izquierda/i.test(await pagina.locator('#panel-der').innerText()));
 	const undo0 = (await historial()).deshacer;
+	await pagina.locator('#e-girar').click();
+	comprobar('giro de riel ocupado se bloquea sin desanclar aparatos ni crear Undo',
+		JSON.stringify(await proyecto()) === JSON.stringify(p0) && (await historial()).deshacer === undo0);
 	await pagina.locator('#e-x').fill(String(r0.x + 5));
 	await pagina.locator('#e-y').fill(String(r0.y + 20));
 	await pagina.locator('#e-aplicar').click();
@@ -154,6 +157,63 @@ try {
 	await pagina.locator('#aplicar-dim').click();
 	comprobar('la lista general no transforma vacío en origen cero',
 		JSON.stringify(await proyecto()) === firmaLista && (await historial()).deshacer === undoRechazo);
+	// Aparato DIN: la posición numérica no despega el clip ni usa cercanía como nuevo anclaje.
+	await pagina.locator('#hta-seleccionar').click();
+	if (!await pagina.locator('#seccion-dispositivos').evaluate((e) => e.open))
+		await pagina.locator('#seccion-dispositivos summary').click();
+	const aparatoId = 'q1';
+	const designacion = (await proyecto()).dispositivos.find((d) => d.id === aparatoId).designacion;
+	await pagina.locator('#lista-dispositivos li').filter({ hasText: designacion }).first().click();
+	await pagina.locator('#pos-aparato-aplicar').waitFor({ state: 'visible' });
+	const antesAparato = await proyecto();
+	const colAntes = antesAparato.gabinete.colocaciones.find((c) => c.dispositivoId === aparatoId);
+	const bultoAntes = await pagina.evaluate((id) => window.qa.bulto(id), aparatoId);
+	const undoAparato = (await historial()).deshacer;
+	comprobar('inspector de aparato expresa coordenadas reales y anclaje explícito',
+		await pagina.locator('#pos-aparato-x').inputValue() === String(colAntes.x)
+		&& /Anclado a r1: solo se mueve por el eje X/.test(await pagina.locator('#panel-der').innerText()));
+	await pagina.locator('#pos-aparato-x').fill(String(colAntes.x + 5));
+	await pagina.locator('#pos-aparato-aplicar').click();
+	const despuesAparato = await proyecto();
+	const colDespues = despuesAparato.gabinete.colocaciones.find((c) => c.dispositivoId === aparatoId);
+	comprobar('aparato se mueve 5 mm sin cambiar rielId, circuito ni otros montajes',
+		colDespues.x === colAntes.x + 5 && colDespues.y === colAntes.y
+		&& colDespues.rielId === id
+		&& firmaElectrica(despuesAparato) === firmaElectrica(antesAparato)
+		&& despuesAparato.gabinete.colocaciones.every((c) => c.dispositivoId === aparatoId
+			|| JSON.stringify(c) === JSON.stringify(antesAparato.gabinete.colocaciones.find((a) => a.dispositivoId === c.dispositivoId)))
+		&& (await historial()).deshacer === undoAparato + 1);
+	const bultoDespues = await pagina.evaluate((id) => window.qa.bulto(id), aparatoId);
+	comprobar('la malla 3D y todos los cables siguen al modelo sin fantasmas',
+		bultoAntes && bultoDespues && Math.abs((bultoDespues.x - bultoAntes.x) - 5) < 0.01
+		&& await pagina.evaluate(() => window.qa.cablesDibujados() === window.qa.proyecto().conductores.length));
+	const firmaAparato = JSON.stringify(despuesAparato), undoInvalido = (await historial()).deshacer;
+	await pagina.locator('#pos-aparato-y').fill(String(colAntes.y + 10));
+	await pagina.locator('#pos-aparato-aplicar').click();
+	comprobar('mover fuera del eje DIN se rechaza sin despegar anclaje',
+		JSON.stringify(await proyecto()) === firmaAparato && (await historial()).deshacer === undoInvalido);
+	await pagina.locator('#pos-aparato-y').fill(String(colAntes.y));
+	await pagina.locator('#pos-aparato-x').fill('100');
+	await pagina.locator('#pos-aparato-aplicar').click();
+	comprobar('solape con otro aparato se rechaza sin mutación',
+		JSON.stringify(await proyecto()) === firmaAparato && (await historial()).deshacer === undoInvalido);
+	await pagina.locator('#pos-aparato-x').fill('');
+	await pagina.locator('#pos-aparato-aplicar').click();
+	comprobar('campo de posición vacío no se convierte en cero',
+		JSON.stringify(await proyecto()) === firmaAparato && (await historial()).deshacer === undoInvalido);
+	await pagina.locator('#btn-deshacer').click();
+	comprobar('Undo de aparato restaura solo su posición',
+		(await proyecto()).gabinete.colocaciones.find((c) => c.dispositivoId === aparatoId).x === colAntes.x);
+	await pagina.locator('#btn-rehacer').click();
+	comprobar('Redo de aparato repone la posición y el anclaje',
+		(await proyecto()).gabinete.colocaciones.find((c) => c.dispositivoId === aparatoId).x === colDespues.x
+		&& (await proyecto()).gabinete.colocaciones.find((c) => c.dispositivoId === aparatoId).rielId === id);
+	await pagina.evaluate(() => window.qa.esperarPersistencia());
+	await pagina.reload({ waitUntil: 'domcontentloaded' });
+	await esperarEditorListo(pagina);
+	comprobar('posición numérica del aparato sobrevive reapertura',
+		(await proyecto()).gabinete.colocaciones.find((c) => c.dispositivoId === aparatoId).x === colDespues.x
+		&& (await proyecto()).gabinete.colocaciones.find((c) => c.dispositivoId === aparatoId).rielId === id);
 	comprobar('ningún error JavaScript', erroresJS.length === 0);
 	console.log(`MON-01/02 montaje numérico: ${casos}/${casos}, 0 JS`);
 } catch (fallo) {

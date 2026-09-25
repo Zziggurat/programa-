@@ -264,6 +264,14 @@ try {
 	comprobar('drag: inspector conserva compatibilidad geométrica',
 		/Envolvente geométricamente compatible; fijación no certificada/i.test(
 			await pagina.locator('#panel-der .revision-personal').innerText()));
+	await pagina.locator('#pos-aparato-x').fill(String(haciaLibre.posterior.x + 0.5));
+	await pagina.locator('#pos-aparato-aplicar').click();
+	const placaNumerica = await colocacionDe(placa.id);
+	comprobar('posición numérica de componente propio conserva placa sin inventar DIN',
+		placaNumerica.x === haciaLibre.posterior.x + 0.5
+		&& placaNumerica.y === haciaLibre.posterior.y && !placaNumerica.rielId);
+	comprobar('malla de componente propio sigue seleccionable tras medida decimal',
+		!!(await puntoArrastrable(placa.id)).punto);
 	await qa('esperarPersistencia');
 	await pagina.reload({ waitUntil: 'load' });
 	await esperarEditorListo(pagina);
@@ -273,7 +281,7 @@ try {
 	comprobar('recarga: instancia, anclajes y posición sobreviven',
 		placaReabierta?.montajeComponente?.metodo === 'atornillado-placa'
 		&& placaReabierta.montajeComponente.anclajes?.length === 2
-		&& colReabierta?.x === haciaLibre.posterior.x && colReabierta?.y === haciaLibre.posterior.y
+		&& colReabierta?.x === placaNumerica.x && colReabierta?.y === placaNumerica.y
 		&& !colReabierta?.rielId);
 	comprobar('recarga: la pieza sigue siendo seleccionable donde está guardada',
 		!!(await puntoArrastrable(placa.id)).punto);
