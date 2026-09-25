@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
+import { identidadParaCopia } from '../src/modelo/identidad-copia.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
 import { planCopiarAparatoConVista } from '../src/motores/copiar-representacion-esquema.js';
 import { montarEsquema } from '../src/motores/esquema.js';
+import { hojaASvg } from '../app/esquema-svg.js';
 import { calcularPotenciales } from '../src/motores/potenciales.js';
 
 function fixture(): Proyecto {
@@ -102,4 +104,116 @@ test('ESQ-05: copiar una vista girada conserva la orientación, no las conexione
 	if (!plan.ok) return;
 	assert.equal(plan.nuevaVista.giro, 180);
 	assert.deepEqual(p.conductores.map((c) => c.id), ['c1']);
+});
+
+function fixtureDesdoblado(): Proyecto {
+	const p = fixture();
+	p.dispositivos[0] = {
+		id: 'km1', tipo: 'contactor', designacion: '-KM1',
+		bornes: ['1/L1', '2/T1', '3/L2', '4/T2', 'A1', 'A2', '13', '14'].map((id) => ({ id })),
+		comportamiento: { version: 1, clase: 'contactos-electromagneticos',
+			bobina: { entrada: 'A1', retorno: 'A2' },
+			polos: [{ entrada: '1/L1', salida: '2/T1' }, { entrada: '3/L2', salida: '4/T2' }],
+			contactos: [{ entrada: '13', salida: '14', reposo: 'abierto', funcion: 'auxiliar' }],
+		},
+	};
+	p.gabinete!.colocaciones[0].dispositivoId = 'km1';
+	p.conductores[0].de = { dispositivoId: 'km1', borneId: 'A1' };
+	p.esquema!.representaciones = [
+		{ id: 'bobina', dispositivoId: 'km1', hojaId: 'h1',
+			posicion: { columna: 3, fila: 2 }, parte: { tipo: 'bobina' } },
+		{ id: 'polos', dispositivoId: 'km1', hojaId: 'h2',
+			posicion: { columna: 4, fila: 3 }, parte: { tipo: 'contactos', pares: [
+				{ entrada: '1/L1', salida: '2/T1' }, { entrada: '3/L2', salida: '4/T2' },
+			] } },
+		{ id: 'auxiliar', dispositivoId: 'km1', hojaId: 'h1',
+			posicion: { columna: 5, fila: 4 }, parte: { tipo: 'contactos', pares: [
+				{ entrada: '13', salida: '14' },
+			] } },
+		{ id: 'x-vista', dispositivoId: 'x1', hojaId: 'h1',
+			posicion: { columna: 7, fila: 5 }, parte: { tipo: 'completa' } },
+	];
+	return p;
+}
+
+const idsGrupo = { dispositivoId: 'km2', vistaId: 'bobina-nueva', otrasVistas: [
+	{ origenVistaId: 'polos', nuevaVistaId: 'polos-nuevos' },
+	{ origenVistaId: 'auxiliar', nuevaVistaId: 'auxiliar-nueva' },
+] };
+
+test('ESQ-05: copiar desde bobina crea un aparato y todas sus vistas sin duplicar bornes', () => {
+	const p = fixtureDesdoblado();
+	const antes = JSON.stringify(p);
+	const plan = planCopiarAparatoConVista(p, 'bobina', { hojaId: 'h1', columna: 6, fila: 2 }, idsGrupo);
+	assert.equal(plan.ok, true);
+	if (!plan.ok) return;
+	assert.equal(JSON.stringify(p), antes, 'el preview no modifica el proyecto');
+	assert.equal(plan.nuevasVistas.length, 3);
+	assert.deepEqual(plan.nuevasVistas.map((r) => [r.id, r.hojaId, r.posicion.columna, r.posicion.fila]), [
+		['bobina-nueva', 'h1', 6, 2], ['auxiliar-nueva', 'h1', 8, 4], ['polos-nuevos', 'h2', 7, 3],
+	]);
+	p.dispositivos.push({ ...structuredClone(p.dispositivos[0]), id: plan.nuevoDispositivoId,
+		...identidadParaCopia(p.dispositivos[0], p.dispositivos) });
+	p.gabinete!.colocaciones.push({ ...p.gabinete!.colocaciones[0], dispositivoId: plan.nuevoDispositivoId,
+		x: 160 });
+	p.esquema!.representaciones!.push(...plan.nuevasVistas);
+	assert.equal(p.conductores.length, 1, 'no se copiaron cables como efecto lateral');
+	const hojas = montarEsquema(p, calcularPotenciales(p));
+	const montadas = hojas.flatMap((h) => h.simbolos)
+		.filter((s) => s.dispositivoId === plan.nuevoDispositivoId);
+	assert.equal(montadas.length, 3);
+	assert.ok(montadas.every((s) => s.designacion === '-KM2'));
+	assert.ok(hojas.filter((h) => h.simbolos.some((s) => s.dispositivoId === plan.nuevoDispositivoId))
+		.every((h) => hojaASvg(h).includes('-KM2')), 'ambos SVG salen de las vistas del mismo aparato');
+	assert.deepEqual([...new Set(montadas.flatMap((s) => [...s.pines.keys()]))].sort(),
+		p.dispositivos[0].bornes.map((b) => b.id).sort());
+	const reabierto = cargarProyecto(JSON.stringify(p));
+	assert.deepEqual(reabierto.diagnosticos, []);
+	assert.equal(reabierto.proyecto.esquema?.representaciones?.filter((r) => r.dispositivoId === 'km2').length, 3);
+	assert.equal(reabierto.proyecto.conductores.length, 1);
+});
+
+test('ESQ-05: el grupo desdoblado se pega por IDs, no por orden de arrays', () => {
+	const p = fixtureDesdoblado();
+	const invertido = structuredClone(p);
+	invertido.hojas.reverse(); invertido.dispositivos.reverse();
+	invertido.esquema!.representaciones!.reverse(); invertido.gabinete!.colocaciones.reverse();
+	const destino = { hojaId: 'h1', columna: 6, fila: 2 };
+	assert.deepEqual(planCopiarAparatoConVista(p, 'bobina', destino, idsGrupo),
+		planCopiarAparatoConVista(invertido, 'bobina', destino,
+			{ ...idsGrupo, otrasVistas: [...idsGrupo.otrasVistas].reverse() }));
+	const desdePolos = planCopiarAparatoConVista(p, 'polos', { hojaId: 'h2', columna: 7, fila: 3 },
+		{ dispositivoId: 'km2', vistaId: 'polos-nuevos', otrasVistas: [
+			{ origenVistaId: 'bobina', nuevaVistaId: 'bobina-nueva' },
+			{ origenVistaId: 'auxiliar', nuevaVistaId: 'auxiliar-nueva' },
+		] });
+	assert.equal(desdePolos.ok, true, 'el ancla puede ser un contacto, no solo la bobina');
+	if (desdePolos.ok) assert.deepEqual(desdePolos.nuevasVistas.map((r) => [r.hojaId, r.posicion.columna]),
+		[['h2', 7], ['h1', 8], ['h1', 6]]);
+});
+
+test('ESQ-05: el grupo rechaza folios cambiados, casillas ocupadas e IDs incompletos', () => {
+	const p = fixtureDesdoblado();
+	const proponer = (destino: { hojaId: string; columna: number; fila: number },
+		ids = idsGrupo) => planCopiarAparatoConVista(p, 'bobina', destino, ids);
+	const antes = JSON.stringify(p);
+	assert.match((proponer({ hojaId: 'h2', columna: 6, fila: 2 }) as { motivo: string }).motivo, /conserva los folios/);
+	assert.equal(proponer({ hojaId: 'h1', columna: 9, fila: 2 }).ok, false,
+		'la vista auxiliar saldría de la rejilla');
+	assert.equal(proponer({ hojaId: 'h1', columna: 5, fila: 3 }).ok, false,
+		'la vista auxiliar caería en la casilla ocupada por X1');
+	assert.equal(proponer({ hojaId: 'h1', columna: 6, fila: 2 },
+		{ ...idsGrupo, otrasVistas: [idsGrupo.otrasVistas[0]] }).ok, false);
+	assert.equal(proponer({ hojaId: 'h1', columna: 6, fila: 2 },
+		{ ...idsGrupo, otrasVistas: idsGrupo.otrasVistas.map((v) => ({ ...v, nuevaVistaId: 'duplicada' })) }).ok, false);
+	assert.equal(JSON.stringify(p), antes, 'los rechazos no generan aparatos ni capturas');
+});
+
+test('ESQ-05: una vista funcional aislada no se presenta como copia completa', () => {
+	const p = fixtureDesdoblado();
+	p.esquema!.representaciones = p.esquema!.representaciones!.filter((r) => r.id !== 'polos' && r.id !== 'auxiliar');
+	const plan = planCopiarAparatoConVista(p, 'bobina', { hojaId: 'h1', columna: 6, fila: 2 },
+		{ dispositivoId: 'km2', vistaId: 'bobina-nueva' });
+	assert.equal(plan.ok, false);
+	if (!plan.ok) assert.match(plan.motivo, /funcional aislada/);
 });

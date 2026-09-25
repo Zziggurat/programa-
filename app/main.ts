@@ -34,6 +34,7 @@ import { aplicarEliminacionDispositivos, planificarEliminacionDispositivos,
 import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
 import { montarEsquema } from '../src/motores/esquema.js';
 import { planCopiarAparatoConVista } from '../src/motores/copiar-representacion-esquema.js';
+import { identidadParaCopia } from '../src/modelo/identidad-copia.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import {
@@ -3233,20 +3234,17 @@ function duplicarDispositivo(id: string, copiaEsquema?: {
 		return undefined;
 	}
 
-	const clase = original.clase ?? CLASE_POR_TIPO[original.tipo];
-	let maximo = 0;
-	for (const d of proyecto.dispositivos) {
-		if ((d.clase ?? CLASE_POR_TIPO[d.tipo]) === clase && d.numero) maximo = Math.max(maximo, d.numero);
-	}
-	const numero = maximo + 1;
+	const identidad = identidadParaCopia(original, proyecto.dispositivos);
 	const copia: Dispositivo = {
 		...structuredClone(original),
 		id: idUnico('d'),
-		numero,
-		designacion: (original.designacion ?? '').replace(/\d+$/, '') + numero,
+		...identidad,
 	};
+	const vistasDelOrigen = copiaEsquema ? (proyecto.esquema?.representaciones ?? [])
+		.filter((r) => r.dispositivoId === id && r.id !== copiaEsquema.vistaId) : [];
 	const planVista = copiaEsquema ? planCopiarAparatoConVista(proyecto, copiaEsquema.vistaId,
-		copiaEsquema.destino, { dispositivoId: copia.id, vistaId: idUnico('r') }) : undefined;
+		copiaEsquema.destino, { dispositivoId: copia.id, vistaId: idUnico('r'),
+			otrasVistas: vistasDelOrigen.map((r) => ({ origenVistaId: r.id, nuevaVistaId: idUnico('r') })) }) : undefined;
 	if (planVista && (!planVista.ok || planVista.origenDispositivoId !== id)) {
 		avisar(planVista.ok ? 'La vista copiada ya no pertenece al aparato esperado.' : planVista.motivo, 'info');
 		return undefined;
@@ -3281,7 +3279,7 @@ function duplicarDispositivo(id: string, copiaEsquema?: {
 	}
 	if (!capturar()) return;
 	proyecto.dispositivos.push(copia);
-	if (planVista?.ok) proyecto.esquema!.representaciones!.push(planVista.nuevaVista);
+	if (planVista?.ok) proyecto.esquema!.representaciones!.push(...planVista.nuevasVistas);
 	const nueva = { dispositivoId: copia.id, x, y, ancho: col.ancho, alto: col.alto, rielId, z: col.z };
 	g.colocaciones.push(nueva);
 	const rielCopia = extenderRielPara(nueva);
@@ -8368,17 +8366,10 @@ function pegarAparatos(): void {
 
 /** Da id nuevo y la siguiente designación libre de su clase a un aparato copiado. */
 function renumerar(d: Dispositivo): Dispositivo {
-	const clase = d.clase ?? CLASE_POR_TIPO[d.tipo];
-	let maximo = 0;
-	for (const x of proyecto.dispositivos) {
-		if ((x.clase ?? CLASE_POR_TIPO[x.tipo]) === clase && x.numero) maximo = Math.max(maximo, x.numero);
-	}
-	const numero = maximo + 1;
 	return {
 		...d,
 		id: idUnico('d'),
-		numero,
-		designacion: (d.designacion ?? '').replace(/\d+$/, '') + numero,
+		...identidadParaCopia(d, proyecto.dispositivos),
 	};
 }
 
