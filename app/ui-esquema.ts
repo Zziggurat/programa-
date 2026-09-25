@@ -28,6 +28,12 @@ import { exportarEsquemaPDF } from './esquema-pdf.js';
 import { dxfDeEsquema } from './exportaciones.js';
 import { avisar, confirmar, descargar, pedirTexto } from './dialogos.js';
 
+/** Identidades del modelo compartido, nunca designaciones visibles susceptibles de duplicarse. */
+export interface EntidadLocalizableEsquema {
+	tipo: 'DEVICE' | 'CONDUCTOR' | 'CIRCUIT';
+	id: string;
+}
+
 /** Lo que la vista de esquema necesita del editor. */
 export interface ContextoEsquema {
 	proyecto: () => Proyecto;
@@ -36,6 +42,11 @@ export interface ContextoEsquema {
 	dispositivoSeleccionado: () => string | undefined;
 	/** Selecciona un aparato en todo el programa (el esquema y el 3D son dos vistas del mismo). */
 	seleccionar: (id: string) => void;
+	seleccionarConductor: (id: string) => void;
+	/** Cierra el plano y enfoca la identidad eléctrica/física en el tablero. */
+	verEnTablero: (tipo: 'DEVICE' | 'CONDUCTOR', id: string) => void;
+	/** Abre la ficha técnica del mismo aparato, sin buscarlo por su rótulo. */
+	verDatosTecnicos?: (dispositivoId: string) => void;
 	/** Consulta de solo lectura antes de ofrecer una eliminación; no crea entrada de deshacer. */
 	puedeEditar: () => boolean;
 	/** El editor central elimina el conductor real y gestiona historial, recálculo y guardado. */
@@ -74,6 +85,8 @@ export interface PanelEsquema {
 	pasarHoja: (delta: number) => void;
 	/** Consume Escape si había un origen de conexión activo; no cierra el esquema. */
 	cancelarConexionPendiente: () => boolean;
+	/** Navega desde un issue por IDs; si hay varias vistas, exige elección visible. */
+	localizarEntidades: (entidades: readonly EntidadLocalizableEsquema[], issueId: string) => void;
 }
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -153,6 +166,12 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let representacionSeleccionada: string | undefined;
 	/** El índice se calcula al abrirse; el arrastre normal no hace análisis semántico adicional. */
 	let referenciasAbiertas = false;
+	let arrastrandoVista = false;
+	type OpcionLocalizacion = {
+		tipo: EntidadLocalizableEsquema['tipo']; id: string; hojaId: string;
+		representacionId?: string; etiqueta: string;
+	};
+	let localizacion: { issueId: string; documento: Proyecto; opciones: OpcionLocalizacion[] } | undefined;
 	/** El primer extremo se mantiene al cambiar de hoja; nunca es un segundo conductor. */
 	let origenConexion: { ref: RefBorne; representacionId: string; hojaId: string;
 		documento: Proyecto } | undefined;
@@ -174,6 +193,109 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		representacionSeleccionada = ubicacion.representacionId;
 		if (dispositivoId && proyecto().dispositivos.some((d) => d.id === dispositivoId)) seleccionar(dispositivoId);
 		refrescarEsquema();
+	}
+
+	const claveOpcion = (o: OpcionLocalizacion): string =>
+		JSON.stringify([o.tipo, o.id, o.hojaId, o.representacionId ?? '']);
+
+	/** Una identidad puede tener varias vistas; nunca inferimos una por nombre ni por orden del array. */
+	function opcionesParaEntidades(entidades: readonly EntidadLocalizableEsquema[]): OpcionLocalizacion[] {
+		const opciones: OpcionLocalizacion[] = [];
+		for (const entidad of entidades) {
+			if (entidad.tipo === 'DEVICE' && proyecto().dispositivos.some((d) => d.id === entidad.id)) {
+				for (const hoja of hojasEsquema) {
+					for (const simbolo of hoja.simbolos.filter((s) => s.dispositivoId === entidad.id)) {
+						opciones.push({ tipo: 'DEVICE', id: entidad.id, hojaId: hoja.id,
+							...(simbolo.representacionId ? { representacionId: simbolo.representacionId } : {}),
+							etiqueta: `${simbolo.designacion} [${entidad.id}] · hoja ${hoja.numero}`
+								+ (simbolo.representacionId ? ` · vista ${simbolo.representacionId}` : '') });
+					}
+					if (!hoja.simbolos.some((s) => s.dispositivoId === entidad.id)
+						&& hoja.problemas?.some((p) => p.dispositivoId === entidad.id)) {
+						opciones.push({ tipo: 'DEVICE', id: entidad.id, hojaId: hoja.id,
+							etiqueta: `${entidad.id} · hoja ${hoja.numero} · sin vista válida` });
+					}
+				}
+			} else if (entidad.tipo === 'CONDUCTOR'
+				&& proyecto().conductores.some((c) => c.id === entidad.id)) {
+				for (const hoja of hojasEsquema) {
+					if (hoja.hilos.some((h) => h.conductorId === entidad.id)
+						|| hoja.referencias.some((r) => r.conductorId === entidad.id)
+						|| hoja.problemas?.some((p) => p.conductorId === entidad.id)) {
+						opciones.push({ tipo: 'CONDUCTOR', id: entidad.id, hojaId: hoja.id,
+							etiqueta: `Conductor ${entidad.id} · hoja ${hoja.numero}` });
+					}
+				}
+			} else if (entidad.tipo === 'CIRCUIT') {
+				const referencia = proyectarReferenciasEsquemaM2(proyecto(), hojasEsquema)
+					.circuitos.find((c) => c.circuitoId === entidad.id);
+				for (const hoja of referencia?.hojas ?? []) {
+					opciones.push({ tipo: 'CIRCUIT', id: entidad.id, hojaId: hoja.id,
+						etiqueta: `Circuito ${entidad.id} · hoja ${hoja.numero}` });
+				}
+			}
+		}
+		const unicas = [...new Map(opciones.map((o) => [claveOpcion(o), o])).values()];
+		return unicas.sort((a, b) => {
+			const na = hojasEsquema.find((h) => h.id === a.hojaId)?.numero ?? Infinity;
+			const nb = hojasEsquema.find((h) => h.id === b.hojaId)?.numero ?? Infinity;
+			return na - nb || claveOpcion(a).localeCompare(claveOpcion(b));
+		});
+	}
+
+	function aplicarOpcionLocalizacion(opcion: OpcionLocalizacion): void {
+		const indice = hojasEsquema.findIndex((h) => h.id === opcion.hojaId);
+		if (indice < 0) { avisar('La hoja de ese issue ya no existe.', 'info'); return; }
+		hojaActual = indice;
+		representacionSeleccionada = opcion.representacionId;
+		conductorSeleccionado = opcion.tipo === 'CONDUCTOR' ? opcion.id : undefined;
+		if (opcion.tipo === 'DEVICE') seleccionar(opcion.id);
+		else if (opcion.tipo === 'CONDUCTOR') ctx.seleccionarConductor(opcion.id);
+		localizacion = undefined;
+		refrescarEsquema();
+	}
+
+	function localizarEntidades(entidades: readonly EntidadLocalizableEsquema[], issueId: string): void {
+		if (!entidades.length) { avisar('Este issue no identifica una entidad localizable en el esquema.', 'info'); return; }
+		abrirEsquema(true);
+		const opciones = opcionesParaEntidades(entidades);
+		if (opciones.length === 1) { aplicarOpcionLocalizacion(opciones[0]); return; }
+		localizacion = { issueId, documento: proyecto(), opciones };
+		pintarConductorSeleccionado();
+	}
+
+	function pintarLocalizador(ayuda: HTMLElement): void {
+		if (!localizacion) return;
+		const panel = document.createElement('div');
+		panel.id = 'esq-localizador-issue';
+		const cabecera = document.createElement('strong');
+		cabecera.textContent = `Issue ${localizacion.issueId}: ${localizacion.opciones.length
+			? 'elige la vista o entidad exacta' : 'sin hoja o ancla verificable; no se eligió una ubicación'}`;
+		panel.append(cabecera);
+		for (const opcion of localizacion.opciones) {
+			const boton = document.createElement('button');
+			boton.type = 'button';
+			boton.className = 'boton';
+			boton.dataset.localizarTipo = opcion.tipo;
+			boton.dataset.localizarId = opcion.id;
+			boton.dataset.hojaId = opcion.hojaId;
+			if (opcion.representacionId) boton.dataset.representacionId = opcion.representacionId;
+			boton.textContent = opcion.etiqueta;
+			boton.onclick = () => {
+				if (localizacion?.documento !== proyecto()) {
+					avisar('El proyecto cambió; vuelve al issue para localizarlo.', 'info');
+					localizacion = undefined;
+					refrescarEsquema();
+					return;
+				}
+				const actual = opcionesParaEntidades([{ tipo: opcion.tipo, id: opcion.id }])
+					.find((o) => claveOpcion(o) === claveOpcion(opcion));
+				if (!actual) { avisar('La ubicación cambió; vuelve a localizar el issue.', 'info'); return; }
+				aplicarOpcionLocalizacion(actual);
+			};
+			panel.append(boton);
+		}
+		ayuda.append(panel);
 	}
 
 	/** Índice de navegación ESQ-08. No adjudica páginas a retornos no descubiertos. */
@@ -203,6 +325,12 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		};
 		const render = () => {
 			if (!panel.open || !panel.isConnected) return;
+			// Cada casilla atravesada repinta el SVG. Ni la proyección semántica ni el DOM
+			// de todas las referencias se regeneran por pointermove: se actualizan al soltar.
+			if (arrastrandoVista) {
+				contenido.textContent = 'Las referencias se actualizarán al soltar la vista.';
+				return;
+			}
 			const referencias = proyectarReferenciasEsquemaM2(proyecto(), hojasEsquema);
 			contenido.replaceChildren();
 			titulo.textContent = `Referencias de E/S y circuitos por hoja · ${referencias.canales.length} canal(es), `
@@ -493,6 +621,30 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			activar.onclick = () => { void activarRepresentacionesLegacy(); };
 			ayuda.append(document.createTextNode(' · '), activar);
 		}
+		const dispositivo = !c && (vista?.dispositivoId ?? ctx.dispositivoSeleccionado());
+		const idVisible = dispositivo && hojasEsquema[hojaActual]?.simbolos.some((s) => s.dispositivoId === dispositivo)
+			? dispositivo : undefined;
+		if (c || idVisible) {
+			const tipo = c ? 'CONDUCTOR' as const : 'DEVICE' as const;
+			const id = c?.id ?? idVisible!;
+			const tablero = document.createElement('button');
+			tablero.id = 'esq-ver-en-tablero';
+			tablero.className = 'boton';
+			tablero.type = 'button';
+			tablero.textContent = c ? 'Ver cable en tablero' : 'Ver en tablero';
+			tablero.onclick = () => ctx.verEnTablero(tipo, id);
+			ayuda.append(document.createTextNode(' · '), tablero);
+			if (idVisible && ctx.verDatosTecnicos) {
+				const datos = document.createElement('button');
+				datos.id = 'esq-ver-datos-tecnicos';
+				datos.className = 'boton';
+				datos.type = 'button';
+				datos.textContent = 'Datos técnicos';
+				datos.onclick = () => ctx.verDatosTecnicos!(idVisible);
+				ayuda.append(document.createTextNode(' · '), datos);
+			}
+		}
+		pintarLocalizador(ayuda);
 		pintarReferencias(ayuda);
 	}
 
@@ -853,6 +1005,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			window.removeEventListener('pointerup', alSoltar);
 			window.removeEventListener('pointercancel', alSoltar);
 			$('esquema-hoja').classList.remove('arrastrando');
+			arrastrandoVista = false;
 		};
 		const rejillaEn = (cx: number, cy: number): typeof destino | undefined => {
 			const svg = $('esquema-hoja').querySelector('svg');
@@ -887,6 +1040,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			if (!capturado) {
 				if (!capturar()) { limpiar(); refrescarEsquema(); return; }
 				capturado = true;
+				arrastrandoVista = true;
 				$('esquema-hoja').classList.add('arrastrando');
 			}
 			destino = siguiente;
@@ -983,8 +1137,9 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				// Solo se considera arrastre cuando de verdad cambia de casilla: así un clic simple
 				// sigue siendo un clic y no mueve nada sin querer.
 				if (r.columna === (antes?.columna ?? -1) && r.fila === (antes?.fila ?? -1)) return;
-				movido = true;
 				if (!capturar()) return;
+				movido = true;
+				arrastrandoVista = true;
 				$('esquema-hoja').classList.add('arrastrando');
 			}
 			if (r.columna === destino?.columna && r.fila === destino?.fila) return;
@@ -996,7 +1151,9 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const alSoltar = (): void => {
 			window.removeEventListener('pointermove', alMover);
 			window.removeEventListener('pointerup', alSoltar);
+			window.removeEventListener('pointercancel', alSoltar);
 			$('esquema-hoja').classList.remove('arrastrando');
+			arrastrandoVista = false;
 			if (!movido) { refrescarEsquema(); return; }   // fue un clic: solo seleccionar
 			marcarSucio();
 			actualizarTodo();
@@ -1006,6 +1163,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 
 		window.addEventListener('pointermove', alMover);
 		window.addEventListener('pointerup', alSoltar);
+		window.addEventListener('pointercancel', alSoltar);
 	}
 
 	function aplicarZoomEsquema(): void {
@@ -1028,6 +1186,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			origenConexion = undefined;
 			conductorSeleccionado = undefined;
 			representacionSeleccionada = undefined;
+			localizacion = undefined;
+			arrastrandoVista = false;
 			document.getElementById('esq-desdoblar-formulario')?.remove();
 			documentoFormulario = undefined;
 		}
@@ -1251,5 +1411,6 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		reajustarZoom: aplicarZoomEsquema,
 		pasarHoja,
 		cancelarConexionPendiente,
+		localizarEntidades,
 	};
 }

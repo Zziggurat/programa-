@@ -7629,6 +7629,11 @@ panelIngenieria = instalarIngenieria({
 	abrirDatosTecnicos: id => { void panelDatosTecnicos?.abrir(id).catch(e => avisar(String(e), 'error')); },
 	seleccionarDispositivo: seleccionar,
 	seleccionarConductor: (id) => aplicarSeleccion({ tipo: 'cable', id }),
+	abrirEsquemaIssue: (issue) => panelEsq.localizarEntidades(
+		issue.relatedEntities.filter((e) => e.tipo === 'DEVICE' || e.tipo === 'CONDUCTOR' || e.tipo === 'CIRCUIT')
+			.map((e) => ({ tipo: e.tipo as 'DEVICE' | 'CONDUCTOR' | 'CIRCUIT', id: e.id })),
+		issue.id,
+	),
 	avisar,
 	confirmar: (mensaje) => confirmar(mensaje, { ok: 'Aplicar al proyecto' }),
 	trazabilidad: async () => {
@@ -8011,6 +8016,21 @@ const panelEsq = instalarEsquema({
 	potenciales: () => revision.potenciales,
 	dispositivoSeleccionado: () => (sel?.tipo === 'dispositivo' ? sel.id : undefined),
 	seleccionar,
+	seleccionarConductor: (id) => aplicarSeleccion({ tipo: 'cable', id }),
+	verEnTablero: (tipo, id) => {
+		if (tipo === 'DEVICE') seleccionar(id);
+		else aplicarSeleccion({ tipo: 'cable', id });
+		panelEsq.abrir(false);
+		// Un conductor con ruta pendiente se inspecciona por ID, pero no tiene malla 3D
+		// que justifique mover la cámara hacia una posición ficticia.
+		if (sel && cajaDeSeleccion(sel)) enfocarSeleccion();
+	},
+	verDatosTecnicos: (id) => {
+		seleccionar(id);
+		panelEsq.abrir(false);
+		if (panelDatosTecnicos) void panelDatosTecnicos.abrir(id).catch((e) => avisar(String(e), 'error'));
+		else avisar('Datos técnicos no está disponible todavía.', 'info');
+	},
 	puedeEditar: sePuedeEditar,
 	eliminarDispositivo,
 	desconectarConductor: (id) => {

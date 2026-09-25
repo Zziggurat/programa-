@@ -55,6 +55,8 @@ export interface ContextoUIIngenieria {
 	proyecto(): Proyecto;
 	seleccionarDispositivo(id: string): void;
 	seleccionarConductor(id: string): void;
+	/** Salta a la hoja/vista por IDs relacionados; la vista decide ambigüedades. */
+	abrirEsquemaIssue?(issue: EngineeringIssue): void;
 	avisar(mensaje: string, tipo?: 'info' | 'ok' | 'error'): void;
 	confirmar(mensaje: string): Promise<boolean>;
 	identidadActual(): string;
@@ -106,9 +108,11 @@ function botonEntidad(issue: EngineeringIssue): string {
 		?? issue.relatedEntities.find((x) => x.tipo === 'CIRCUIT');
 	const diseno = issue.circuitId && (issue.category === 'CABLE' || issue.category === 'PROTECTION' || issue.category === 'COORDINATION')
 		? `<button class="ing-enlace" data-ing-design-issue="${esc(issue.circuitId)}">Explorar solución V9</button>` : '';
-	if (!e) return diseno;
+	const esquema = issue.relatedEntities.some((x) => x.tipo === 'DEVICE' || x.tipo === 'CONDUCTOR' || x.tipo === 'CIRCUIT')
+		? `<button class="ing-enlace" data-ing-scheme-issue="${esc(issue.id)}">Ver en esquema</button>` : '';
+	if (!e) return `${esquema}${diseno}`;
 	const atributo = e.tipo === 'DEVICE' ? 'device' : e.tipo === 'CONDUCTOR' ? 'conductor' : 'circuit';
-	return `<button class="ing-enlace" data-ing-${atributo}="${esc(e.id)}">Localizar ${esc(e.tipo.toLowerCase())}</button>${diseno}`;
+	return `<button class="ing-enlace" data-ing-${atributo}="${esc(e.id)}">Localizar ${esc(e.tipo.toLowerCase())}</button>${esquema}${diseno}`;
 }
 
 function tabla(cabeceras: string[], filas: (string | number | undefined)[][]): string {
@@ -520,6 +524,10 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		if (b.dataset.ingConductor) ctx.seleccionarConductor(b.dataset.ingConductor);
 		if (b.dataset.ingCircuit) { circuitoId = b.dataset.ingCircuit; vista = 'circuitos'; pintar(); }
 		if (b.dataset.ingIssue) navegarIssue(b.dataset.ingIssue);
+		if (b.dataset.ingSchemeIssue) {
+			const issue = analisis?.validacion.issues.find((x) => x.id === b.dataset.ingSchemeIssue);
+			if (issue) ctx.abrirEsquemaIssue?.(issue);
+		}
 		if (b.dataset.ingDesignIssue !== undefined) { if(b.dataset.ingDesignIssue)circuitoId=b.dataset.ingDesignIssue; vista='diseno'; pintar(); }
 		if (b.dataset.ingDesignRun !== undefined) void (async()=>{
 			try{

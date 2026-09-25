@@ -154,11 +154,27 @@ export function instalarUIDatosTecnicos(ctx: ContextoDatosTecnicos): PanelDatosT
         c.carga = leer('carga') as 'RESISTIVA' | 'INDUCTIVA'; return c; }
     function pintarVinculo() {
         const r = seleccionado();
-        if (r?.tipo !== 'PRODUCTO')
-            throw new Error('Selecciona un producto.');
+        if (r?.tipo !== 'PRODUCTO') {
+            const vinculo = ctx.proyecto().datosTecnicos?.vinculos.find(v => v.entidadId === entidadId);
+            cuerpo.innerHTML = `<h3>Vínculo técnico no disponible · ${esc(entidadId)}</h3>`
+                + `<p>La entidad ${esc(entidadId)} conserva su vínculo, pero la revisión exacta ${esc(vinculo?.producto.hash ?? seleccionHash)} no está en la biblioteca. No se sustituye por otra revisión ni se infieren datos.</p>`
+                + `${boton('faltantes', 'Ver datos faltantes')}${boton('biblioteca', 'Abrir biblioteca')}`;
+            return;
+        }
         const es = opcionesEntidades(r.familia);
-        if (!es.some(e => e.id === entidadId))
-            entidadId = es[0]?.id ?? '';
+        if (!es.some(e => e.id === entidadId)) {
+            if (entidadId) {
+                cuerpo.innerHTML = `<h3>Producto incompatible con ${esc(entidadId)}</h3>`
+                    + `<p>La revisión ${esc(r.hash)} existe, pero no corresponde a la familia de la entidad ${esc(entidadId)}. No se seleccionó otro aparato automáticamente ni se cambió el vínculo persistente.</p>`
+                    + `${boton('faltantes', 'Ver datos faltantes')}${boton('biblioteca', 'Abrir biblioteca')}`;
+                return;
+            }
+            if (!es.length) {
+                cuerpo.innerHTML = `<h3>Sin entidad compatible</h3><p>La revisión ${esc(r.hash)} no tiene aparatos compatibles en este tablero.</p>`;
+                return;
+            }
+            entidadId = es[0].id;
+        }
         const p = ctx.proyecto(), v = p.datosTecnicos?.vinculos.find(x => x.entidadId === entidadId), e = p.dispositivos.find(d => d.id === entidadId) ?? p.conductores.find(c => c.id === entidadId);
         const campos = [...new Set([...r.campos.map(claveDato), ...Object.keys(v?.decisiones ?? {})])].sort();
         const resuelto = resolverProyectoTecnico(p);
