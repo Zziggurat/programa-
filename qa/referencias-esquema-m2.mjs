@@ -57,7 +57,7 @@ const fixture = {
 		{ id: 'plc-vista', dispositivoId: 'plc1', hojaId: 'plc',
 			posicion: { columna: 4, fila: 3 }, parte: { tipo: 'completa' } },
 		{ id: 'x-vista', dispositivoId: 'x1', hojaId: 'terminales',
-			posicion: { columna: 6, fila: 4 }, parte: { tipo: 'completa' } },
+			posicion: { columna: 9, fila: 7 }, parte: { tipo: 'completa' } },
 	] },
 };
 
@@ -111,11 +111,39 @@ try {
 	comprobar('navegar al canal abre hoja PLC y selecciona vista exacta',
 		/Hoja 2/.test(await hojaActual())
 		&& (await pagina.locator('#esq-ayuda').textContent()).includes('plc-vista'));
-	await pagina.locator('[data-referencia-conductor="w-di"]')
-		.getByRole('button', { name: /Ver terminal/i }).click();
+	for (let i = 0; i < 5; i++) await pagina.locator('#esq-acercar').click();
+	const historialAntes = await pagina.evaluate(() => window.qa.historial().deshacer);
+	const enlaceTerminal = pagina.locator('[data-referencia-conductor="w-di"]')
+		.getByRole('button', { name: /Ver terminal/i });
+	await enlaceTerminal.focus();
+	await enlaceTerminal.press('Enter');
+	await pagina.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
 	comprobar('navegar al terminal abre hoja de bornes y selecciona su vista',
 		/Hoja 3/.test(await hojaActual())
 		&& (await pagina.locator('#esq-ayuda').textContent()).includes('x-vista'));
+	const encuadre = await pagina.evaluate(() => {
+		const lienzo = document.getElementById('esquema-lienzo');
+		const vista = document.querySelector('#esquema-hoja .simbolo[data-representacion="x-vista"]');
+		const caja = lienzo.getBoundingClientRect(), objetivo = vista.getBoundingClientRect();
+		const x = objetivo.left + objetivo.width / 2, y = objetivo.top + objetivo.height / 2;
+		return { visible: x > caja.left && x < caja.right && y > caja.top && y < caja.bottom,
+			desplazamiento: lienzo.scrollLeft, ancho: lienzo.scrollWidth, ventana: lienzo.clientWidth };
+	});
+	comprobar('localizar por ID encuadra una vista remota incluso con zoom alto',
+		encuadre.ancho > encuadre.ventana && encuadre.desplazamiento > 0 && encuadre.visible);
+	comprobar('localizar deja foco navegable en la representación exacta',
+		await pagina.evaluate(() => document.activeElement?.getAttribute('data-representacion') === 'x-vista'));
+	const bordes = await pagina.evaluate(() => {
+		const lienzo = document.getElementById('esquema-lienzo');
+		const papel = document.getElementById('esquema-hoja');
+		lienzo.scrollLeft = 0;
+		const izquierda = papel.getBoundingClientRect().left - lienzo.getBoundingClientRect().left;
+		lienzo.scrollLeft = lienzo.scrollWidth;
+		const derecha = papel.getBoundingClientRect().right - lienzo.getBoundingClientRect().right;
+		return { izquierda, derecha, maximo: lienzo.scrollLeft };
+	});
+	comprobar('ambos bordes del papel ampliado son alcanzables',
+		bordes.maximo > 0 && bordes.izquierda >= -1 && bordes.derecha <= 1);
 	const circuito = pagina.locator('[data-referencia-circuito]')
 		.filter({ has: pagina.locator('button[data-hoja-id="plc"]') }).first();
 	comprobar('el circuito identificado enlaza alimentación y PLC, no inventa hoja de retorno/E/S',
@@ -125,10 +153,17 @@ try {
 		&& await circuito.locator('button[data-hoja-id="terminales"]').count() === 0);
 	await circuito.locator('button[data-hoja-id="alimentacion"]').click();
 	comprobar('navegación de circuito por ID abre hoja de alimentación', /Hoja 1/.test(await hojaActual()));
+	const origen = await pagina.locator('#esquema-lienzo').evaluate((el) => ({
+		x: el.scrollLeft, y: el.scrollTop, ancho: el.scrollWidth, ventana: el.clientWidth,
+	}));
+	comprobar('enlace de circuito sin vista concreta no hereda el scroll del folio anterior',
+		origen.ancho > origen.ventana && Math.abs(origen.x) < 1 && Math.abs(origen.y) < 1);
 	comprobar('índice expresa su alcance limitado y muestra diagnósticos',
 		(await pagina.locator('#esq-referencias-contenido').textContent()).includes('no es un mapa exhaustivo de retornos')
 		&& await pagina.locator('[data-referencia-diagnostico]').count() > 0);
 	comprobar('navegación no altera el documento eléctrico', JSON.stringify(await proyecto()) === JSON.stringify(antes));
+	comprobar('zoom y localización no crean un paso Undo',
+		await pagina.evaluate(() => window.qa.historial().deshacer) === historialAntes);
 	comprobar('sin errores JavaScript', erroresJS.length === 0);
 } catch (error) {
 	fallos++;

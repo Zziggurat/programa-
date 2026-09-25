@@ -258,6 +258,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	/** El formulario vive fuera del inspector, para conservar sus valores al navegar entre hojas. */
 	let documentoFormulario: Proyecto | undefined;
 	let refrescoEstadoPendiente = 0;
+	let encuadrePendiente: number | undefined;
 
 	function pintarEstadoEsquema(): void {
 		if (!esquemaAbierto) return;
@@ -323,17 +324,70 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		return `${d?.designacion ?? ref.dispositivoId} [${ref.dispositivoId}] · ${ref.borneId}`;
 	};
 
+	function cancelarEncuadrePendiente(): void {
+		if (encuadrePendiente !== undefined) window.cancelAnimationFrame(encuadrePendiente);
+		encuadrePendiente = undefined;
+	}
+
+	/** Encuadra un ID gráfico único después de montar y dimensionar la hoja, nunca por designación. */
+	function encuadrarRepresentacion(hojaId: string, representacionId: string, documento: Proyecto,
+		desdeTeclado = false): void {
+		cancelarEncuadrePendiente();
+		encuadrePendiente = window.requestAnimationFrame(() => {
+			encuadrePendiente = undefined;
+			if (!esquemaAbierto || proyecto() !== documento || hojaSeleccionadaId !== hojaId
+				|| representacionSeleccionada !== representacionId) return;
+			const hoja = hojasEsquema[hojaActual];
+			const simbolos = hoja?.simbolos.filter((s) => s.representacionId === representacionId) ?? [];
+			const montados = hojasEsquema.reduce((n, h) => n + h.simbolos.filter((s) =>
+				s.representacionId === representacionId).length, 0);
+			const nodos = [...$('esquema-hoja').querySelectorAll<SVGGElement>('.simbolo[data-representacion]')]
+				.filter((g) => g.dataset.representacion === representacionId);
+			if (!hoja || hoja.id !== hojaId || simbolos.length !== 1 || montados !== 1 || nodos.length !== 1) {
+				avisar('La representación ya no tiene un anclaje único; no se pudo centrar.', 'info');
+				return;
+			}
+			const lienzo = $('esquema-lienzo');
+			const svg = $('esquema-hoja').querySelector<SVGSVGElement>('svg');
+			if (!svg) return;
+			const viewport = lienzo.getBoundingClientRect();
+			const papel = svg.getBoundingClientRect();
+			if (papel.width < 1 || papel.height < 1 || lienzo.clientWidth < 1 || lienzo.clientHeight < 1) return;
+			const simbolo = simbolos[0];
+			const centroX = papel.left + (simbolo.x + simbolo.ancho / 2) / hoja.anchoMm * papel.width;
+			const centroY = papel.top + (simbolo.y + simbolo.alto / 2) / hoja.altoMm * papel.height;
+			lienzo.scrollLeft += centroX - (viewport.left + lienzo.clientLeft + lienzo.clientWidth / 2);
+			lienzo.scrollTop += centroY - (viewport.top + lienzo.clientTop + lienzo.clientHeight / 2);
+			if (desdeTeclado && nodos[0].hasAttribute('tabindex')
+				&& Number(nodos[0].getAttribute('tabindex')) >= 0
+				&& (document.activeElement === document.body || !document.activeElement?.isConnected)) {
+				nodos[0].focus({ preventScroll: true });
+			}
+		});
+	}
+
+	function volverAlOrigenDeHoja(): void {
+		const lienzo = $('esquema-lienzo');
+		lienzo.scrollLeft = 0;
+		lienzo.scrollTop = 0;
+	}
+
 	/** Navegación por identidad persistente, nunca por rótulo o número de hoja mutable. */
 	function irAReferencia(ubicacion: DestinoReferenciaEsquema,
-		dispositivoId?: string): void {
+		dispositivoId?: string, desdeTeclado = false): void {
+		cancelarEncuadrePendiente();
 		const indice = hojasEsquema.findIndex((h) => h.id === ubicacion.hojaId);
 		if (indice < 0) { avisar('La hoja de esta referencia ya no existe. Actualiza el esquema.', 'info'); return; }
+		const hojaAnterior = hojaSeleccionadaId;
 		hojaActual = indice;
 		hojaSeleccionadaId = ubicacion.hojaId;
 		conductorSeleccionado = undefined;
 		representacionSeleccionada = ubicacion.representacionId;
 		if (dispositivoId && proyecto().dispositivos.some((d) => d.id === dispositivoId)) seleccionar(dispositivoId);
 		refrescarEsquema();
+		if (ubicacion.representacionId) encuadrarRepresentacion(ubicacion.hojaId, ubicacion.representacionId,
+			proyecto(), desdeTeclado);
+		else if (hojaAnterior !== ubicacion.hojaId) volverAlOrigenDeHoja();
 	}
 
 	const claveOpcion = (o: OpcionLocalizacion): string =>
@@ -384,9 +438,11 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		});
 	}
 
-	function aplicarOpcionLocalizacion(opcion: OpcionLocalizacion): void {
+	function aplicarOpcionLocalizacion(opcion: OpcionLocalizacion, desdeTeclado = false): void {
+		cancelarEncuadrePendiente();
 		const indice = hojasEsquema.findIndex((h) => h.id === opcion.hojaId);
 		if (indice < 0) { avisar('La hoja de ese issue ya no existe.', 'info'); return; }
+		const hojaAnterior = hojaSeleccionadaId;
 		hojaActual = indice;
 		hojaSeleccionadaId = opcion.hojaId;
 		representacionSeleccionada = opcion.representacionId;
@@ -395,6 +451,9 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		else if (opcion.tipo === 'CONDUCTOR') ctx.seleccionarConductor(opcion.id);
 		localizacion = undefined;
 		refrescarEsquema();
+		if (opcion.representacionId) encuadrarRepresentacion(opcion.hojaId, opcion.representacionId,
+			proyecto(), desdeTeclado);
+		else if (hojaAnterior !== opcion.hojaId) volverAlOrigenDeHoja();
 	}
 
 	function localizarEntidades(entidades: readonly EntidadLocalizableEsquema[], issueId: string): void {
@@ -423,7 +482,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			boton.dataset.hojaId = opcion.hojaId;
 			if (opcion.representacionId) boton.dataset.representacionId = opcion.representacionId;
 			boton.textContent = opcion.etiqueta;
-			boton.onclick = () => {
+			boton.onclick = (ev) => {
 				if (localizacion?.documento !== proyecto()) {
 					avisar('El proyecto cambió; vuelve al issue para localizarlo.', 'info');
 					localizacion = undefined;
@@ -433,7 +492,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				const actual = opcionesParaEntidades([{ tipo: opcion.tipo, id: opcion.id }])
 					.find((o) => claveOpcion(o) === claveOpcion(opcion));
 				if (!actual) { avisar('La ubicación cambió; vuelve a localizar el issue.', 'info'); return; }
-				aplicarOpcionLocalizacion(actual);
+				aplicarOpcionLocalizacion(actual, ev.detail === 0);
 			};
 			panel.append(boton);
 		}
@@ -462,7 +521,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				+ (ubicacion.columna === undefined ? '' : `, col. ${ubicacion.columna}`);
 			boton.dataset.hojaId = ubicacion.hojaId;
 			if (ubicacion.representacionId) boton.dataset.representacionId = ubicacion.representacionId;
-			boton.onclick = () => irAReferencia(ubicacion, dispositivoId);
+			boton.onclick = (ev) => irAReferencia(ubicacion, dispositivoId, ev.detail === 0);
 			return boton;
 		};
 		const render = () => {
@@ -1461,6 +1520,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		if (abrir) cerrarTodasLasVentanas();
 		esquemaAbierto = abrir;
 		if (!abrir) {
+			cancelarEncuadrePendiente();
 			cancelarArrastreM2?.();
 			limpiarGrupoRepresentaciones();
 			$('esq-folios-panel').hidden = true;
