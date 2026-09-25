@@ -8,7 +8,7 @@
  *
  * No importa nada de `main.ts`: lo que necesita del editor entra por `ContextoEsquema`.
  */
-import { Proyecto, RefBorne } from '../src/modelo/tipos.js';
+import { Proyecto, RefBorne, type ClaseHojaEsquema } from '../src/modelo/tipos.js';
 import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import { resolverComportamiento } from '../src/modelo/comportamiento.js';
 import { cerrarTodasLasVentanas } from './ventanas.js';
@@ -22,6 +22,8 @@ import {
 	planPartesDesdoblamiento, planReponerRepresentacion, type DestinosDesdoblamiento,
 } from '../src/motores/crear-representaciones-esquema.js';
 import { aplicarRenumeracionEsquema, previsualizarRenumeracionEsquema } from '../src/motores/renumeracion-esquema.js';
+import { aplicarGestionHojaEsquema, previsualizarGestionHojaEsquema,
+	type SolicitudGestionHojaEsquema } from '../src/motores/gestion-hojas-esquema.js';
 import { proyectarReferenciasEsquemaM2, type UbicacionTerminalEsquema } from '../src/motores/referencias-esquema-m2.js';
 import { proyectarEstadoEsquema } from '../src/motores/estado-esquema-simulacion.js';
 import type { ResultadoSimulacion } from '../src/motores/simulacion.js';
@@ -165,6 +167,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	/** Las hojas montadas del esquema abierto: se rehacen enteras en cada refresco. */
 	let hojasEsquema: HojaEsq[] = [];
 	let hojaActual = 0;
+	/** El índice solo sirve para pintar; la selección sobrevive reordenación/Undo por ID. */
+	let hojaSeleccionadaId: string | undefined;
 	let zoomEsquema = 1;
 	/** Selección de vista: el conductor sigue identificado por su id del proyecto. */
 	let conductorSeleccionado: string | undefined;
@@ -255,6 +259,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const indice = hojasEsquema.findIndex((h) => h.id === ubicacion.hojaId);
 		if (indice < 0) { avisar('La hoja de esta referencia ya no existe. Actualiza el esquema.', 'info'); return; }
 		hojaActual = indice;
+		hojaSeleccionadaId = ubicacion.hojaId;
 		conductorSeleccionado = undefined;
 		representacionSeleccionada = ubicacion.representacionId;
 		if (dispositivoId && proyecto().dispositivos.some((d) => d.id === dispositivoId)) seleccionar(dispositivoId);
@@ -313,6 +318,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const indice = hojasEsquema.findIndex((h) => h.id === opcion.hojaId);
 		if (indice < 0) { avisar('La hoja de ese issue ya no existe.', 'info'); return; }
 		hojaActual = indice;
+		hojaSeleccionadaId = opcion.hojaId;
 		representacionSeleccionada = opcion.representacionId;
 		conductorSeleccionado = opcion.tipo === 'CONDUCTOR' ? opcion.id : undefined;
 		if (opcion.tipo === 'DEVICE') seleccionar(opcion.id);
@@ -514,7 +520,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		marcarSucio();
 		actualizarTodo();
 		const indice = hojasEsquema.findIndex((h) => h.id === plan.valor.hojaId);
-		if (indice >= 0) hojaActual = indice;
+		if (indice >= 0) { hojaActual = indice; hojaSeleccionadaId = plan.valor.hojaId; }
 		refrescarEsquema();
 		avisar(`Vista ${plan.valor.id} repuesta; ${d.designacion ?? d.id} y sus conexiones conservan su identidad.`, 'ok');
 	}
@@ -746,6 +752,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		marcarSucio();
 		actualizarTodo();
 		hojaActual = Math.max(0, hojasEsquema.findIndex((h) => h.id === idHojaActual));
+		hojaSeleccionadaId = idHojaActual;
 		refrescarEsquema();
 		avisar(`${plan.valor.representaciones.length} vistas activadas sin cambiar el circuito.`, 'ok');
 	}
@@ -854,6 +861,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			documentoFormulario = undefined;
 			representacionSeleccionada = reemplazo.valor[0]?.id;
 			hojaActual = Math.max(0, hojasEsquema.findIndex((h) => h.id === reemplazo.valor[0]?.hojaId));
+			hojaSeleccionadaId = reemplazo.valor[0]?.hojaId;
 			marcarSucio();
 			actualizarTodo();
 			refrescarEsquema();
@@ -933,6 +941,10 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	/** Vuelve a montar el esquema desde el modelo actual y lo pinta. */
 	function refrescarEsquema(): void {
 		if (!esquemaAbierto) return;
+		if (proyecto().esquema?.representaciones === undefined) {
+			$('esq-folios-panel').hidden = true;
+			$('esq-folios').hidden = true;
+		}
 		const formulario = document.getElementById('esq-desdoblar-formulario');
 		if (formulario && (documentoFormulario !== proyecto()
 			|| !proyecto().esquema?.representaciones?.some((r) => r.id === formulario.dataset.vistaId))) {
@@ -945,6 +957,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			origenConexion = undefined;
 		}
 		if (hojasEsquema.length === 0) {
+			hojaSeleccionadaId = undefined;
+			$('esq-folios').hidden = proyecto().esquema?.representaciones === undefined;
 			conductorSeleccionado = undefined;
 			representacionSeleccionada = undefined;
 			$('esquema-hoja').innerHTML = '<div id="esquema-vacio">Todavía no hay nada que dibujar.<br>'
@@ -953,15 +967,19 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			$('esq-titulo').textContent = '';
 			pintarConductorSeleccionado();
 			pintarEstadoEsquema();
+			pintarPanelFolios();
 			return;
 		}
-		hojaActual = Math.max(0, Math.min(hojaActual, hojasEsquema.length - 1));
+		const indicePorId = hojasEsquema.findIndex((h) => h.id === hojaSeleccionadaId);
+		hojaActual = indicePorId >= 0 ? indicePorId : Math.max(0, Math.min(hojaActual, hojasEsquema.length - 1));
 		const hoja = hojasEsquema[hojaActual];
+		hojaSeleccionadaId = hoja.id;
 		if (!hoja.hilos.some((h) => h.conductorId === conductorSeleccionado)
 			&& !hoja.referencias.some((r) => r.tipo === 'enlace' && r.conductorId === conductorSeleccionado)) {
 			conductorSeleccionado = undefined;
 		}
 		const explicito = proyecto().esquema?.representaciones !== undefined;
+		$('esq-folios').hidden = !explicito;
 		$('esquema-hoja').innerHTML = hojaASvg(hoja, {
 			proyecto: proyecto().nombre,
 			datos: proyecto().datos,
@@ -986,6 +1004,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		pintarConductorSeleccionado();
 		aplicarZoomEsquema();
 		pintarEstadoEsquema();
+		pintarPanelFolios();
 
 		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('.hilo[data-conductor], .referencia-conductor[data-conductor]')) {
 			const seleccionarConductor = (): void => {
@@ -1120,6 +1139,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			limpiar();
 			if (!capturado) { refrescarEsquema(); return; }
 			hojaActual = Math.max(0, hojasEsquema.findIndex((h) => h.id === destino.hojaId));
+			hojaSeleccionadaId = destino.hojaId;
 			marcarSucio();
 			actualizarTodo();
 			refrescarEsquema();
@@ -1251,6 +1271,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		if (abrir) cerrarTodasLasVentanas();
 		esquemaAbierto = abrir;
 		if (!abrir) {
+			$('esq-folios-panel').hidden = true;
 			if (refrescoEstadoPendiente) window.cancelAnimationFrame(refrescoEstadoPendiente);
 			refrescoEstadoPendiente = 0;
 			origenConexion = undefined;
@@ -1330,27 +1351,168 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 
 	function pasarHoja(delta: number): void {
 		hojaActual += delta;
+		hojaSeleccionadaId = hojasEsquema[hojaActual]?.id;
 		conductorSeleccionado = undefined;
 		representacionSeleccionada = undefined;
 		refrescarEsquema();
 	}
 
+	/** Registro visible M2: las identidades son IDs de hoja, nunca el número o la posición del array. */
+	function pintarPanelFolios(): void {
+		if ($('esq-folios-panel').hidden) return;
+		const documento = proyecto();
+		const folios = [...documento.hojas].sort((a, b) => a.numero - b.numero || a.id.localeCompare(b.id));
+		const idActual = hojasEsquema[hojaActual]?.id;
+		const folio = folios.find((h) => h.id === idActual);
+		const lista = $('esq-folios-lista');
+		lista.replaceChildren();
+		for (const h of folios) {
+			const fila = document.createElement('div');
+			fila.className = `esq-folios-fila${h.id === idActual ? ' actual' : ''}`;
+			const ir = document.createElement('button');
+			ir.type = 'button';
+			ir.className = 'boton';
+			ir.dataset.hojaId = h.id;
+			ir.textContent = `Hoja ${h.numero}: ${h.titulo} · ${h.clase ?? 'sin clase'} · ${h.columnas ?? documento.esquema?.columnasPorHoja ?? 10} col. [${h.id}]`;
+			ir.onclick = () => {
+				const teniaFoco = document.activeElement === ir;
+				const indice = hojasEsquema.findIndex((hoja) => hoja.id === h.id);
+				if (indice < 0) { avisar('Esa hoja ya no está montada; actualiza el esquema.', 'info'); return; }
+				hojaActual = indice;
+				hojaSeleccionadaId = h.id;
+				refrescarEsquema();
+				// El refresco sustituye los botones de la lista: Enter/Tab no deben perder foco al body.
+				if (teniaFoco) [...lista.querySelectorAll<HTMLButtonElement>('button[data-hoja-id]')]
+					.find((b) => b.dataset.hojaId === h.id)?.focus();
+			};
+			fila.append(ir);
+			lista.append(fila);
+		}
+		($('esq-folio-titulo') as HTMLInputElement).value = folio?.titulo ?? '';
+		($('esq-folio-clase') as HTMLSelectElement).value = folio?.clase ?? '';
+		const columnas = $('esq-folio-columnas') as HTMLInputElement;
+		columnas.value = folio?.columnas === undefined ? '' : String(folio.columnas);
+		columnas.placeholder = `Heredar (${documento.esquema?.columnasPorHoja ?? 10})`;
+		for (const id of ['esq-folio-guardar', 'esq-folio-subir', 'esq-folio-bajar', 'esq-folio-eliminar']) {
+			($(id) as HTMLButtonElement).disabled = !folio;
+		}
+		const indice = folios.findIndex((h) => h.id === idActual);
+		($('esq-folio-subir') as HTMLButtonElement).disabled = indice <= 0;
+		($('esq-folio-bajar') as HTMLButtonElement).disabled = indice < 0 || indice === folios.length - 1;
+		const ocupada = !!folio && (documento.esquema?.representaciones?.some((r) => r.hojaId === folio.id)
+			|| documento.dispositivos.some((d) => d.hojaId === folio.id));
+		($('esq-folio-eliminar') as HTMLButtonElement).disabled = !folio || folios.length < 2 || ocupada;
+		$('esq-folios-borrar-motivo').textContent = ocupada
+			? 'Esta hoja contiene vistas o referencias; reubícalas antes de eliminar.'
+			: folios.length < 2 ? 'Debe quedar al menos una hoja.' : '';
+	}
+
+	function abrirPanelFolios(): void {
+		if (proyecto().esquema?.representaciones === undefined) {
+			avisar('Activa las vistas M2 antes de gestionar folios explícitos.', 'info');
+			return;
+		}
+		$('esq-folios-panel').hidden = false;
+		pintarPanelFolios();
+	}
+
+	async function gestionarHoja(solicitud: SolicitudGestionHojaEsquema): Promise<void> {
+		if (!ctx.puedeEditar()) return;
+		const documento = proyecto();
+		let plan;
+		try { plan = previsualizarGestionHojaEsquema(documento, solicitud); }
+		catch (error) { avisar(error instanceof Error ? error.message : 'No se pudo preparar el folio.', 'error'); return; }
+		if (!plan.cambios) { avisar('La hoja ya tiene esos datos; no hay cambios que guardar.', 'info'); return; }
+		const firma = JSON.stringify(documento);
+		const antesPorId = new Map(plan.hojasAntes.map((h) => [h.id, h]));
+		const despuesPorId = new Map(plan.hojasDespues.map((h) => [h.id, h]));
+		const resumir = (h: (typeof plan.hojasAntes)[number] | undefined) => !h ? '—'
+			: `#${h.numero} «${h.titulo}» · ${h.clase ?? 'sin clase'} · ${h.columnas} col. ${h.columnasDeclaradas === undefined ? '(heredadas)' : '(fijadas)'}`;
+		const idsCambiados = [...new Set([...antesPorId.keys(), ...despuesPorId.keys()])]
+			.filter((id) => JSON.stringify(antesPorId.get(id)) !== JSON.stringify(despuesPorId.get(id)))
+			.sort((a, b) => (despuesPorId.get(a)?.numero ?? antesPorId.get(a)?.numero ?? 0)
+				- (despuesPorId.get(b)?.numero ?? antesPorId.get(b)?.numero ?? 0) || a.localeCompare(b));
+		const filas = idsCambiados.slice(0, 12)
+			.map((id) => `[${id}] ${resumir(antesPorId.get(id))} → ${resumir(despuesPorId.get(id))}`);
+		const vistas = plan.vistasAfectadas.slice(0, 8)
+			.map((v) => `${v.id} (${v.dispositivoId}, hoja ${v.hojaId})`);
+		const mensaje = [
+			`Gestión de folio: ${solicitud.tipo}. ${plan.hojasAntes.length} → ${plan.hojasDespues.length} hojas; ${plan.cambios} identidad(es) editoriales afectadas.`,
+			`Folios que cambian:\n${filas.join('\n')}${idsCambiados.length > filas.length ? `\n… y ${idsCambiados.length - filas.length} folio(s) más renumerados.` : ''}`,
+			`${plan.vistasAfectadas.length} vista(s) afectadas: ${vistas.join(', ') || 'ninguna'}${plan.vistasAfectadas.length > vistas.length ? ` y ${plan.vistasAfectadas.length - vistas.length} más` : ''}. No se duplican aparatos, conductores ni la red eléctrica.`,
+			'Cancelar no modifica el proyecto. Aplicar crea una sola entrada de deshacer (Ctrl+Z).',
+		].join('\n\n');
+		if (!(await confirmar(mensaje, { ok: solicitud.tipo === 'eliminar' ? 'Eliminar hoja vacía' : 'Aplicar folio',
+			peligro: solicitud.tipo === 'eliminar' }))) return;
+		if (proyecto() !== documento || JSON.stringify(documento) !== firma || !ctx.puedeEditar()) {
+			avisar('El proyecto cambió durante la confirmación; previsualiza de nuevo.', 'info');
+			return;
+		}
+		const indiceAntes = plan.hojasAntes.findIndex((h) => h.id === solicitud.id);
+		const idDestino = solicitud.tipo === 'eliminar'
+			? plan.hojasDespues[Math.min(indiceAntes, plan.hojasDespues.length - 1)]?.id : solicitud.id;
+		if (!capturar()) return;
+		try { aplicarGestionHojaEsquema(documento, plan); }
+		catch (error) {
+			ctx.descartarCapturaSiIgual();
+			avisar(error instanceof Error ? error.message : 'La previsualización del folio envejeció.', 'error');
+			return;
+		}
+		marcarSucio();
+		actualizarTodo();
+		// El índice de la vista anterior puede estar obsoleto tras crear/borrar/reordenar.
+		hojaSeleccionadaId = idDestino;
+		refrescarEsquema();
+		if (solicitud.tipo === 'crear') ($('esq-folio-nuevo-titulo') as HTMLInputElement).value = '';
+		avisar(`Folio ${solicitud.tipo === 'crear' ? 'creado' : solicitud.tipo === 'editar' ? 'actualizado'
+			: solicitud.tipo === 'mover' ? 'reordenado' : 'eliminado'}; Ctrl+Z permite deshacer.`, 'ok');
+	}
+
+	($('esq-folios') as HTMLButtonElement).onclick = abrirPanelFolios;
+	($('esq-folios-cerrar') as HTMLButtonElement).onclick = () => { $('esq-folios-panel').hidden = true; };
+	($('esq-folio-crear') as HTMLButtonElement).onclick = () => {
+		const titulo = ($('esq-folio-nuevo-titulo') as HTMLInputElement).value;
+		const clase = ($('esq-folio-nueva-clase') as HTMLSelectElement).value as ClaseHojaEsquema | '';
+		const valor = ($('esq-folio-nuevas-columnas') as HTMLInputElement).value;
+		void gestionarHoja({ tipo: 'crear', id: `hoja-${crypto.randomUUID()}`, titulo,
+			...(clase ? { clase } : {}), ...(valor ? { columnas: Number(valor) } : {}) });
+	};
+	($('esq-folio-guardar') as HTMLButtonElement).onclick = () => {
+		const id = hojasEsquema[hojaActual]?.id;
+		if (!id) return;
+		const titulo = ($('esq-folio-titulo') as HTMLInputElement).value;
+		const clase = ($('esq-folio-clase') as HTMLSelectElement).value as ClaseHojaEsquema | '';
+		const valor = ($('esq-folio-columnas') as HTMLInputElement).value;
+		const declaradas = proyecto().hojas.find((h) => h.id === id)?.columnas;
+		const cambioColumnas = valor ? Number(valor) : declaradas === undefined ? undefined : null;
+		void gestionarHoja({ tipo: 'editar', id, titulo, clase: clase || null,
+			...(cambioColumnas === undefined ? {} : { columnas: cambioColumnas }) });
+	};
+	for (const [id, direccion] of [['esq-folio-subir', 'subir'], ['esq-folio-bajar', 'bajar']] as const) {
+		($(id) as HTMLButtonElement).onclick = () => {
+			const hojaId = hojasEsquema[hojaActual]?.id;
+			if (hojaId) void gestionarHoja({ tipo: 'mover', id: hojaId, direccion });
+		};
+	}
+	($('esq-folio-eliminar') as HTMLButtonElement).onclick = () => {
+		const id = hojasEsquema[hojaActual]?.id;
+		if (id) void gestionarHoja({ tipo: 'eliminar', id });
+	};
+
 	// Columnas por hoja: menos columnas = símbolos más separados y más hojas. Es la palanca que
 	// convierte un esquema apretado e ilegible en uno que se lee, sin tocar el circuito.
 	($('esq-columnas') as HTMLInputElement).onchange = (ev) => {
-		const n = Math.max(4, Math.min(20, Number((ev.target as HTMLInputElement).value) || 10));
-		(ev.target as HTMLInputElement).value = String(n);
+		const entrada = ev.target as HTMLInputElement;
 		if (proyecto().esquema?.representaciones !== undefined) {
-			const actual = hojasEsquema[hojaActual];
-			const hoja = proyecto().hojas.find((h) => h.id === actual?.id);
-			if (!hoja || n === actual.columnas) return;
-			if (!capturar()) return;
-			hoja.columnas = n;
-			marcarSucio();
-			actualizarTodo();
-			refrescarEsquema();
+			const valorPropuesto = entrada.value;
+			entrada.value = String(hojasEsquema[hojaActual]?.columnas ?? 10);
+			abrirPanelFolios();
+			($('esq-folio-columnas') as HTMLInputElement).value = valorPropuesto;
+			($('esq-folio-columnas') as HTMLInputElement).focus();
 			return;
 		}
+		const n = Math.max(4, Math.min(20, Number(entrada.value) || 10));
+		entrada.value = String(n);
 		if (n === (proyecto().esquema?.columnasPorHoja ?? 10)) return;
 		if (!capturar()) return;
 		proyecto().esquema = { ...proyecto().esquema, columnasPorHoja: n };
@@ -1362,20 +1524,15 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	($('esq-titulo-editar') as HTMLButtonElement).onclick = async () => {
 		const hoja = hojasEsquema[hojaActual];
 		if (!hoja) { avisar('Todavía no hay ninguna hoja.', 'info'); return; }
+		if (proyecto().esquema?.representaciones !== undefined) {
+			abrirPanelFolios();
+			($('esq-folio-titulo') as HTMLInputElement).focus();
+			return;
+		}
 		const documento = proyecto();
 		const nuevo = await pedirTexto(`Título de la hoja ${hoja.numero}:`, hoja.titulo);
 		if (nuevo === null) return;
 		if (proyecto() !== documento) { avisar('El proyecto cambió mientras editabas el título.', 'info'); return; }
-		if (proyecto().esquema?.representaciones !== undefined) {
-			const folio = documento.hojas.find((h) => h.id === hoja.id);
-			if (!folio || nuevo.trim() === folio.titulo) return;
-			if (!capturar()) return;
-			folio.titulo = nuevo.trim() || `Hoja ${folio.numero}`;
-			marcarSucio();
-			actualizarTodo();
-			refrescarEsquema();
-			return;
-		}
 		if (!capturar()) return;
 		const titulos = { ...(proyecto().esquema?.titulos ?? {}) };
 		// Vaciarlo devuelve el título automático, que es lo que espera quien borra el texto.
