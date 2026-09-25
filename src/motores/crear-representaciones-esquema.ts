@@ -209,3 +209,44 @@ export function planDesdoblamientoRepresentacion(
 	}
 	return { ok: true, valor: nuevas };
 }
+
+/** Reponer una vista completa de un aparato que sigue existiendo eléctricamente.
+ * No crea otro dispositivo ni ancla dos veces un borne ya representado. */
+export function planReponerRepresentacion(
+	proyecto: Proyecto, dispositivoId: string, destino: PosicionVista,
+): Plan<RepresentacionEsquema> {
+	const lista = proyecto.esquema?.representaciones;
+	if (!lista) return error('Activa las vistas editables antes de reponer una representación.');
+	const aparatos = proyecto.dispositivos.filter((d) => d.id === dispositivoId);
+	const d = aparatos.length === 1 ? aparatos[0] : undefined;
+	if (!d || esReferenciaVisualInerte(d)) return error('El aparato eléctrico ya no existe o no es esquemático.');
+	if (lista.some((r) => r.dispositivoId === dispositivoId)) {
+		return error('El aparato ya tiene una vista. No se pueden duplicar sus bornes gráficos.');
+	}
+	if (lista.length >= 5000) return error('El esquema llegó al máximo de 5000 vistas.');
+	const folios = proyecto.hojas.filter((h) => h.id === destino.hojaId);
+	const hoja = folios.length === 1 ? folios[0] : undefined;
+	if (!hoja) return error('Elige una hoja existente y única.');
+	const columnas = Math.max(4, Math.min(20, hoja.columnas ?? proyecto.esquema?.columnasPorHoja ?? 10));
+	if (!Number.isInteger(destino.columna) || destino.columna < 1 || destino.columna > columnas
+		|| !Number.isInteger(destino.fila) || destino.fila < 1 || destino.fila > FILAS_ESQ) {
+		return error(`La casilla debe caber en ${hoja.titulo} (${columnas}×${FILAS_ESQ}).`);
+	}
+	if (lista.some((r) => r.hojaId === destino.hojaId
+		&& r.posicion.columna === destino.columna && r.posicion.fila === destino.fila)) {
+		return error(`La casilla ${destino.columna}.${destino.fila} de ${hoja.titulo} ya tiene otra vista.`);
+	}
+	const nueva: RepresentacionEsquema = {
+		id: idLibre('vista-m2', new Set(lista.map((r) => r.id))), dispositivoId,
+		hojaId: destino.hojaId,
+		posicion: { columna: destino.columna, fila: destino.fila }, parte: { tipo: 'completa' },
+	};
+	const candidato = [...lista, nueva];
+	const avisos: string[] = [];
+	const leidas = leerRepresentacionesEsquema(candidato, proyecto.dispositivos, proyecto.hojas,
+		(ruta, motivo) => avisos.push(`${ruta}: ${motivo}`));
+	if (avisos.length || leidas?.length !== candidato.length) {
+		return error(`La vista no pasó la validación: ${avisos[0] ?? 'faltan anclajes'}.`);
+	}
+	return { ok: true, valor: nueva };
+}

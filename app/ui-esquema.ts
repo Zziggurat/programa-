@@ -19,7 +19,7 @@ import {
 } from '../src/motores/esquema.js';
 import {
 	planActivacionRepresentaciones, planDesdoblamientoRepresentacion,
-	planPartesDesdoblamiento, type DestinosDesdoblamiento,
+	planPartesDesdoblamiento, planReponerRepresentacion, type DestinosDesdoblamiento,
 } from '../src/motores/crear-representaciones-esquema.js';
 import { aplicarRenumeracionEsquema, previsualizarRenumeracionEsquema } from '../src/motores/renumeracion-esquema.js';
 import { hojaASvg } from './esquema-svg.js';
@@ -158,6 +158,60 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const d = proyecto().dispositivos.find((x) => x.id === ref.dispositivoId);
 		return `${d?.designacion ?? ref.dispositivoId} [${ref.dispositivoId}] · ${ref.borneId}`;
 	};
+
+	/** Una vista repuesta apunta al MISMO aparato; nunca crea un segundo circuito. */
+	async function reponerVista(dispositivoId: string): Promise<void> {
+		if (!ctx.puedeEditar()) return;
+		const documento = proyecto();
+		const firma = JSON.stringify(documento);
+		const d = documento.dispositivos.find((x) => x.id === dispositivoId);
+		const hoja = hojasEsquema[hojaActual];
+		if (!d || !hoja || documento.esquema?.representaciones === undefined) return;
+		const ocupadas = new Set(documento.esquema.representaciones
+			.filter((r) => r.hojaId === hoja.id)
+			.map((r) => `${r.posicion.columna}.${r.posicion.fila}`));
+		let sugerencia = `${hoja.numero}.1.1`;
+		buscarCasilla: for (let fila = 1; fila <= FILAS_ESQ; fila++) {
+			for (let columna = 1; columna <= hoja.columnas; columna++) {
+				if (!ocupadas.has(`${columna}.${fila}`)) {
+					sugerencia = `${hoja.numero}.${columna}.${fila}`;
+					break buscarCasilla;
+				}
+			}
+		}
+		const paginas = documento.hojas.map((h) => `${h.numero} ${h.titulo}`).join(' · ');
+		const texto = await pedirTexto(
+			`Reponer vista de ${d.designacion ?? d.id} [${d.id}] sin cambiar el aparato ni sus conexiones. `
+			+ `Indica hoja.columna.fila (p. ej. ${sugerencia}). Hojas: ${paginas}`,
+			sugerencia,
+		);
+		if (texto === null) return;
+		if (proyecto() !== documento || JSON.stringify(documento) !== firma) {
+			avisar('El proyecto cambió mientras elegías la casilla. Vuelve a intentarlo.', 'info');
+			refrescarEsquema();
+			return;
+		}
+		const partes = /^(\d+)\.(\d+)\.(\d+)$/.exec(texto.trim());
+		const folios = partes ? documento.hojas.filter((h) => h.numero === Number(partes[1])) : [];
+		if (!partes || folios.length !== 1) {
+			avisar('Indica una hoja única y una casilla válida con formato hoja.columna.fila.', 'error');
+			return;
+		}
+		const plan = planReponerRepresentacion(documento, dispositivoId, {
+			hojaId: folios[0].id, columna: Number(partes[2]), fila: Number(partes[3]),
+		});
+		if (!plan.ok) { avisar(plan.motivo, 'error'); return; }
+		if (!capturar()) return;
+		documento.esquema!.representaciones!.push(plan.valor);
+		representacionSeleccionada = plan.valor.id;
+		conductorSeleccionado = undefined;
+		marcarSucio();
+		actualizarTodo();
+		const indice = hojasEsquema.findIndex((h) => h.id === plan.valor.hojaId);
+		if (indice >= 0) hojaActual = indice;
+		refrescarEsquema();
+		avisar(`Vista ${plan.valor.id} repuesta; ${d.designacion ?? d.id} y sus conexiones conservan su identidad.`, 'ok');
+	}
 
 	/** Inspector de conexiones, vistas y problemas. Todo dato del proyecto entra como texto. */
 	function pintarConductorSeleccionado(): void {
@@ -304,6 +358,15 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			for (const problema of problemas) {
 				const fila = document.createElement('li');
 				fila.textContent = problema.mensaje;
+				if (problema.codigo === 'aparato-sin-representacion' && problema.dispositivoId) {
+					const boton = document.createElement('button');
+					boton.className = 'boton';
+					boton.type = 'button';
+					boton.dataset.reponerDispositivo = problema.dispositivoId;
+					boton.textContent = 'Reponer vista…';
+					boton.onclick = () => { void reponerVista(problema.dispositivoId!); };
+					fila.append(document.createTextNode(' · '), boton);
+				}
 				lista.append(fila);
 			}
 			panel.append(titulo, lista);
