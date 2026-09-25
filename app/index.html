@@ -1002,8 +1002,8 @@
 	 * al borde del cajón, la lista larga deja de ser un problema: se recorre o se filtra, y las
 	 * dos cosas están siempre a mano.
 	 */
-	#buscar-catalogo { position: sticky; top: 0; z-index: 2; width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 6px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 12.5px; }
-	#buscar-catalogo::placeholder { color: var(--texto-suave); }
+	#buscar-catalogo, #buscar-dispositivos { position: sticky; top: 0; z-index: 2; width: 100%; box-sizing: border-box; margin-bottom: 6px; padding: 6px 9px; background: var(--panel-2); border: 1px solid var(--borde); border-radius: 8px; color: var(--texto); font-size: 12.5px; }
+	#buscar-catalogo::placeholder, #buscar-dispositivos::placeholder { color: var(--texto-suave); }
 	.catalogo-vacio { color: var(--texto-suave); font-size: 12px; padding: 8px 2px; }
 	.item-catalogo {
 		display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
@@ -1022,6 +1022,8 @@
 	#lista-dispositivos li.seleccionado { background: #29405c; }
 	#lista-dispositivos .des { font-weight: 600; min-width: 40px; }
 	#lista-dispositivos .desc { color: var(--texto-suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+	#lista-dispositivos .foco { margin-left: auto; flex: none; min-width: 28px; }
+	#lista-dispositivos .sin-coincidencias { cursor: default; color: var(--texto-suave); font-size: 12px; }
 	.hallazgo { padding: 3px 0 3px 14px; position: relative; color: var(--texto-suave); }
 	.hallazgo::before { content: '●'; position: absolute; left: 0; font-size: 9px; top: 6px; }
 	.hallazgo.error::before { color: var(--error); }
@@ -1701,7 +1703,10 @@
 	-->
 	<details open id="seccion-dispositivos" data-cajon="seleccionar">
 		<summary>Dispositivos <span id="contador-dispositivos"></span></summary>
-		<div class="contenido"><ul id="lista-dispositivos"></ul></div>
+		<div class="contenido">
+			<input id="buscar-dispositivos" type="search" placeholder="Buscar por marcado, descripción o referencia…" aria-label="Buscar dispositivos del tablero" autocomplete="off">
+			<ul id="lista-dispositivos"></ul>
+		</div>
 	</details>
 	<details open id="seccion-cables" data-espacio="interior conjunto" data-cajon="conectar">
 		<summary>Cables <span id="contador-cables"></span></summary>

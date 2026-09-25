@@ -3374,13 +3374,38 @@ function pintarPaneles(): void {
 	const lista = $('lista-dispositivos');
 	lista.innerHTML = '';
 	const internos = proyecto.dispositivos.filter((x) => !x.campo);
-	$('contador-dispositivos').textContent = `(${internos.length})`;
-	for (const d of internos) {
+	const normalizar = (texto: string) => texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+	const terminos = normalizar(($('buscar-dispositivos') as HTMLInputElement).value).split(/\s+/).filter(Boolean);
+	const encontrados = internos.filter((d) => {
+		const texto = normalizar(`${d.designacion ?? ''} ${d.id} ${d.descripcion ?? ''} ${d.fabricante ?? ''} ${d.referencia ?? ''}`);
+		return terminos.every((termino) => texto.includes(termino));
+	});
+	$('contador-dispositivos').textContent = terminos.length
+		? `(${encontrados.length}/${internos.length})` : `(${internos.length})`;
+	if (!encontrados.length && terminos.length) {
+		const li = document.createElement('li');
+		li.className = 'sin-coincidencias';
+		li.textContent = `Sin coincidencias; ${internos.length} dispositivo(s) siguen en el tablero.`;
+		lista.appendChild(li);
+	}
+	for (const d of encontrados) {
 		const li = document.createElement('li');
 		li.className = d.id === idDispositivoSel() ? 'seleccionado' : '';
 		li.innerHTML = `<span class="des">${escaparHtml(d.designacion ?? d.id)}</span>`
 			+ `<span class="desc">${escaparHtml(d.descripcion ?? '')}</span>`;
 		li.onclick = () => seleccionar(d.id);
+		li.tabIndex = 0;
+		li.onkeydown = (ev) => {
+			if (ev.target === li && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); seleccionar(d.id); }
+		};
+		const foco = document.createElement('button');
+		foco.className = 'boton foco';
+		foco.type = 'button';
+		foco.title = `Enfocar ${d.designacion ?? d.id}`;
+		foco.setAttribute('aria-label', foco.title);
+		foco.textContent = '⌕';
+		foco.onclick = (ev) => { ev.stopPropagation(); seleccionar(d.id); enfocarSeleccion(); };
+		li.appendChild(foco);
 		lista.appendChild(li);
 	}
 
@@ -9234,6 +9259,15 @@ encuadrar(); // ahora que el lienzo ya mide, el encuadre sale bien
 	buscador.onkeydown = (ev) => {
 		ev.stopPropagation(); // que Supr/flechas no lleguen a los atajos del tablero mientras se escribe
 		if (ev.key === 'Escape') { buscador.value = ''; pintarCatalogo(); buscador.blur(); }
+	};
+}
+
+{
+	const buscador = $('buscar-dispositivos') as HTMLInputElement;
+	buscador.oninput = () => pintarPaneles();
+	buscador.onkeydown = (ev) => {
+		ev.stopPropagation();
+		if (ev.key === 'Escape') { buscador.value = ''; pintarPaneles(); buscador.blur(); }
 	};
 }
 
