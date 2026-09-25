@@ -11,7 +11,9 @@ test('ESQ-03 DXF conserva el mismo hueco sin unión que SVG y PDF', () => {
 			{ conductorId: 'b', nodos: [{ x: 50, y: 10 }, { x: 50, y: 90 }] },
 		] };
 	const dxf = dxfDeEsquema(hoja);
-	const entidades = dxf.split(/(?=^0\n(?:LINE|CIRCLE)\n)/m);
+	// Separar todas las entidades DXF, incluido TEXT del cajetín: un texto posterior no
+	// puede sobrescribir los códigos de coordenadas de la última línea de cable.
+	const entidades = dxf.split(/(?=^0\n[A-Z]+\n)/m);
 	const cables = entidades.filter((e) => e.startsWith('0\nLINE\n8\nCABLES\n'));
 	assert.equal(cables.length, 3, 'uno horizontal y dos subtramos verticales');
 	const datos = cables.map((e) => Object.fromEntries([...e.matchAll(/^(10|20|11|21)\n([^\n]+)/gm)]
@@ -32,7 +34,7 @@ test('ESQ-03 DXF aparta un conductor aislado del nudo de otro borne', () => {
 			{ conductorId: 'aislado', nodos: [{ x: 20, y: 50 }, { x: 80, y: 50 }] },
 		] };
 	const dxf = dxfDeEsquema(hoja);
-	const cables = dxf.split(/(?=^0\n(?:LINE|CIRCLE)\n)/m)
+	const cables = dxf.split(/(?=^0\n[A-Z]+\n)/m)
 		.filter((e) => e.startsWith('0\nLINE\n8\nCABLES\n'));
 	const horizontales = cables.map((e) => Object.fromEntries([...e.matchAll(/^(10|20|11|21)\n([^\n]+)/gm)]
 		.map((m) => [m[1], Number(m[2])]))).filter((e) => e['20'] === 50 && e['21'] === 50);
@@ -52,7 +54,7 @@ test('ESQ-03 DXF conserva la interrupción de la línea continua en una T aislad
 					a: { dispositivoId: 'destino', borneId: 'X1' } } },
 		] };
 	const dxf = dxfDeEsquema(hoja);
-	const cables = dxf.split(/(?=^0\n(?:LINE|CIRCLE)\n)/m)
+	const cables = dxf.split(/(?=^0\n[A-Z]+\n)/m)
 		.filter((e) => e.startsWith('0\nLINE\n8\nCABLES\n'));
 	const horizontales = cables.map((e) => Object.fromEntries([...e.matchAll(/^(10|20|11|21)\n([^\n]+)/gm)]
 		.map((m) => [m[1], Number(m[2])]))).filter((e) => e['20'] === 50 && e['21'] === 50);
