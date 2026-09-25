@@ -148,8 +148,11 @@ export function esquemaComoBlob(
 	if (hojas.length === 0) throw new Error('el esquema no tiene hojas');
 	const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [hojas[0].anchoMm, hojas[0].altoMm] });
 	const identidad = resumenProcedenciaDocumento(procedencia);
+	const plantillas = [...new Set(hojas.flatMap((hoja) => hoja.simbolos
+		.map((simbolo) => simbolo.plantilla?.id).filter((id): id is string => id !== undefined)))].sort();
 	doc.setProperties({ title: `${proyecto} — esquema eléctrico`,
-		creator: `TableroStudio · ${identidad.buildId}`, subject: identidad.estado });
+		creator: `TableroStudio · ${identidad.buildId}`, subject: identidad.estado,
+		keywords: `Plantillas de esquema locales (licencia del proyecto declarada, no verificada por plantilla): ${plantillas.join(', ') || 'ninguna'}` });
 
 	hojas.forEach((hoja, i) => {
 		if (i > 0) doc.addPage([hoja.anchoMm, hoja.altoMm], 'landscape');

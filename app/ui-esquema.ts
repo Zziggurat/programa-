@@ -244,6 +244,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	}
 	/** El índice se calcula al abrirse; el arrastre normal no hace análisis semántico adicional. */
 	let referenciasAbiertas = false;
+	let procedenciaAbierta = false;
 	let arrastrandoVista = false;
 	/** Un solo gesto M2 activo; cerrar el esquema también retira sus listeners globales. */
 	let cancelarArrastreM2: (() => void) | undefined;
@@ -844,6 +845,45 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				.filter((ref) => ref.representacionId === vista.id)
 				.map((ref) => ref.texto));
 			if (referencias.length) detalle.textContent += ` · Referencias: ${referencias.join(' · ')}`;
+			const simbolosDeVista = hojasEsquema.flatMap((h) => h.simbolos
+				.filter((s) => s.representacionId === vista.id)
+				.map((s) => ({ hojaId: h.id, plantilla: s.plantilla })));
+			// La ficha pertenece al símbolo montado que ve el usuario; no recalcular su geometría
+			// ni atribuir una plantilla si el ID aparece dos veces o en otra hoja.
+			const plantilla = d && simbolosDeVista.length === 1 && simbolosDeVista[0].hojaId === vista.hojaId
+				? simbolosDeVista[0].plantilla : undefined;
+			const procedencia = document.createElement('details');
+			procedencia.id = 'esq-plantilla-procedencia';
+			procedencia.open = procedenciaAbierta;
+			const cabecera = document.createElement('summary');
+			const nombreFamilia = plantilla ? ({ dedicado: 'símbolo dedicado',
+				'bloque-funcional': 'bloque funcional', generico: 'símbolo genérico',
+				parte: 'parte funcional' } as const)[plantilla.familia] : undefined;
+			cabecera.textContent = plantilla
+				? `Simbología: ${nombreFamilia} [${plantilla.id}] · CONFORMIDAD NO VERIFICADA`
+				: 'Simbología: sin plantilla representable · NO VERIFICADO';
+			procedencia.append(cabecera);
+			if (plantilla) {
+				procedencia.dataset.plantillaId = plantilla.id;
+				procedencia.dataset.familia = plantilla.familia;
+				procedencia.dataset.conformidad = plantilla.conformidadNormativa;
+				const origen = document.createElement('p');
+				origen.textContent = `Origen gráfico: trazos generados en el editor (${plantilla.archivo}). No es una biblioteca IEC certificada.`;
+				const licencia = document.createElement('p');
+				licencia.textContent = `Licencia del proyecto declarada: ${plantilla.licenciaDeclarada}. `
+					+ 'La autoría y licencia individual de este símbolo no están verificadas.';
+				const norma = document.createElement('p');
+				norma.textContent = 'Conformidad normativa: NO VERIFICADA; esta vista no certifica el plano ni la fabricación.';
+				procedencia.append(origen, licencia, norma);
+			} else {
+				const pendiente = document.createElement('p');
+				pendiente.textContent = 'No hay una proyección gráfica única y válida para atribuirle una plantilla. Revisa los pendientes del esquema.';
+				procedencia.append(pendiente);
+			}
+			procedencia.addEventListener('toggle', () => {
+				if (procedencia.isConnected) procedenciaAbierta = procedencia.open;
+			});
+			ayuda.append(detalle, procedencia);
 			const boton = document.createElement('button');
 			boton.id = 'esq-borrar-representacion';
 			boton.className = 'boton';
@@ -874,7 +914,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				refrescarEsquema();
 				avisar(`Vista ${vista.id} borrada; ${d?.designacion ?? vista.dispositivoId} permanece en el proyecto.`, 'ok');
 			};
-			ayuda.append(detalle, document.createTextNode(' · '), boton);
+			ayuda.append(document.createTextNode(' · '), boton);
 			if (d) {
 				const borrarAparato = document.createElement('button');
 				borrarAparato.id = 'esq-eliminar-dispositivo';

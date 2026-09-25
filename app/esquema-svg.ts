@@ -353,6 +353,21 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 		const agarre = `<rect x="${n(s.x - 9)}" y="${n(s.y - 3)}" width="${n(s.ancho + 12)}" `
 			+ `height="${n(s.alto + 6)}" fill="transparent" pointer-events="all"/>`;
 		const vista = s.representacionId ? ` data-representacion="${esc(s.representacionId)}"` : '';
+		// Metadatos derivados del mismo resolvedor que dibujó la vista. No son una
+		// afirmación de conformidad IEC ni alteran el documento eléctrico persistido.
+		const plantilla = s.plantilla;
+		const procedencia = plantilla
+			? ` data-plantilla="${esc(plantilla.id)}" data-familia-simbolo="${esc(plantilla.familia)}"`
+				+ ` data-origen-simbolo="${esc(plantilla.origen)}"`
+				+ ` data-licencia-declarada="${esc(plantilla.licenciaDeclarada)}"`
+				+ ` data-licencia-verificada="${plantilla.licenciaVerificada ? 'si' : 'no'}"`
+				+ ` data-conformidad-normativa="${esc(plantilla.conformidadNormativa)}"`
+			: '';
+		const tituloPlantilla = plantilla
+			? `<title>${esc(`Plantilla ${plantilla.id} · trazos generados en el editor · `
+				+ `licencia ${plantilla.licenciaDeclarada} declarada por el proyecto, no verificada por plantilla · `
+				+ `conformidad normativa ${plantilla.conformidadNormativa}`)}</title>`
+			: '';
 		const teclado = o.interactivo && s.representacionId
 			? ` tabindex="0" role="button" aria-label="Seleccionar representación ${esc(s.representacionId)} de ${esc(s.designacion)}" style="cursor:move"`
 			: '';
@@ -369,7 +384,7 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 					+ `stroke="${color}" stroke-width="${origen ? '1' : '0.7'}" pointer-events="none"/></g>`;
 			}).join('') : '';
 		partes.push(
-			`<g data-dispositivo="${esc(s.dispositivoId)}"${vista} class="simbolo"${teclado}>${marca}${agarre}`
+			`<g data-dispositivo="${esc(s.dispositivoId)}"${vista} class="simbolo"${procedencia}${teclado}>${tituloPlantilla}${marca}${agarre}`
 			+ s.trazos.map((t) => pintarTrazo(t, tinta)).join('')
 			+ `<text x="${n(s.x - 5)}" y="${n(s.y + s.alto / 2 + 1.2)}" font-size="3.4" text-anchor="end" fill="${tinta}" `
 			+ `font-family="system-ui, sans-serif" font-weight="700">${esc(s.designacion)}</text>${bornes}</g>`,
