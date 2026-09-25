@@ -487,8 +487,8 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 		['Conexiones', String(ficha.conductores.total)],
 		['Caja (an × al × f)', ficha.caja ? `${Math.round(ficha.caja.ancho)} × ${Math.round(ficha.caja.alto)} × ${mm(ficha.caja.profundidad)}` : '—'],
 		['Placa de montaje', ficha.placa ? `${Math.round(ficha.placa.ancho)} × ${mm(ficha.placa.alto)}` : '—'],
-		['Cable total', metros(ficha.conductores.longitudTotalMm)],
-		['Verificación', errores ? `${errores} error${errores > 1 ? 'es' : ''}` : (avisos ? `${avisos} aviso${avisos > 1 ? 's' : ''}` : 'Conforme')],
+		['Cable 2D estimado', metros(ficha.conductores.longitudTotalMm)],
+		['Verificación', errores ? `${errores} error${errores > 1 ? 'es' : ''}` : (avisos ? `${avisos} aviso${avisos > 1 ? 's' : ''}` : 'Sin hallazgos DRC')],
 	];
 	const anchoTarjeta = (anchoPag - 40 - 2 * 6) / 3;
 	// Si hay empresa, las cifras bajan lo que ocupa su nombre y su contacto.
@@ -630,8 +630,9 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 		['Aparatos y conexiones', `${ficha.aparatos.total} aparatos y ${ficha.conductores.total} conexiones eléctricas`
 			+ (ficha.conductores.pendientesRuta ? `; ${ficha.conductores.pendientesRuta} con ruta física pendiente` : '')],
 		['Medidas de la placa', ficha.placa ? `${mm(ficha.placa.ancho)} × ${mm(ficha.placa.alto)}, del propio tablero` : 'sin gabinete definido'],
-		['Longitudes de cable con ruta', `${metros(ficha.conductores.longitudTotalMm)}, del ruteo físico disponible con `
-			+ `${Math.round(opciones.reservaCable * 100)} % de reserva; excluye conexiones sin ruta física`],
+		['Propuesta 2D de cable', `${metros(ficha.conductores.longitudTotalMm)}, del ruteo ortogonal estimado con `
+			+ `${Math.round(opciones.reservaCable * 100)} % de reserva y dos puntas por conexión. `
+			+ 'No mide Z, curvas ni corte real; excluye conexiones sin ruta física.'],
 		['Verificación eléctrica', errores
 			? `${errores} error(es) y ${avisos} aviso(s) — ver el apartado de verificación`
 			: `sin errores${avisos ? `, ${avisos} aviso(s)` : ''}`],
@@ -678,7 +679,7 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 		['Aparatos de campo (fuera del tablero)', String(ficha.aparatos.deCampo)],
 		['Conexiones eléctricas', String(ficha.conductores.total)],
 		['Conexiones sin ruta física', String(ficha.conductores.pendientesRuta)],
-		['Longitud de cable con ruta', metros(ficha.conductores.longitudTotalMm)],
+		['Propuesta 2D (con márgenes)', metros(ficha.conductores.longitudTotalMm)],
 		['Tensiones de trabajo', ficha.tensiones.length ? ficha.tensiones.map((v) => `${v} V`).join(' · ') : '—'],
 		['Fondo libre tras el aparato más profundo', ficha.holguraFondoMm !== undefined ? mm(ficha.holguraFondoMm) : '—'],
 		['Referencias de material distintas', String(bom.length)],
@@ -732,7 +733,7 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 		doc.text('Cable por sección', 12, y);
 		doc.setFont('helvetica', 'normal');
 		y += 4;
-		tabla(['Sección', 'Conductores', 'Longitud'],
+		tabla(['Sección', 'Conductores', 'Propuesta 2D'],
 			ficha.conductores.porSeccion.map((s) => [
 				s.seccion !== undefined ? `${s.seccion} mm²` : 'sin definir',
 				s.cantidad,
@@ -880,7 +881,7 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 		doc.setFontSize(10);
 		doc.text('El proyecto no tiene conductores.', 12, y);
 	} else {
-			tabla(['Nº', 'Desde', 'Hacia', 'Sección', 'Color', 'Estado físico / longitud'],
+			tabla(['Nº', 'Desde', 'Hacia', 'Sección', 'Color', 'Propuesta 2D / estado'],
 				conductores.map((c) => [c.numero, c.de, c.a, c.seccion || '—', c.color || '—',
 					c.pendienteRuta ? 'Ruta física pendiente' : c.longitudMm ? metros(c.longitudMm) : 'Sin longitud calculada']),
 				{ 0: 14, 3: 20, 5: 30 });

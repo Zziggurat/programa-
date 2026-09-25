@@ -7,6 +7,7 @@ import { aCSV } from '../src/modelo/csv.js';
 import { hashSnapshotTecnico } from '../src/datos-tecnicos/hash.js';
 import { revisarTablero } from '../src/motores/revision.js';
 import { prepararMarcadores } from '../src/motores/marcadores.js';
+import { proyectarLongitudesDocumentales } from '../src/motores/longitudes-documentales.js';
 import { longitudesDibujadasMm } from './escena3d.js';
 import { hojaASvg } from './esquema-svg.js';
 import { esquemaComoBlob } from './esquema-pdf.js';
@@ -116,7 +117,19 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 	csv('listas/conductores.csv', ['ID', 'Número', 'Sección mm²', 'Color', 'Material', 'Longitud m', 'Origen longitud', 'Circuitos', 'Ruta física'],
 		informe.conductores.map((c) => [c.id, c.numero, c.seccionMm2, c.color, c.material,
 			c.longitudM, c.origenLongitud, c.circuitos.join(', '), c.estadoRutaFisica === 'pendiente' ? 'PENDIENTE' : 'DECLARADA_O_LEGACY']),
-		'Conductores individuales, no metros de manguera multiconductor ni longitudes de corte certificadas.');
+		'Longitud m corresponde a la política eléctrica de Ingeniería, no a un corte verificado ni a metros de manguera multiconductora.');
+	csv('listas/longitudes-conductores.csv', ['Conductor ID', 'Estado de ruta',
+		'Longitud eléctrica declarada (m)', 'Ruta 2D estimada (mm)',
+		'Reserva (%)', 'Origen reserva', 'Reserva (mm)', 'Extra por conexión (mm)',
+		'Origen puntas', 'Puntas total (mm)', 'Redondeo (mm)',
+		'Propuesta de corte estimada (mm)', 'Corte verificado (mm)'],
+		proyectarLongitudesDocumentales(copia, revision.ruteo).map((l) => [
+			l.conductorId, l.estadoRuta, l.longitudDeclaradaElectricaM, l.longitudRutaMm,
+			l.reservaPorcentaje * 100, l.origenReserva, l.reservaMm, l.extraPorConexionMm,
+			l.origenPuntas, l.puntasMm, l.redondeoMm, l.propuestaCorteMm,
+			l.longitudCorteVerificadaMm,
+		]),
+		'Una propuesta de corte usa recorrido ortogonal 2D y márgenes declarados o predeterminados; no mide Z, curvas ni taller. Corte verificado queda vacío. Ruta pendiente/sin resolver no recibe propuesta.');
 	csv('listas/borneros.csv', ['Bornero ID', 'Designación', 'Borne', 'Tipo', 'Conexiones', 'Circuitos'],
 		informe.terminales.map((t) => [t.borneroId, t.designacion, t.borneId, t.tipo,
 			t.conexiones.map((c) => `${c.conductorId}:${c.dispositivoId}:${c.borneId}`).join(' / '), t.circuitos.join(', ')]),

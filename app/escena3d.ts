@@ -1388,11 +1388,11 @@ export function salidasDeCable(
 }
 
 /**
- * Largo real (mm) de un conductor tal como está DIBUJADO en la placa, por su recorrido ortogonal
- * (Manhattan, que es como corren los cables de verdad).
+ * Longitud ortogonal XY (mm) de un conductor tal como está DIBUJADO en la placa.
  *
- * Es el metraje que se va a cortar en el taller, y por tanto el bueno para la caída de tensión y
- * para el total de cable que enseña el panel. Vive aquí y no en los motores porque la geometría
+ * Es una aproximación visual 2D, NO un metraje verificado de corte: omite Z, curvas,
+ * holguras y puntas reales. La revisión legacy aún puede usarla en caída de tensión; cambiar
+ * esa política requiere una fuente física persistente compartida con M6. Vive aquí porque la geometría
  * del trazado es de la vista: depende de dónde quedó cada aparato, de por dónde abre el cable
  * para no fundirse con sus vecinos y de los puntos de quiebre que haya movido quien dibuja.
  * La firma numérica legacy devuelve 0 para una ruta pendiente como sentinel interno; para

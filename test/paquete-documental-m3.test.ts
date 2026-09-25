@@ -36,7 +36,7 @@ test('DOC-02 compone un único snapshot sin duplicar un aparato multivista ni un
 	for (const ruta of ['index.html', 'esquema/hoja-001.svg', 'esquema/hoja-002.svg',
 		'esquema/esquema.pdf', 'dossier/dossier.pdf', 'dossier/dossier.html',
 		'ingenieria/informe.json', 'ingenieria/bom.csv', 'listas/aparatos.csv',
-		'listas/conexiones.csv', 'listas/conductores.csv', 'listas/borneros.csv',
+		'listas/conexiones.csv', 'listas/conductores.csv', 'listas/longitudes-conductores.csv', 'listas/borneros.csv',
 		'listas/referencias-cruzadas.csv', 'listas/senales-io.csv', 'listas/marcadores.csv']) {
 		assert.ok(archivos.some((a) => a.ruta === ruta), `falta ${ruta}`);
 	}
@@ -63,6 +63,14 @@ test('DOC-02 compone un único snapshot sin duplicar un aparato multivista ni un
 	const conexiones = texto('listas/conexiones.csv');
 	assert.equal((conexiones.match(/w1/g) ?? []).length, 1, 'el enlace interhoja no duplica conductor');
 	assert.match(conexiones, /PENDIENTE/);
+	const longitudes = texto('listas/longitudes-conductores.csv');
+	const filaPendiente = longitudes.split('\n').find((fila) => fila.startsWith('w1;'))?.split(';');
+	assert.ok(filaPendiente, 'la conexión eléctrica pendiente permanece listada');
+	assert.equal(filaPendiente[1], 'PENDIENTE');
+	assert.equal(filaPendiente[3], '', 'sin ruta 2D inventada');
+	assert.equal(filaPendiente[11], '', 'sin propuesta de corte');
+	assert.equal(filaPendiente[12], '', 'sin corte verificado');
+	assert.match(longitudes, /Propuesta de corte estimada \(mm\)/);
 	const marcadores = texto('listas/marcadores.csv');
 	assert.match(marcadores, /Campo principal;Texto principal;Campo secundario;Texto secundario;Cantidad/);
 	assert.equal((marcadores.match(/extremo-conductor;w1;/g) ?? []).length, 2,

@@ -57,12 +57,12 @@ export interface OpcionesRevision {
 	 */
 	renumerarHilos?: boolean;
 	/**
-	 * Largo real de cada conductor (mm) por su id, tal como está DIBUJADO en la placa. Lo aporta
-	 * quien dibuja, porque la geometría del trazado vive en la vista y no en el modelo.
+	 * Longitud ortogonal XY dibujada de cada conductor (mm) por id. La aporta la vista;
+	 * no incluye profundidad Z, curvas, holguras ni puntas reales de instalación.
 	 *
-	 * Es el dato bueno para la caída de tensión: es el hilo que se va a cortar. Si no se pasa, se
-	 * cae al largo que calcula el ruteo por canaletas, que es una estimación —y que además solo
-	 * existe para los conductores que el ruteo consiguió resolver—.
+	 * La revisión legacy la usa para sus comprobaciones; esta política NO acredita metraje de
+	 * corte ni sustituye la longitud eléctrica declarada. Si no se aporta, recurre al ruteo
+	 * por canaletas, también estimado y disponible solo para las rutas resueltas.
 	 */
 	longitudesMm?: Map<string, number>;
 	/** Montaje del armario para el balance térmico, si se quiere forzar. */

@@ -18,6 +18,7 @@ import { ResultadoReferencias } from './referencias.js';
 import { ResultadoRuteo } from './ruteo.js';
 import { ResultadoSincronizacion } from './sincronizacion.js';
 import { proyectarBomCanonica } from './bom.js';
+import { proyectarLongitudesDocumentales } from './longitudes-documentales.js';
 
 export interface FilaBOM {
 	cantidad: number;
@@ -152,9 +153,21 @@ ${tabla(['Designación', 'Descripción', 'Posición'],
 ${tabla(['Maestro', 'Posición', 'Contacto', 'Tipo', 'Posición'], filasXref)}`);
 
 	secciones.push(`<h2>5. Lista de conductores</h2>
-${tabla(['Número', 'De', 'A', 'Sección', 'Color', 'Longitud (mm)', 'Estado físico'],
+${tabla(['Número', 'De', 'A', 'Sección', 'Color', 'Ruteo 2D + margen/puntas (mm)', 'Estado físico'],
 		conductores.map((f) => [f.numero, f.de, f.a, f.seccion, f.color, f.longitudMm,
 			f.pendienteRuta ? 'Ruta física pendiente' : f.longitudMm === undefined ? 'Sin longitud calculada' : 'Con ruta']))}`);
+	const numeroMm = (v: number | undefined): string => v === undefined ? '—'
+		: `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(v)} mm`;
+	const longitudes = proyectarLongitudesDocumentales(proyecto, d.ruteo);
+	secciones.push(`<h3>Desglose de longitudes por conductor</h3>
+<p>La longitud eléctrica declarada, el recorrido ortogonal 2D y la propuesta con reserva y puntas son magnitudes diferentes. La propuesta no mide profundidad Z, curvas ni corte real de taller. Un corte verificado no está disponible en esta revisión.</p>
+${tabla(['Conductor', 'Estado', 'Eléctrica declarada', 'Ruta 2D', 'Reserva', 'Puntas', 'Propuesta de corte', 'Corte verificado'],
+	longitudes.map((l) => [l.conductorId, l.estadoRuta,
+		l.longitudDeclaradaElectricaM === undefined ? '—' : `${l.longitudDeclaradaElectricaM} m`,
+		numeroMm(l.longitudRutaMm),
+		`${Math.round(l.reservaPorcentaje * 10000) / 100} % (${l.origenReserva}); ${numeroMm(l.reservaMm)}`,
+		`${numeroMm(l.puntasMm)} (${l.origenPuntas})`,
+		numeroMm(l.propuestaCorteMm), numeroMm(l.longitudCorteVerificadaMm)]))}`);
 
 	for (const plan of d.planesBorneros) {
 		secciones.push(`<h3>Plan de bornero ${esc(plan.designacion)}</h3>
