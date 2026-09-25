@@ -4,6 +4,12 @@ import { chromium } from 'playwright-core';
 import { abrirNavegador, esperarEditorListo, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
 const inicio = Date.now();
+let anterior = inicio;
+const fase = (nombre) => {
+	const ahora = Date.now();
+	console.log(`FASE ${nombre}: ${((ahora - anterior) / 1000).toFixed(1)} s; total ${((ahora - inicio) / 1000).toFixed(1)} s`);
+	anterior = ahora;
+};
 let servidor, navegador, pagina;
 let comprobaciones = 0, fallos = 0;
 const erroresJS = [];
@@ -102,6 +108,7 @@ async function presionarStart() {
 
 try {
 	const entorno = await servidorDeQA(); servidor = entorno.servidor;
+	fase('servidor QA');
 	navegador = await abrirNavegador(chromium);
 	pagina = await navegador.newPage({ viewport: { width: 1600, height: 920 } });
 	pagina.setDefaultTimeout(20_000);
@@ -121,6 +128,7 @@ try {
 	if (await pagina.locator('#modal-explicacion').isVisible())
 		await pagina.locator('#btn-cerrar-explicacion').click();
 	assert.equal(await trabajarSobreCopia(pagina), true, 'el ejemplo no se convirtió en copia editable');
+	fase('navegador, ejemplo y copia editable');
 	await pagina.locator('#hta-seleccionar').click();
 	await pagina.locator('#btn-esquema').click();
 	const antesDeVistas = await estado();
@@ -167,6 +175,7 @@ try {
 	await pagina.waitForFunction(() => window.qa.proyecto().esquema.representaciones
 		.filter((r) => r.dispositivoId === 'km1').length === 3);
 	const desdoblado = await estado();
+	fase('activación y desdoblamiento multihoja');
 	const vistasKM = desdoblado.proyecto.esquema.representaciones.filter((r) => r.dispositivoId === 'km1');
 	comprobar('bobina, polos y auxiliar comparten km1 y están en dos hojas sin duplicar cables',
 		vistasKM.length === 3 && new Set(vistasKM.map((r) => r.hojaId)).size === 2
@@ -179,6 +188,7 @@ try {
 		&& [c.de, c.a].some((e) => e.dispositivoId === 'x2' && e.borneId === '3'));
 	assert.ok(cableA1, 'el ejemplo no conserva la conexión mando x2:3 ↔ km1:A1');
 	const metodoSeleccion = await seleccionarConexion(cableA1.id);
+	fase('selección del conductor colineal');
 	const inspectorSeleccion = await pagina.locator('#esq-ayuda').textContent();
 	comprobar('conductor real se selecciona por trazo único o teclado semántico sin adjudicar clic al solape',
 		['teclado', 'puntero'].includes(metodoSeleccion)
@@ -204,6 +214,7 @@ try {
 		!sinBobina.activos.includes('m1') && !sinBobina.activos.includes('km1'));
 	await pagina.mouse.up();
 	await energizar(false);
+	fase('desconexión y simulación sin bobina');
 	await pagina.locator('#hta-seleccionar').click();
 	await pagina.locator('#btn-esquema').click();
 	await hoja(2);
@@ -219,6 +230,7 @@ try {
 	await pagina.waitForFunction((n) => window.qa.proyecto().conductores.length === n,
 		desdoblado.proyecto.conductores.length);
 	const reconectado = await estado();
+	fase('reconexión desde esquema');
 	const nuevo = reconectado.proyecto.conductores.find((c) => c.id !== cableA1.id
 		&& [c.de, c.a].some((e) => e.dispositivoId === 'km1' && e.borneId === 'A1')
 		&& [c.de, c.a].some((e) => e.dispositivoId === 'x2' && e.borneId === '3'));
@@ -243,6 +255,7 @@ try {
 	comprobar('soltar START conserva marcha por enclavamiento del mismo KM1',
 		(await simulacion()).activos.includes('m1'));
 	await energizar(false);
+	fase('lista, nueva simulación y enclavamiento');
 	await pagina.locator('#hta-seleccionar').click();
 	await pagina.locator('#btn-esquema').click();
 	await hoja(2);
@@ -289,6 +302,7 @@ try {
 		.some((r) => r.dispositivoId === 'f1'));
 	comprobar('Redo recompone la vista y conserva el circuito probado',
 		(await proyecto()).conductores.length === reconectado.proyecto.conductores.length);
+	fase('problema, reparación y Undo/Redo F1');
 	comprobar('sin errores JavaScript', erroresJS.length === 0);
 } catch (error) {
 	fallos++;
