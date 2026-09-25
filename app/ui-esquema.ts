@@ -259,6 +259,133 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let documentoFormulario: Proyecto | undefined;
 	let refrescoEstadoPendiente = 0;
 	let encuadrePendiente: number | undefined;
+	let espacioPan = false;
+	let cancelarPanEsquema: (() => void) | undefined;
+	let residuoPan: { pointerId: number; button: number } | undefined;
+	let relojResiduoPan: number | undefined;
+
+	function limpiarResiduoPan(): void {
+		if (relojResiduoPan !== undefined) window.clearTimeout(relojResiduoPan);
+		relojResiduoPan = undefined;
+		residuoPan = undefined;
+	}
+
+	/** El click sintético que sigue a pointerup pertenece al pan; un nuevo pointerdown lo descarta. */
+	function reservarResiduoPan(pointerId: number, button: number): void {
+		limpiarResiduoPan();
+		residuoPan = { pointerId, button };
+		relojResiduoPan = window.setTimeout(limpiarResiduoPan, 1200);
+	}
+
+	function instalarPanEsquema(): void {
+		const lienzo = $('esquema-lienzo');
+		const hayModal = (): boolean => [...document.querySelectorAll<HTMLElement>('[id^="modal-"]')]
+			.some((el) => !el.hidden);
+		lienzo.addEventListener('keydown', (ev) => {
+			if (!esquemaAbierto || document.activeElement !== lienzo || hayModal()) return;
+			if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight'
+				|| ev.key === 'ArrowUp' || ev.key === 'ArrowDown') {
+				// El navegador desplaza este region scrollable; el editor global no cambia de folio.
+				ev.stopPropagation();
+				return;
+			}
+			if (ev.code === 'Space' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+				espacioPan = true;
+				ev.preventDefault();
+				ev.stopPropagation();
+			}
+		});
+		lienzo.addEventListener('blur', () => { espacioPan = false; cancelarPanEsquema?.(); });
+		window.addEventListener('blur', () => { espacioPan = false; cancelarPanEsquema?.(); });
+		window.addEventListener('keyup', (ev) => { if (ev.code === 'Space') espacioPan = false; }, true);
+		const suprimirClickResidual = (ev: MouseEvent): void => {
+			const residuo = residuoPan;
+			if (!residuo || ev.button !== residuo.button || ev.detail === 0) return;
+			if ('pointerId' in ev && (ev as PointerEvent).pointerId !== residuo.pointerId) return;
+			ev.preventDefault();
+			ev.stopImmediatePropagation();
+			limpiarResiduoPan();
+		};
+		lienzo.addEventListener('click', suprimirClickResidual, true);
+		lienzo.addEventListener('auxclick', suprimirClickResidual, true);
+		lienzo.addEventListener('pointerdown', (ev) => {
+			// Si no hubo click residual, el siguiente gesto normal nunca hereda su supresión.
+			limpiarResiduoPan();
+			if (ev.pointerType === 'touch') return; // el gesto táctil conserva su scroll nativo
+			if (cancelarPanEsquema) { ev.preventDefault(); ev.stopImmediatePropagation(); return; }
+			if (!esquemaAbierto || hayModal() || arrastrandoVista || cancelarArrastreM2) return;
+			const objetivo = ev.target;
+			if (objetivo instanceof Element && objetivo.closest(
+				'button, input, select, textarea, [contenteditable="true"], [role="textbox"]')) return;
+			const medio = ev.button === 1 && (ev.buttons & ~4) === 0;
+			const primarioConEspacio = ev.button === 0 && (ev.buttons & ~1) === 0
+				&& espacioPan && document.activeElement === lienzo;
+			if (!medio && !primarioConEspacio) return;
+			ev.preventDefault();
+			ev.stopImmediatePropagation();
+			const pointerId = ev.pointerId;
+			const button = ev.button;
+			const inicioX = ev.clientX;
+			const inicioY = ev.clientY;
+			const scrollX = lienzo.scrollLeft;
+			const scrollY = lienzo.scrollTop;
+			let activo = true;
+			const desplazar = (actual: PointerEvent): void => {
+				lienzo.scrollLeft = scrollX + inicioX - actual.clientX;
+				lienzo.scrollTop = scrollY + inicioY - actual.clientY;
+			};
+			const terminar = (): void => {
+				if (!activo) return;
+				activo = false;
+				window.removeEventListener('pointermove', alMover, true);
+				window.removeEventListener('pointerup', alSoltar, true);
+				window.removeEventListener('pointercancel', alCancelarPuntero, true);
+				window.removeEventListener('keydown', alTecla, true);
+				lienzo.removeEventListener('lostpointercapture', alPerderCaptura);
+				lienzo.classList.remove('pan-esquema');
+				cancelarPanEsquema = undefined;
+				reservarResiduoPan(pointerId, button);
+				if (lienzo.hasPointerCapture(pointerId)) lienzo.releasePointerCapture(pointerId);
+			};
+			const alMover = (actual: PointerEvent): void => {
+				if (actual.pointerId !== pointerId) return;
+				actual.preventDefault();
+				actual.stopImmediatePropagation();
+				desplazar(actual);
+			};
+			const alSoltar = (actual: PointerEvent): void => {
+				if (actual.pointerId !== pointerId) return;
+				actual.preventDefault();
+				actual.stopImmediatePropagation();
+				desplazar(actual);
+				terminar();
+			};
+			const alCancelarPuntero = (actual: PointerEvent): void => {
+				if (actual.pointerId !== pointerId) return;
+				actual.preventDefault();
+				actual.stopImmediatePropagation();
+				terminar();
+			};
+			const alPerderCaptura = (actual: PointerEvent): void => {
+				if (actual.pointerId === pointerId) terminar();
+			};
+			const alTecla = (tecla: KeyboardEvent): void => {
+				if (tecla.key !== 'Escape') return;
+				tecla.preventDefault();
+				tecla.stopImmediatePropagation();
+				espacioPan = false;
+				terminar();
+			};
+			window.addEventListener('pointermove', alMover, true);
+			window.addEventListener('pointerup', alSoltar, true);
+			window.addEventListener('pointercancel', alCancelarPuntero, true);
+			window.addEventListener('keydown', alTecla, true);
+			lienzo.addEventListener('lostpointercapture', alPerderCaptura);
+			lienzo.classList.add('pan-esquema');
+			cancelarPanEsquema = terminar;
+			try { lienzo.setPointerCapture(pointerId); } catch { /* window conserva el gesto si falla captura */ }
+		}, true);
+	}
 
 	function pintarEstadoEsquema(): void {
 		if (!esquemaAbierto) return;
@@ -1520,6 +1647,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		if (abrir) cerrarTodasLasVentanas();
 		esquemaAbierto = abrir;
 		if (!abrir) {
+			cancelarPanEsquema?.();
+			espacioPan = false;
 			cancelarEncuadrePendiente();
 			cancelarArrastreM2?.();
 			limpiarGrupoRepresentaciones();
@@ -1544,6 +1673,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	}
 
 	/* ------------------------ Botones de la vista de esquema ------------------------ */
+	instalarPanEsquema();
 
 	async function alinearGrupo(eje: 'fila' | 'columna'): Promise<void> {
 		if (!esquemaAbierto || !ctx.puedeEditar()) return;

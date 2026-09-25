@@ -1338,6 +1338,8 @@
 	#esq-movimiento-aviso[hidden] { display: none; }
 	/* La hoja se centra con márgenes automáticos solo mientras cabe; al crecer no puede quedar a x negativa. */
 	#esquema-lienzo { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 18px; display: flex; align-items: flex-start; }
+	#esquema-lienzo:focus-visible { outline: 2px solid #50a6ec; outline-offset: -3px; }
+	#esquema-lienzo.pan-esquema, #esquema-lienzo.pan-esquema * { cursor: grabbing !important; user-select: none; }
 	#esquema-hoja { flex: none; margin-inline: auto; box-shadow: 0 10px 40px #0009; border-radius: 3px; overflow: hidden; line-height: 0; }
 	#esquema-hoja .simbolo { cursor: grab; }
 	#esquema-hoja .simbolo:hover { opacity: .65; }
@@ -1349,6 +1351,7 @@
 		font-size: 12.5px; }
 	#esq-ayuda { flex: none; text-align: center; font-size: 11.5px; color: var(--texto-suave);
 		padding: 6px 12px 10px; }
+	#esq-pan-ayuda { flex: none; text-align: center; font-size: 11.5px; color: var(--texto-suave); padding: 5px 12px 0; }
 	#esq-ayuda b { color: var(--texto); }
 	/* Guía de la rejilla mientras se arrastra: enseña dónde va a caer el símbolo. */
 	#esquema-hoja .guia-suelta { pointer-events: none; }
@@ -1602,7 +1605,8 @@
 		</div>
 	</section>
 	<div id="esq-movimiento-aviso" role="status" aria-live="polite" hidden></div>
-	<div id="esquema-lienzo"><div id="esquema-hoja"></div></div>
+	<div id="esquema-lienzo" role="region" tabindex="0" aria-label="Lienzo desplazable del esquema" aria-describedby="esq-pan-ayuda"><div id="esquema-hoja"></div></div>
+	<div id="esq-pan-ayuda">Mover plano: botón medio y arrastrar · con foco en el lienzo, Espacio + arrastre primario · flechas para desplazarte</div>
 	<div id="esq-ayuda"><b>Arrastra</b> cualquier símbolo para colocarlo donde quieras · los hilos lo siguen</div>
 </section>
 
