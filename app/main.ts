@@ -75,7 +75,9 @@ import { instalarEsquema, proponerConductorPendiente } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
 import { instalarIngenieria, type PanelIngenieria } from './ui-ingenieria.js';
 import { crearZipDeRevisionDocumental } from '../src/modelo/manifiesto-paquete-documental.js';
+import { LIMITE_ARCHIVO_ZIP_DOCUMENTAL } from '../src/modelo/zip-documental.js';
 import { crearArchivosPaqueteDocumental } from './paquete-documental.js';
+import { compararRevisiones } from '../src/motores/diferencia-revision.js';
 import { instalarUIDatosTecnicos, type PanelDatosTecnicos } from './ui-datos-tecnicos.js';
 import { animarSimulacion } from './animacion-sim.js';
 import { dxfDePlaca, exportarEtiquetasPDF } from './exportaciones.js';
@@ -102,7 +104,7 @@ import { abrirAdopcionComponente } from './ui-adopcion-componente.js';
 import type { PreparacionAdopcionComponente } from '../src/componentes/adopcion.js';
 import type { RepositorioProyectos } from '../src/persistencia/tipos.js';
 import type { RevisionTecnica } from '../src/datos-tecnicos/tipos.js';
-import { jsonCanonico } from '../src/datos-tecnicos/hash.js';
+import { jsonCanonico, sha256Texto } from '../src/datos-tecnicos/hash.js';
 
 /** Bandera que inyecta el empaquetador: true solo en el build para las pruebas (QA=1). */
 declare const __QA__: boolean;
@@ -317,6 +319,10 @@ async function copiaParaEntregable(): Promise<{ copia: Proyecto; procedencia: Pr
 }
 
 let preparandoPaqueteDocumental = false;
+async function sha256BytesDocumento(bytes: Uint8Array): Promise<string> {
+	const digerido = new Uint8Array(await crypto.subtle.digest('SHA-256', Uint8Array.from(bytes)));
+	return `sha256:${[...digerido].map((n) => n.toString(16).padStart(2, '0')).join('')}`;
+}
 /** Un único proyecto y una única revisión confirmada para todos los archivos del ZIP. */
 async function descargarPaqueteDocumental(): Promise<void> {
 	if (preparandoPaqueteDocumental) throw new Error('Ya se está preparando un paquete documental.');
@@ -335,6 +341,9 @@ async function descargarPaqueteDocumental(): Promise<void> {
 				'Los hashes SHA-256 comprueban integridad de bytes, no autenticidad ni firma.',
 			],
 		});
+		const sha256Paquete = procedencia.estado === 'confirmado' ? await sha256BytesDocumento(zip) : undefined;
+		const sha256Manifiesto = procedencia.estado === 'confirmado'
+			? sha256Texto(`${JSON.stringify(manifiesto, null, 2)}\n`) : undefined;
 		const vigente = await obtenerProcedenciaDocumental();
 		const identidad = (p: ProcedenciaDocumento): string => p.estado === 'confirmado'
 			? JSON.stringify([p.estado, p.projectId, p.revisionRepositorio, p.buildId])
@@ -342,6 +351,18 @@ async function descargarPaqueteDocumental(): Promise<void> {
 		if (origen !== proyecto || firma !== JSON.stringify(proyecto)
 			|| identidad(vigente) !== identidad(procedencia)) {
 			throw new Error('El proyecto o la revisión cambió durante el paquete. Genera uno nuevo.');
+		}
+		if (procedencia.estado === 'confirmado') {
+			if (!repositorioDocumentos || !sha256Paquete || !sha256Manifiesto)
+				throw new Error('No se pudo archivar la revisión documental confirmada.');
+			await repositorioDocumentos.archivarRevisionDocumental({
+				projectId: procedencia.projectId, revisionEsperada: procedencia.revisionRepositorio,
+				proyecto: proyectoParaPersistir(copia), sha256Manifiesto, sha256Paquete,
+			});
+			if (origen !== proyecto || firma !== JSON.stringify(proyecto)
+				|| identidad(await obtenerProcedenciaDocumental()) !== identidad(procedencia)) {
+				throw new Error('El proyecto o la revisión cambió antes de descargar. Genera uno nuevo.');
+			}
 		}
 		const sufijo = procedencia.estado === 'confirmado'
 			? `r${procedencia.revisionRepositorio}` : 'efimero';
@@ -7515,6 +7536,59 @@ panelIngenieria = instalarIngenieria({
 	proyecto: () => proyecto,
 	obtenerProcedencia: obtenerProcedenciaDocumental,
 	descargarPaqueteDocumental,
+	listarRevisionesDocumentales: async (todos = false) => {
+		const eraEjemplo = gestorDocumentos?.estaMostrandoEjemplo() === true;
+		const id = gestorDocumentos?.estaMostrandoEjemplo()
+			? undefined : gestorDocumentos?.documentoActivo()?.id;
+		if (!repositorioDocumentos || (!id && !todos)) return [];
+		const revisiones = await repositorioDocumentos.listarRevisionesDocumentales(todos ? undefined : id);
+		if (gestorDocumentos?.estaMostrandoEjemplo() !== eraEjemplo
+			|| (!eraEjemplo && gestorDocumentos?.documentoActivo()?.id !== id))
+			throw new Error('El tablero cambió mientras se consultaban sus revisiones.');
+		return revisiones.map((r) => ({
+			projectId: r.projectId, nombreProyecto: r.proyecto.nombre,
+			revisionRepositorio: r.revisionRepositorio, creadoEn: r.preparadaEn,
+			estado: r.estado, sha256Paquete: r.sha256Paquete,
+		}));
+	},
+	declararEntregaDocumental: async (revision, sha256Paquete, archivo) => {
+		const id = gestorDocumentos?.estaMostrandoEjemplo()
+			? undefined : gestorDocumentos?.documentoActivo()?.id;
+		if (!repositorioDocumentos || !id) throw new Error('Abre un tablero persistido antes de declarar una entrega.');
+		if (!Number.isSafeInteger(revision) || revision < 1 || archivo.size < 1
+			|| archivo.size > LIMITE_ARCHIVO_ZIP_DOCUMENTAL)
+			throw new Error('Revisión o tamaño del ZIP documental inválido.');
+		const archivada = await repositorioDocumentos.abrirRevisionDocumental(id, revision, sha256Paquete);
+		if (archivada.estado !== 'PREPARADA') throw new Error('La entrega de ese paquete ya fue declarada.');
+		const hashLocal = await sha256BytesDocumento(new Uint8Array(await archivo.arrayBuffer()));
+		if (hashLocal !== archivada.sha256Paquete)
+			throw new Error('El archivo seleccionado no coincide con el SHA-256 del ZIP preparado.');
+		if (gestorDocumentos?.documentoActivo()?.id !== id || gestorDocumentos.estaMostrandoEjemplo())
+			throw new Error('El tablero cambió antes de declarar la entrega.');
+		const aceptado = await confirmar(
+			`Se verificó el ZIP local de la revisión r${revision} (SHA-256 ${hashLocal}).\n\n`
+			+ '¿Declarar que entregaste este archivo? Esto registra tu declaración; no prueba recepción, aprobación ni certificación externa.',
+			{ ok: 'Declarar entrega' },
+		);
+		if (!aceptado) return;
+		if (gestorDocumentos?.documentoActivo()?.id !== id || gestorDocumentos.estaMostrandoEjemplo())
+			throw new Error('El tablero cambió durante la confirmación.');
+		await repositorioDocumentos.confirmarEntregaRevisionDocumental(id, revision, hashLocal);
+		avisar(`Entrega declarada para r${revision}; el archivo local fue verificado por SHA-256.`, 'ok');
+	},
+	compararRevisionDocumental: async (revision, sha256Paquete) => {
+		const id = gestorDocumentos?.estaMostrandoEjemplo()
+			? undefined : gestorDocumentos?.documentoActivo()?.id;
+		if (!repositorioDocumentos || !id) throw new Error('Abre un tablero persistido para comparar revisiones.');
+		const archivada = await repositorioDocumentos.abrirRevisionDocumental(id, revision, sha256Paquete);
+		if (archivada.estado !== 'ENTREGA_DECLARADA')
+			throw new Error('Solo una revisión cuya entrega se declaró puede servir de base.');
+		const { copia, procedencia } = await copiaParaEntregable();
+		if (procedencia.estado !== 'confirmado' || procedencia.projectId !== id
+			|| gestorDocumentos?.documentoActivo()?.id !== id)
+			throw new Error('El tablero cambió durante la comparación.');
+		return compararRevisiones(archivada.proyecto, proyectoParaPersistir(copia));
+	},
 	identidadActual: () => gestorDocumentos?.estaMostrandoEjemplo() ? 'EJEMPLO' : gestorDocumentos?.documentoActivo()?.id ?? 'SIN_REPOSITORIO',
 	prepararAplicacion: prepararAplicacionTecnica,
 	revisionesTecnicas: () => listarRevisionesTecnicas(),

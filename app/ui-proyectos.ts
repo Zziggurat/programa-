@@ -103,8 +103,8 @@ export function instalarUIProyectos(ctx: ContextoUIProyectos): PanelProyectos {
 					avisar('Reparación aceptada. El original permanece en Recuperación.', 'ok');
 				});
 			}
-			const borrar = boton('Eliminar', 'Eliminar este tablero y sus snapshots', async () => {
-				if (!await confirmar(`¿Eliminar «${d.nombre}»? Esta acción no se puede deshacer.`, {
+			const borrar = boton('Eliminar', 'Eliminar este tablero y sus snapshots; conserva el archivo documental emitido', async () => {
+				if (!await confirmar(`¿Eliminar «${d.nombre}»? Se borrarán el tablero editable y sus snapshots; las revisiones documentales preparadas o declaradas entregadas permanecerán en el archivo. Esta acción no se puede deshacer.`, {
 					ok: 'Eliminar', peligro: true,
 				})) return;
 				await ctx.gestor.eliminar(d.id); await pintar(); avisar('Tablero eliminado', 'info');

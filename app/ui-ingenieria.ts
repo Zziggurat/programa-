@@ -37,6 +37,20 @@ declare const __VERSION__: string;
 type Analisis = ReturnType<typeof ejecutarIngenieria>;
 type Vista = 'circuitos' | 'validacion' | 'protecciones' | 'potencia' | 'escenarios' | 'diseno' | 'documentacion';
 
+interface RevisionDocumentalVisible {
+	projectId: string;
+	nombreProyecto: string;
+	revisionRepositorio: number;
+	creadoEn: string;
+	estado: 'PREPARADA' | 'ENTREGA_DECLARADA';
+	sha256Paquete: string;
+}
+
+interface ComparacionDocumentalVisible {
+	cambios: { categoria: string; entidadId: string; tipo: string; detalle: string }[];
+	limitaciones: string[];
+}
+
 export interface ContextoUIIngenieria {
 	proyecto(): Proyecto;
 	seleccionarDispositivo(id: string): void;
@@ -53,6 +67,11 @@ export interface ContextoUIIngenieria {
 	abrirDossierPDF(): void;
 	/** Congela una sola revisión y entrega los documentos relacionados en un ZIP offline. */
 	descargarPaqueteDocumental?(): Promise<void>;
+	/** Archivo documental separado de snapshots de recuperación. */
+	listarRevisionesDocumentales?(todos?: boolean): Promise<RevisionDocumentalVisible[]>;
+	/** Solo una selección de ZIP con hash correcto y declaración explícita cambia PREPARADA. */
+	declararEntregaDocumental?(revision: number, sha256Paquete: string, archivo: File): Promise<void>;
+	compararRevisionDocumental?(revision: number, sha256Paquete: string): Promise<ComparacionDocumentalVisible>;
 }
 
 export interface PanelIngenieria {
@@ -119,6 +138,10 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	let revisionesDiseno: RevisionTecnica[] = [];
 	let abortoDiseno: AbortController | undefined;
 	let progresoDiseno = '';
+	let revisionesDocumentales: RevisionDocumentalVisible[] = [];
+	let archivoDocumentalGlobal = false;
+	let solicitudArchivoDocumental = 0;
+	let comparacionDocumental: { revision: number; resultado: ComparacionDocumentalVisible } | undefined;
 	let conductoresDiseno: string[] = [];
 	let proteccionDiseno = '';
 	let aplicandoDiseno = false;
@@ -137,6 +160,7 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		firmaAnalisis = hashSnapshotTecnico(p);
 		circuitoId = analisis.circuitos.some((x) => x.id === circuitoId) ? circuitoId : analisis.circuitos[0]?.id;
 		alternativas = []; definicionesAlternativas = []; informe = undefined; firmaInforme = undefined; snapshotDiseno = undefined; identidadDiseno = undefined; resultadoDiseno = undefined;
+		comparacionDocumental = undefined;
 		pintarEstado(`Snapshot derivado en ${(performance.now() - inicio).toFixed(1)} ms · no persistido`, 'ok');
 		pintar();
 		ctx.avisar(`Ingeniería V7: ${analisis.validacion.resumen.fail} fallos, ${analisis.validacion.resumen.warning} advertencias y ${analisis.validacion.resumen.indeterminate} indeterminadas.`,
@@ -147,6 +171,8 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	function invalidar(): void {
 		if (!analisis) return;
 		analisis = undefined; firmaAnalisis = undefined; alternativas = []; definicionesAlternativas = []; informe = undefined; firmaInforme = undefined; snapshotDiseno = undefined; identidadDiseno = undefined; resultadoDiseno = undefined; abortoDiseno?.abort();
+		solicitudArchivoDocumental++;
+		revisionesDocumentales = []; archivoDocumentalGlobal = false; comparacionDocumental = undefined;
 		filtroSeveridad = ''; filtroCategoria = ''; filtroCircuito = '';
 		pintarEstado('El proyecto cambió. Ejecuta Validar proyecto para crear un snapshot nuevo.', 'pendiente');
 		pintar();
@@ -301,6 +327,28 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 	}
 
 	function vistaDocumentacion(): string {
+		const historial = revisionesDocumentales.length
+			? `<div class="ing-doc-revisions">${revisionesDocumentales.map((r) => `<article class="ing-doc-preview">
+				<h4>${esc(r.nombreProyecto)} · revisión r${r.revisionRepositorio}</h4><p>${esc(r.creadoEn.replace('T', ' ').slice(0, 19))} · ${r.estado === 'PREPARADA'
+					? 'ZIP preparado; descarga y entrega no confirmadas'
+					: 'Entrega declarada por la persona tras verificar el ZIP local'}</p>
+				<p class="ing-meta">Project ID: ${esc(r.projectId)}</p>
+				<p class="ing-meta">SHA-256 ZIP: ${esc(r.sha256Paquete)}</p>
+				${r.projectId !== ctx.identidadActual()
+					? '<p class="ing-meta">Archivo de otro tablero: abre ese tablero para declarar o comparar. Si fue eliminado, su archivo sigue conservado solo para consulta.</p>'
+					: r.estado === 'PREPARADA' ? `<label>Verificar ZIP r${r.revisionRepositorio} y declarar entrega
+					<input type="file" accept=".zip,application/zip" data-ing-doc-file="${r.revisionRepositorio}" data-ing-doc-hash="${esc(r.sha256Paquete)}"></label>`
+					: `<button class="boton" data-ing-doc-compare="${r.revisionRepositorio}" data-ing-doc-hash="${esc(r.sha256Paquete)}">Comparar con la revisión actual</button>`}
+			</article>`).join('')}</div>`
+			: `<p class="ing-meta">No hay revisiones ${archivoDocumentalGlobal ? 'en el archivo local' : 'preparadas para este tablero'}. Los autosaves de recuperación no se tratan como entregas.</p>`;
+		const comparacion = comparacionDocumental
+			? `<section class="ing-doc-preview"><h4>Cambios desde r${comparacionDocumental.revision}</h4>
+				<p>Comparación del modelo persistido. No certifica aprobación, recepción ni rutas AUTO recalculadas.</p>
+				${comparacionDocumental.resultado.cambios.length
+					? `<ul>${comparacionDocumental.resultado.cambios.map((c) => `<li><b>${esc(c.categoria)} · ${esc(c.tipo)}</b> ${esc(c.entidadId)}: ${esc(c.detalle)}</li>`).join('')}</ul>`
+					: '<p>Sin cambios modelados entre ambas revisiones.</p>'}
+				${comparacionDocumental.resultado.limitaciones.map((l) => `<p class="ing-meta">Límite: ${esc(l)}</p>`).join('')}
+			</section>` : '';
 		return `<section data-ing-documentation><p>Los entregables consumen el mismo snapshot de Ingeniería; la UI no reconstruye BOM, cableado ni borneras.</p>
 			<div class="botonera"><button class="boton primario" data-ing-doc="prepare">Preparar informe</button>
 			<button class="boton" data-ing-doc="paquete" ${ctx.descargarPaqueteDocumental ? '' : 'disabled'}>Paquete de revisión ZIP</button>
@@ -309,7 +357,24 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 			<button class="boton" data-ing-doc="terminal" ${informe ? '' : 'disabled'}>Terminales CSV</button><button class="boton" data-ing-doc="technical" ${informe?.datosTecnicos ? '' : 'disabled'}>Datos técnicos CSV</button><button class="boton" data-ing-doc="pdf">Dossier PDF existente</button></div>
 			${informe ? `<article class="ing-doc-preview"><h3>Informe listo</h3><dl class="ing-magnitudes"><dt>Project ID</dt><dd>${esc(informe.proyecto.id)}</dd><dt>Revisión</dt><dd>${esc(informe.proyecto.revision ?? '—')}</dd>
 			<dt>Snapshot</dt><dd>${esc(informe.proyecto.snapshotId ?? '—')}</dd><dt>Build ID</dt><dd>${esc(informe.trazabilidad.buildId)}</dd><dt>Circuitos</dt><dd>${informe.circuitos.length}</dd><dt>BOM</dt><dd>${informe.bom.length} líneas</dd>
-			<dt>Conductores</dt><dd>${informe.conductores.length}</dd><dt>Borneras</dt><dd>${informe.terminales.length}</dd></dl><p class="ing-meta">${esc(informe.leyenda)}</p></article>` : ''}</section>`;
+			<dt>Conductores</dt><dd>${informe.conductores.length}</dd><dt>Borneras</dt><dd>${informe.terminales.length}</dd></dl><p class="ing-meta">${esc(informe.leyenda)}</p></article>` : ''}
+			<h3>Archivo de revisiones documentales</h3><p>Preparar un ZIP no acredita que se descargó ni que el destinatario lo recibió. Para declararlo entregado, vuelve a seleccionar el archivo descargado: se verificará su SHA-256 y se pedirá confirmación explícita.</p>
+			<button class="boton" data-ing-doc-refresh ${ctx.listarRevisionesDocumentales ? '' : 'disabled'}>Consultar este tablero</button>
+			<button class="boton" data-ing-doc-global ${ctx.listarRevisionesDocumentales ? '' : 'disabled'}>Archivo de todos los tableros</button>
+			${historial}${comparacion}</section>`;
+	}
+
+	async function cargarRevisionesDocumentales(todos = archivoDocumentalGlobal): Promise<void> {
+		if (!ctx.listarRevisionesDocumentales) return;
+		const solicitud = ++solicitudArchivoDocumental;
+		const identidad = ctx.identidadActual();
+		const lista = await ctx.listarRevisionesDocumentales(todos);
+		if (solicitud !== solicitudArchivoDocumental) return;
+		if (ctx.identidadActual() !== identidad) throw new Error('El tablero cambió durante la lectura de revisiones.');
+		archivoDocumentalGlobal = todos;
+		revisionesDocumentales = lista;
+		comparacionDocumental = undefined;
+		pintar();
 	}
 
 	function pintar(): void {
@@ -366,7 +431,8 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		if (accion === 'pdf') { ctx.abrirDossierPDF(); return; }
 		if (accion === 'paquete') {
 			if (!ctx.descargarPaqueteDocumental) throw new Error('La exportación de paquete no está disponible.');
-			return ctx.descargarPaqueteDocumental();
+			await ctx.descargarPaqueteDocumental();
+			return cargarRevisionesDocumentales();
 		}
 		if (!informe) return;
 		const documentoPreparado = informe;
@@ -420,6 +486,18 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		vista = b.dataset.ingView as Vista; if (vista !== 'documentacion') { informe = undefined; firmaInforme = undefined; } pintar();
 	};
 	contenido.onchange = (ev) => {
+		const archivo = ev.target as HTMLInputElement;
+		if (archivo.dataset.ingDocFile !== undefined) {
+			const elegido = archivo.files?.[0];
+			const revision = Number(archivo.dataset.ingDocFile);
+			const sha256Paquete = archivo.dataset.ingDocHash ?? '';
+			archivo.value = '';
+			if (elegido && Number.isSafeInteger(revision) && ctx.declararEntregaDocumental)
+				void ctx.declararEntregaDocumental(revision, sha256Paquete, elegido)
+					.then(() => cargarRevisionesDocumentales())
+					.catch((error) => ctx.avisar(`No se declaró la entrega: ${String(error)}`, 'error'));
+			return;
+		}
 		const e = ev.target as HTMLSelectElement; const f = e.dataset.ingFilter;
 		if (f === 'severity') filtroSeveridad = e.value;
 		if (f === 'category') filtroCategoria = e.value;
@@ -463,6 +541,20 @@ export function instalarIngenieria(ctx: ContextoUIIngenieria): PanelIngenieria {
 		if(b.dataset.ingDesignCancel!==undefined){abortoDiseno?.abort();}
 		if(b.dataset.ingDesignApply&&!aplicandoDiseno)void(async()=>{aplicandoDiseno=true;b.disabled=true;try{if(!snapshotDiseno||!resultadoDiseno)throw new Error('Calcula nuevamente las alternativas.');const r=resultadoDiseno.resultados.find(x=>x.plan.id===b.dataset.ingDesignApply);if(!r)throw new Error('Resultado no encontrado.');const preview=prepararAplicacionDiseno(snapshotDiseno,r);const resumen=preview.cambios.map(c=>c.tipo==='SECCION'?`${c.conductorId}: ${c.seccionMm2} mm²`:`${c.dispositivoId}: ${c.referencia.id} r${c.referencia.revision}`).join('\n');if(!(await ctx.confirmar(`Aplicar este plan V9?\n${resumen}\n\nSe revalidará BASE y se guardará como una sola operación.`)))return;const operacion=await ctx.prepararAplicacion();comprobarAplicacionDiseno(operacion.proyecto,preview);if(!(await operacion.aplicar(preview.candidato)))throw new Error('APLICACION_CANCELADA');analisis=undefined;snapshotDiseno=undefined;resultadoDiseno=undefined;pintarEstado('Plan V9 aplicado. Valida el nuevo proyecto.','ok');pintar();ctx.avisar('Plan V9 aplicado de forma transaccional. Ctrl+Z permite deshacerlo.','ok');}catch(e){ctx.avisar(`No se aplicó el plan: ${(e as Error).message}`,'error');}finally{aplicandoDiseno=false;if(b.isConnected)b.disabled=false;}})();
 		if(b.dataset.ingDesignExport)void exportarDiseno(b.dataset.ingDesignExport).catch(e=>ctx.avisar(`No se pudo exportar: ${(e as Error).message}`,'error'));
+		if (b.dataset.ingDocRefresh !== undefined) void cargarRevisionesDocumentales(false)
+			.catch((error) => ctx.avisar(`No se pudieron consultar las revisiones: ${String(error)}`, 'error'));
+		if (b.dataset.ingDocGlobal !== undefined) void cargarRevisionesDocumentales(true)
+			.catch((error) => ctx.avisar(`No se pudo consultar el archivo documental: ${String(error)}`, 'error'));
+		if (b.dataset.ingDocCompare !== undefined && ctx.compararRevisionDocumental) void (async () => {
+			const identidad = ctx.identidadActual();
+			const revision = Number(b.dataset.ingDocCompare);
+			const sha256Paquete = b.dataset.ingDocHash ?? '';
+			if (!Number.isSafeInteger(revision)) throw new Error('Revisión documental inválida.');
+			const resultado = await ctx.compararRevisionDocumental!(revision, sha256Paquete);
+			if (identidad !== ctx.identidadActual()) throw new Error('El tablero cambió durante la comparación.');
+			comparacionDocumental = { revision, resultado };
+			pintar();
+		})().catch((error) => ctx.avisar(`No se pudieron comparar las revisiones: ${String(error)}`, 'error'));
 		if (b.dataset.ingScenarioRun !== undefined) {
 			let definicion: DefinicionEscenarioIngenieria;
 			if (tipoEscenario === 'SECCION_CONDUCTOR') {
