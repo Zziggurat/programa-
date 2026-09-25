@@ -134,11 +134,17 @@ export function generarInformeHTML(d: Dossier, procedencia?: ProcedenciaDocument
 
 	secciones.push(`<h2>1. Verificación eléctrica (DRC)</h2>
 <p>${errores.length} errores, ${avisos.length} avisos.</p>
-${tabla(['Severidad', 'Regla', 'Detalle'], d.hallazgos.map((h) => [h.severidad, h.regla, h.mensaje]))}`);
+${d.hallazgos.length === 0
+	? '<p>Sin hallazgos en las reglas implementadas. No equivale a una aprobación de fabricación.</p>'
+	: tabla(['Severidad', 'Regla', 'Detalle'], d.hallazgos.map((h) => [h.severidad, h.regla, h.mensaje]))}`);
 
 	secciones.push(`<h2>2. Lista de materiales</h2>
-${tabla(['Cant.', 'Descripción', 'Fabricante', 'Referencia', 'Variante declarada', 'Designaciones'],
-		bom.map((f) => [f.cantidad, f.descripcion, f.fabricante, f.referencia, f.varianteDeclarada, f.designaciones.join(', ')]))}`);
+<p>El número de partida vincula la referencia de compra con su variante y marcado, sin comprimir seis columnas en una hoja A4.</p>
+${tabla(['Partida', 'Cant.', 'Descripción', 'Fabricante', 'Referencia'],
+		bom.map((f, i) => [i + 1, f.cantidad, f.descripcion, f.fabricante, f.referencia]))}
+<h3>Variante y marcado por partida</h3>
+${tabla(['Partida', 'Variante declarada', 'Designaciones'],
+		bom.map((f, i) => [i + 1, f.varianteDeclarada, f.designaciones.join(', ')]))}`);
 
 	secciones.push(`<h2>3. Índice de dispositivos</h2>
 ${tabla(['Designación', 'Descripción', 'Posición'],
@@ -150,10 +156,14 @@ ${tabla(['Designación', 'Descripción', 'Posición'],
 			: x.contactos.map((c) => [x.designacion, x.posicion, c.designacion, c.contacto, c.posicion]),
 	);
 	secciones.push(`<h2>4. Referencias cruzadas</h2>
-${tabla(['Maestro', 'Posición', 'Contacto', 'Tipo', 'Posición'], filasXref)}`);
+${filasXref.length ? tabla(['Maestro', 'Posición', 'Contacto', 'Tipo', 'Posición'], filasXref)
+	: '<p>Sin referencias cruzadas declaradas.</p>'}`);
 
 	const formatoNumero = (v: number): string => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(v);
 	const numeroMm = (v: number | undefined): string => v === undefined ? '—' : `${formatoNumero(v)} mm`;
+	const estadoRutaLegible = { PENDIENTE: 'Ruta física pendiente', SIN_RUTA: 'Sin ruta calculada',
+		SIN_DESGLOSE: 'Ruta sin desglose', RUTA_2D_ESTIMADA: 'Ruta 2D estimada' } as const;
+	const origenLegible = { CONFIGURADO: 'Configurado en el proyecto', POR_DEFECTO: 'Valor por defecto' } as const;
 	secciones.push(`<h2>5. Lista de conductores</h2>
 ${tabla(['Número', 'De', 'A', 'Sección', 'Color', 'Ruteo 2D + margen/puntas (mm)', 'Estado físico'],
 		conductores.map((f) => [f.numero, f.de, f.a, f.seccion, f.color,
@@ -163,14 +173,15 @@ ${tabla(['Número', 'De', 'A', 'Sección', 'Color', 'Ruteo 2D + margen/puntas (m
 	secciones.push(`<h3>Desglose de longitudes por conductor</h3>
 <p>La longitud eléctrica declarada, el recorrido ortogonal 2D y la propuesta con reserva y puntas son magnitudes diferentes. La propuesta no mide profundidad Z, curvas ni corte real de taller. Un corte verificado no está disponible en esta revisión.</p>
 ${tabla(['Conductor', 'Estado', 'Eléctrica declarada', 'Ruta 2D', 'Corte propuesto (estimado)'],
-	longitudes.map((l) => [l.conductorId, l.estadoRuta,
+	longitudes.map((l) => [l.conductorId, estadoRutaLegible[l.estadoRuta],
 		l.longitudDeclaradaElectricaM === undefined ? '—' : `${formatoNumero(l.longitudDeclaradaElectricaM)} m`,
 		numeroMm(l.longitudRutaMm), numeroMm(l.propuestaCorteMm)]))}
+<section class="tabla-reserva"><h3>Reserva, puntas y verificación de corte</h3>
 ${tabla(['Conductor', 'Reserva', 'Puntas', 'Redondeo', 'Corte verificado'],
 	longitudes.map((l) => [l.conductorId,
-		`${Math.round(l.reservaPorcentaje * 10000) / 100} % (${l.origenReserva}); ${numeroMm(l.reservaMm)}`,
-		`${numeroMm(l.puntasMm)} (${l.origenPuntas})`, numeroMm(l.redondeoMm),
-		numeroMm(l.longitudCorteVerificadaMm)]))}`);
+		`${formatoNumero(l.reservaPorcentaje * 100)} % (${origenLegible[l.origenReserva]}); ${numeroMm(l.reservaMm)}`,
+		`${numeroMm(l.puntasMm)} (${origenLegible[l.origenPuntas]})`, numeroMm(l.redondeoMm),
+		numeroMm(l.longitudCorteVerificadaMm)]))}</section>`);
 
 	for (const plan of d.planesBorneros) {
 		secciones.push(`<h3>Plan de bornero ${esc(plan.designacion)}</h3>
@@ -205,10 +216,12 @@ ${sync.sincronizado ? '' : tabla(['Problema', 'Dispositivos'], [
 <style>
 	body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
 	table { border-collapse: collapse; width: 100%; margin: .8rem 0 1.6rem; font-size: .9rem; }
-	th, td { border: 1px solid #bbb; padding: .3rem .5rem; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
-	th { background: #eee; }
+	th, td { border: 1px solid #bbb; padding: .3rem .5rem; text-align: left; vertical-align: top; overflow-wrap: break-word; }
+	th { background: #eee; overflow-wrap: normal; }
 	td.numero { text-align: right; font-variant-numeric: tabular-nums; }
 	h1 { border-bottom: 2px solid #444; padding-bottom: .3rem; }
+	dl { display: grid; grid-template-columns: 11rem minmax(0, 1fr); gap: .2rem .75rem; }
+	dt { font-weight: 600; } dd { margin: 0; overflow-wrap: break-word; }
 	@media print {
 		@page { size: A4; margin: 14mm; }
 		body { margin: 0; padding: 0; max-width: none; font-size: 10pt; }
@@ -216,6 +229,7 @@ ${sync.sincronizado ? '' : tabla(['Problema', 'Dispositivos'], [
 		thead { display: table-header-group; }
 		tr { break-inside: avoid; page-break-inside: avoid; }
 		h2, h3 { break-after: avoid; page-break-after: avoid; }
+		.tabla-reserva { break-inside: avoid; }
 	}
 </style></head><body>
 <h1>${esc(proyecto.nombre)} — Dossier técnico</h1>

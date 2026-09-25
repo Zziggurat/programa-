@@ -102,8 +102,11 @@ test('DOC-06: HTML de impresión repite cabeceras y separa ruta, reserva y corte
 	assert.match(html, /tr \{ break-inside: avoid; page-break-inside: avoid; \}/);
 	assert.match(html, /Corte propuesto \(estimado\)/);
 	assert.match(html, /Corte verificado/);
+	assert.match(html, /Variante y marcado por partida/);
+	assert.match(html, /<section class="tabla-reserva">/);
+	assert.match(html, /Ruta 2D estimada/);
+	assert.doesNotMatch(html, /RUTA_2D_ESTIMADA|POR_DEFECTO|22\.560000000000002/);
 	assert.match(html, /no mide profundidad Z, curvas ni corte real de taller/i);
-	assert.doesNotMatch(html, /22\.560000000000002/);
 	assert.match(html, /22,56/);
 	assert.match(html, /<\/body><\/html>$/);
 });
