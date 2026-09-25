@@ -5,7 +5,7 @@
  * Se usa SVG y no Canvas a propósito: el esquema se lee con lupa, se imprime en A3 y se
  * exporta a PDF, y el SVG es nítido a cualquier tamaño y se puede volcar a papel tal cual.
  */
-import { anchoEtiquetaMm, HojaEsq, MARGEN, resumenPendientesEsquema, Trazo } from '../src/motores/esquema.js';
+import { anchoEtiquetaMm, HojaEsq, MARGEN, NOTA_SIMBOLOGIA_ESQUEMA, resumenPendientesEsquema, Trazo } from '../src/motores/esquema.js';
 import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
 	tramosSeleccionablesDeHilo, tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
@@ -149,7 +149,7 @@ function pintarCajetin(hoja: HojaEsq, o: OpcionesEsquema, tinta: string, suave: 
 		// La nota de normas va FUERA de la casilla, a la izquierda del cajetín. Dentro caía justo
 		// encima de los valores de DIBUJÓ y FECHA (la tercera franja ya está ocupada por ellos) y
 		// tapaba el nombre del proyectista, que es de lo poco que nadie puede permitirse no leer.
-		`<text x="${n(MARGEN.izq)}" y="${n(y + alto - 1.2)}" font-size="2.4" fill="${suave}" font-family="system-ui, sans-serif">Símbolos IEC 60617 · Conjunto según IEC 61439-1/-2</text>`,
+		`<text x="${n(MARGEN.izq)}" y="${n(y + alto - 1.2)}" font-size="2.4" fill="${suave}" font-family="system-ui, sans-serif">${esc(NOTA_SIMBOLOGIA_ESQUEMA)}</text>`,
 	].join('');
 }
 

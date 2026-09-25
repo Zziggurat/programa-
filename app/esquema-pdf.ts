@@ -6,7 +6,7 @@
  * se puede ampliar sin pixelarse y el texto se busca y se copia, como en un plano de verdad.
  */
 import { jsPDF } from 'jspdf';
-import { anchoEtiquetaMm, HojaEsq, MARGEN, resumenPendientesEsquema, Trazo } from '../src/motores/esquema.js';
+import { anchoEtiquetaMm, HojaEsq, MARGEN, NOTA_SIMBOLOGIA_ESQUEMA, resumenPendientesEsquema, Trazo } from '../src/motores/esquema.js';
 import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
 	tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
@@ -135,7 +135,7 @@ function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number,
 		MARGEN.izq, y + 13.4, anchoNota, 6);
 	// Fuera de la casilla, a la izquierda del cajetín: dentro caía encima de los valores de
 	// DIBUJÓ y FECHA, que ocupan esa misma franja.
-	doc.text('Símbolos IEC 60617 · Conjunto según IEC 61439-1/-2', MARGEN.izq, y + alto - 1.4);
+	doc.text(NOTA_SIMBOLOGIA_ESQUEMA, MARGEN.izq, y + alto - 1.4);
 }
 
 /** Genera el mismo PDF vectorial que la descarga individual, sin efectos de interfaz. */

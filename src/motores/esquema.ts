@@ -119,6 +119,8 @@ export interface EtiquetaEsq {
 
 /** A3 apaisado, que es el formato normal de un esquema de tablero. */
 export const HOJA_A3 = { ancho: 420, alto: 297 };
+/** El plano usa símbolos genéricos dibujados por el editor; no certifica conformidad normativa. */
+export const NOTA_SIMBOLOGIA_ESQUEMA = 'Simbología genérica del editor · No certifica normas ni fabricación';
 /** Margen del cajetín y la rejilla. */
 export const MARGEN = { izq: 20, der: 10, arriba: 14, abajo: 34 };
 /** Alto de la banda de alimentación (arriba) y de la de retorno (abajo) dentro del dibujo. */
