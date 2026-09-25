@@ -34,6 +34,25 @@ test('DOC-09: DRC sin hallazgos no se anuncia como certificación o aprobación 
 	assert.doesNotMatch(textoPdf, /pasa todas las reglas|listo para fabricar|certificado|Nada queda supuesto/i);
 });
 
+test('DOC-09: un borrador con fallo eléctrico conserva y muestra el error sin bloquear la emisión', async () => {
+	const proyecto = tableroEjemplo();
+	const fuente = proyecto.dispositivos[0];
+	const borne = fuente.bornes[0];
+	borne.obligatorio = true;
+	proyecto.conductores = proyecto.conductores.filter((c) =>
+		!(c.de.dispositivoId === fuente.id && c.de.borneId === borne.id)
+		&& !(c.a.dispositivoId === fuente.id && c.a.borneId === borne.id));
+	const archivos = await crearArchivosPaqueteDocumental(proyecto, procedencia);
+	const indice = String(archivos.find((a) => a.ruta === 'index.html')?.contenido ?? '');
+	const informe = String(archivos.find((a) => a.ruta === 'dossier/dossier.html')?.contenido ?? '');
+	const pdf = archivos.find((a) => a.ruta === 'dossier/dossier.pdf')?.contenido;
+	assert.ok(pdf instanceof Uint8Array);
+	assert.match(indice, /Borrador técnico para revisión profesional/);
+	assert.match(indice, /DRC: [1-9]\d* errores/);
+	assert.match(informe, /R2-borne-sin-conectar/);
+	assert.match(Buffer.from(pdf).toString('latin1'), /R2-borne-sin-conectar/);
+});
+
 test('DOC-02 compone un único snapshot sin duplicar un aparato multivista ni una conexión interhoja', async () => {
 	const p = crearProyecto('<img src=x onerror=alert(1)> & Revisión');
 	p.hojas = [{ id: 'h1', numero: 1, titulo: 'Mando' }, { id: 'h2', numero: 2, titulo: 'Potencia' }];
