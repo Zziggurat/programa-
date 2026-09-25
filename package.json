@@ -26,6 +26,7 @@
 	"qa:adopcion-componentes-m1": "vite build app --mode qa && node qa/adopcion-componentes-m1.mjs",
 	"qa:ficha-componente-m1": "vite build app --mode qa && node qa/ficha-componente-m1.mjs",
 	"qa:esquema-desconexion-m2": "vite build app --mode qa && node qa/esquema-desconexion-m2.mjs",
+	"qa:esquema-eliminacion-m2": "vite build app --mode qa && node qa/esquema-eliminacion-m2.mjs",
 	"qa:activar-representaciones-m2": "vite build app --mode qa && node qa/activar-representaciones-m2.mjs",
 	"qa:ruta-pendiente-m2": "vite build app --mode qa && node qa/ruta-pendiente-m2.mjs",
 	"qa:esquema-conexion-pendiente-m2": "vite build app --mode qa && node qa/esquema-conexion-pendiente-m2.mjs",
