@@ -53,6 +53,21 @@ test('DOC-09: un borrador con fallo eléctrico conserva y muestra el error sin b
 	assert.match(Buffer.from(pdf).toString('latin1'), /R2-borne-sin-conectar/);
 });
 
+test('DOC-09: incluso con los campos listados completos no se afirma que todo el proyecto esté verificado', async () => {
+	const proyecto = tableroEjemplo();
+	proyecto.datos = { ...proyecto.datos, cliente: 'Cliente', obra: 'Obra',
+		proyectista: 'Proyectista', fabricante: 'Fabricante' };
+	proyecto.opciones = { ...proyecto.opciones, iccPresuntaKA: 6, corrienteAsignadaA: 32,
+		gradoIP: 'IP54', regimenNeutro: 'TN-S', usoPrevisto: 'interior',
+		temperaturaAmbienteC: 35, montajeGabinete: 'mural', frecuenciaHz: 50 };
+	const archivos = await crearArchivosPaqueteDocumental(proyecto, procedencia);
+	const pdf = archivos.find((a) => a.ruta === 'dossier/dossier.pdf')?.contenido;
+	assert.ok(pdf instanceof Uint8Array);
+	const texto = Buffer.from(pdf).toString('latin1');
+	assert.match(texto, /Sin faltantes entre los datos revisados aquí/);
+	assert.doesNotMatch(texto, /Nada queda supuesto|todos los datos necesarios|aprobado para fabricar/i);
+});
+
 test('DOC-02 compone un único snapshot sin duplicar un aparato multivista ni una conexión interhoja', async () => {
 	const p = crearProyecto('<img src=x onerror=alert(1)> & Revisión');
 	p.hojas = [{ id: 'h1', numero: 1, titulo: 'Mando' }, { id: 'h2', numero: 2, titulo: 'Potencia' }];

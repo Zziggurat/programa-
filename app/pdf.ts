@@ -563,8 +563,8 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 	doc.text(
 		'Todo lo que sigue en este dossier sale del tablero tal como está dibujado en este momento: '
 		+ 'los aparatos son los que hay colocados, las conexiones las que hay cableadas y las medidas '
-		+ 'las de la placa. Nada se rellena por parecido. Lo que el proyecto todavía no declara se '
-		+ 'lista aquí y aparece marcado en su apartado.',
+		+ 'se distinguen entre declaradas y estimadas. Los datos no declarados de esta lista se '
+		+ 'señalan aquí; los supuestos de cálculo se identifican en su apartado.',
 		12, y, { maxWidth: anchoPag - 24 },
 	);
 	y += 18;
