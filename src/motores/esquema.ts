@@ -136,6 +136,8 @@ export interface EtiquetaEsq {
 
 /** A3 apaisado, que es el formato normal de un esquema de tablero. */
 export const HOJA_A3 = { ancho: 420, alto: 297 };
+/** A2 apaisado para un folio que necesita mayor superficie sin comprimir la rejilla. */
+export const HOJA_A2 = { ancho: 594, alto: 420 };
 /** El plano usa símbolos genéricos dibujados por el editor; no certifica conformidad normativa. */
 export const NOTA_SIMBOLOGIA_ESQUEMA = 'Simbología genérica del editor · No certifica normas ni fabricación';
 /** Margen del cajetín y la rejilla. */
@@ -727,20 +729,27 @@ function montarRepresentaciones(
 	potenciales: ResultadoPotenciales,
 	opciones: { columnasPorHoja?: number; hoja?: { ancho: number; alto: number } },
 ): HojaEsq[] {
-	const papel = opciones.hoja ?? HOJA_A3;
+	const papelPorDefecto = opciones.hoja ?? HOJA_A3;
 	const columnasDefecto = proyecto.esquema?.columnasPorHoja ?? 10;
 	const cuentaHojas = new Map<string, number>();
 	for (const h of proyecto.hojas) cuentaHojas.set(h.id, (cuentaHojas.get(h.id) ?? 0) + 1);
 	const hojas: HojaEsq[] = proyecto.hojas
 		.filter((h) => cuentaHojas.get(h.id) === 1)
 		.sort((a, b) => a.numero - b.numero || a.id.localeCompare(b.id))
-		.map((h) => ({
-			id: h.id, numero: h.numero, titulo: h.titulo,
-			...(h.clase === undefined ? {} : { clase: h.clase }),
-			anchoMm: papel.ancho, altoMm: papel.alto,
-			columnas: Math.max(4, Math.min(20, opciones.columnasPorHoja ?? h.columnas ?? columnasDefecto)),
-			simbolos: [], hilos: [], referencias: [], problemas: [],
-		}));
+		.map((h) => {
+			if (h.formatoPapel !== undefined && h.formatoPapel !== 'A3' && h.formatoPapel !== 'A2') {
+				throw new Error(`La hoja ${h.id} tiene un formato de papel no reconocido.`);
+			}
+			const papel = h.formatoPapel === 'A2' ? HOJA_A2
+				: h.formatoPapel === 'A3' ? HOJA_A3 : papelPorDefecto;
+			return {
+				id: h.id, numero: h.numero, titulo: h.titulo,
+				...(h.clase === undefined ? {} : { clase: h.clase }),
+				anchoMm: papel.ancho, altoMm: papel.alto,
+				columnas: Math.max(4, Math.min(20, opciones.columnasPorHoja ?? h.columnas ?? columnasDefecto)),
+				simbolos: [], hilos: [], referencias: [], problemas: [],
+			};
+		});
 	const hojaPorId = new Map(hojas.map((h) => [h.id, h]));
 	const dispositivoPorId = new Map(proyecto.dispositivos.map((d) => [d.id, d]));
 	type Lugar = { pin: PuntoEsq; hoja: HojaEsq; columna: number };
@@ -764,6 +773,7 @@ function montarRepresentaciones(
 		}
 		const columna = Math.max(1, Math.min(hoja.columnas, r.posicion.columna));
 		const fila = Math.max(1, Math.min(FILAS_ESQ, r.posicion.fila));
+		const papel = { ancho: hoja.anchoMm, alto: hoja.altoMm };
 		const cx = MARGEN.izq + anchoColumna(papel, hoja.columnas) * (columna - 0.5);
 		const cyIdeal = alturaDeFila(fila, papel);
 		const mitad = geometria.alto / 2;
@@ -836,7 +846,7 @@ function montarRepresentaciones(
 				propia.hoja.referencias.push({
 					dispositivoId, conductorId: c.id, tipo: 'enlace',
 					texto: `${numero ? `${numero} ` : ''}→ /${otra.hoja.numero}.${otra.columna}`,
-					p: { x: propia.pin.x, y: propia.pin.y + (propia.pin.y > papel.alto / 2 ? 6 : -6) },
+					p: { x: propia.pin.x, y: propia.pin.y + (propia.pin.y > propia.hoja.altoMm / 2 ? 6 : -6) },
 				});
 			}
 		}

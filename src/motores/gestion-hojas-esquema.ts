@@ -3,10 +3,11 @@
  * identificada por ID; cambiar su número o clasificación nunca toca el grafo.
  * El plan es para confirmar/mostrar. Solo la preparación privada puede aplicar.
  */
-import type { ClaseHojaEsquema, Hoja, Proyecto, RepresentacionEsquema } from '../modelo/tipos.js';
+import type { ClaseHojaEsquema, FormatoPapelEsquema, Hoja, Proyecto, RepresentacionEsquema } from '../modelo/tipos.js';
 
 const ordenar = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 const CLASES: readonly ClaseHojaEsquema[] = ['potencia', 'mando', 'plc-io', 'bornes', 'mixta'];
+const FORMATOS: readonly FormatoPapelEsquema[] = ['A3', 'A2'];
 const maxTitulo = 120;
 const maxId = 120;
 const maxColumnas = 20;
@@ -14,12 +15,15 @@ const minColumnas = 4;
 
 export type SolicitudGestionHojaEsquema =
 	| { readonly tipo: 'crear'; readonly id: string; readonly titulo: string;
-		readonly clase?: ClaseHojaEsquema; readonly columnas?: number }
+		readonly clase?: ClaseHojaEsquema; readonly columnas?: number;
+		readonly formatoPapel?: FormatoPapelEsquema }
 	| { readonly tipo: 'editar'; readonly id: string; readonly titulo?: string;
 		/** `null` quita la clasificación; ausente conserva el valor anterior. */
 		readonly clase?: ClaseHojaEsquema | null;
 		/** `null` restaura la herencia global; ausente conserva el valor anterior. */
-		readonly columnas?: number | null }
+		readonly columnas?: number | null;
+		/** `null` restaura el A3 histórico; ausente conserva el valor anterior. */
+		readonly formatoPapel?: FormatoPapelEsquema | null }
 	| { readonly tipo: 'mover'; readonly id: string; readonly direccion: 'subir' | 'bajar' }
 	| { readonly tipo: 'eliminar'; readonly id: string };
 
@@ -28,6 +32,9 @@ export interface ResumenHojaEsquema {
 	readonly numero: number;
 	readonly titulo: string;
 	readonly clase?: ClaseHojaEsquema;
+	/** Ausente = A3 histórico, aunque el valor efectivo coincida con un A3 declarado. */
+	readonly formatoPapelDeclarado?: FormatoPapelEsquema;
+	readonly formatoPapel: FormatoPapelEsquema;
 	/** Ausente = hereda columnas globales; no equivale a declarar el mismo número. */
 	readonly columnasDeclaradas?: number;
 	readonly columnas: number;
@@ -52,6 +59,7 @@ const tituloValido = (v: unknown, limitar: boolean): v is string => typeof v ===
 	&& v.trim().length > 0 && (!limitar || v.trim().length <= maxTitulo)
 	&& !/[\x00-\x1F\x7F]/.test(v);
 const claseValida = (v: unknown): v is ClaseHojaEsquema => CLASES.includes(v as ClaseHojaEsquema);
+const formatoPapelValido = (v: unknown): v is FormatoPapelEsquema => FORMATOS.includes(v as FormatoPapelEsquema);
 const columnasValidas = (v: unknown): v is number => typeof v === 'number'
 	&& Number.isInteger(v) && v >= minColumnas && v <= maxColumnas;
 const foliosOrdenados = (hojas: readonly Hoja[]): Hoja[] => [...hojas]
@@ -81,8 +89,9 @@ function validarBase(proyecto: Proyecto): void {
 		if (!idValido(h.id) || !Number.isInteger(h.numero) || h.numero < 1
 			|| !tituloValido(h.titulo, false)
 			|| (h.clase !== undefined && !claseValida(h.clase))
+			|| (h.formatoPapel !== undefined && !formatoPapelValido(h.formatoPapel))
 			|| (h.columnas !== undefined && !columnasValidas(h.columnas))) {
-			throw new Error('Hay una hoja con ID, número, título, clase o columnas inválidos; revisa el documento antes de editar folios.');
+			throw new Error('Hay una hoja con ID, número, título, clase o columnas inválidos, o formato de papel inválido; revisa el documento antes de editar folios.');
 		}
 		if (ids.has(h.id) || numeros.has(h.numero)) {
 			throw new Error('Hay IDs o números de hoja duplicados; no se elige una hoja por orden del array.');
@@ -115,9 +124,16 @@ function columnasNuevas(columnas: unknown): number {
 	return columnas;
 }
 
+function formatoPapelNuevo(formato: unknown): FormatoPapelEsquema {
+	if (!formatoPapelValido(formato)) throw new Error('El formato de papel debe ser A3 o A2 apaisado.');
+	return formato;
+}
+
 function resumen(h: Hoja, columnasPorHoja: number | undefined): ResumenHojaEsquema {
 	return { id: h.id, numero: h.numero, titulo: h.titulo,
 		...(h.clase === undefined ? {} : { clase: h.clase }),
+		...(h.formatoPapel === undefined ? {} : { formatoPapelDeclarado: h.formatoPapel }),
+		formatoPapel: h.formatoPapel ?? 'A3',
 		...(h.columnas === undefined ? {} : { columnasDeclaradas: h.columnas }),
 		columnas: h.columnas ?? columnasPorHoja ?? 10 };
 }
@@ -138,8 +154,10 @@ export function previsualizarGestionHojaEsquema(
 			const numero = Math.max(0, ...hojas.map((h) => h.numero)) + 1;
 			const columnas = solicitud.columnas === undefined ? undefined : columnasNuevas(solicitud.columnas);
 			const clase = claseNueva(solicitud.clase);
+			const formatoPapel = solicitud.formatoPapel === undefined ? undefined : formatoPapelNuevo(solicitud.formatoPapel);
 			hojas.push({ id: solicitud.id, numero, titulo: tituloNuevo(solicitud.titulo),
-				...(clase === undefined ? {} : { clase }), ...(columnas === undefined ? {} : { columnas }) });
+				...(clase === undefined ? {} : { clase }), ...(columnas === undefined ? {} : { columnas }),
+				...(formatoPapel === undefined ? {} : { formatoPapel }) });
 			for (const [i, h] of hojas.entries()) h.numero = i + 1;
 			break;
 		}
@@ -151,6 +169,10 @@ export function previsualizarGestionHojaEsquema(
 				const clase = claseNueva(solicitud.clase);
 				if (clase === undefined) delete h.clase;
 				else h.clase = clase;
+			}
+			if (solicitud.formatoPapel !== undefined) {
+				if (solicitud.formatoPapel === null) delete h.formatoPapel;
+				else h.formatoPapel = formatoPapelNuevo(solicitud.formatoPapel);
 			}
 			if (solicitud.columnas !== undefined) {
 				const columnas = solicitud.columnas === null

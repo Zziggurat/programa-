@@ -381,6 +381,8 @@ export type ClaseConductor = 'interno' | 'puerta' | 'campo' | 'proteccion';
 
 /** Folio del esquema. Rejilla al estilo QET: columnas numeradas y filas con letra. */
 export type ClaseHojaEsquema = 'potencia' | 'mando' | 'plc-io' | 'bornes' | 'mixta';
+/** Formatos físicos de folio admitidos por el montaje M2, siempre apaisados. */
+export type FormatoPapelEsquema = 'A3' | 'A2';
 
 export interface Hoja {
 	id: string;
@@ -388,8 +390,10 @@ export interface Hoja {
 	titulo: string;
 	/** Clasificación editorial explícita; ausente no se infiere del título ni del circuito. */
 	clase?: ClaseHojaEsquema;
+	/** Formato físico explícito. Ausente conserva el A3 histórico. */
+	formatoPapel?: FormatoPapelEsquema;
 	columnas?: number; // por defecto 10
-	filas?: number;    // por defecto 6
+	filas?: number;    // metadato legado; la rejilla M2 usa 8 filas y aún no lo consulta
 }
 
 /* ------------------------- Modelo físico del gabinete ------------------------- */

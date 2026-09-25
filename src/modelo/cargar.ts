@@ -11,7 +11,7 @@
  */
 import {
 	AjustesMazo, BloqueTerminales, Borne, Canaleta, Colocacion, Conductor, Dispositivo, EntradaCable,
-	ClaseHojaEsquema, Gabinete, Hoja, LadoAparato, OpcionesProyecto, RotuloFrontal, Posicion, Proyecto, Riel, Rol,
+	ClaseHojaEsquema, FormatoPapelEsquema, Gabinete, Hoja, LadoAparato, OpcionesProyecto, RotuloFrontal, Posicion, Proyecto, Riel, Rol,
 } from './tipos.js';
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 import { leerComportamientoSimulacion, validarComportamiento } from './comportamiento.js';
@@ -155,7 +155,8 @@ function conTope(v: unknown, tope: number, nombre: string, arreglos: string[]): 
 }
 
 const CLASES_HOJA = new Set<ClaseHojaEsquema>(['potencia', 'mando', 'plc-io', 'bornes', 'mixta']);
-const CAMPOS_HOJA = new Set(['id', 'numero', 'titulo', 'clase', 'columnas', 'filas']);
+const FORMATOS_PAPEL = new Set<FormatoPapelEsquema>(['A3', 'A2']);
+const CAMPOS_HOJA = new Set(['id', 'numero', 'titulo', 'clase', 'formatoPapel', 'columnas', 'filas']);
 const numeroHojaValido = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) > 0;
 const idHojaValido = (v: unknown): v is string =>
 	typeof v === 'string' && v.length > 0 && v.length <= 120
@@ -214,6 +215,14 @@ function leerHojas(bruto: unknown, arreglos: string[], m2: boolean, m2Vacio: boo
 			if (typeof entrada.clase === 'string' && CLASES_HOJA.has(entrada.clase as ClaseHojaEsquema)) {
 				hoja.clase = entrada.clase as ClaseHojaEsquema;
 			} else anotar(`${ruta}.clase`, 'la clase de hoja no era reconocida');
+		}
+		if (entrada.formatoPapel !== undefined) {
+			if (typeof entrada.formatoPapel === 'string'
+				&& FORMATOS_PAPEL.has(entrada.formatoPapel as FormatoPapelEsquema)) {
+				hoja.formatoPapel = entrada.formatoPapel as FormatoPapelEsquema;
+			} else if (m2) {
+				throw new ArchivoInvalido(`La hoja ${entrada.id} del esquema M2 tenía un formato de papel inválido; descartarlo alteraría su geometría. No se importó.`);
+			} else anotar(`${ruta}.formatoPapel`, 'el formato de papel no era A3 ni A2; se conserva el A3 histórico');
 		}
 		if (entrada.columnas !== undefined) {
 			if (Number.isInteger(entrada.columnas) && Number(entrada.columnas) >= 4
