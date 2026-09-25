@@ -37,6 +37,7 @@ export function ejecutableNavegador() {
 	for (const d of dirs.reverse()) {
 		for (const rel of [
 			['chrome-linux', 'chrome'],
+			['chrome-win64', 'chrome.exe'],
 			['chrome-win', 'chrome.exe'],
 			['chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'],
 		]) {

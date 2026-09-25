@@ -45,7 +45,7 @@ export function navegadorDelSistema() {
 	const base = process.env.PLAYWRIGHT_BROWSERS_PATH;
 	if (!base || !existsSync(base)) return undefined;
 	for (const d of readdirSync(base).filter((x) => x.startsWith('chromium')).sort().reverse()) {
-		for (const rel of [['chrome-linux', 'chrome'], ['chrome-win', 'chrome.exe']]) {
+		for (const rel of [['chrome-linux', 'chrome'], ['chrome-win64', 'chrome.exe'], ['chrome-win', 'chrome.exe']]) {
 			const f = join(base, d, ...rel);
 			if (existsSync(f)) return f;
 		}
