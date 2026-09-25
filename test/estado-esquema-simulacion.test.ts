@@ -136,3 +136,17 @@ test('cada representación ve solo sus pines; una identidad duplicada no gana po
 	assert.deepEqual(a, b);
 	assert.ok(a.aparatos.every((x) => x.actividad === 'desconocida' && !x.funcion));
 });
+
+test('referencia interhoja proyecta el mismo conductor vivo sin duplicar identidad', () => {
+	const { proyecto, hoja, marcha } = arranqueDirecto();
+	const resultado = simular(proyecto, { [marcha.id]: { activo: true } });
+	const id = proyecto.conductores.find((c) => resultado.conductoresVivos.has(c.id))?.id;
+	assert.ok(id);
+	const referencia = { texto: 'otra hoja', p: { x: 10, y: 10 }, tipo: 'enlace' as const, conductorId: id };
+	const soloReferencia = { hilos: [], simbolos: [], referencias: [referencia] };
+	assert.deepEqual(proyectarEstadoEsquema({ proyecto, hoja: soloReferencia, energizado: true, resultado }).hilos,
+		[{ conductorId: id, estado: 'vivo' }]);
+	const repetido = { ...hoja, referencias: [...hoja.referencias, referencia] };
+	const hilos = proyectarEstadoEsquema({ proyecto, hoja: repetido, energizado: true, resultado }).hilos;
+	assert.equal(hilos.filter((h) => h.conductorId === id).length, 1);
+});

@@ -1305,6 +1305,13 @@
 	#esquema-barra .sep { width: 1px; height: 20px; background: var(--borde); margin: 0 4px; }
 	#esq-indicador { font-size: 12.5px; min-width: 86px; text-align: center; color: var(--texto-suave); }
 	#esq-titulo { font-size: 13px; font-weight: 600; margin-left: 6px; }
+	#esq-sim-estado { font-size: 11.5px; white-space: nowrap; color: var(--texto-suave); border: 1px solid var(--borde); border-radius: 5px; padding: 4px 7px; }
+	#esq-sim-estado[data-modo="simulacion"] { color: #f5bd6c; border-color: #9b7036; }
+	#esq-sim-estado[data-modo="simulacion-inestable"] { color: #ff907d; border-color: #b04e42; }
+	#esquema-hoja .hilo[data-sim-estado="vivo"] > path:first-child { stroke: #b96c0a; stroke-width: .75; }
+	#esquema-hoja .hilo[data-sim-estado="vivo"][data-sim-seleccionado="true"] > path:first-child { stroke: #2ea3ff; stroke-width: 1.2; }
+	#esquema-hoja .referencia-conductor[data-sim-estado="vivo"] > text { fill: #b96c0a; font-weight: 700; }
+	#esquema-hoja .simbolo[data-sim-actividad="activa"] > :is(path,line,polyline,circle) { stroke: #b96c0a; }
 	#esquema-lienzo { flex: 1; overflow: auto; padding: 18px; display: flex; align-items: flex-start; justify-content: center; }
 	#esquema-hoja { box-shadow: 0 10px 40px #0009; border-radius: 3px; overflow: hidden; line-height: 0; }
 	#esquema-hoja .simbolo { cursor: grab; }
@@ -1524,6 +1531,7 @@
 		<span id="esq-indicador">Hoja 1 / 1</span>
 		<button class="boton" id="esq-siguiente" title="Hoja siguiente">›</button>
 		<span id="esq-titulo"></span>
+		<span id="esq-sim-estado" role="status">Diseño · sin tensión</span>
 		<div class="sep"></div>
 		<button class="boton" id="esq-alejar" title="Alejar">−</button>
 		<button class="boton" id="esq-ajustar" title="Ajustar la hoja a la ventana">Ajustar</button>

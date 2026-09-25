@@ -45,6 +45,8 @@ export interface ContextoSimulacion {
 	seleccionarCable?: (id: string) => void;
 	/** Sincroniza la visibilidad del cajón cuando Energizar lo fuerza fuera de su herramienta. */
 	refrescarPanel?: () => void;
+	/** Publica el resultado final del scan (también al apagar/reiniciar), sin crear otro reloj ni listener. */
+	alActualizarResultado?: () => void;
 	/** Identidad persistente de la revisión que se citará en un informe V6. */
 	trazabilidadInforme?: () => Promise<{ projectId: string; revision?: number; snapshotId?: string }>
 		| { projectId: string; revision?: number; snapshotId?: string };
@@ -519,6 +521,7 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 			o.material.emissiveIntensity = 0.3 * emisionDeCable(o.material, o);
 		});
 		pintarPanelSimulacion();
+		ctx.alActualizarResultado?.();
 	}
 
 	/** Proyecta V5 y enlaza sus controles sin alargar el renderer historico de PLC/mandos. */

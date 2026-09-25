@@ -7843,6 +7843,7 @@ const panelSim = instalarSimulacion({
 	seleccionar,
 	seleccionarCable: (id) => aplicarSeleccion({ tipo: 'cable', id }),
 	refrescarPanel: pintarRail,
+	alActualizarResultado: () => panelEsq.refrescarEstado(),
 	trazabilidadInforme: async () => {
 		if (!gestorDocumentos || gestorDocumentos.estaMostrandoEjemplo()) {
 			return { projectId: proyecto.esEjemplo ? 'EJEMPLO_EFIMERO' : 'SIN_REPOSITORIO' };
@@ -8014,6 +8015,7 @@ $('modo-trabajo').onclick = () => { if (!visualizacion) aplicarModo('trabajo'); 
 const panelEsq = instalarEsquema({
 	proyecto: () => proyecto,
 	potenciales: () => revision.potenciales,
+	estadoSimulacion: () => ({ energizado: panelSim.energizado(), resultado: panelSim.resultado() }),
 	dispositivoSeleccionado: () => (sel?.tipo === 'dispositivo' ? sel.id : undefined),
 	seleccionar,
 	seleccionarConductor: (id) => aplicarSeleccion({ tipo: 'cable', id }),

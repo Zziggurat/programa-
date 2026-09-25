@@ -44,7 +44,7 @@ export interface ProyeccionEstadoEsquema {
 
 export interface EntradaEstadoEsquema {
 	proyecto: Proyecto;
-	hoja: Pick<HojaEsq, 'hilos' | 'simbolos'>;
+	hoja: Pick<HojaEsq, 'hilos' | 'simbolos'> & Partial<Pick<HojaEsq, 'referencias'>>;
 	energizado: boolean;
 	/** Debe ser el resultado vigente de ESTE proyecto; el tipo no porta identidad para comprobarlo. */
 	resultado?: ResultadoSimulacion;
@@ -79,7 +79,11 @@ export function proyectarEstadoEsquema({ proyecto, hoja, energizado, resultado }
 	const motores = indexarUnicos(utilizable?.motores ?? [], (m) => m.dispositivoId);
 	const protecciones = indexarUnicos(utilizable?.protecciones ?? [], (p) => p.dispositivoId);
 	const variadores = indexarUnicos(utilizable?.variadores ?? [], (v) => v.dispositivoId);
-	const hilos = [...new Set(hoja.hilos.map((h) => h.conductorId))].sort(comparar).map((conductorId): IndicadorHiloEsquema => ({
+	// Una referencia interhoja es otra vista del MISMO conductor, no un conductor nuevo.
+	const idsVisibles = [...hoja.hilos.map((h) => h.conductorId),
+		...(hoja.referencias ?? []).filter((r) => r.tipo === 'enlace' && r.conductorId)
+			.map((r) => r.conductorId!)];
+	const hilos = [...new Set(idsVisibles)].sort(comparar).map((conductorId): IndicadorHiloEsquema => ({
 		conductorId,
 		estado: !conductores.has(conductorId) || conductoresDuplicados.has(conductorId)
 			|| modo === 'simulacion-sin-snapshot' || modo === 'simulacion-inestable'

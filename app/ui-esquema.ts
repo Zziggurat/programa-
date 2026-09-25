@@ -23,6 +23,8 @@ import {
 } from '../src/motores/crear-representaciones-esquema.js';
 import { aplicarRenumeracionEsquema, previsualizarRenumeracionEsquema } from '../src/motores/renumeracion-esquema.js';
 import { proyectarReferenciasEsquemaM2, type UbicacionTerminalEsquema } from '../src/motores/referencias-esquema-m2.js';
+import { proyectarEstadoEsquema } from '../src/motores/estado-esquema-simulacion.js';
+import type { ResultadoSimulacion } from '../src/motores/simulacion.js';
 import { hojaASvg } from './esquema-svg.js';
 import { exportarEsquemaPDF } from './esquema-pdf.js';
 import { dxfDeEsquema } from './exportaciones.js';
@@ -38,6 +40,8 @@ export interface EntidadLocalizableEsquema {
 export interface ContextoEsquema {
 	proyecto: () => Proyecto;
 	potenciales: () => ResultadoPotenciales;
+	/** Una lectura del runtime vigente; jamás se toma de potenciales estáticos ni del SVG exportable. */
+	estadoSimulacion: () => { energizado: boolean; resultado?: ResultadoSimulacion };
 	/** El aparato seleccionado ahora mismo, para resaltarlo en la hoja. */
 	dispositivoSeleccionado: () => string | undefined;
 	/** Selecciona un aparato en todo el programa (el esquema y el 3D son dos vistas del mismo). */
@@ -79,6 +83,8 @@ export interface PanelEsquema {
 	abrir: (abrir: boolean) => void;
 	/** Vuelve a montar el esquema desde el modelo y lo pinta. No hace nada si está cerrado. */
 	refrescar: () => void;
+	/** Actualiza sólo indicadores DOM; el esquema no se remonta en cada scan. */
+	refrescarEstado: () => void;
 	/** Recalcula el tamaño de la hoja (al cambiar el tamaño de la ventana). */
 	reajustarZoom: () => void;
 	/** Pasa de hoja (+1 siguiente, -1 anterior). */
@@ -177,6 +183,66 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		documento: Proyecto } | undefined;
 	/** El formulario vive fuera del inspector, para conservar sus valores al navegar entre hojas. */
 	let documentoFormulario: Proyecto | undefined;
+	let refrescoEstadoPendiente = 0;
+
+	function pintarEstadoEsquema(): void {
+		if (!esquemaAbierto) return;
+		const hoja = hojasEsquema[hojaActual];
+		const { energizado, resultado } = ctx.estadoSimulacion();
+		const estado = proyectarEstadoEsquema({ proyecto: proyecto(),
+			hoja: hoja ?? { hilos: [], simbolos: [] }, energizado, resultado });
+		const etiqueta = estado.modo === 'diseno' ? 'Diseño · sin tensión'
+			: estado.modo === 'simulacion-sin-snapshot' ? 'Simulación · sin resultado todavía'
+			: estado.modo === 'simulacion-inestable' ? 'Simulación · resultado inestable'
+			: `Simulación · ${estado.hilos.filter((h) => h.estado === 'vivo').length} hilo(s) con tensión`;
+		const indicador = $('esq-sim-estado');
+		indicador.dataset.modo = estado.modo;
+		if (indicador.textContent !== etiqueta) indicador.textContent = etiqueta;
+		if (!hoja) return;
+		const hilos = new Map(estado.hilos.map((h) => [h.conductorId, h]));
+		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>(
+			'.hilo[data-conductor], .referencia-conductor[data-conductor]')) {
+			const id = g.dataset.conductor ?? '';
+			const hilo = hilos.get(id);
+			const valor = hilo?.estado ?? 'desconocido';
+			g.dataset.simEstado = valor;
+			g.dataset.simSeleccionado = String(id === conductorSeleccionado);
+			let titulo = g.querySelector<SVGTitleElement>('title.esq-sim-titulo');
+			if (!titulo) {
+				titulo = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+				titulo.classList.add('esq-sim-titulo');
+				g.append(titulo);
+			}
+			titulo.textContent = `Conductor ${id}: ${valor === 'vivo' ? 'con tensión' : valor === 'no-registrado-vivo'
+				? 'sin tensión registrada' : valor === 'no-aplica' ? 'diseño sin simulación' : 'estado desconocido'}`;
+		}
+		const aparatos = new Map(estado.aparatos.map((a) => [JSON.stringify([a.dispositivoId, a.representacionId ?? '']), a]));
+		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('.simbolo[data-dispositivo]')) {
+			const id = g.dataset.dispositivo ?? '';
+			const aparato = aparatos.get(JSON.stringify([id, g.dataset.representacion ?? '']));
+			g.dataset.simActividad = aparato?.actividad ?? 'desconocida';
+			if (aparato?.funcion) g.dataset.simFuncion = aparato.funcion.estado;
+			else delete g.dataset.simFuncion;
+			let titulo = g.querySelector<SVGTitleElement>('title.esq-sim-titulo');
+			if (!titulo) {
+				titulo = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+				titulo.classList.add('esq-sim-titulo');
+				g.append(titulo);
+			}
+			titulo.textContent = `Aparato ${id}: ${aparato?.funcion ? aparato.funcion.estado + ' · ' : ''}`
+				+ (aparato?.actividad === 'activa' ? 'activo' : aparato?.actividad === 'no-registrada-activa'
+					? 'sin actividad registrada' : aparato?.actividad === 'no-aplica' ? 'diseño sin simulación' : 'estado desconocido')
+				+ (aparato?.bornesConTension.length ? ` · bornes con tensión: ${aparato.bornesConTension.join(', ')}` : '');
+		}
+	}
+
+	function refrescarEstado(): void {
+		if (!esquemaAbierto || refrescoEstadoPendiente) return;
+		refrescoEstadoPendiente = window.requestAnimationFrame(() => {
+			refrescoEstadoPendiente = 0;
+			pintarEstadoEsquema();
+		});
+	}
 
 	const describirBorne = (ref: RefBorne): string => {
 		const d = proyecto().dispositivos.find((x) => x.id === ref.dispositivoId);
@@ -886,6 +952,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			$('esq-indicador').textContent = 'Sin hojas';
 			$('esq-titulo').textContent = '';
 			pintarConductorSeleccionado();
+			pintarEstadoEsquema();
 			return;
 		}
 		hojaActual = Math.max(0, Math.min(hojaActual, hojasEsquema.length - 1));
@@ -918,6 +985,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			: aMano ? `⟲ Ordenar solo (${aMano})` : '⟲ Ordenar solo';
 		pintarConductorSeleccionado();
 		aplicarZoomEsquema();
+		pintarEstadoEsquema();
 
 		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('.hilo[data-conductor], .referencia-conductor[data-conductor]')) {
 			const seleccionarConductor = (): void => {
@@ -1183,6 +1251,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		if (abrir) cerrarTodasLasVentanas();
 		esquemaAbierto = abrir;
 		if (!abrir) {
+			if (refrescoEstadoPendiente) window.cancelAnimationFrame(refrescoEstadoPendiente);
+			refrescoEstadoPendiente = 0;
 			origenConexion = undefined;
 			conductorSeleccionado = undefined;
 			representacionSeleccionada = undefined;
@@ -1408,6 +1478,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		abierto: () => esquemaAbierto,
 		abrir: abrirEsquema,
 		refrescar: refrescarEsquema,
+		refrescarEstado,
 		reajustarZoom: aplicarZoomEsquema,
 		pasarHoja,
 		cancelarConexionPendiente,
