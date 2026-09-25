@@ -75,6 +75,7 @@ import { instalarEsquema, proponerConductorPendiente } from './ui-esquema.js';
 import { instalarSimulacion } from './ui-simulacion.js';
 import { instalarIngenieria, type PanelIngenieria } from './ui-ingenieria.js';
 import { crearZipDeRevisionDocumental } from '../src/modelo/manifiesto-paquete-documental.js';
+import { activosIncrustablesEnDossier } from '../src/modelo/activos-documentales.js';
 import { LIMITE_ARCHIVO_ZIP_DOCUMENTAL } from '../src/modelo/zip-documental.js';
 import { crearArchivosPaqueteDocumental } from './paquete-documental.js';
 import { compararRevisiones } from '../src/motores/diferencia-revision.js';
@@ -330,6 +331,21 @@ async function descargarPaqueteDocumental(): Promise<void> {
 	try {
 		const origen = proyecto;
 		const firma = JSON.stringify(proyecto);
+		const activos = activosIncrustablesEnDossier(proyecto);
+		if (activos.total) {
+			const detalle = [
+				...(activos.logo ? ['el logo de la empresa'] : []),
+				...(activos.imagenes ? [`${activos.imagenes} ${activos.imagenes === 1 ? 'imagen' : 'imágenes'} del dossier`] : []),
+			].join(' y ');
+			const permitido = await confirmar(
+				`El dossier PDF del ZIP puede incorporar ${detalle}. Estas imágenes pueden contener información privada y viajarán dentro del PDF si compartes el paquete. No se adjuntan archivos de imagen independientes. ¿Autorizas incluirlas en este ZIP?`,
+				{ ok: 'Incluir imágenes y generar ZIP' },
+			);
+			if (!permitido) return;
+		}
+		if (origen !== proyecto || firma !== JSON.stringify(proyecto)) {
+			throw new Error('El proyecto cambió mientras se solicitaba permiso para los activos. Genera un paquete nuevo.');
+		}
 		const { copia, procedencia } = await copiaParaEntregable();
 		const archivos = await crearArchivosPaqueteDocumental(copia, procedencia);
 		const { zip, manifiesto } = await crearZipDeRevisionDocumental({

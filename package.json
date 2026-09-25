@@ -44,6 +44,7 @@
 	"qa:paquete-documental-offline": "vite build app --mode qa && node qa/paquete-documental-offline.mjs",
 	"qa:paquete-revision-obsoleto": "vite build app --mode qa && node qa/paquete-revision-obsoleto-m3.mjs",
 	"qa:revision-documental-m3": "vite build app --mode qa && node qa/revision-documental-m3.mjs",
+	"qa:activos-documentales-m3": "vite build app --mode qa && node qa/activos-documentales-m3.mjs",
 	"qa:datos-tecnicos": "vite build app --mode qa && node qa/todas.mjs datos-tecnicos-",
 	"qa:datos-tecnicos:run": "node qa/todas.mjs datos-tecnicos-",
 	"qa:datos-tecnicos:stress": "tsc && node herramientas/medir-datos-tecnicos.mjs",
