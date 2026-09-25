@@ -18,6 +18,8 @@ import type { BloqueTerminales, Borne, Dispositivo, MontajeComponente, Proyecto,
 import { leerMontajeDeclarado, validarMontajeDeclarado } from './montaje.js';
 import { leerCarcasaParametrica, validarCarcasaParametrica, type CarcasaParametrica } from './carcasa.js';
 import { MAX_TERMINALES_BLOQUE } from '../motores/terminales.js';
+import { leerSimboloEsquemaPersonal, validarSimboloEsquemaPersonal,
+	type SimboloEsquemaPersonal } from '../modelo/simbolo-personal.js';
 
 export const FORMATO_COMPONENTE_PERSONALIZADO = 'tablero-studio-componente' as const;
 export const VERSION_COMPONENTE_PERSONALIZADO = 1 as const;
@@ -58,6 +60,8 @@ export interface DefinicionComponentePersonalizado {
 	montaje?: MontajeComponente;
 	/** Envolvente visual declarada, aproximada; independiente del contrato eléctrico. */
 	carcasa?: CarcasaParametrica;
+	/** Dibujo M2 de autoría declarada; cada instancia fotografía esta revisión. */
+	simboloEsquema?: SimboloEsquemaPersonal;
 	assetId: string;
 	terminales: TerminalComponentePersonalizado[];
 	/** Borneras físicas declaradas: IDs existentes, orden dentro de cada bloque y borde del aparato. */
@@ -95,8 +99,8 @@ export interface AssetPortatil {
 
 export interface PaqueteProyectoPortatil {
 	formato: 'tablero-studio-paquete';
-	/** V2 porta revisiones; V3 fichas exactas; V4 preserva carcasas visuales declaradas. */
-	version: 1 | 2 | 3 | 4;
+	/** V2 porta revisiones; V3 fichas; V4 carcasas; V5 símbolos personales. */
+	version: 1 | 2 | 3 | 4 | 5;
 	proyecto: Proyecto;
 	assets: AssetPortatil[];
 	componentes: DefinicionComponentePersonalizado[];
@@ -267,6 +271,7 @@ export function validarDefinicionComponente(d: DefinicionComponentePersonalizado
 	}
 	errores.push(...validarMontajeDeclarado(d.montaje, d.dimensiones));
 	errores.push(...validarCarcasaParametrica(d.carcasa));
+	errores.push(...validarSimboloEsquemaPersonal(d.simboloEsquema));
 	const p = d.parametros;
 	if (p?.temporizacion && (!Number.isFinite(p.temporizacion.segundos) || p.temporizacion.segundos < 0)) {
 		errores.push('la temporización debe expresarse en segundos positivos o cero');
@@ -411,6 +416,7 @@ export function instanciarComponentePersonalizado(
 		componentePersonalizado: { definicionId: definicion.id, revision: definicion.revision },
 		...(definicion.montaje ? { montajeComponente: leerMontajeDeclarado(definicion.montaje, definicion.dimensiones)! } : {}),
 		...(definicion.carcasa ? { carcasaPersonalizada: leerCarcasaParametrica(definicion.carcasa)! } : {}),
+		...(definicion.simboloEsquema ? { simboloEsquemaPersonal: leerSimboloEsquemaPersonal(definicion.simboloEsquema)! } : {}),
 		...(opciones.imagenResuelta ? { imagen: opciones.imagenResuelta } : {}),
 	};
 }
@@ -530,6 +536,10 @@ export function crearPaqueteProyecto(
 		|| validado.dispositivos.some((dispositivo) => dispositivo.carcasaPersonalizada !== undefined))) {
 		throw new Error('La carcasa paramétrica requiere el paquete de proyecto V4 para conservarse.');
 	}
+	if (version < 5 && (componentes.some((componente) => componente.simboloEsquema !== undefined)
+		|| validado.dispositivos.some((dispositivo) => dispositivo.simboloEsquemaPersonal !== undefined))) {
+		throw new Error('El símbolo personal requiere el paquete de proyecto V5 para conservarse.');
+	}
 	validarCierreComponentesProyecto(validado, componentes, version);
 	const idsComponentes = new Set<string>();
 	for (const componente of componentes) {
@@ -572,7 +582,7 @@ export function leerPaqueteProyecto(textoJson: string): PaqueteProyectoPortatil 
 	const bruto: unknown = JSON.parse(textoJson);
 	if (typeof bruto !== 'object' || bruto === null || Array.isArray(bruto)) throw new Error('El paquete no es un objeto.');
 	const p = bruto as Partial<PaqueteProyectoPortatil>;
-	if (p.formato !== 'tablero-studio-paquete' || (p.version !== 1 && p.version !== 2 && p.version !== 3 && p.version !== 4) || !p.proyecto
+	if (p.formato !== 'tablero-studio-paquete' || (p.version !== 1 && p.version !== 2 && p.version !== 3 && p.version !== 4 && p.version !== 5) || !p.proyecto
 		|| !Array.isArray(p.assets) || !Array.isArray(p.componentes)) {
 		throw new Error('El archivo no es un paquete portable de TableroStudio compatible.');
 	}

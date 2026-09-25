@@ -20,6 +20,7 @@ import type { ConfiguracionProgramaPLC } from './programa-plc.js';
 import type { ConfiguracionFisicaConductor, ConfiguracionFisicaDispositivo } from './fisica.js';
 import type { ConfiguracionIngenieriaProyecto } from './ingenieria.js';
 import type { CarcasaParametrica } from '../componentes/carcasa.js';
+import type { SimboloEsquemaPersonal } from './simbolo-personal.js';
 
 export type TipoDispositivo =
 	| 'plc' | 'fuente' | 'transformador' | 'contactor' | 'rele'
@@ -262,6 +263,8 @@ export interface Dispositivo {
 	montajeComponente?: MontajeComponente;
 	/** Fotografía de la envolvente visual aproximada; nunca controla perfil ni conectividad. */
 	carcasaPersonalizada?: CarcasaParametrica;
+	/** Fotografía vectorial de la revisión personal: no modifica bornes ni función eléctrica. */
+	simboloEsquemaPersonal?: SimboloEsquemaPersonal;
 	/**
 	 * Colocación MANUAL en el esquema: la columna y la fila donde quien dibuja ha decidido que
 	 * va este aparato, arrastrándolo. Si falta, la decide el motor de esquema.

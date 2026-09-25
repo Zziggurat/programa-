@@ -157,6 +157,7 @@ export function prepararAdopcionRevisionComponente(
 		'disipacionW', 'profundidad', 'temporizacion', 'programa', 'rangoSonda',
 		'unidadSonda', 'rangoSalidaAnalogica', 'bornes', 'comportamiento', 'assetId',
 		'componentePersonalizado', 'montajeComponente',
+		'simboloEsquemaPersonal',
 	] as const satisfies readonly (keyof Dispositivo)[];
 	for (const campo of camposDeDefinicion) {
 		// La ausencia en la definición nueva también retira el dato anterior; no debe sobrevivir

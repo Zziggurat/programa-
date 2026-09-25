@@ -884,7 +884,9 @@ export class RepositorioProyectosCore implements RepositorioProyectos {
 			identidades.add(id);
 			return false;
 		});
-		const version = recogido.componentes.some((componente) => componente.carcasa !== undefined)
+		const version = recogido.componentes.some((componente) => componente.simboloEsquema !== undefined)
+			|| recogido.proyecto.dispositivos.some((dispositivo) => dispositivo.simboloEsquemaPersonal !== undefined)
+			? 5 : recogido.componentes.some((componente) => componente.carcasa !== undefined)
 			|| recogido.proyecto.dispositivos.some((dispositivo) => dispositivo.carcasaPersonalizada !== undefined)
 			? 4 : recogido.componentes.some((componente) => componente.fichaTecnica !== undefined)
 				? 3 : variasRevisiones ? 2 : 1;

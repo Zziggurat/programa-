@@ -8,6 +8,7 @@ import {
 } from './personalizados.js';
 import { leerMontajeDeclarado, validarMontajeDeclarado } from './montaje.js';
 import { leerCarcasaParametrica, validarCarcasaParametrica } from './carcasa.js';
+import { leerSimboloEsquemaPersonal } from '../modelo/simbolo-personal.js';
 import { leerComportamientoSimulacion } from '../modelo/comportamiento.js';
 import type { TipoBorne, TipoDispositivo } from '../modelo/tipos.js';
 import { inspeccionarDatosNoConfiables } from '../datos-tecnicos/schema.js';
@@ -16,8 +17,8 @@ import { PERFILES_BASE } from './perfiles-base.js';
 export type MimeComponentePortatil = 'image/png' | 'image/jpeg' | 'image/webp';
 export interface ArchivoComponentePortatil {
 	formato: 'tablero-studio-componente-portatil';
-	/** V2 cierra ficha técnica; V3 añade carcasa paramétrica sin perder compatibilidad V1/V2. */
-	version: 1 | 2 | 3;
+	/** V2 cierra ficha; V3 añade carcasa; V4 porta dibujo vectorial personal. */
+	version: 1 | 2 | 3 | 4;
 	definicion: DefinicionComponentePersonalizado;
 	asset: { id: string; mime: MimeComponentePortatil; base64: string };
 }
@@ -52,7 +53,7 @@ function validarDefinicionSegura(d: unknown): asserts d is DefinicionComponenteP
 }
 
 /** Reconstruye únicamente campos declarados; V1 puede tener metadatos ajenos inocuos. */
-function leerDefinicion(bruto: unknown, version: 1 | 2 | 3): DefinicionComponentePersonalizado {
+function leerDefinicion(bruto: unknown, version: 1 | 2 | 3 | 4): DefinicionComponentePersonalizado {
 	if (!esObjeto(bruto) || !esObjeto(bruto.dimensiones) || !Array.isArray(bruto.terminales)
 		|| bruto.terminales.length > MAX_TERMINALES || !Number.isInteger(bruto.revision)
 		|| bruto.formato !== FORMATO_COMPONENTE_PERSONALIZADO
@@ -66,9 +67,12 @@ function leerDefinicion(bruto: unknown, version: 1 | 2 | 3): DefinicionComponent
 	if (version < 3 && bruto.carcasa !== undefined) {
 		throw new Error('Una carcasa paramétrica exige .tscomp V3; V1/V2 no pueden descartarla silenciosamente.');
 	}
+	if (version < 4 && bruto.simboloEsquema !== undefined) {
+		throw new Error('Un símbolo personal exige .tscomp V4; versiones anteriores no pueden descartarlo.');
+	}
 	if (version >= 2) {
 		exigirClaves(bruto, ['formato', 'version', 'id', 'revision', 'nombre', 'fabricante', 'referencia',
-			'descripcion', 'creadoEn', 'modificadoEn', 'tipoDispositivo', 'dimensiones', 'montaje', 'carcasa', 'assetId',
+			'descripcion', 'creadoEn', 'modificadoEn', 'tipoDispositivo', 'dimensiones', 'montaje', 'carcasa', 'simboloEsquema', 'assetId',
 			'terminales', 'bloquesTerminales', 'comportamiento', 'parametros', 'fichaTecnica'], 'Definición V2');
 		exigirClaves(bruto.dimensiones, ['anchoMm', 'altoMm', 'fondoMm'], 'Dimensiones V2');
 		if (esObjeto(bruto.montaje)) {
@@ -82,6 +86,11 @@ function leerDefinicion(bruto: unknown, version: 1 | 2 | 3): DefinicionComponent
 	if (version === 3 && bruto.carcasa === undefined) {
 		throw new Error('Un .tscomp V3 requiere la carcasa paramétrica declarada.');
 	}
+	if (version === 4 && bruto.simboloEsquema === undefined) {
+		throw new Error('Un .tscomp V4 requiere el símbolo personal declarado.');
+	}
+	const simbolo = bruto.simboloEsquema === undefined ? undefined : leerSimboloEsquemaPersonal(bruto.simboloEsquema);
+	if (bruto.simboloEsquema !== undefined && !simbolo) throw new Error('El símbolo personal es inválido.');
 	const erroresCarcasa = validarCarcasaParametrica(bruto.carcasa);
 	if (erroresCarcasa.length) {
 		throw new Error(`Carcasa paramétrica inválida: ${erroresCarcasa.join('; ')}`);
@@ -155,7 +164,8 @@ function leerDefinicion(bruto: unknown, version: 1 | 2 | 3): DefinicionComponent
 		...(opcional(bruto.referencia) ? { referencia: opcional(bruto.referencia) } : {}),
 		...(opcional(bruto.descripcion) ? { descripcion: opcional(bruto.descripcion) } : {}), tipoDispositivo: tipo,
 		dimensiones, ...(montaje ? { montaje } : {}),
-		...(version === 3 && bruto.carcasa !== undefined ? { carcasa: leerCarcasaParametrica(bruto.carcasa)! } : {}),
+		...(version >= 3 && bruto.carcasa !== undefined ? { carcasa: leerCarcasaParametrica(bruto.carcasa)! } : {}),
+		...(simbolo ? { simboloEsquema: simbolo } : {}),
 		assetId: requerido(bruto.assetId, 'el asset'), terminales, comportamiento,
 		...(bruto.bloquesTerminales !== undefined
 			? { bloquesTerminales: structuredClone(bruto.bloquesTerminales) as DefinicionComponentePersonalizado['bloquesTerminales'] }
@@ -190,13 +200,13 @@ async function verificarAsset(asset: ArchivoComponentePortatil['asset'], assetId
 	return bytes;
 }
 
-/** Parser no mutante de V1/V2/V3. Toda validación sucede antes de cualquier transacción IDB. */
+/** Parser no mutante de V1–V4. Toda validación sucede antes de cualquier transacción IDB. */
 export async function leerComponentePortatil(textoJson: string): Promise<ArchivoComponentePortatil> {
 	if (textoJson.length > MAX_TSCOMP_TEXTO) throw new Error('El componente supera el límite de 64 MiB de texto.');
 	let bruto: unknown;
 	try { bruto = JSON.parse(textoJson); } catch { throw new Error('JSON del componente inválido.'); }
 	if (!esObjeto(bruto) || bruto.formato !== 'tablero-studio-componente-portatil'
-		|| (bruto.version !== 1 && bruto.version !== 2 && bruto.version !== 3) || !esObjeto(bruto.asset)) {
+		|| (bruto.version !== 1 && bruto.version !== 2 && bruto.version !== 3 && bruto.version !== 4) || !esObjeto(bruto.asset)) {
 		throw new Error('Formato de componente portable no compatible.');
 	}
 	const version = bruto.version;
@@ -228,7 +238,8 @@ export async function crearComponentePortatil(definicion: DefinicionComponentePe
 	if (asset.bytes.length * 4 / 3 > MAX_TSCOMP_TEXTO) throw new Error('La imagen supera el límite portable de 64 MiB.');
 	const limpio = { id: asset.id, mime: asset.mime as MimeComponentePortatil, base64: bytesABase64(asset.bytes) };
 	await verificarAsset(limpio, definicion.assetId);
-	const version = definicion.carcasa !== undefined ? 3 : definicion.fichaTecnica === undefined ? 1 : 2;
+	const version = definicion.simboloEsquema !== undefined ? 4
+		: definicion.carcasa !== undefined ? 3 : definicion.fichaTecnica === undefined ? 1 : 2;
 	const paquete: ArchivoComponentePortatil = { formato: 'tablero-studio-componente-portatil', version,
 		definicion: structuredClone(definicion), asset: limpio };
 	if (JSON.stringify(paquete).length > MAX_TSCOMP_TEXTO) throw new Error('El componente supera el límite portable de 64 MiB.');

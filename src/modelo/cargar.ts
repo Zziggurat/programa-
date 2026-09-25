@@ -21,6 +21,7 @@ import { validarConfiguracionTecnica } from '../datos-tecnicos/schema.js';
 import { leerMontajeDeclarado } from '../componentes/montaje.js';
 import { leerCarcasaParametrica } from '../componentes/carcasa.js';
 import { leerRepresentacionesEsquema } from './representaciones-esquema.js';
+import { leerSimboloEsquemaPersonal } from './simbolo-personal.js';
 import type { ConfiguracionProgramaPLC, EtiquetaPLC } from './programa-plc.js';
 
 /** Versión de formato que escribe este programa. */
@@ -1104,6 +1105,9 @@ function leerDispositivos(bruto: unknown, arreglos: string[]): Dispositivo[] {
 			carcasaPersonalizada: oQuitado(d.carcasaPersonalizada,
 				leerCarcasaParametrica(d.carcasaPersonalizada), ruta('carcasaPersonalizada'),
 				'la carcasa paramétrica no tenía plantilla y acabado reconocidos'),
+			simboloEsquemaPersonal: oQuitado(d.simboloEsquemaPersonal,
+				leerSimboloEsquemaPersonal(d.simboloEsquemaPersonal), ruta('simboloEsquemaPersonal'),
+				'el símbolo personal no tenía forma, trazos y procedencia válidos'),
 			curvaDisparo: oQuitado(d.curvaDisparo, unoDe(d.curvaDisparo, ['B', 'C', 'D', 'K', 'Z', 'gG', 'aM'] as const),
 				ruta('curvaDisparo'), 'la curva de disparo no era una de la norma'),
 			claseDiferencial: oQuitado(d.claseDiferencial, unoDe(d.claseDiferencial, ['AC', 'A', 'F', 'B'] as const),
