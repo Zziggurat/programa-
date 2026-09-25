@@ -67,9 +67,12 @@ test('tiraDeAparatos: solo los del tablero, ordenados y con su descripción', ()
 	assert.ok(!t.etiquetas.some((e) => e.principal === '-M1'), 'el motor es de campo: no va en el tablero');
 });
 
-test('todasLasTiras: junta borneros y aparatos, sin tiras vacías', () => {
-	const tiras = todasLasTiras(conBornero());
-	assert.equal(tiras.length, 2);
+test('todasLasTiras: junta borneros, aparatos y extremos de hilo, sin tiras vacías', () => {
+	const proyecto = conBornero();
+	const tiras = todasLasTiras(proyecto);
+	assert.equal(tiras.length, 3);
+	assert.deepEqual(tiras[2].etiquetas.map((e) => e.principal),
+		[proyecto.conductores[0].numero, proyecto.conductores[0].numero]);
 	assert.ok(tiras.every((t) => t.etiquetas.length > 0));
 });
 

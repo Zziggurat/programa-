@@ -8,6 +8,7 @@
 import { Proyecto } from '../modelo/tipos.js';
 import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { ResultadoPotenciales } from './potenciales.js';
+import { prepararMarcadores } from './marcadores.js';
 
 export interface Etiqueta {
 	/** Texto principal (lo que se lee de lejos): la borna o el aparato. */
@@ -70,10 +71,21 @@ export function tiraDeAparatos(proyecto: Proyecto): TiraEtiquetas {
 	return { titulo: 'Aparatos del tablero', etiquetas };
 }
 
+/** Un marcador físico por cada extremo del conductor; ambos llevan el mismo identificador. */
+export function tiraDeExtremosConductores(proyecto: Proyecto): TiraEtiquetas {
+	return {
+		titulo: 'Extremos de conductores',
+		etiquetas: prepararMarcadores(proyecto).filter((m) => m.tipo === 'extremo-conductor')
+			.map((m) => ({ principal: m.principal, secundaria: m.secundaria })),
+	};
+}
+
 /** Todas las tiras que hay que imprimir de un proyecto. */
 export function todasLasTiras(proyecto: Proyecto, potenciales?: ResultadoPotenciales): TiraEtiquetas[] {
 	const tiras = tirasDeBorneros(proyecto, potenciales);
 	const aparatos = tiraDeAparatos(proyecto);
 	if (aparatos.etiquetas.length) tiras.push(aparatos);
+	const extremos = tiraDeExtremosConductores(proyecto);
+	if (extremos.etiquetas.length) tiras.push(extremos);
 	return tiras;
 }

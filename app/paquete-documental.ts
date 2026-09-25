@@ -6,6 +6,7 @@ import type { ArchivoPaqueteDocumental } from '../src/modelo/manifiesto-paquete-
 import { aCSV } from '../src/modelo/csv.js';
 import { hashSnapshotTecnico } from '../src/datos-tecnicos/hash.js';
 import { revisarTablero } from '../src/motores/revision.js';
+import { prepararMarcadores } from '../src/motores/marcadores.js';
 import { longitudesDibujadasMm } from './escena3d.js';
 import { hojaASvg } from './esquema-svg.js';
 import { esquemaComoBlob } from './esquema-pdf.js';
@@ -120,6 +121,16 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 		informe.terminales.map((t) => [t.borneroId, t.designacion, t.borneId, t.tipo,
 			t.conexiones.map((c) => `${c.conductorId}:${c.dispositivoId}:${c.borneId}`).join(' / '), t.circuitos.join(', ')]),
 		'Bornes y conexiones reales, no referencias gráficas duplicadas.');
+	csv('listas/marcadores.csv', ['Tipo', 'Entidad ID', 'Extremo', 'Dispositivo ID', 'Borne ID',
+		'Identificador', 'Designación', 'Borne', 'Destino dispositivo', 'Destino borne',
+		'Número conductor', 'Descripción',
+		'Campo principal', 'Texto principal', 'Campo secundario', 'Texto secundario', 'Cantidad'],
+		prepararMarcadores(copia).map((m) => [m.tipo, m.entidadId, m.lado ?? '', m.dispositivoId,
+			m.borneId ?? '', m.campos.identificador, m.campos.designacion, m.campos.borne,
+			m.campos.destinoDispositivo, m.campos.destinoBorne,
+			m.campos.numeroConductor, m.campos.descripcion,
+			m.campoPrincipal, m.principal, m.campoSecundario ?? '', m.secundaria ?? '', m.cantidad]),
+		'Un marcador por aparato/borne y uno por cada extremo de conductor. Cantidad = copias por marcador; importar columnas por nombre en la impresora.');
 	csv('listas/referencias-cruzadas.csv', ['Maestro ID', 'Designación', 'Posición', 'Contacto ID', 'Tipo contacto', 'Posición contacto'],
 		revision.referencias.cruzadas.flatMap((r) => r.contactos.length
 			? r.contactos.map((c) => [r.maestroId, r.designacion, r.posicion, c.dispositivoId, c.contacto, c.posicion])

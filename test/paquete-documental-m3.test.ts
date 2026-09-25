@@ -37,7 +37,7 @@ test('DOC-02 compone un único snapshot sin duplicar un aparato multivista ni un
 		'esquema/esquema.pdf', 'dossier/dossier.pdf', 'dossier/dossier.html',
 		'ingenieria/informe.json', 'ingenieria/bom.csv', 'listas/aparatos.csv',
 		'listas/conexiones.csv', 'listas/conductores.csv', 'listas/borneros.csv',
-		'listas/referencias-cruzadas.csv', 'listas/senales-io.csv']) {
+		'listas/referencias-cruzadas.csv', 'listas/senales-io.csv', 'listas/marcadores.csv']) {
 		assert.ok(archivos.some((a) => a.ruta === ruta), `falta ${ruta}`);
 	}
 	const texto = (ruta: string) => String(archivos.find((a) => a.ruta === ruta)?.contenido ?? '');
@@ -63,6 +63,10 @@ test('DOC-02 compone un único snapshot sin duplicar un aparato multivista ni un
 	const conexiones = texto('listas/conexiones.csv');
 	assert.equal((conexiones.match(/w1/g) ?? []).length, 1, 'el enlace interhoja no duplica conductor');
 	assert.match(conexiones, /PENDIENTE/);
+	const marcadores = texto('listas/marcadores.csv');
+	assert.match(marcadores, /Campo principal;Texto principal;Campo secundario;Texto secundario;Cantidad/);
+	assert.equal((marcadores.match(/extremo-conductor;w1;/g) ?? []).length, 2,
+		'el paquete lleva una etiqueta por cada extremo real del conductor');
 	assert.match(texto('ingenieria/informe.json'), /"projectId": "doc-123"/);
 	assert.match(texto('esquema/hoja-001.svg'), /doc-123/);
 	assert.match(Buffer.from(archivos.find((a) => a.ruta === 'esquema/esquema.pdf')!.contenido as Uint8Array)
