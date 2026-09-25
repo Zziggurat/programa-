@@ -1,5 +1,6 @@
 /** Aceptación M2 focal: una edición esquemática cambia la red DOL, su lista y la simulación. */
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { abrirNavegador, esperarEditorListo, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
@@ -39,11 +40,6 @@ async function seleccionarConexion(id) {
 	const diagnostico = [];
 	for (const numero of [1, 2]) {
 		await hoja(numero);
-		const referencia = pagina.locator(`#esquema-hoja .referencia-conductor[data-conductor="${id}"]`).first();
-		if (await referencia.count()) {
-			await referencia.click();
-			return 'puntero';
-		}
 		for (const hilo of await pagina.locator(`#esquema-hoja .hilo[data-conductor="${id}"]`).all()) {
 			diagnostico.push(await hilo.evaluate((grupo) => ({
 				hoja: document.querySelector('#esq-indicador')?.textContent,
@@ -67,8 +63,13 @@ async function seleccionarConexion(id) {
 			});
 			if (punto) {
 				await pagina.mouse.click(punto.x, punto.y);
-				return 'puntero';
+				return 'trazo';
 			}
+		}
+		const referencia = pagina.locator(`#esquema-hoja .referencia-conductor[data-conductor="${id}"]`).first();
+		if (await referencia.count()) {
+			await referencia.click();
+			return 'referencia';
 		}
 	}
 	// Un hilo colineal puede quedar enteramente bajo otros sin zona única de ratón.
@@ -183,34 +184,30 @@ try {
 		&& vistasKM.filter((r) => r.parte.tipo === 'contactos').length === 2
 		&& desdoblado.proyecto.dispositivos.filter((d) => d.id === 'km1').length === 1
 		&& desdoblado.proyecto.conductores.length === antesDeVistas.proyecto.conductores.length);
+	if (process.env.QA_CAPTURAS) {
+		for (const numero of [1, 2]) {
+			await hoja(numero);
+			await pagina.locator('#esquema-hoja').screenshot({
+				path: join(process.env.QA_CAPTURAS, `esquema-m2-hoja-${numero}.png`),
+			});
+		}
+	}
 	const cableA1 = desdoblado.proyecto.conductores.find((c) =>
 		[c.de, c.a].some((e) => e.dispositivoId === 'km1' && e.borneId === 'A1')
 		&& [c.de, c.a].some((e) => e.dispositivoId === 'x2' && e.borneId === '3'));
 	assert.ok(cableA1, 'el ejemplo no conserva la conexión mando x2:3 ↔ km1:A1');
 	const metodoSeleccion = await seleccionarConexion(cableA1.id);
-	fase('selección del conductor colineal');
+	fase('selección del conductor antes colineal');
 	const inspectorSeleccion = await pagina.locator('#esq-ayuda').textContent();
-	comprobar('conductor real se selecciona por trazo único o teclado semántico sin adjudicar clic al solape',
-		['teclado', 'puntero'].includes(metodoSeleccion)
+	comprobar('conductor antes colineal se selecciona por su propio trazo con ratón',
+		metodoSeleccion === 'trazo'
 		&& !!inspectorSeleccion && inspectorSeleccion.includes(cableA1.id)
 		&& inspectorSeleccion.includes('A1'));
 	const panelSolapes = pagina.locator('#esq-solapes');
-	const estadoPanelSolapes = {
-		paneles: await panelSolapes.count(),
-		visible: await panelSolapes.locator('summary').isVisible(),
-		resumen: await panelSolapes.locator('summary').innerText(),
-		botones: await panelSolapes.locator(`[data-esq-seleccionar-solape="${cableA1.id}"]`).count(),
-	};
-	if (estadoPanelSolapes.paneles !== 1 || !estadoPanelSolapes.visible || !/sin resolver/i.test(estadoPanelSolapes.resumen)
-		|| estadoPanelSolapes.botones !== 1) console.log('DIAGNÓSTICO panel solapes:', estadoPanelSolapes);
-	comprobar('el solape conserva una advertencia visible y un selector por ID para ratón',
-		estadoPanelSolapes.paneles === 1 && estadoPanelSolapes.visible && /sin resolver/i.test(estadoPanelSolapes.resumen)
-		&& estadoPanelSolapes.botones === 1);
-	if (!await panelSolapes.evaluate(el => el.open)) await panelSolapes.locator('summary').click();
-	await panelSolapes.locator(`[data-esq-seleccionar-solape="${cableA1.id}"]`).click();
-	comprobar('el selector por ratón enfoca el conductor ambiguo sin alterar la topología',
-		await panelSolapes.locator(`[data-esq-seleccionar-solape="${cableA1.id}"]`).getAttribute('aria-pressed') === 'true'
-		&& (await pagina.locator('#esq-ayuda').innerText()).includes(`Conductor ${cableA1.id}`)
+	comprobar('el cable ya no figura entre los solapes sin resolver',
+		await panelSolapes.locator(`[data-esq-seleccionar-solape="${cableA1.id}"]`).count() === 0);
+	comprobar('la selección por ratón conserva la topología eléctrica',
+		(await pagina.locator('#esq-ayuda').innerText()).includes(`Conductor ${cableA1.id}`)
 		&& (await proyecto()).conductores.some(c => c.id === cableA1.id));
 	await pagina.locator('#esq-desconectar').click();
 	const avisoDesconexion = await pagina.locator('#dialogo-msg').textContent();
