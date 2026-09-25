@@ -28,6 +28,7 @@
 	"qa:esquema-desconexion-m2": "vite build app --mode qa && node qa/esquema-desconexion-m2.mjs",
 	"qa:esquema-eliminacion-m2": "vite build app --mode qa && node qa/esquema-eliminacion-m2.mjs",
 	"qa:esquema-renumeracion-m2": "vite build app --mode qa && node qa/esquema-renumeracion-m2.mjs",
+	"qa:esquema-aceptacion-m2": "vite build app --mode qa && node qa/esquema-aceptacion-m2.mjs",
 	"qa:activar-representaciones-m2": "vite build app --mode qa && node qa/activar-representaciones-m2.mjs",
 	"qa:ruta-pendiente-m2": "vite build app --mode qa && node qa/ruta-pendiente-m2.mjs",
 	"qa:esquema-conexion-pendiente-m2": "vite build app --mode qa && node qa/esquema-conexion-pendiente-m2.mjs",
