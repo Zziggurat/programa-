@@ -8,7 +8,7 @@
  * saber nada de SVG, Canvas ni PDF. Quien dibuje decide cómo pintarlo, y las pruebas pueden
  * comprobar la topología sin renderizar nada.
  *
- * Convenios de dibujo (IEC 60617, como en cualquier esquema de tablero):
+ * Convenios editoriales de lectura; los trazos locales NO están verificados frente a IEC 60617:
  *  - Los circuitos se leen de arriba abajo: la alimentación arriba, el consumo abajo.
  *  - La hoja se divide en COLUMNAS numeradas; cada circuito ocupa una columna.
  *  - Cada hilo lleva su número de potencial, el mismo en todos los puntos que están unidos.
@@ -34,6 +34,8 @@ export type Trazo =
 /** Símbolo de un aparato ya colocado en la hoja, con sus puntos de conexión. */
 export interface SimboloEsq {
 	dispositivoId: string;
+	/** Procedencia derivada de la plantilla que produjo los trazos; no pertenece al Proyecto. */
+	plantilla?: PlantillaSimboloEsquema;
 	/** Identidad gráfica; ausente solo en el esquema legacy de un símbolo por aparato. */
 	representacionId?: string;
 	parte?: ParteRepresentacionEsquema['tipo'];
@@ -138,8 +140,8 @@ export interface EtiquetaEsq {
 export const HOJA_A3 = { ancho: 420, alto: 297 };
 /** A2 apaisado para un folio que necesita mayor superficie sin comprimir la rejilla. */
 export const HOJA_A2 = { ancho: 594, alto: 420 };
-/** El plano usa símbolos genéricos dibujados por el editor; no certifica conformidad normativa. */
-export const NOTA_SIMBOLOGIA_ESQUEMA = 'Simbología genérica del editor · No certifica normas ni fabricación';
+/** El plano no certifica conformidad ni la licencia individual de cada plantilla. */
+export const NOTA_SIMBOLOGIA_ESQUEMA = 'Simbología genérica del editor · Trazos locales · GPL-2.0-or-later declarada (no verificada por símbolo) · No certifica normas ni fabricación';
 /** Margen del cajetín y la rejilla. */
 export const MARGEN = { izq: 20, der: 10, arriba: 14, abajo: 34 };
 /** Alto de la banda de alimentación (arriba) y de la de retorno (abajo) dentro del dibujo. */
@@ -183,6 +185,74 @@ export function anchoColumna(hoja = HOJA_A3, columnas = 10): number {
 }
 
 /* --------------------------------- Símbolos --------------------------------- */
+
+/** Metadatos del trazo realmente generado, no una licencia ni certificación del fabricante. */
+export interface PlantillaSimboloEsquema {
+	/** Identificador estable de la geometría local; no es una designación IEC. */
+	readonly id: string;
+	readonly familia: 'dedicado' | 'bloque-funcional' | 'generico' | 'parte';
+	readonly origen: 'trazos-generados-en-editor';
+	readonly archivo: 'src/motores/esquema.ts';
+	/** Declaración global de package.json, no verificación de derechos de cada trazo. */
+	readonly licenciaDeclarada: 'GPL-2.0-or-later';
+	readonly licenciaVerificada: false;
+	readonly conformidadNormativa: 'NO_VERIFICADA';
+}
+
+function plantilla(id: string, familia: PlantillaSimboloEsquema['familia']): PlantillaSimboloEsquema {
+	return Object.freeze({ id, familia, origen: 'trazos-generados-en-editor',
+		archivo: 'src/motores/esquema.ts', licenciaDeclarada: 'GPL-2.0-or-later',
+		licenciaVerificada: false, conformidadNormativa: 'NO_VERIFICADA' });
+}
+
+/** Inventario local: dos tipos pueden compartir la misma forma sin compartir función eléctrica. */
+const PLANTILLAS = Object.freeze({
+	bloqueFuncional: plantilla('esq.bloque-funcional.v1', 'bloque-funcional'),
+	proteccionContacto: plantilla('esq.proteccion-contacto.v1', 'dedicado'),
+	diferencial: plantilla('esq.diferencial.v1', 'dedicado'),
+	fusible: plantilla('esq.fusible.v1', 'dedicado'),
+	bobinaCompleta: plantilla('esq.bobina-completa.v1', 'dedicado'),
+	contactoElectromagnetico: plantilla('esq.contacto-electromagnetico.v1', 'dedicado'),
+	motor: plantilla('esq.motor.v1', 'dedicado'),
+	piloto: plantilla('esq.piloto.v1', 'dedicado'),
+	mando: plantilla('esq.mando.v1', 'dedicado'),
+	transformador: plantilla('esq.transformador.v1', 'dedicado'),
+	fuente: plantilla('esq.fuente.v1', 'dedicado'),
+	sensor: plantilla('esq.sensor.v1', 'dedicado'),
+	bornero: plantilla('esq.bornero.v1', 'dedicado'),
+	cajaGenerica: plantilla('esq.caja-generica.v1', 'generico'),
+	bobinaParcial: plantilla('esq.bobina-parcial.v1', 'parte'),
+	contactosParciales: plantilla('esq.contactos-parciales.v1', 'parte'),
+});
+
+interface GeometriaSimboloEsquema {
+	ancho: number;
+	alto: number;
+	trazos: Trazo[];
+	pines: Map<string, PuntoEsq>;
+	plantilla: PlantillaSimboloEsquema;
+}
+
+/** Se resuelve una sola vez y el identificador resultante decide la geometría completa. */
+function plantillaCompleta(d: Dispositivo): PlantillaSimboloEsquema {
+	if (esBloqueFuncional(d)) return PLANTILLAS.bloqueFuncional;
+	switch (d.tipo) {
+		case 'disyuntor': case 'guardamotor': case 'seccionador': return PLANTILLAS.proteccionContacto;
+		case 'diferencial': return PLANTILLAS.diferencial;
+		case 'fusible': return PLANTILLAS.fusible;
+		case 'contactor': case 'rele':
+			return d.bornes.some((b) => /^A[12]$/.test(b.id))
+				? PLANTILLAS.bobinaCompleta : PLANTILLAS.contactoElectromagnetico;
+		case 'motor': return PLANTILLAS.motor;
+		case 'piloto': return PLANTILLAS.piloto;
+		case 'pulsador': case 'selector': return PLANTILLAS.mando;
+		case 'transformador': return PLANTILLAS.transformador;
+		case 'fuente': return PLANTILLAS.fuente;
+		case 'sensor': return PLANTILLAS.sensor;
+		case 'bornero': return PLANTILLAS.bornero;
+		default: return PLANTILLAS.cajaGenerica;
+	}
+}
 
 /** Ancho máximo de un símbolo: por encima de esto invadiría la columna vecina. */
 export const ANCHO_MAX_SIMBOLO = 30;
@@ -280,12 +350,13 @@ function bloqueFuncional(d: Dispositivo): { ancho: number; alto: number; trazos:
 }
 
 /**
- * Dibuja el símbolo IEC de un aparato, centrado en (0,0) y mirando hacia abajo (entrada
+ * Dibuja un símbolo genérico local de un aparato, centrado en (0,0) y mirando hacia abajo (entrada
  * arriba, salida abajo), que es como se leen los esquemas de mando y potencia.
  * Devuelve los trazos en coordenadas locales y los pines por nombre de borne.
  */
-export function simboloDe(d: Dispositivo): { ancho: number; alto: number; trazos: Trazo[]; pines: Map<string, PuntoEsq> } {
-	if (esBloqueFuncional(d)) return bloqueFuncional(d);
+export function simboloDe(d: Dispositivo): GeometriaSimboloEsquema {
+	const plantilla = plantillaCompleta(d);
+	if (plantilla === PLANTILLAS.bloqueFuncional) return { ...bloqueFuncional(d), plantilla };
 
 	const pines = new Map<string, PuntoEsq>();
 	const trazos: Trazo[] = [];
@@ -315,10 +386,8 @@ export function simboloDe(d: Dispositivo): { ancho: number; alto: number; trazos
 	repartir(entradas, -alto / 2);
 	repartir(salidas, alto / 2);
 
-	switch (d.tipo) {
-		case 'disyuntor':
-		case 'guardamotor':
-		case 'seccionador':
+	switch (plantilla) {
+		case PLANTILLAS.proteccionContacto:
 			// Contacto abierto con la cruz del magnetotérmico.
 			for (const b of entradas) {
 				const p = pines.get(b.id)!;
@@ -326,20 +395,20 @@ export function simboloDe(d: Dispositivo): { ancho: number; alto: number; trazos
 			}
 			trazos.push({ tipo: 'linea', a: { x: -ancho / 2 - 2, y: 0 }, b: { x: ancho / 2 + 2, y: 0 }, trazos: true });
 			break;
-		case 'diferencial':
+		case PLANTILLAS.diferencial:
 			trazos.push({ tipo: 'circulo', c: { x: 0, y: 0 }, r: 5 });
 			trazos.push({ tipo: 'texto', p: { x: 0, y: 1.5 }, texto: 'I∆', tam: 4, anclaje: 'centro' });
 			break;
-		case 'fusible':
+		case PLANTILLAS.fusible:
 			trazos.push({ tipo: 'linea', a: { x: -3, y: -6 }, b: { x: 3, y: -6 } });
 			trazos.push({ tipo: 'linea', a: { x: 3, y: -6 }, b: { x: 3, y: 6 } });
 			trazos.push({ tipo: 'linea', a: { x: 3, y: 6 }, b: { x: -3, y: 6 } });
 			trazos.push({ tipo: 'linea', a: { x: -3, y: 6 }, b: { x: -3, y: -6 } });
 			break;
-		case 'contactor':
-		case 'rele':
+		case PLANTILLAS.bobinaCompleta:
+		case PLANTILLAS.contactoElectromagnetico:
 			// Bobina: rectángulo con la designación; contactos: trazo inclinado.
-			if (d.bornes.some((b) => /^A[12]$/.test(b.id))) {
+			if (plantilla === PLANTILLAS.bobinaCompleta) {
 				trazos.push({ tipo: 'linea', a: { x: -5, y: -5 }, b: { x: 5, y: -5 } });
 				trazos.push({ tipo: 'linea', a: { x: 5, y: -5 }, b: { x: 5, y: 5 } });
 				trazos.push({ tipo: 'linea', a: { x: 5, y: 5 }, b: { x: -5, y: 5 } });
@@ -348,38 +417,37 @@ export function simboloDe(d: Dispositivo): { ancho: number; alto: number; trazos
 				trazos.push({ tipo: 'linea', a: { x: -4, y: 4 }, b: { x: 4, y: -4 } });
 			}
 			break;
-		case 'motor':
+		case PLANTILLAS.motor:
 			trazos.push({ tipo: 'circulo', c: { x: 0, y: 0 }, r: 8 });
 			trazos.push({ tipo: 'texto', p: { x: 0, y: 2 }, texto: 'M', tam: 6, anclaje: 'centro', negrita: true });
 			break;
-		case 'piloto':
+		case PLANTILLAS.piloto:
 			trazos.push({ tipo: 'circulo', c: { x: 0, y: 0 }, r: 5 });
 			trazos.push({ tipo: 'linea', a: { x: -3.5, y: -3.5 }, b: { x: 3.5, y: 3.5 } });
 			trazos.push({ tipo: 'linea', a: { x: 3.5, y: -3.5 }, b: { x: -3.5, y: 3.5 } });
 			break;
-		case 'pulsador':
-		case 'selector':
+		case PLANTILLAS.mando:
 			trazos.push({ tipo: 'linea', a: { x: -4, y: 4 }, b: { x: 4, y: -4 } });
 			trazos.push({ tipo: 'linea', a: { x: 0, y: -6 }, b: { x: 0, y: -2 } });
 			trazos.push({ tipo: 'linea', a: { x: -3, y: -6 }, b: { x: 3, y: -6 } });
 			break;
-		case 'transformador':
+		case PLANTILLAS.transformador:
 			trazos.push({ tipo: 'circulo', c: { x: -3, y: 0 }, r: 5 });
 			trazos.push({ tipo: 'circulo', c: { x: 3, y: 0 }, r: 5 });
 			break;
-		case 'fuente':
+		case PLANTILLAS.fuente:
 			trazos.push({ tipo: 'linea', a: { x: -8, y: -6 }, b: { x: 8, y: -6 } });
 			trazos.push({ tipo: 'linea', a: { x: 8, y: -6 }, b: { x: 8, y: 6 } });
 			trazos.push({ tipo: 'linea', a: { x: 8, y: 6 }, b: { x: -8, y: 6 } });
 			trazos.push({ tipo: 'linea', a: { x: -8, y: 6 }, b: { x: -8, y: -6 } });
 			trazos.push({ tipo: 'texto', p: { x: 0, y: 2 }, texto: '=', tam: 6, anclaje: 'centro' });
 			break;
-		case 'sensor':
+		case PLANTILLAS.sensor:
 			trazos.push({ tipo: 'linea', a: { x: -5, y: -5 }, b: { x: 5, y: 0 } });
 			trazos.push({ tipo: 'linea', a: { x: 5, y: 0 }, b: { x: -5, y: 5 } });
 			trazos.push({ tipo: 'linea', a: { x: -5, y: 5 }, b: { x: -5, y: -5 } });
 			break;
-		case 'bornero':
+		case PLANTILLAS.bornero:
 			for (const [, p] of pines) trazos.push({ tipo: 'circulo', c: { x: p.x, y: 0 }, r: 1.6 });
 			break;
 		default:
@@ -388,7 +456,7 @@ export function simboloDe(d: Dispositivo): { ancho: number; alto: number; trazos
 			trazos.push({ tipo: 'linea', a: { x: ancho / 2, y: 6 }, b: { x: -ancho / 2, y: 6 } });
 			trazos.push({ tipo: 'linea', a: { x: -ancho / 2, y: 6 }, b: { x: -ancho / 2, y: -6 } });
 	}
-	return { ancho, alto, trazos, pines };
+	return { ancho, alto, trazos, pines, plantilla };
 }
 
 /* --------------------------------- Montaje de hojas --------------------------------- */
@@ -564,6 +632,7 @@ export function montarEsquema(
 				}
 				simbolos.push({
 					dispositivoId: d.id,
+					plantilla: s.plantilla,
 					designacion: d.designacion ?? d.id,
 					columna: col + 1,
 					x: cx - s.ancho / 2, y: cy - s.alto / 2, ancho: s.ancho, alto: s.alto,
@@ -669,6 +738,7 @@ function simboloDeRepresentacion(d: Dispositivo, r: RepresentacionEsquema): Geom
 		if (!a || !b) return undefined;
 		return {
 			ancho: 12, alto: 20,
+			plantilla: PLANTILLAS.bobinaParcial,
 			pines: new Map([[entrada, { x: 0, y: -10 }], [retorno, { x: 0, y: 10 }]]),
 			trazos: [
 				{ tipo: 'linea', a: { x: 0, y: -10 }, b: { x: 0, y: -5 } },
@@ -720,7 +790,14 @@ function simboloDeRepresentacion(d: Dispositivo, r: RepresentacionEsquema): Geom
 			{ tipo: 'texto', p: { x: x + 1, y: 13 }, texto: rotuloVisibleBorne(b), tam: 2.2 },
 		);
 	}
-	return { ancho, alto: 20, trazos, pines };
+	return { ancho, alto: 20, trazos, pines, plantilla: PLANTILLAS.contactosParciales };
+}
+
+/** Procedencia de la geometría que efectivamente se puede dibujar para esta vista. */
+export function procedenciaSimboloEsquema(
+	d: Dispositivo, r?: RepresentacionEsquema,
+): PlantillaSimboloEsquema | undefined {
+	return (r ? simboloDeRepresentacion(d, r) : simboloDe(d))?.plantilla;
 }
 
 /** Montaje M2 opt-in: hoja/posición son referencias estables, no columnas globales legacy. */
@@ -791,6 +868,7 @@ function montarRepresentaciones(
 		}
 		const simbolo: SimboloEsq = {
 			dispositivoId: d.id, representacionId: r.id, parte: r.parte.tipo,
+			plantilla: geometria.plantilla,
 			designacion: d.designacion ?? d.id, columna,
 			x: cx - geometria.ancho / 2, y: cy - geometria.alto / 2,
 			ancho: geometria.ancho, alto: geometria.alto,
