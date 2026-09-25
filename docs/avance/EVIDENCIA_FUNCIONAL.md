@@ -111,3 +111,9 @@ Estados: `YA_EXISTE_POR_VERIFICAR`, `PENDIENTE`, `EN_CURSO`, `IMPLEMENTADO`, `VE
 - M8–M9: recorridos integrados, accesibilidad/teclado, offline, CI, artifacts y revisión visual/humana pendiente.
 
 Si un cambio cruza identidad, conectividad, anclajes, longitudes o el resolver técnico, ampliar la prueba en esa frontera; no limitarse a la suite del archivo editado.
+
+## ESQ-04 — borrado de vista frente a aparato eléctrico
+
+- `test/eliminar-dispositivos-m2.test.ts`: 7/7 focales para plan sin mutación, dependencias multivista/multihoja, datos técnicos y ajenos, ausencia legacy, proyecto cambiado durante confirmación, solo lectura, selección múltiple/orden inverso y reapertura.
+- `qa/esquema-eliminacion-m2.mjs`: 12/12 por interacción visible y almacenamiento real, 28,5 s, 0 fallos y 0 errores JS. Comprueba «Borrar vista» sin perder aparato, «Eliminar aparato» con preview de tres conexiones/dos hojas/datos, cancelar sin historial, eliminación de dependencias, Undo/Redo y recarga sin huérfanos.
+- TypeScript app/core verde; Node integrado 1647/1647, 0 fallos/omitidos, 94,6 s bajo concurrencia con navegador. Build QA 422 módulos/8,03 s. QA M2 previos afectados: desconexión exit 0 (6 hitos, ~103 s) y activación de vistas exit 0 (5 hitos, ~40 s), ambos 0 errores JS y cierre de Chromium/servidor. No atribuir a este SHA la campaña histórica completa, CI ni aceptación humana de M2.
