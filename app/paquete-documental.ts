@@ -9,6 +9,7 @@ import { revisarTablero } from '../src/motores/revision.js';
 import { prepararMarcadores } from '../src/motores/marcadores.js';
 import { proyectarLongitudesDocumentales } from '../src/motores/longitudes-documentales.js';
 import { proyectarReferenciasEsquemaM2 } from '../src/motores/referencias-esquema-m2.js';
+import { etiquetaClaseHojaEsquema, type HojaEsq } from '../src/motores/esquema.js';
 import { longitudesDibujadasMm } from './escena3d.js';
 import { hojaASvg } from './esquema-svg.js';
 import { esquemaComoBlob } from './esquema-pdf.js';
@@ -42,15 +43,20 @@ function listaCsv(cabeceras: string[], filas: (string | number | undefined)[][],
 
 function indiceHtml(proyecto: Proyecto, procedencia: ProcedenciaDocumento,
 	archivos: readonly ArchivoPaqueteDocumental[], errores: number, avisos: number,
-	rutasPendientes: number, ioDiagnosticos: number): string {
+	rutasPendientes: number, ioDiagnosticos: number, hojas: readonly HojaEsq[]): string {
 	const p = resumenProcedenciaDocumento(procedencia);
 	const enlaces = archivos.map((a) => `<li><a href="${esc(a.ruta)}">${esc(a.ruta)}</a> <small>${esc(a.mime)}</small></li>`).join('');
+	const folios = [...hojas].sort((a, b) => a.numero - b.numero || a.id.localeCompare(b.id))
+		.map((h) => `<tr><td>${h.numero}</td><td><a href="esquema/hoja-${String(h.numero).padStart(3, '0')}.svg">${esc(h.titulo)}</a></td>`
+			+ `<td>${esc(h.clase ? etiquetaClaseHojaEsquema(h.clase) : 'Sin clase declarada')}</td><td><code>${esc(h.id)}</code></td></tr>`).join('');
 	return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(proyecto.nombre)} — paquete de revisión</title>
-<style>body{font:16px/1.55 system-ui,sans-serif;max-width:68rem;margin:0 auto;padding:2rem;color:#142535}h1{border-bottom:4px solid #154c70;padding-bottom:.6rem}dt{font-weight:700}dd{margin:0 0 .7rem}ul{columns:2}li{break-inside:avoid;padding:.2rem 0}a{color:#14547e}small{color:#506473}.aviso{border-left:5px solid #b16e0d;background:#fff5df;padding:1rem}@media(max-width:700px){ul{columns:1}body{padding:1rem}}</style></head><body>
+<style>body{font:16px/1.55 system-ui,sans-serif;max-width:68rem;margin:0 auto;padding:2rem;color:#142535}h1{border-bottom:4px solid #154c70;padding-bottom:.6rem}dt{font-weight:700}dd{margin:0 0 .7rem}ul{columns:2}li{break-inside:avoid;padding:.2rem 0}a{color:#14547e}small{color:#506473}table{border-collapse:collapse;width:100%}th,td{text-align:left;border-bottom:1px solid #c6d4dc;padding:.35rem;vertical-align:top}code{overflow-wrap:anywhere}.aviso{border-left:5px solid #b16e0d;background:#fff5df;padding:1rem}@media(max-width:700px){ul{columns:1}body{padding:1rem}}</style></head><body>
 <h1>${esc(proyecto.nombre)} — paquete eléctrico</h1>
 <p class="aviso"><strong>Borrador técnico para revisión profesional.</strong> No certifica, aprueba ni autoriza fabricación. DRC: ${errores} errores y ${avisos} avisos; ${rutasPendientes} conexiones con ruta física pendiente; ${ioDiagnosticos} diagnósticos de E/S. Una longitud estimada no es un metraje de corte.</p>
 <dl><dt>Estado documental</dt><dd>${esc(p.estado)}</dd><dt>Project ID</dt><dd>${esc(p.projectId)}</dd><dt>Revisión del repositorio</dt><dd>${esc(p.revisionRepositorio)}</dd><dt>Revisión editorial</dt><dd>${esc(proyecto.datos?.revision ?? 'No declarada')}</dd><dt>Generado</dt><dd>${esc(p.generadoEn)}</dd><dt>Build ID</dt><dd>${esc(p.buildId)}</dd></dl>
+<h2>Folios de esta revisión</h2><p>La clase es editorial y solo aparece si se declaró; no certifica la función eléctrica. Los enlaces abren cada hoja de esta misma revisión.</p>
+<table><thead><tr><th>N.º</th><th>Título</th><th>Clase</th><th>ID estable</th></tr></thead><tbody>${folios}</tbody></table>
 <h2>Archivos de esta revisión</h2><ul>${enlaces}</ul>
 <p>Las hojas gráficas no duplican aparatos ni conductores: los listados se derivan de las identidades persistentes. El manifiesto externo incluye SHA-256 de cada archivo. El informe de Ingeniería usa condición estática declarada, no un estado de simulación energizada.</p>
 </body></html>`;
@@ -189,6 +195,6 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 			limitacion: 'La intención aplicada persiste, pero no el resultado completo de búsqueda. No equivale a una recomendación V9 vigente.',
 			decisiones: copia.ingenieria.disenoAsistido.decisiones }, null, 2), 'application/json');
 	agregar('index.html', indiceHtml(copia, procedencia, archivos, revision.resumen.errores,
-		revision.resumen.avisos, pendientes, io.diagnosticos.length), 'text/html; charset=utf-8');
+		revision.resumen.avisos, pendientes, io.diagnosticos.length, revision.hojasEsquema), 'text/html; charset=utf-8');
 	return archivos;
 }

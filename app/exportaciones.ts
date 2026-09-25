@@ -9,7 +9,7 @@ import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { todasLasTiras } from '../src/motores/etiquetas.js';
 import { EntidadDXF, generarDXF, rectangulo, sinAcentos } from '../src/motores/dxf.js';
-import { HojaEsq, resumenPendientesEsquema } from '../src/motores/esquema.js';
+import { HojaEsq, resumenPendientesEsquema, rotuloEditorialHoja } from '../src/motores/esquema.js';
 import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
 	tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 
@@ -205,31 +205,35 @@ export function dxfDeEsquema(hoja: HojaEsq, opciones: OpcionesDxfEsquema = {}): 
 		e.push({ capa: 'TEXTO', trazo: { tipo: 'texto', x: s.x - 4, y: s.y + s.alto / 2,
 			texto: textoSeguroEsquemaDxf(s.designacion), alto: 3.4 } });
 	}
-	let comentarios = '';
+	// El rótulo editorial existe incluso cuando no se adjunta procedencia de repositorio.
+	// Se escribe en la banda inferior, sin cambiar CABLES ni inferir una clase legacy.
+	const pie = hoja.altoMm - 34 + 1;
+	const rotuloHoja = textoSeguroEsquemaDxf(
+		`Proyecto ${opciones.proyecto ?? 'TableroStudio'} | Hoja ${hoja.numero} / ${opciones.totalHojas ?? 1} | ${rotuloEditorialHoja(hoja)}`);
+	e.push({ capa: 'TEXTO', trazo: { tipo: 'texto', x: 20, y: pie + 5,
+		texto: rotuloHoja.slice(0, 180), alto: 2.2 } });
+	let comentarios = `999\n${rotuloHoja.slice(0, 240)}\n`;
 	if (opciones.procedencia) {
 		const identidad = resumenProcedenciaDocumento(opciones.procedencia);
 		const pendientes = opciones.rutasPendientes ?? 'no informadas';
 		const lineas = [
 			`${identidad.estado} | Project ID ${identidad.projectId} | Revision repositorio ${identidad.revisionRepositorio}`,
 			`Generado ${identidad.generadoEn} | Build ID ${identidad.buildId}`,
-			`Proyecto ${opciones.proyecto ?? ''} | Hoja ${hoja.numero} / ${opciones.totalHojas ?? 1}`,
 			`Revision editorial ${opciones.datos?.revision ?? 'no declarada'} | Fecha editorial ${opciones.datos?.fecha ?? 'no declarada'}`,
 			`Alcance: esquema electrico; no certifica instalacion ni fabricacion.`,
 			`Rutas fisicas pendientes del proyecto: ${pendientes}. Sin trayecto, longitud ni material.`,
 		].map(textoSeguroEsquemaDxf);
 		// Grupo 999 es comentario estándar R12. No cambia una sola entidad eléctrica del dibujo.
-		comentarios = lineas.map((linea) => `999\n${linea.slice(0, 240)}\n`).join('');
+		comentarios += lineas.map((linea) => `999\n${linea.slice(0, 240)}\n`).join('');
 		const anotacion = (y: number, texto: string, alto = 2.2): void => {
 			e.push({ capa: 'TEXTO', trazo: { tipo: 'texto', x: 20, y,
 				texto: texto.slice(0, 180), alto } });
 		};
 		anotacion(5, lineas[0]);
 		anotacion(9.5, lineas[1]);
-		const pie = hoja.altoMm - 34 + 1;
-		anotacion(pie + 5, lineas[2]);
-		anotacion(pie + 9.2, lineas[3]);
-		anotacion(pie + 13.4, lineas[4]);
-		anotacion(pie + 17.6, lineas[5]);
+		anotacion(pie + 9.2, lineas[2]);
+		anotacion(pie + 13.4, lineas[3]);
+		anotacion(pie + 17.6, lineas[4]);
 	}
 	if (solapes.length) {
 		const ids = [...new Set(solapes.map((s) => `${s.primero.conductorId}/${s.segundo.conductorId} ${Math.round(s.longitudMm * 10) / 10} mm`))];
