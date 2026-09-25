@@ -39,13 +39,15 @@ import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.
 import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
-	diagnosticoCables, largoDibujadoMm, liberar, longitudesDibujadasMm, rutasDeCables, salidasDeCable,
+	adoptarRutasCalculadas, diagnosticoCables, firmaRuteo, largoDibujadoMm, liberar,
+	longitudesDibujadasMm, rutasDeCables, salidasDeCable,
 	construirUnCable, contadores, radioCodo, radioDeCable, reconciliarCablesDibujados,
 	reiniciarContadores, rutaProvisional,
 	RutaCable, rutasVigentes, rutaVigente,
 	vaciar, VOLTAJE_COLOR,
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
+import RuteoWorker from './ruteo-worker.ts?worker&inline';
 import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, RedCanaletas } from './canaletas-red.js';
 import { actualizarMazoPuerta, ajustesDeMazo, trazasDeMazo } from './mazo-puerta.js';
 import {
@@ -1526,7 +1528,75 @@ function encuadrar(): void {
 	encuadrePendiente = false;
 }
 
+let siguienteTrabajoRuteo = 0;
+let trabajoRuteo: { worker: Worker; token: number; documento: Proyecto; firma: string;
+	historial: number } | undefined;
+
+function detenerTrabajoRuteo(): void {
+	if (trabajoRuteo) void trabajoRuteo.worker.terminate();
+	trabajoRuteo = undefined;
+	document.body.classList.remove('ruteando');
+	$('ruteo-estado').hidden = true;
+}
+
+/** El documento ya cambió, pero la geometría se calcula sin bloquear el siguiente frame. */
+function programarReconstruccionDeCables(): void {
+	detenerTrabajoRuteo();
+	let worker: Worker;
+	try { worker = new RuteoWorker(); }
+	catch (error) {
+		avisar(`No se pudo iniciar el cálculo de recorridos en segundo plano: ${String(error)}`, 'error');
+		reconstruirCables();
+		return;
+	}
+	const documento = proyecto;
+	const firma = firmaRuteo(documento);
+	const token = ++siguienteTrabajoRuteo;
+	trabajoRuteo = { worker, token, documento, firma, historial: pila.length };
+	document.body.classList.add('ruteando');
+	$('ruteo-estado').hidden = false;
+	escenario.cables.visible = false; // las rutas viejas no deben parecer conectadas al aparato movido
+	worker.onmessage = (evento: MessageEvent<{ token: number; firma?: string;
+		rutas?: RutaCable[]; error?: string }>) => {
+		if (trabajoRuteo?.token !== token) return;
+		if (evento.data.token !== token || evento.data.error || !evento.data.rutas
+			|| evento.data.firma !== firma) {
+			detenerTrabajoRuteo();
+			avisar(`No se pudieron calcular los recorridos: ${evento.data.error ?? 'respuesta inválida'}`, 'error');
+			reconstruirCables();
+			construirHandles();
+			return;
+		}
+		if (proyecto !== documento || firmaRuteo(proyecto) !== firma) {
+			detenerTrabajoRuteo();
+			programarReconstruccionDeCables();
+			return;
+		}
+		detenerTrabajoRuteo();
+		if (!adoptarRutasCalculadas(proyecto, firma, evento.data.rutas)) {
+			avisar('El reparto devuelto no correspondía al tablero vigente; se recalcula.', 'info');
+		}
+		reconstruirCables();
+		construirHandles();
+	};
+	worker.onerror = (evento) => {
+		if (trabajoRuteo?.token !== token) return;
+		detenerTrabajoRuteo();
+		avisar(`Falló el cálculo de recorridos en segundo plano: ${evento.message}`, 'error');
+		reconstruirCables();
+		construirHandles();
+	};
+	try { worker.postMessage({ token, proyecto: documento }); } // postMessage toma su propia copia aislada
+	catch (error) {
+		detenerTrabajoRuteo();
+		avisar(`No se pudo enviar el tablero al cálculo de recorridos: ${String(error)}`, 'error');
+		reconstruirCables();
+		construirHandles();
+	}
+}
+
 function reconstruirCables(): void {
+	if (trabajoRuteo) detenerTrabajoRuteo();
 	// El reparto sigue siendo GLOBAL; solo se conservan las mallas cuyas rutas resueltas no
 	// cambiaron. Antes de reconciliar se restauran los materiales prestados al hover/selección:
 	// liberar una malla con un clon aún registrado dejaría una referencia a material destruido.
@@ -1550,6 +1620,19 @@ function reconstruirCables(): void {
 	if (sel?.tipo === 'cable') resaltarCable(sel.id);
 	atenuarCables(sel?.tipo === 'cable' ? sel.id : undefined);
 }
+
+($('ruteo-cancelar') as HTMLButtonElement).onclick = () => {
+	const pendiente = trabajoRuteo;
+	if (!pendiente) return;
+	if (proyecto !== pendiente.documento || firmaRuteo(proyecto) !== pendiente.firma
+		|| pila.length !== pendiente.historial) {
+		avisar('El tablero cambió durante el cálculo; usa Deshacer para revisar el último gesto.', 'info');
+		return;
+	}
+	detenerTrabajoRuteo();
+	deshacer();
+	avisar('Movimiento cancelado; se restauró el tablero anterior.', 'info');
+};
 
 function reconstruirCotas(): void {
 	vaciar(escenario.cotas);
@@ -6893,15 +6976,15 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		}
 		motivoInvalido = undefined;
 		/*
-		 * AQUÍ ES DONDE SE PAGA LO CARO, y solo aquí.
+		 * AQUÍ SE PROGRAMA LO CARO, y solo aquí.
 		 *
 		 * Durante el arrastre se ha ido dibujando una vista previa de ESTE cable y nada más. Al
-		 * soltar se hace el trabajo de verdad: el repartidor vuelve a buscar sitio para todos, con
+		 * soltar se programa el trabajo de verdad fuera del hilo de interacción: el repartidor
+		 * vuelve a buscar sitio para todos, con
 		 * su comprobación contra los demás conductores, contra los aparatos y contra las canaletas.
 		 * Una vez, no trescientas.
 		 */
-		reconstruirCables();
-		construirHandles();
+		programarReconstruccionDeCables();
 		pintarPaneles();
 		pintarSeleccion();
 		marcarSucio();
@@ -6955,7 +7038,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 	medirEtapa('drop 1 trazados invadidos', () => avisarSiSeMovioAlgunCable(contarTrazadosInvadidos()));
 
 	medirEtapa('drop 2 recalcular', () => recalcular());
-	medirEtapa('drop 3 reconstruir cables', () => reconstruirCables());
+	medirEtapa('drop 3 programar cables', () => programarReconstruccionDeCables());
 	medirEtapa('drop 6 bornes', () => reconstruirBornes()); // si se movió un aparato, sus bornes clicables van con él
 	medirEtapa('drop 7 cotas', () => reconstruirCotas());
 	medirEtapa('drop 8 handles', () => construirHandles());
@@ -6977,8 +7060,7 @@ function crearUnionBajoElPuntero(ev: MouseEvent): boolean {
 	if (!(sel?.tipo === 'cable' && sel.id === golpe.id)) aplicarSeleccion({ tipo: 'cable', id: c.id });
 	if (!capturar()) return false;
 	insertarWaypoint(c, golpe.punto, golpe.avance);
-	reconstruirCables();
-	construirHandles();
+	programarReconstruccionDeCables();
 	pintarPaneles();
 	pintarSeleccion();
 	marcarSucio();
@@ -6996,8 +7078,7 @@ renderer.domElement.addEventListener('dblclick', (ev) => {
 			if (!capturar()) return;
 			c.trazado.splice(handle.indice, 1);
 			if (c.trazado.length === 0) delete c.trazado;
-			reconstruirCables();
-			construirHandles();
+			programarReconstruccionDeCables();
 			pintarPaneles();
 			pintarSeleccion();
 			marcarSucio();

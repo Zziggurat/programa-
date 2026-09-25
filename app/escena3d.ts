@@ -1484,12 +1484,42 @@ function firmaDelRuteo(proyecto: Proyecto): string {
 	const ordenar = <T>(lista: T[] | undefined, clave: (elemento: T) => string): T[] | undefined =>
 		lista?.slice().sort((a, b) => clave(a).localeCompare(clave(b)));
 	return JSON.stringify([
-		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado, c.estadoRutaFisica]),
-		ordenar(g?.colocaciones, (c) => c.dispositivoId)?.map((c) => [c.dispositivoId, c.x, c.y, c.ancho, c.alto, c.z]),
+		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado, c.estadoRutaFisica, c.clase]),
+		// El anclaje depende de la disposición de bornes, pines de imagen y bloques reales.
+		// No incluir los bytes de la imagen: su presencia, no su contenido, cambia el ruteo.
+		proyecto.dispositivos.map((d) => [d.id, d.tipo, d.bornes.map((b) => [b.id, b.u, b.v]),
+			d.terminales, Boolean(d.imagen), Boolean(d.componentePersonalizado), d.profundidad]),
+		ordenar(g?.colocaciones, (c) => c.dispositivoId)?.map((c) => [c.dispositivoId, c.x, c.y,
+			c.ancho, c.alto, c.z, c.montaje]),
 		ordenar(g?.canaletas, (c) => c.id)?.map((c) => [c.id, c.x, c.y, c.largo, c.orientacion, c.ancho, c.alto]),
 		ordenar(g?.rieles, (r) => r.id ?? `${r.x}|${r.y}|${r.orientacion}`)?.map((r) => [r.id, r.x, r.y, r.largo, r.orientacion]),
-		[g?.ancho, g?.alto],
+		[g?.ancho, g?.alto, g?.caja?.ancho, g?.caja?.alto, g?.caja?.profundidad,
+			g?.caja?.bisagras, g?.mazoPuerta?.desdeBisagra],
+		g?.entradas?.map((e) => [e.id, e.cara, e.x]),
 	]);
+}
+
+/** Firma compartida entre el documento vigente y un cálculo ejecutado fuera del hilo UI. */
+export function firmaRuteo(proyecto: Proyecto): string {
+	return firmaDelRuteo(proyecto);
+}
+
+/** Acepta solo rutas calculadas para el mismo contenido; jamás para un documento que cambió. */
+export function adoptarRutasCalculadas(proyecto: Proyecto, firma: string, rutas: RutaCable[]): boolean {
+	if (firmaDelRuteo(proyecto) !== firma) return false;
+	const ids = new Set(proyecto.conductores.filter((c) => c.estadoRutaFisica !== 'pendiente').map((c) => c.id));
+	const vistos = new Set<string>();
+	for (const ruta of rutas) {
+		if (!ids.has(ruta.conductorId) || vistos.has(ruta.conductorId)
+			|| ruta.puntos.length < 2 || !Number.isFinite(ruta.radio) || ruta.radio <= 0
+			|| !Number.isFinite(ruta.z + ruta.de.x + ruta.de.y + ruta.de.z
+				+ ruta.a.x + ruta.a.y + ruta.a.z)
+			|| !ruta.nodos.every((p) => Number.isFinite(p.x + p.y))
+			|| !ruta.puntos.every((p) => Number.isFinite(p.x + p.y + p.z))) return false;
+		vistos.add(ruta.conductorId);
+	}
+	ultimoReparto = { firma, rutas };
+	return true;
 }
 
 export function rutasDeCables(proyecto: Proyecto): RutaCable[] {

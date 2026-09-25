@@ -86,6 +86,11 @@
 	body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; background: var(--fondo); color: var(--texto); font-size: 13px; }
 	body.persistencia-pendiente::after { content:"Abriendo biblioteca local…"; position:fixed; inset:0; z-index:30000; display:grid; place-items:center; background:#07111ed9; color:#e8f2fb; font:600 15px/1.4 system-ui,sans-serif; letter-spacing:.01em; }
 	#escena { position: fixed; inset: 46px 0 0 0; }
+	#ruteo-estado[hidden] { display: none; }
+	#ruteo-estado { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 16;
+		display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 150px); padding: 7px 10px;
+		background: #17232def; border: 1px solid #748694; border-radius: 9px; box-shadow: 0 5px 18px #0008; }
+	body.ruteando #escena canvas { pointer-events: none; }
 
 	/* ==========================================================================
 	 * EL RAIL DE HERRAMIENTAS
@@ -1520,6 +1525,10 @@
 </nav>
 
 <div id="escena"></div>
+<div id="ruteo-estado" role="status" aria-live="polite" hidden>
+	<span>Actualizando recorridos… puedes cancelar el movimiento.</span>
+	<button class="boton" id="ruteo-cancelar" type="button" title="Cancelar el cálculo y deshacer este movimiento">Cancelar movimiento</button>
+</div>
 
 <!--
 	LOS CONTROLES DE VISTA VIVEN SOBRE EL VISOR, que es lo que afectan. Estaban repartidos entre
