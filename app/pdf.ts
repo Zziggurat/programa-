@@ -179,8 +179,9 @@ function reordenarPaginas(doc: jsPDF, orden: number[]): void {
  * guarde: el documento que se ve es exactamente el que se descarga, porque es el mismo.
  */
 export function construirDossier(proyectoOriginal: Proyecto, procedencia?: ProcedenciaDocumento): jsPDF {
-	// La numeración del documento es una derivación de presentación: jamás altera los bytes del
-	// proyecto que confirmó el repositorio ni la instancia que sigue abierta en el editor.
+	// El documento conserva las designaciones PERSISTIDAS. Renumerar solo esta copia podía
+	// imprimir -K100 cuando el esquema/Proyecto aprobado mostraba -K1 (ESQ-08).
+	// La renumeración explícita tiene preview y Undo en el esquema; aquí solo recalculamos.
 	const proyecto = structuredClone(proyectoOriginal);
 	// Recalcular todo para que el PDF refleje el estado actual del tablero. Sale de UNA sola
 	// revisión y con las MISMAS longitudes de cable que usa la pantalla: cuando cada uno hacía su
@@ -188,7 +189,7 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 	// por el trazado dibujado —dos caídas de tensión distintas para el mismo tablero—, y el papel
 	// se saltaba la sincronización, así que no avisaba de aparatos sin colocar ni que se pisan.
 	const revision = revisarTablero(proyecto, {
-		renumerarAparatos: true, // el documento se entrega con la numeración al día
+		renumerarAparatos: false,
 		longitudesMm: longitudesDibujadasMm(proyecto),
 	});
 	const { potenciales, ruteo, hallazgos, referencias, ficha, termico } = revision;

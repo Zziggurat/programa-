@@ -47,8 +47,9 @@ export interface OpcionesRevision {
 	/**
 	 * Rehacer las designaciones de los aparatos (-K1, -Q2…). Por defecto FALSE, y a propósito:
 	 * mientras se dibuja, cada aparato recibe su número al colocarlo, y renumerar en cada
-	 * repintado le cambiaría el nombre a un aparato por haber borrado otro. Solo lo pide quien
-	 * exporta, para que el documento salga con la numeración al día.
+	 * repintado le cambiaría el nombre a un aparato por haber borrado otro. Los documentos
+	 * tampoco deben activar esta opción: las designaciones persistidas son su fuente de verdad.
+	 * La opción se conserva para callers legacy que piden explícitamente la numeración inicial.
 	 */
 	renumerarAparatos?: boolean;
 	/**

@@ -67,7 +67,9 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 	const fuente = structuredClone(proyecto);
 	const snapshotId = hashSnapshotTecnico(fuente);
 	const copia = structuredClone(fuente);
-	const revision = revisarTablero(copia, { renumerarAparatos: true,
+	// Una revisión emitida no inventa designaciones distintas de las guardadas. La persona puede
+	// renumerar con vista previa antes de emitir; si falta una etiqueta, se muestra el ID estable.
+	const revision = revisarTablero(copia, { renumerarAparatos: false,
 		longitudesMm: longitudesDibujadasMm(copia) });
 	const analisis = ejecutarIngenieria({ proyecto: copia,
 		contextoFisico: contextoEstaticoIngenieria(copia) });
