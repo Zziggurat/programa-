@@ -149,7 +149,31 @@ try {
 	await pagina.locator('#esq-svg').click();
 	const svg = await textoDescarga(await descargaSvg);
 	comprobar('SVG entregable A2 usa tamaño físico del folio', /viewBox="0 0 594 420"/.test(svg));
-	await pagina.locator('#esq-siguiente').click();
+	const pAntesCruce = await proyecto();
+	const filaSiguiente = Array.from({ length: 8 }, (_, i) => i + 1).find((fila) =>
+		!pAntesCruce.esquema.representaciones.some((r) => r.hojaId === h2
+			&& r.posicion.columna === 1 && r.posicion.fila === fila));
+	assert.ok(filaSiguiente, 'la primera columna A3 necesita una fila libre');
+	const vistaMovida = await pagina.locator(`#esquema-hoja .simbolo[data-representacion="${id}"]`).boundingBox();
+	const cajaA2 = await pagina.locator('#esquema-hoja svg').boundingBox();
+	assert.ok(vistaMovida && cajaA2);
+	await pagina.mouse.move(vistaMovida.x + vistaMovida.width / 2,
+		vistaMovida.y + vistaMovida.height / 2);
+	await pagina.mouse.down();
+	const puntoBorde = await puntoCasilla({ anchoMm: 594, altoMm: 420 }, columnas,
+		{ columna: 1, fila: filaSiguiente });
+	await pagina.mouse.move(cajaA2.x + 590 / 594 * cajaA2.width, puntoBorde.y, { steps: 2 });
+	comprobar('borde A2 propone A3 sin reescribir la red antes de soltar',
+		await pagina.locator('#esq-movimiento-aviso').getAttribute('data-estado') === 'valido'
+		&& /hoja 2/.test(await pagina.locator('#esq-movimiento-aviso').textContent())
+		&& vista(await proyecto(), id)?.hojaId === h1);
+	await pagina.mouse.up();
+	await pagina.waitForFunction(({ id, h2 }) => window.qa.proyecto().esquema.representaciones
+		.find((r) => r.id === id)?.hojaId === h2, { id, h2 });
+	comprobar('traslado A2→A3 conserva ID, fila y conectividad',
+		vista(await proyecto(), id)?.posicion.columna === 1
+		&& vista(await proyecto(), id)?.posicion.fila === filaSiguiente
+		&& firmaCircuito(await proyecto()) === firma);
 	comprobar('segunda hoja permanece A3 en el mismo documento',
 		await pagina.locator('#esquema-hoja svg').getAttribute('viewBox') === '0 0 420 297'
 		&& /A3/.test(await pagina.locator('#esq-formato-actual').textContent()));
@@ -163,8 +187,9 @@ try {
 	comprobar('reapertura conserva A2/A3 por ID y movimiento',
 		reabierto.hojas.find((h) => h.id === h1)?.formatoPapel === 'A2'
 		&& reabierto.hojas.find((h) => h.id === h2)?.formatoPapel === undefined
-		&& vista(reabierto, id)?.posicion.columna === destino.columna
-		&& vista(reabierto, id)?.posicion.fila === destino.fila
+		&& vista(reabierto, id)?.hojaId === h2
+		&& vista(reabierto, id)?.posicion.columna === 1
+		&& vista(reabierto, id)?.posicion.fila === filaSiguiente
 		&& firmaCircuito(reabierto) === firma);
 	comprobar('cero errores JavaScript', erroresJS.length === 0);
 	console.log(`ESQ-07 formato por folio: ${casos}/${casos}, 0 JS; ${((Date.now() - inicio) / 1000).toFixed(1)} s`);
