@@ -20,6 +20,8 @@ import {
 import { aplicarMovimientoRepresentacion, previsualizarMovimientoRepresentacion,
 	type PlanMovimientoRepresentacion, type PosicionMovimientoRepresentacion,
 } from '../src/motores/mover-representacion-esquema.js';
+import { aplicarAlineacionRepresentaciones, previsualizarAlineacionRepresentaciones,
+} from '../src/motores/alinear-representaciones-esquema.js';
 import {
 	planActivacionRepresentaciones, planDesdoblamientoRepresentacion,
 	planPartesDesdoblamiento, planReponerRepresentacion, type DestinosDesdoblamiento,
@@ -177,6 +179,69 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let conductorSeleccionado: string | undefined;
 	/** Identidad gráfica M2, distinta de la identidad eléctrica del aparato. */
 	let representacionSeleccionada: string | undefined;
+	/** Selección editorial transitoria: jamás se serializa ni duplica dispositivos o conductores. */
+	const grupoVistaIds = new Set<string>();
+	let grupoAnclaId: string | undefined;
+	let grupoDocumento: Proyecto | undefined;
+	let grupoHojaId: string | undefined;
+	function pintarGrupoRepresentaciones(): void {
+		const explicito = esquemaAbierto && proyecto().esquema?.representaciones !== undefined;
+		const info = $('esq-grupo-estado');
+		const total = grupoVistaIds.size;
+		info.hidden = !explicito;
+		info.textContent = total ? `${total} vista(s) · ancla ${grupoAnclaId ?? '—'}`
+			: 'Shift+clic o Shift+Enter: seleccionar vistas';
+		if (explicito && proyecto().esEjemplo) info.textContent += ' · ejemplo de solo lectura';
+		info.title = total ? `Grupo de ${total} vista(s) de esta hoja; ancla ${grupoAnclaId}` : '';
+		for (const id of ['esq-alinear-fila', 'esq-alinear-columna', 'esq-grupo-limpiar']) {
+			const boton = $(id) as HTMLButtonElement;
+			boton.hidden = !explicito;
+			boton.disabled = id === 'esq-grupo-limpiar' ? !total : total < 2 || !!proyecto().esEjemplo;
+		}
+		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('.simbolo[data-representacion]')) {
+			const id = g.dataset.representacion ?? '';
+			g.dataset.multiseleccion = String(grupoVistaIds.has(id));
+			g.dataset.grupoAncla = String(id === grupoAnclaId && grupoVistaIds.has(id));
+			g.setAttribute('aria-pressed', String(grupoVistaIds.has(id)));
+		}
+	}
+	function limpiarGrupoRepresentaciones(): void {
+		grupoVistaIds.clear();
+		grupoAnclaId = undefined;
+		grupoDocumento = undefined;
+		grupoHojaId = undefined;
+		pintarGrupoRepresentaciones();
+	}
+	function alternarVistaEnGrupo(id: string, desdeTeclado: boolean): void {
+		const documento = proyecto();
+		const hoja = hojasEsquema[hojaActual];
+		if (!hoja || documento.esquema?.representaciones === undefined
+			|| !hoja.simbolos.some((s) => s.representacionId === id)) return;
+		if (grupoDocumento !== documento || grupoHojaId !== hoja.id) {
+			grupoVistaIds.clear();
+			grupoAnclaId = undefined;
+		}
+		grupoDocumento = documento;
+		grupoHojaId = hoja.id;
+		if (!grupoVistaIds.has(id) && grupoVistaIds.size >= 64) {
+			avisar('Puedes seleccionar hasta 64 vistas en un mismo grupo.', 'info');
+			pintarGrupoRepresentaciones();
+			return;
+		}
+		if (grupoVistaIds.has(id)) grupoVistaIds.delete(id);
+		else grupoVistaIds.add(id);
+		grupoAnclaId = [...grupoVistaIds].at(-1);
+		if (!grupoVistaIds.size) { grupoDocumento = undefined; grupoHojaId = undefined; }
+		const habiaInspector = !!(origenConexion || conductorSeleccionado || representacionSeleccionada);
+		origenConexion = undefined;
+		conductorSeleccionado = undefined;
+		representacionSeleccionada = undefined;
+		if (habiaInspector) {
+			refrescarEsquema();
+			if (desdeTeclado) [...$('esquema-hoja').querySelectorAll<SVGGElement>('.simbolo[data-representacion]')]
+				.find((g) => g.dataset.representacion === id)?.focus();
+		} else pintarGrupoRepresentaciones();
+	}
 	/** El índice se calcula al abrirse; el arrastre normal no hace análisis semántico adicional. */
 	let referenciasAbiertas = false;
 	let arrastrandoVista = false;
@@ -894,6 +959,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 
 	async function elegirBorne(ref: RefBorne, representacionId: string, hojaId: string): Promise<void> {
 		const documento = proyecto();
+		limpiarGrupoRepresentaciones();
 		if (!anclaVigente(ref, representacionId, hojaId)) {
 			avisar('Ese borne ya no tiene una vista única. Actualiza el esquema antes de conectar.', 'info');
 			refrescarEsquema();
@@ -947,6 +1013,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	function refrescarEsquema(): void {
 		if (!esquemaAbierto) return;
 		if (proyecto().esquema?.representaciones === undefined) {
+			limpiarGrupoRepresentaciones();
 			$('esq-folios-panel').hidden = true;
 			$('esq-folios').hidden = true;
 		}
@@ -962,6 +1029,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			origenConexion = undefined;
 		}
 		if (hojasEsquema.length === 0) {
+			limpiarGrupoRepresentaciones();
 			hojaSeleccionadaId = undefined;
 			$('esq-folios').hidden = proyecto().esquema?.representaciones === undefined;
 			conductorSeleccionado = undefined;
@@ -980,6 +1048,11 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		hojaActual = indicePorId >= 0 ? indicePorId : Math.max(0, Math.min(hojaActual, hojasEsquema.length - 1));
 		const hoja = hojasEsquema[hojaActual];
 		hojaSeleccionadaId = hoja.id;
+		if (grupoVistaIds.size && (grupoDocumento !== proyecto() || grupoHojaId !== hoja.id
+			|| [...grupoVistaIds].some((id) => !hoja.simbolos.some((s) => s.representacionId === id)
+				|| !proyecto().esquema?.representaciones?.some((r) => r.id === id && r.hojaId === hoja.id)))) {
+			limpiarGrupoRepresentaciones();
+		}
 		if (!hoja.hilos.some((h) => h.conductorId === conductorSeleccionado)
 			&& !hoja.referencias.some((r) => r.tipo === 'enlace' && r.conductorId === conductorSeleccionado)) {
 			conductorSeleccionado = undefined;
@@ -1011,12 +1084,14 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		pintarConductorSeleccionado();
 		aplicarZoomEsquema();
 		pintarEstadoEsquema();
+		pintarGrupoRepresentaciones();
 		pintarPanelFolios();
 
 		for (const g of $('esquema-hoja').querySelectorAll<SVGGElement>('.hilo[data-conductor], .referencia-conductor[data-conductor]')) {
 			const seleccionarConductor = (): void => {
 				const id = g.getAttribute('data-conductor');
 				if (!id || !proyecto().conductores.some((c) => c.id === id)) return;
+				limpiarGrupoRepresentaciones();
 				origenConexion = undefined;
 				conductorSeleccionado = id;
 				representacionSeleccionada = undefined;
@@ -1058,6 +1133,9 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				const id = g.getAttribute('data-representacion');
 				if (!id || !proyecto().esquema?.representaciones?.some((r) => r.id === id)) return;
 				ev.preventDefault();
+				ev.stopPropagation();
+				if (ev.shiftKey && ev.key === 'Enter') { alternarVistaEnGrupo(id, true); return; }
+				limpiarGrupoRepresentaciones();
 				origenConexion = undefined;
 				representacionSeleccionada = id;
 				conductorSeleccionado = undefined;
@@ -1263,6 +1341,16 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	 * esquema que se entrega tiene los aparatos alineados, no puestos a ojo.
 	 */
 	function empezarArrastreEsquema(ev: PointerEvent, g: SVGGElement): void {
+		if (ev.button === 0 && ev.shiftKey && proyecto().esquema?.representaciones !== undefined) {
+			const id = g.getAttribute('data-representacion');
+			if (id) {
+				ev.preventDefault();
+				ev.stopPropagation();
+				alternarVistaEnGrupo(id, false);
+			}
+			return;
+		}
+		if (ev.button === 0) limpiarGrupoRepresentaciones();
 		if (proyecto().esquema?.representaciones !== undefined) {
 			empezarArrastreRepresentacion(ev, g);
 			return;
@@ -1374,6 +1462,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		esquemaAbierto = abrir;
 		if (!abrir) {
 			cancelarArrastreM2?.();
+			limpiarGrupoRepresentaciones();
 			$('esq-folios-panel').hidden = true;
 			if (refrescoEstadoPendiente) window.cancelAnimationFrame(refrescoEstadoPendiente);
 			refrescoEstadoPendiente = 0;
@@ -1396,6 +1485,48 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 
 	/* ------------------------ Botones de la vista de esquema ------------------------ */
 
+	async function alinearGrupo(eje: 'fila' | 'columna'): Promise<void> {
+		if (!esquemaAbierto || !ctx.puedeEditar()) return;
+		const documento = proyecto();
+		const ids = [...grupoVistaIds];
+		const anclaId = grupoAnclaId;
+		const hojaId = hojasEsquema[hojaActual]?.id;
+		if (ids.length < 2 || !anclaId || !hojaId || grupoDocumento !== documento || grupoHojaId !== hojaId) {
+			avisar('Selecciona al menos dos vistas de la misma hoja con Shift+clic o Shift+Enter.', 'info');
+			return;
+		}
+		const plan = previsualizarAlineacionRepresentaciones(documento, ids, anclaId, eje);
+		if (!plan.ok) { avisar(plan.motivo, 'info'); return; }
+		if (plan.noOp) { avisar('Las vistas ya están alineadas; no se creó una entrada de deshacer.', 'info'); return; }
+		const firmaInicial = JSON.stringify(documento);
+		const cambios = plan.cambios.filter((c) => c.antes.columna !== c.despues.columna
+			|| c.antes.fila !== c.despues.fila || c.antes.hojaId !== c.despues.hojaId);
+		const resumen = [
+			`Alinear ${ids.length} vistas por ${eje} en la hoja ${hojaId}, usando ${anclaId} como ancla.`,
+			...cambios.map((c) => `${c.vistaId}: ${c.antes.columna}.${c.antes.fila} → ${c.despues.columna}.${c.despues.fila}`),
+			'Las identidades eléctricas, bornes y conductores no cambian. Cancelar no modifica el proyecto; aplicar crea un solo paso de Undo.',
+		].join('\n');
+		if (!(await confirmar(resumen, { ok: `Alinear ${eje}` }))) return;
+		if (!esquemaAbierto || proyecto() !== documento || JSON.stringify(documento) !== firmaInicial
+			|| hojasEsquema[hojaActual]?.id !== hojaId || grupoDocumento !== documento || grupoHojaId !== hojaId
+			|| grupoAnclaId !== anclaId || JSON.stringify([...grupoVistaIds]) !== JSON.stringify(ids)
+			|| !ctx.puedeEditar()) {
+			avisar('El proyecto o la selección cambiaron durante la confirmación. Previsualiza de nuevo.', 'info');
+			return;
+		}
+		if (!capturar()) return;
+		try { aplicarAlineacionRepresentaciones(documento, plan); }
+		catch (error) {
+			ctx.descartarCapturaSiIgual();
+			avisar(error instanceof Error ? error.message : 'La alineación no se aplicó.', 'error');
+			return;
+		}
+		marcarSucio();
+		actualizarTodo();
+		refrescarEsquema();
+		avisar(`${cambios.length} vista(s) alineadas por ${eje}; Ctrl+Z permite deshacer.`, 'ok');
+	}
+
 	($('btn-esquema') as HTMLButtonElement).onclick = () => abrirEsquema(!esquemaAbierto);
 	($('esq-cerrar') as HTMLButtonElement).onclick = () => abrirEsquema(false);
 	($('esq-anterior') as HTMLButtonElement).onclick = () => pasarHoja(-1);
@@ -1403,6 +1534,9 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	($('esq-acercar') as HTMLButtonElement).onclick = () => { zoomEsquema = Math.min(6, zoomEsquema * 1.3); aplicarZoomEsquema(); };
 	($('esq-alejar') as HTMLButtonElement).onclick = () => { zoomEsquema = Math.max(0.4, zoomEsquema / 1.3); aplicarZoomEsquema(); };
 	($('esq-ajustar') as HTMLButtonElement).onclick = () => { zoomEsquema = 1; aplicarZoomEsquema(); };
+	($('esq-alinear-fila') as HTMLButtonElement).onclick = () => { void alinearGrupo('fila'); };
+	($('esq-alinear-columna') as HTMLButtonElement).onclick = () => { void alinearGrupo('columna'); };
+	($('esq-grupo-limpiar') as HTMLButtonElement).onclick = limpiarGrupoRepresentaciones;
 	($('esq-renumerar') as HTMLButtonElement).onclick = async () => {
 		if (!ctx.puedeEditar()) return;
 		const documento = proyecto();
@@ -1453,6 +1587,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	}
 
 	function pasarHoja(delta: number): void {
+		limpiarGrupoRepresentaciones();
 		hojaActual += delta;
 		hojaSeleccionadaId = hojasEsquema[hojaActual]?.id;
 		conductorSeleccionado = undefined;

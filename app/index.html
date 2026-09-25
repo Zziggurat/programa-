@@ -1325,6 +1325,10 @@
 	#esq-folios-panel input[type="text"] { width: min(35vw, 280px); }
 	#esq-folios-panel input[type="number"] { width: 78px; }
 	#esq-folios-borrar-motivo { color: var(--texto-suave); }
+	#esq-grupo-estado { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+		font-size: 11.5px; color: var(--texto-suave); }
+	#esquema-hoja .simbolo[data-multiseleccion="true"] { filter: drop-shadow(0 0 1.8px #1687d9); }
+	#esquema-hoja .simbolo[data-grupo-ancla="true"] { filter: drop-shadow(0 0 2.6px #e7a223); }
 	#esq-movimiento-aviso { position: absolute; bottom: 36px; left: 50%; transform: translateX(-50%);
 		z-index: 2; max-width: calc(100% - 24px); padding: 6px 12px; pointer-events: none;
 		font-size: 12px; line-height: 1.35; border-radius: 6px; box-shadow: 0 4px 16px #0008;
@@ -1563,6 +1567,10 @@
 		</label>
 		<button class="boton" id="esq-titulo-editar" title="Poner un título propio a esta hoja">✎ Título</button>
 		<button class="boton" id="esq-folios" title="Gestionar las hojas explícitas del esquema" hidden>Folios…</button>
+		<span id="esq-grupo-estado" role="status" aria-live="polite" hidden>Sin grupo</span>
+		<button class="boton" id="esq-alinear-fila" type="button" title="Alinear las vistas seleccionadas con la fila de la última vista añadida" hidden disabled>Alinear fila…</button>
+		<button class="boton" id="esq-alinear-columna" type="button" title="Alinear las vistas seleccionadas con la columna de la última vista añadida" hidden disabled>Alinear columna…</button>
+		<button class="boton" id="esq-grupo-limpiar" type="button" title="Vaciar la selección múltiple de vistas" hidden disabled>Limpiar grupo</button>
 		<button class="boton" id="esq-renumerar" title="Previsualizar y aplicar designaciones sin cambiar IDs ni hojas">Renumerar…</button>
 		<button class="boton" id="esq-auto" title="Deshacer las colocaciones a mano y volver a ordenar el esquema solo">⟲ Ordenar solo</button>
 		<div class="sep"></div>
