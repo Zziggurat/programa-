@@ -4,7 +4,8 @@
  * Modela las canaletas del gabinete como un grafo (extremos + intersecciones + puntos
  * de entrada) y rutea cada conductor con Dijkstra:
  *   aparato → bajada a la canaleta más cercana → recorrido por canaletas → subida al destino.
- * Devuelve longitudes reales (con reserva configurable) y la ocupación de cada canaleta.
+ * Devuelve longitudes estimadas 2D (con reserva configurable) y la ocupación de cada canaleta.
+ * No mide la geometría 3D de fabricación ni certifica una longitud de corte.
  *
  * QElectroTech no tiene nada de esto: su Conductor::length() son píxeles de esquema.
  */
@@ -16,8 +17,16 @@ export interface Punto { x: number; y: number }
 
 export interface RutaConductor {
 	conductorId: string;
-	/** Longitud total en mm, incluida la reserva y las puntas. */
+	/** Total legacy estimado en mm, incluida la reserva y las puntas; no es un corte verificado. */
 	longitudMm: number;
+	/** Recorrido ortogonal del modelo de canaletas, antes de reserva y puntas (mm). Estimado, no metraje verificado. */
+	longitudRutaMm?: number;
+	/** Reserva porcentual aplicada al recorrido (mm), antes del redondeo final. */
+	reservaMm?: number;
+	/** Dos puntas, una por conexión (mm), antes del redondeo final. */
+	puntasMm?: number;
+	/** Diferencia entre los sumandos y `longitudMm` por el redondeo hacia arriba (mm). */
+	redondeoMm?: number;
 	/** Polilínea completa: aparato origen → canaletas → aparato destino. */
 	camino: Punto[];
 	canaletasUsadas: string[];
@@ -240,9 +249,16 @@ export function rutearConductores(proyecto: Proyecto): ResultadoRuteo {
 		}
 		const base = e1.bajada + resultado.longitud + e2.bajada;
 		const longitudMm = Math.ceil(base * (1 + opciones.reservaCable) + 2 * opciones.extraPorConexionMm);
+		const reservaMm = base * opciones.reservaCable;
+		const puntasMm = 2 * opciones.extraPorConexionMm;
 		rutas.push({
 			conductorId: conductor.id,
 			longitudMm,
+			longitudRutaMm: base,
+			reservaMm,
+			puntasMm,
+			// La fórmula legacy y la suma de sus partes pueden diferir un epsilon por flotantes.
+			redondeoMm: Math.max(0, longitudMm - (base + reservaMm + puntasMm)),
 			camino: [e1.centro, ...resultado.camino.map((n) => nodos[n].p), e2.centro],
 			canaletasUsadas: resultado.canaletas,
 		});
