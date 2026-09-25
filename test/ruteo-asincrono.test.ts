@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { crearProyecto } from '../src/modelo/proyecto.js';
+import { EJEMPLOS } from '../ejemplo/biblioteca.js';
+import { proyectoParaRuteo } from '../app/proyecto-ruteo.js';
 import { adoptarRutasCalculadas, firmaRuteo, invalidarCacheRuteo, rutasDeCables,
 	rutasVigentes } from '../app/escena3d.js';
 
@@ -55,5 +57,45 @@ test('M0/R1: mover un pin de imagen invalida una respuesta asíncrona anterior',
 	assert.notEqual(firmaRuteo(p), firma);
 	assert.equal(adoptarRutasCalculadas(p, firma, rutas), false);
 	assert.notDeepEqual(rutasDeCables(p), rutas);
+	invalidarCacheRuteo();
+});
+
+test('M0/R1: el mensaje mínimo reproduce rutas principales y la puerta', () => {
+	const puerta = EJEMPLOS.find((e) => e.id === 'fixture-puerta');
+	assert.ok(puerta);
+	for (const ejemplo of [...EJEMPLOS.slice(0, 5), puerta]) {
+		const proyecto = ejemplo.crear();
+		const mensaje = structuredClone(proyectoParaRuteo(proyecto));
+		assert.equal(firmaRuteo(mensaje), firmaRuteo(proyecto), ejemplo.titulo);
+		invalidarCacheRuteo();
+		const rutasOriginales = structuredClone(rutasDeCables(proyecto));
+		invalidarCacheRuteo();
+		assert.deepEqual(rutasDeCables(mensaje), rutasOriginales, ejemplo.titulo);
+	}
+	invalidarCacheRuteo();
+});
+
+test('M0/R1: una fotografía grande no se copia al Worker ni altera el pin personalizado', () => {
+	const p = crearProyecto('Fotografía local');
+	p.gabinete = { ancho: 400, alto: 400, rieles: [], canaletas: [], colocaciones: [
+		{ dispositivoId: 'img', x: 30, y: 40, ancho: 80, alto: 60 },
+		{ dispositivoId: 'x1', x: 190, y: 40, ancho: 35, alto: 30 },
+	] };
+	p.dispositivos = [
+		{ id: 'img', tipo: 'bornero', imagen: `data:image/png;base64,${'A'.repeat(4_000_000)}`,
+			componentePersonalizado: { definicionId: 'plantilla-1', revision: 2 }, profundidad: 19,
+			bornes: [{ id: 'A', u: 0.8, v: 0.2 }] },
+		{ id: 'x1', tipo: 'bornero', bornes: [{ id: '1' }] },
+	];
+	p.conductores = [{ id: 'c1', de: { dispositivoId: 'img', borneId: 'A' },
+		a: { dispositivoId: 'x1', borneId: '1' } }];
+	const mensaje = proyectoParaRuteo(p);
+	assert.ok(JSON.stringify(mensaje).length < JSON.stringify(p).length / 100);
+	assert.equal(firmaRuteo(mensaje), firmaRuteo(p));
+	invalidarCacheRuteo();
+	const ruta = structuredClone(rutasDeCables(p));
+	invalidarCacheRuteo();
+	assert.deepEqual(rutasDeCables(structuredClone(mensaje)), ruta);
+	assert.equal(p.dispositivos[0].imagen?.length, 4_000_022, 'el documento de usuario no se modifica');
 	invalidarCacheRuteo();
 });

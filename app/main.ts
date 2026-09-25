@@ -48,6 +48,7 @@ import {
 	yEntradasCampo, Z_FRENTE, Z_IMAGEN_FONDO, Z_IMAGEN_FRENTE,
 } from './escena3d.js';
 import RuteoWorker from './ruteo-worker.ts?worker&inline';
+import { proyectoParaRuteo } from './proyecto-ruteo.js';
 import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, RedCanaletas } from './canaletas-red.js';
 import { actualizarMazoPuerta, ajustesDeMazo, trazasDeMazo } from './mazo-puerta.js';
 import {
@@ -1586,7 +1587,7 @@ function programarReconstruccionDeCables(): void {
 		reconstruirCables();
 		construirHandles();
 	};
-	try { worker.postMessage({ token, proyecto: documento }); } // postMessage toma su propia copia aislada
+	try { worker.postMessage({ token, proyecto: proyectoParaRuteo(documento) }); } // postMessage toma su propia copia aislada
 	catch (error) {
 		detenerTrabajoRuteo();
 		avisar(`No se pudo enviar el tablero al cálculo de recorridos: ${String(error)}`, 'error');
