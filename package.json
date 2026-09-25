@@ -37,6 +37,7 @@
 	"qa:esquema-folios-m2": "vite build app --mode qa && node qa/esquema-folios-m2.mjs",
 	"qa:esquema-mover-vistas-m2": "vite build app --mode qa && node qa/esquema-mover-vistas-m2.mjs",
 	"qa:esquema-copiar-vista-m2": "vite build app --mode qa && node qa/esquema-copiar-vista-m2.mjs",
+	"qa:esquema-copiar-grupo-m2": "vite build app --mode qa && node qa/esquema-copiar-grupo-m2.mjs",
 	"qa:ruteo-r1": "vite build app --mode qa && node qa/benchmark-r1.mjs --focal",
 	"qa:esquema-procedencia-m2": "vite build app --mode qa && node qa/esquema-procedencia-m2.mjs",
 	"qa:procedencia-documental-m3": "vite build app --mode qa && node qa/procedencia-documental-m3.mjs",
