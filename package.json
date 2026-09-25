@@ -40,6 +40,7 @@
 	"qa:esquema-copiar-grupo-m2": "vite build app --mode qa && node qa/esquema-copiar-grupo-m2.mjs",
 	"qa:ruteo-r1": "vite build app --mode qa && node qa/benchmark-r1.mjs --focal",
 	"qa:esquema-procedencia-m2": "vite build app --mode qa && node qa/esquema-procedencia-m2.mjs",
+	"qa:simbolo-personal-m2": "vite build app --mode qa && node qa/simbolo-personal-m2.mjs",
 	"qa:procedencia-documental-m3": "vite build app --mode qa && node qa/procedencia-documental-m3.mjs",
     "qa:simulacion": "vite build app --mode qa && node qa/todas.mjs simulacion-industrial",
 	"qa:bomba-fallo-m4": "vite build app --mode qa && node qa/bomba-fallo-m4.mjs",
