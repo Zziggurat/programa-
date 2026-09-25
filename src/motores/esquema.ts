@@ -81,11 +81,25 @@ export interface HojaEsq {
 }
 
 export interface ProblemaEsq {
-	codigo: 'posicion-fuera-de-hoja' | 'representacion-invalida' | 'conexion-sin-ancla';
+	codigo: 'posicion-fuera-de-hoja' | 'representacion-invalida' | 'conexion-sin-ancla'
+		| 'aparato-sin-representacion';
 	mensaje: string;
 	dispositivoId?: string;
 	representacionId?: string;
 	conductorId?: string;
+}
+
+/** Advertencia compacta para un plano entregable: el dibujo nunca afirma estar completo si
+ * el montaje conoce aparatos, vistas o conductores pendientes. Los detalles quedan en el inspector. */
+export function resumenPendientesEsquema(hoja: Pick<HojaEsq, 'problemas'>): string | undefined {
+	const problemas = hoja.problemas ?? [];
+	if (!problemas.length) return undefined;
+	const ids = [...new Set(problemas.map((p) => p.dispositivoId ?? p.conductorId ?? p.representacionId)
+		.filter((id): id is string => !!id))].sort((a, b) => a.localeCompare(b));
+	// El aviso cabe en la banda A3 incluso con IDs hostiles/largos; el inspector conserva el ID íntegro.
+	const visibles = ids.slice(0, 4).map((id) => id.length > 24 ? `${id.slice(0, 21)}...` : id).join(', ');
+	return `PENDIENTES DE ESQUEMA ${problemas.length}: ${visibles || 'ver inspector'}`
+		+ (ids.length > 4 ? ` (+${ids.length - 4} entidades)` : '');
 }
 
 /** Un texto suelto ya colocado en la hoja. */
@@ -766,6 +780,15 @@ function montarRepresentaciones(
 		const anteriores = simbolosDeAparato.get(d.id) ?? [];
 		anteriores.push({ simbolo, hoja });
 		simbolosDeAparato.set(d.id, anteriores);
+	}
+	// Una lista explícita de vistas vacía o parcial NO borra aparatos del circuito. Si no se
+	// señalan aquí, el plano aparenta estar terminado mientras oculta equipo real del proyecto.
+	for (const d of [...proyecto.dispositivos].sort((a, b) => a.id.localeCompare(b.id))) {
+		if (esReferenciaVisualInerte(d) || simbolosDeAparato.has(d.id)) continue;
+		const hoja = hojaPorId.get(d.hojaId ?? '') ?? hojas[0];
+		hoja?.problemas?.push({ codigo: 'aparato-sin-representacion', dispositivoId: d.id,
+			mensaje: `El aparato ${d.designacion ?? d.id} [${d.id}] no tiene ninguna vista válida en el esquema; falta representarlo.`,
+		});
 	}
 
 	for (const c of proyecto.conductores) {

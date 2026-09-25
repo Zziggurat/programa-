@@ -9,7 +9,7 @@ import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { todasLasTiras } from '../src/motores/etiquetas.js';
 import { EntidadDXF, generarDXF, rectangulo, sinAcentos } from '../src/motores/dxf.js';
-import { HojaEsq } from '../src/motores/esquema.js';
+import { HojaEsq, resumenPendientesEsquema } from '../src/motores/esquema.js';
 import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
 	tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 
@@ -236,6 +236,13 @@ export function dxfDeEsquema(hoja: HojaEsq, opciones: OpcionesDxfEsquema = {}): 
 		const texto = textoSeguroEsquemaDxf(`SOLAPE SIN RESOLVER: ${solapes.length} tramo(s) (${ids.join(', ')}). Reubicar hilos; no asumir union.`);
 		e.push({ capa: 'TEXTO', trazo: { tipo: 'texto', x: 20, y: hoja.altoMm - 34 + 22.2,
 			texto: texto.slice(0, 180), alto: 2.2 } });
+		comentarios += `999\n${texto.slice(0, 240)}\n`;
+	}
+	const pendientesEsquema = resumenPendientesEsquema(hoja);
+	if (pendientesEsquema) {
+		const texto = textoSeguroEsquemaDxf(pendientesEsquema);
+		e.push({ capa: 'TEXTO', trazo: { tipo: 'texto', x: 20,
+			y: hoja.altoMm - 34 + 26.4, texto: texto.slice(0, 180), alto: 2.2 } });
 		comentarios += `999\n${texto.slice(0, 240)}\n`;
 	}
 	e.push(...rectangulo('COTAS', 0, 0, hoja.anchoMm, hoja.altoMm));

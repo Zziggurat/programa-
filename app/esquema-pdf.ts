@@ -6,7 +6,7 @@
  * se puede ampliar sin pixelarse y el texto se busca y se copia, como en un plano de verdad.
  */
 import { jsPDF } from 'jspdf';
-import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
+import { anchoEtiquetaMm, HojaEsq, MARGEN, resumenPendientesEsquema, Trazo } from '../src/motores/esquema.js';
 import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
 	tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
@@ -211,7 +211,14 @@ export function esquemaComoBlob(
 			doc.setFont('helvetica', 'bold');
 			doc.setTextColor(155, 75, 0);
 			textoDeUnaLinea(doc, resumen, MARGEN.izq,
-				hoja.altoMm - MARGEN.abajo + 19, hoja.anchoMm - MARGEN.izq - MARGEN.der - 185, 6);
+				hoja.altoMm - MARGEN.abajo + 17.5, hoja.anchoMm - MARGEN.izq - MARGEN.der - 185, 6);
+		}
+		const pendientes = resumenPendientesEsquema(hoja);
+		if (pendientes) {
+			doc.setFont('helvetica', 'bold');
+			doc.setTextColor(155, 75, 0);
+			textoDeUnaLinea(doc, pendientes, MARGEN.izq,
+				hoja.altoMm - MARGEN.abajo + 21.3, hoja.anchoMm - MARGEN.izq - MARGEN.der - 185, 6);
 		}
 	});
 

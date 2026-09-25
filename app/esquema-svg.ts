@@ -5,7 +5,7 @@
  * Se usa SVG y no Canvas a propósito: el esquema se lee con lupa, se imprime en A3 y se
  * exporta a PDF, y el SVG es nítido a cualquier tamaño y se puede volcar a papel tal cual.
  */
-import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
+import { anchoEtiquetaMm, HojaEsq, MARGEN, resumenPendientesEsquema, Trazo } from '../src/motores/esquema.js';
 import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
 	tramosSeleccionablesDeHilo, tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
@@ -399,8 +399,16 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 		const resumen = `SOLAPE SIN RESOLVER: ${solapes.length} tramo(s) (${unico.join(', ')}). Reubicar hilos; no asumir unión.`;
 		const ancho = hoja.anchoMm - MARGEN.izq - MARGEN.der - 185;
 		const valor = enCaja(resumen, 2.2, ancho);
-		partes.push(`<text class="aviso-solape" x="${n(MARGEN.izq)}" y="${n(hoja.altoMm - MARGEN.abajo + 19)}" `
+		partes.push(`<text class="aviso-solape" x="${n(MARGEN.izq)}" y="${n(hoja.altoMm - MARGEN.abajo + 17.5)}" `
 			+ `font-size="2.2" fill="#9a4b00" font-family="system-ui, sans-serif"${valor.attr}>${esc(valor.texto)}</text>`);
+	}
+	const pendientes = resumenPendientesEsquema(hoja);
+	if (pendientes) {
+		const ancho = hoja.anchoMm - MARGEN.izq - MARGEN.der - 185;
+		const valor = enCaja(pendientes, 2.2, ancho);
+		partes.push(`<text class="aviso-pendientes-esquema" x="${n(MARGEN.izq)}" `
+			+ `y="${n(hoja.altoMm - MARGEN.abajo + 21.3)}" font-size="2.2" `
+			+ `fill="#9a4b00" font-family="system-ui, sans-serif"${valor.attr}>${esc(valor.texto)}</text>`);
 	}
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${hoja.anchoMm} ${hoja.altoMm}" `
 		+ `width="100%" height="100%" preserveAspectRatio="xMidYMid meet">${partes.join('')}</svg>`;
