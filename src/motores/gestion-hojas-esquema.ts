@@ -17,7 +17,9 @@ export type SolicitudGestionHojaEsquema =
 		readonly clase?: ClaseHojaEsquema; readonly columnas?: number }
 	| { readonly tipo: 'editar'; readonly id: string; readonly titulo?: string;
 		/** `null` quita la clasificación; ausente conserva el valor anterior. */
-		readonly clase?: ClaseHojaEsquema | null; readonly columnas?: number }
+		readonly clase?: ClaseHojaEsquema | null;
+		/** `null` restaura la herencia global; ausente conserva el valor anterior. */
+		readonly columnas?: number | null }
 	| { readonly tipo: 'mover'; readonly id: string; readonly direccion: 'subir' | 'bajar' }
 	| { readonly tipo: 'eliminar'; readonly id: string };
 
@@ -69,6 +71,10 @@ function validarBase(proyecto: Proyecto): void {
 	if (proyecto.esEjemplo) throw new Error('Un ejemplo es de solo lectura; crea una copia antes de gestionar hojas.');
 	const vistas = proyecto.esquema?.representaciones;
 	if (!Array.isArray(vistas)) throw new Error('Activa primero las vistas M2; las hojas legacy son generadas y no tienen IDs estables.');
+	if (proyecto.esquema?.columnasPorHoja !== undefined
+		&& !columnasValidas(proyecto.esquema.columnasPorHoja)) {
+		throw new Error('Las columnas globales del esquema son inválidas; revisa el documento antes de editar folios.');
+	}
 	const ids = new Set<string>();
 	const numeros = new Set<number>();
 	for (const h of proyecto.hojas) {
@@ -147,13 +153,16 @@ export function previsualizarGestionHojaEsquema(
 				else h.clase = clase;
 			}
 			if (solicitud.columnas !== undefined) {
-				const columnas = columnasNuevas(solicitud.columnas);
-				const actuales = h.columnas ?? proyecto.esquema?.columnasPorHoja ?? 10;
-				if (columnas < actuales) {
-					const fuera = vistas.filter((r) => r.hojaId === h.id && r.posicion.columna > columnas);
-					if (fuera.length) throw new Error(`Reducir a ${columnas} columnas dejaría fuera las vistas ${fuera.map((r) => r.id).sort(ordenar).join(', ')}.`);
+				const columnas = solicitud.columnas === null
+					? proyecto.esquema?.columnasPorHoja ?? 10
+					: columnasNuevas(solicitud.columnas);
+				const fuera = vistas.filter((r) => r.hojaId === h.id && r.posicion.columna > columnas);
+				if (fuera.length) {
+					const accion = solicitud.columnas === null ? 'Restaurar la herencia de' : 'Reducir a';
+					throw new Error(`${accion} ${columnas} columnas dejaría fuera las vistas ${fuera.map((r) => r.id).sort(ordenar).join(', ')}.`);
 				}
-				h.columnas = columnas;
+				if (solicitud.columnas === null) delete h.columnas;
+				else h.columnas = columnas;
 			}
 			break;
 		}

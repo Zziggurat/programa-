@@ -85,6 +85,45 @@ test('editar título, clase y columnas no desplaza vistas; reducción incompatib
 	assert.equal(p.hojas.find((h) => h.id === 'bornes')?.columnas, 10);
 });
 
+test('columnas null restaura herencia sin confundir valor efectivo con override persistido', () => {
+	const p = proyectoM2();
+	p.esquema!.columnasPorHoja = 10;
+	const fijar = previsualizarGestionHojaEsquema(p, { tipo: 'editar', id: 'bornes', columnas: 10 });
+	aplicarGestionHojaEsquema(p, fijar);
+	assert.equal(previsualizarGestionHojaEsquema(p,
+		{ tipo: 'editar', id: 'bornes', columnas: undefined }).cambios, 0,
+		'undefined no toca las columnas explícitas');
+	const antes = JSON.stringify(p);
+	const restaurar = previsualizarGestionHojaEsquema(p, { tipo: 'editar', id: 'bornes', columnas: null });
+	assert.equal(JSON.stringify(p), antes, 'la previsualización no borra el override');
+	assert.equal(restaurar.cambios, 1, 'eliminar el override cambia el documento aunque el valor visible coincida');
+	assert.equal(restaurar.hojasAntes.find((h) => h.id === 'bornes')?.columnasDeclaradas, 10);
+	assert.equal(restaurar.hojasDespues.find((h) => h.id === 'bornes')?.columnasDeclaradas, undefined);
+	assert.equal(restaurar.hojasDespues.find((h) => h.id === 'bornes')?.columnas, 10);
+	aplicarGestionHojaEsquema(p, restaurar);
+	assert.equal(Object.hasOwn(p.hojas.find((h) => h.id === 'bornes')!, 'columnas'), false);
+	p.esquema!.columnasPorHoja = 12;
+	const reabierto = cargarProyecto(JSON.stringify(p)).proyecto;
+	const preview = previsualizarGestionHojaEsquema(reabierto,
+		{ tipo: 'editar', id: 'bornes', columnas: undefined });
+	assert.equal(preview.hojasAntes.find((h) => h.id === 'bornes')?.columnas, 12,
+		'el folio sin override sigue el valor global tras guardar y cargar');
+});
+
+test('restaurar herencia bloquea una vista fuera del nuevo ancho y no muta el proyecto', () => {
+	const p = proyectoM2();
+	p.esquema!.columnasPorHoja = 6;
+	const antes = JSON.stringify(p);
+	assert.throws(() => previsualizarGestionHojaEsquema(p,
+		{ tipo: 'editar', id: 'potencia', columnas: null }), /herencia de 6 columnas.*x1-vista/);
+	assert.equal(JSON.stringify(p), antes);
+	const valido = previsualizarGestionHojaEsquema(p, { tipo: 'editar', id: 'mando', columnas: null });
+	assert.equal(valido.hojasDespues.find((h) => h.id === 'mando')?.columnas, 6);
+	aplicarGestionHojaEsquema(p, valido);
+	assert.equal(Object.hasOwn(p.hojas.find((h) => h.id === 'mando')!, 'columnas'), false);
+	assert.equal(p.esquema?.representaciones?.find((r) => r.id === 'x2-vista')?.posicion.columna, 3);
+});
+
 test('mover reordena por número estable con independencia del array y actualiza referencias entre hojas', () => {
 	const p = proyectoM2();
 	const inverso = structuredClone(p);
