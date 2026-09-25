@@ -9,9 +9,10 @@ import { tableroEjemplo } from '../ejemplo/tablero-ejemplo.js';
 import { calcularPotenciales } from '../src/motores/potenciales.js';
 import { numerarConductores, numerarDispositivos } from '../src/motores/numeracion.js';
 import { verificarProyecto } from '../src/motores/drc.js';
-import { aCSV, bomACSV, generarBOM, generarListaConductores } from '../src/motores/documentacion.js';
+import { aCSV, bomACSV, generarBOM, generarInformeHTML, generarListaConductores } from '../src/motores/documentacion.js';
 import { celdaSegura } from '../src/modelo/csv.js';
 import { rutearConductores } from '../src/motores/ruteo.js';
+import { revisarTablero } from '../src/motores/revision.js';
 
 const sinBom = (texto: string) => texto.startsWith('\uFEFF') ? texto.slice(1) : texto;
 
@@ -88,6 +89,23 @@ test('DOC-07: CR, LF, separador y comillas quedan dentro de la celda CSV', () =>
 test('CSV: el texto normal no se toca', () => {
 	assert.equal(sinBom(aCSV([['UMA-3-343', 'Disyuntor 1P C10', 'iC60N', 10]])),
 		'UMA-3-343;Disyuntor 1P C10;iC60N;10');
+});
+
+test('DOC-06: HTML de impresión repite cabeceras y separa ruta, reserva y corte no verificado', () => {
+	const p = tableroEjemplo();
+	const dossier = revisarTablero(p);
+	assert.ok(dossier.ruteo.rutas.length > 0);
+	dossier.ruteo.rutas[0].longitudMm = 22.560000000000002;
+	const html = generarInformeHTML(dossier);
+	assert.match(html, /^<!doctype html><html lang="es"><head>/);
+	assert.match(html, /thead \{ display: table-header-group; \}/);
+	assert.match(html, /tr \{ break-inside: avoid; page-break-inside: avoid; \}/);
+	assert.match(html, /Corte propuesto \(estimado\)/);
+	assert.match(html, /Corte verificado/);
+	assert.match(html, /no mide profundidad Z, curvas ni corte real de taller/i);
+	assert.doesNotMatch(html, /22\.560000000000002/);
+	assert.match(html, /22,56/);
+	assert.match(html, /<\/body><\/html>$/);
 });
 
 test('el proyecto de ejemplo pasa el DRC sin errores', () => {

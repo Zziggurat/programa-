@@ -114,9 +114,9 @@ const esc = (s: string) =>
 	s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
 function tabla(cabeceras: string[], filas: (string | number | undefined)[][]): string {
-	const th = cabeceras.map((c) => `<th>${esc(c)}</th>`).join('');
+	const th = cabeceras.map((c) => `<th scope="col">${esc(c)}</th>`).join('');
 	const trs = filas
-		.map((f) => `<tr>${f.map((c) => `<td>${esc(c === undefined ? '' : String(c))}</td>`).join('')}</tr>`)
+		.map((f) => `<tr>${f.map((c) => `<td${typeof c === 'number' ? ' class="numero"' : ''}>${esc(c === undefined ? '' : String(c))}</td>`).join('')}</tr>`)
 		.join('\n');
 	return `<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
 }
@@ -152,22 +152,25 @@ ${tabla(['Designación', 'Descripción', 'Posición'],
 	secciones.push(`<h2>4. Referencias cruzadas</h2>
 ${tabla(['Maestro', 'Posición', 'Contacto', 'Tipo', 'Posición'], filasXref)}`);
 
+	const formatoNumero = (v: number): string => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(v);
+	const numeroMm = (v: number | undefined): string => v === undefined ? '—' : `${formatoNumero(v)} mm`;
 	secciones.push(`<h2>5. Lista de conductores</h2>
 ${tabla(['Número', 'De', 'A', 'Sección', 'Color', 'Ruteo 2D + margen/puntas (mm)', 'Estado físico'],
-		conductores.map((f) => [f.numero, f.de, f.a, f.seccion, f.color, f.longitudMm,
+		conductores.map((f) => [f.numero, f.de, f.a, f.seccion, f.color,
+			f.longitudMm === undefined ? '' : formatoNumero(f.longitudMm),
 			f.pendienteRuta ? 'Ruta física pendiente' : f.longitudMm === undefined ? 'Sin longitud calculada' : 'Con ruta']))}`);
-	const numeroMm = (v: number | undefined): string => v === undefined ? '—'
-		: `${new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(v)} mm`;
 	const longitudes = proyectarLongitudesDocumentales(proyecto, d.ruteo);
 	secciones.push(`<h3>Desglose de longitudes por conductor</h3>
 <p>La longitud eléctrica declarada, el recorrido ortogonal 2D y la propuesta con reserva y puntas son magnitudes diferentes. La propuesta no mide profundidad Z, curvas ni corte real de taller. Un corte verificado no está disponible en esta revisión.</p>
-${tabla(['Conductor', 'Estado', 'Eléctrica declarada', 'Ruta 2D', 'Reserva', 'Puntas', 'Propuesta de corte', 'Corte verificado'],
+${tabla(['Conductor', 'Estado', 'Eléctrica declarada', 'Ruta 2D', 'Corte propuesto (estimado)'],
 	longitudes.map((l) => [l.conductorId, l.estadoRuta,
-		l.longitudDeclaradaElectricaM === undefined ? '—' : `${l.longitudDeclaradaElectricaM} m`,
-		numeroMm(l.longitudRutaMm),
+		l.longitudDeclaradaElectricaM === undefined ? '—' : `${formatoNumero(l.longitudDeclaradaElectricaM)} m`,
+		numeroMm(l.longitudRutaMm), numeroMm(l.propuestaCorteMm)]))}
+${tabla(['Conductor', 'Reserva', 'Puntas', 'Redondeo', 'Corte verificado'],
+	longitudes.map((l) => [l.conductorId,
 		`${Math.round(l.reservaPorcentaje * 10000) / 100} % (${l.origenReserva}); ${numeroMm(l.reservaMm)}`,
-		`${numeroMm(l.puntasMm)} (${l.origenPuntas})`,
-		numeroMm(l.propuestaCorteMm), numeroMm(l.longitudCorteVerificadaMm)]))}`);
+		`${numeroMm(l.puntasMm)} (${l.origenPuntas})`, numeroMm(l.redondeoMm),
+		numeroMm(l.longitudCorteVerificadaMm)]))}`);
 
 	for (const plan of d.planesBorneros) {
 		secciones.push(`<h3>Plan de bornero ${esc(plan.designacion)}</h3>
@@ -197,15 +200,24 @@ ${sync.sincronizado ? '' : tabla(['Problema', 'Dispositivos'], [
 		['Fuera de placa', sync.fueraDePlaca.join(', ')],
 	])}`);
 
-	return `<meta charset="utf-8">
+	return `<!doctype html><html lang="es"><head><meta charset="utf-8">
 <title>${esc(proyecto.nombre)} — Dossier técnico</title>
 <style>
 	body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
 	table { border-collapse: collapse; width: 100%; margin: .8rem 0 1.6rem; font-size: .9rem; }
-	th, td { border: 1px solid #bbb; padding: .3rem .5rem; text-align: left; }
+	th, td { border: 1px solid #bbb; padding: .3rem .5rem; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 	th { background: #eee; }
+	td.numero { text-align: right; font-variant-numeric: tabular-nums; }
 	h1 { border-bottom: 2px solid #444; padding-bottom: .3rem; }
-</style>
+	@media print {
+		@page { size: A4; margin: 14mm; }
+		body { margin: 0; padding: 0; max-width: none; font-size: 10pt; }
+		table { font-size: 8.5pt; break-inside: auto; }
+		thead { display: table-header-group; }
+		tr { break-inside: avoid; page-break-inside: avoid; }
+		h2, h3 { break-after: avoid; page-break-after: avoid; }
+	}
+</style></head><body>
 <h1>${esc(proyecto.nombre)} — Dossier técnico</h1>
 <p>Generado por TableroStudio. Hojas: ${proyecto.hojas.length}. Dispositivos: ${proyecto.dispositivos.length}. Conductores: ${proyecto.conductores.length}.</p>
 <dl><dt>Estado documental</dt><dd>${esc(identidad.estado)}</dd>
@@ -216,5 +228,5 @@ ${sync.sincronizado ? '' : tabla(['Problema', 'Dispositivos'], [
 <dt>Generado</dt><dd>${esc(identidad.generadoEn)}</dd>
 <dt>Build ID</dt><dd>${esc(identidad.buildId)}</dd>
 <dt>Alcance y límites</dt><dd>Informe HTML de revisión eléctrica, materiales y conexiones del proyecto visible. No constituye certificación ni aprobación de fabricación.</dd></dl>
-${secciones.join('\n')}`;
+${secciones.join('\n')}</body></html>`;
 }

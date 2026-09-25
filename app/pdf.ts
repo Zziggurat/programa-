@@ -611,7 +611,8 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 		doc.setTextColor(...VERDE);
 		doc.setFont('helvetica', 'bold');
 		doc.setFontSize(10);
-		doc.text('El proyecto declara todos los datos necesarios. Nada queda supuesto.', 17, y + 10);
+		doc.text('Sin faltantes entre los datos revisados aquí. Comprobar el resto del proyecto.',
+			17, y + 10, { maxWidth: anchoPag - 34 });
 		doc.setFont('helvetica', 'normal');
 		doc.setTextColor(0);
 		y += 24;
@@ -694,7 +695,7 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 		body: filasFicha,
 		theme: 'plain',
 		bodyStyles: { fontSize: 9.5 },
-		columnStyles: { 0: { fontStyle: 'bold', cellWidth: 92, textColor: GRIS }, 1: { cellWidth: 80 } },
+		columnStyles: { 0: { fontStyle: 'bold', cellWidth: 92, textColor: GRIS }, 1: { cellWidth: 94 } },
 		margin: { left: 12, right: 12 },
 	});
 	// @ts-expect-error autotable añade lastAutoTable
@@ -728,6 +729,12 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 	}
 
 	if (ficha.conductores.porSeccion.length > 0) {
+		// La cabecera del subapartado viaja con la tabla; no dejarla huérfana al pie.
+		if (y + 4 > LIMITE - 34) {
+			doc.addPage();
+			pintarCabecera(`${apartadoActual} (continúa)`);
+			y = 38;
+		}
 		doc.setFont('helvetica', 'bold');
 		doc.setFontSize(11);
 		doc.text('Cable por sección', 12, y);
@@ -927,7 +934,7 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 			] as [string, string][],
 			theme: 'plain',
 			bodyStyles: { fontSize: 9.5 },
-			columnStyles: { 0: { fontStyle: 'bold', cellWidth: 92, textColor: GRIS }, 1: { cellWidth: 88 } },
+			columnStyles: { 0: { fontStyle: 'bold', cellWidth: 92, textColor: GRIS }, 1: { cellWidth: 94 } },
 			margin: { left: 12, right: 12 },
 		});
 		// @ts-expect-error autotable añade lastAutoTable
@@ -1007,7 +1014,8 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 	if (hallazgos.length === 0) {
 		doc.setFontSize(11);
 		doc.setTextColor(...VERDE);
-		doc.text('Sin errores ni avisos. El tablero pasa todas las reglas.', 12, y);
+		doc.text('Sin hallazgos en las reglas implementadas. Revisar datos y alcance antes de fabricar.',
+			12, y, { maxWidth: anchoPag - 24 });
 		doc.setTextColor(0);
 	} else {
 		tabla(['Severidad', 'Regla', 'Detalle'],

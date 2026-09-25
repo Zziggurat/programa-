@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { crearProyecto } from '../src/modelo/proyecto.js';
+import { tableroEjemplo } from '../ejemplo/tablero-ejemplo.js';
 
 Object.assign(globalThis, {
 	document: { documentElement: {}, querySelectorAll: () => [],
@@ -9,10 +10,29 @@ Object.assign(globalThis, {
 	getComputedStyle: () => ({ getPropertyValue: () => '' }),
 	MutationObserver: class { observe(): void {} },
 });
+
 const { crearArchivosPaqueteDocumental } = await import('../app/paquete-documental.js');
 
 const procedencia = { estado: 'confirmado' as const, projectId: 'doc-123',
 	revisionRepositorio: 8, buildId: 'BUILD-QA', generadoEn: '2026-09-24T12:00:00.000Z' };
+
+test('DOC-09: DRC sin hallazgos no se anuncia como certificación o aprobación del tablero', async () => {
+	const avisosMaquetacion: string[] = [];
+	const logOriginal = console.log;
+	let archivos: Awaited<ReturnType<typeof crearArchivosPaqueteDocumental>>;
+	try {
+		console.log = (...partes: unknown[]) => { avisosMaquetacion.push(partes.join(' ')); };
+		archivos = await crearArchivosPaqueteDocumental(tableroEjemplo(), procedencia);
+	} finally {
+		console.log = logOriginal;
+	}
+	assert.deepEqual(avisosMaquetacion.filter((a) => /width could not fit page/i.test(a)), []);
+	const pdf = archivos.find((a) => a.ruta === 'dossier/dossier.pdf')?.contenido;
+	assert.ok(pdf instanceof Uint8Array);
+	const textoPdf = Buffer.from(pdf).toString('latin1');
+	assert.match(textoPdf, /Sin hallazgos en las reglas implementadas/);
+	assert.doesNotMatch(textoPdf, /pasa todas las reglas|listo para fabricar|certificado|Nada queda supuesto/i);
+});
 
 test('DOC-02 compone un único snapshot sin duplicar un aparato multivista ni una conexión interhoja', async () => {
 	const p = crearProyecto('<img src=x onerror=alert(1)> & Revisión');
