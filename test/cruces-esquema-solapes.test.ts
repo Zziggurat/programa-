@@ -80,6 +80,18 @@ test('un borne eléctrico compartido conserva el nudo real pero no legitima 60 m
 	assert.match(hojaASvg(plano), /SOLAPE SIN RESOLVER/);
 });
 
+test('una salida común de 3 mm desde el mismo borne real no se denuncia como corredor fusionado', () => {
+	const borne = { dispositivoId: 'X1', borneId: '1' };
+	const a: HiloEsq = { conductorId: 'a', nodos: [{ x: 10, y: 10 }, { x: 10, y: 7 },
+		{ x: 30, y: 7 }], bornes: { de: borne, a: { dispositivoId: 'Y1', borneId: '1' } } };
+	const b: HiloEsq = { conductorId: 'b', nodos: [{ x: 10, y: 10 }, { x: 10, y: 7 },
+		{ x: 20, y: 7 }], bornes: { de: borne, a: { dispositivoId: 'Y2', borneId: '1' } } };
+	const solapes = solapesColinealesSinResolver(hoja(a, b));
+	assert.equal(solapes.some((s) => s.longitudMm <= 3), false);
+	assert.equal(solapes.some((s) => s.longitudMm > 3), true,
+		'la salida común no justifica compartir después otros 10 mm de tinta');
+});
+
 test('detectar un solape eléctrico aislado no une potenciales ni modifica el proyecto físico', () => {
 	const proyecto = crearProyecto('Solape sin unión');
 	proyecto.dispositivos = [

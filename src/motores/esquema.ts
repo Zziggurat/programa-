@@ -21,6 +21,7 @@ import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { resolverComportamiento } from '../modelo/comportamiento.js';
 import { leerSimboloEsquemaPersonal, type SimboloEsquemaPersonal } from '../modelo/simbolo-personal.js';
 import { ResultadoPotenciales } from './potenciales.js';
+import { rutaOrtogonalM2 } from './ruteo-esquema-m2.js';
 
 /* --------------------------------- Geometría --------------------------------- */
 
@@ -102,7 +103,7 @@ export function rotuloEditorialHoja(hoja: Pick<HojaEsq, 'titulo' | 'clase'>): st
 
 export interface ProblemaEsq {
 	codigo: 'posicion-fuera-de-hoja' | 'representacion-invalida' | 'conexion-sin-ancla'
-		| 'aparato-sin-representacion';
+		| 'aparato-sin-representacion' | 'ruta-grafica-sin-corredor';
 	mensaje: string;
 	dispositivoId?: string;
 	representacionId?: string;
@@ -975,6 +976,32 @@ function montarRepresentaciones(
 					p: { x: propia.pin.x, y: propia.pin.y + (propia.pin.y > propia.hoja.altoMm / 2 ? 6 : -6) },
 				});
 			}
+		}
+	}
+	// El tendido M2 es una proyección editorial, nunca metraje de cable. Reservar tinta
+	// por ID estable evita que el orden del array decida qué hilo queda escondido.
+	for (const hoja of hojas) {
+		const previos: HiloEsq[] = [];
+		const limites = { x0: MARGEN.izq, x1: hoja.anchoMm - MARGEN.der,
+			y0: MARGEN.arriba + BARRA_ARRIBA / 4,
+			y1: hoja.altoMm - MARGEN.abajo - BARRA_ABAJO / 4,
+			superior: MARGEN.arriba + BARRA_ARRIBA / 2,
+			inferior: hoja.altoMm - MARGEN.abajo - BARRA_ABAJO / 2 };
+		for (const hilo of [...hoja.hilos].sort((a, b) =>
+			a.conductorId < b.conductorId ? -1 : a.conductorId > b.conductorId ? 1 : 0)) {
+			const a = hilo.nodos[0], b = hilo.nodos[hilo.nodos.length - 1];
+			const nodos = rutaOrtogonalM2(a, b, hoja, previos, limites, hilo.bornes);
+			if (!nodos) {
+				hoja.problemas!.push({ codigo: 'ruta-grafica-sin-corredor', conductorId: hilo.conductorId,
+					mensaje: `El conductor ${hilo.conductorId} no tiene corredor gráfico seguro; revisar el plano antes de emitirlo.` });
+				previos.push(hilo);
+				continue;
+			}
+			hilo.nodos = nodos;
+			previos.push(hilo);
+			for (const etiqueta of hoja.referencias) if (etiqueta.tipo === 'hilo'
+				&& etiqueta.conductorId === hilo.conductorId)
+				etiqueta.p = puntoMedioDelTramoMasLargo(nodos);
 		}
 	}
 

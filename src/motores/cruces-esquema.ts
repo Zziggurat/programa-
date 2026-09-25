@@ -62,6 +62,8 @@ interface Segmento {
 
 const TOLERANCIA_MM = 1e-6;
 const TOLERANCIA_ANGULAR = 1e-12;
+/** Inicio común de un borne verdadero; no legitima un corredor compartido. */
+const SALIDA_BORNE_GRAFICA_MM = 3;
 
 const cruz = (ax: number, ay: number, bx: number, by: number): number => ax * by - ay * bx;
 const compararIds = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
@@ -146,11 +148,23 @@ export function solapesColinealesSinResolver(hoja: Pick<HojaEsq, 'hilos'>): Sola
 			const hasta = Math.min(a.largo, Math.max(posA, posB));
 			if (hasta - desde <= TOLERANCIA_MM) continue;
 			const longitudMm = hasta - desde;
+			const inicio = { x: a.a.x + ux * desde, y: a.a.y + uy * desde };
+			const fin = { x: a.a.x + ux * hasta, y: a.a.y + uy * hasta };
+			const terminales = [
+				[a.borneA, a.a, b.borneA, b.a], [a.borneA, a.a, b.borneB, b.b],
+				[a.borneB, a.b, b.borneA, b.a], [a.borneB, a.b, b.borneB, b.b],
+			] as const;
+			const salidaComun = longitudMm <= SALIDA_BORNE_GRAFICA_MM + TOLERANCIA_MM
+				&& terminales.some(([borneA, puntoA, borneB, puntoB]) =>
+					mismoBorne(borneA, borneB)
+					&& Math.hypot(puntoA.x - puntoB.x, puntoA.y - puntoB.y) <= TOLERANCIA_MM
+					&& (Math.hypot(puntoA.x - inicio.x, puntoA.y - inicio.y) <= TOLERANCIA_MM
+						|| Math.hypot(puntoA.x - fin.x, puntoA.y - fin.y) <= TOLERANCIA_MM));
+			if (salidaComun) continue;
 			salida.push({
 				primero: { conductorId: a.conductorId, segmento: a.segmento },
 				segundo: { conductorId: b.conductorId, segmento: b.segmento },
-				inicio: { x: a.a.x + ux * desde, y: a.a.y + uy * desde },
-				fin: { x: a.a.x + ux * hasta, y: a.a.y + uy * hasta },
+				inicio, fin,
 				longitudMm,
 				tipo: Math.abs(longitudMm - a.largo) <= TOLERANCIA_MM
 					&& Math.abs(longitudMm - b.largo) <= TOLERANCIA_MM ? 'TOTAL' : 'PARCIAL',
