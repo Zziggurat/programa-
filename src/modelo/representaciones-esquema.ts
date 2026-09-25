@@ -39,9 +39,13 @@ function leerUna(
 ): RepresentacionEsquema | undefined {
 	const ruta = `esquema.representaciones[${indice}]`;
 	const rechazar = (motivo: string): undefined => { avisar(ruta, motivo); return undefined; };
-	if (!esObjeto(bruto) || !soloClaves(bruto, ['id', 'dispositivoId', 'hojaId', 'posicion', 'parte'])) {
+	if (!esObjeto(bruto) || !soloClaves(bruto, ['id', 'dispositivoId', 'hojaId', 'posicion', 'parte', 'giro'])) {
 		return rechazar('la representación no tenía una forma reconocida');
 	}
+	if (bruto.giro !== undefined && bruto.giro !== 180) {
+		return rechazar('el giro de la vista debía ser 180°; valores desconocidos no se descartan');
+	}
+	const giro = bruto.giro === 180 ? { giro: 180 as const } : {};
 	if (!idValido(bruto.id) || !referenciaValida(bruto.dispositivoId) || !referenciaValida(bruto.hojaId)) {
 		return rechazar('la representación necesitaba identificadores válidos');
 	}
@@ -62,7 +66,7 @@ function leerUna(
 	if (parte.tipo === 'completa' && soloClaves(parte, ['tipo'])) {
 		return {
 			id: bruto.id, dispositivoId: d.id, hojaId: bruto.hojaId,
-			posicion: { columna: posicion.columna, fila: posicion.fila }, parte: { tipo: 'completa' },
+			posicion: { columna: posicion.columna, fila: posicion.fila }, ...giro, parte: { tipo: 'completa' },
 		};
 	}
 	if (parte.tipo === 'bobina' && soloClaves(parte, ['tipo'])) {
@@ -76,7 +80,7 @@ function leerUna(
 		}
 		return {
 			id: bruto.id, dispositivoId: d.id, hojaId: bruto.hojaId,
-			posicion: { columna: posicion.columna, fila: posicion.fila }, parte: { tipo: 'bobina' },
+			posicion: { columna: posicion.columna, fila: posicion.fila }, ...giro, parte: { tipo: 'bobina' },
 		};
 	}
 	if (parte.tipo !== 'contactos' || !soloClaves(parte, ['tipo', 'pares'])
@@ -116,7 +120,7 @@ function leerUna(
 	}
 	return {
 		id: bruto.id, dispositivoId: d.id, hojaId: bruto.hojaId,
-		posicion: { columna: posicion.columna, fila: posicion.fila }, parte: { tipo: 'contactos', pares },
+		posicion: { columna: posicion.columna, fila: posicion.fila }, ...giro, parte: { tipo: 'contactos', pares },
 	};
 }
 

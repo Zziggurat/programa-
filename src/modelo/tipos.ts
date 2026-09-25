@@ -700,6 +700,8 @@ export interface RepresentacionEsquema {
 	hojaId: string;
 	/** Casilla local a `hojaId`; reordenar hojas no cambia esta referencia ni el circuito. */
 	posicion: { columna: number; fila: number };
+	/** Giro editorial de 180° alrededor del centro; ausente conserva la orientación histórica. */
+	giro?: 180;
 	parte: ParteRepresentacionEsquema;
 }
 

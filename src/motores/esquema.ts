@@ -858,8 +858,9 @@ function montarRepresentaciones(
 		const suelo = papel.alto - MARGEN.abajo - BARRA_ABAJO - mitad;
 		const cy = suelo >= techo ? Math.min(Math.max(cyIdeal, techo), suelo) : (techo + suelo) / 2;
 		const pines = new Map<string, PuntoEsq>();
+		const sentido = r.giro === 180 ? -1 : 1;
 		for (const [borneId, pin] of geometria.pines) {
-			const abs = { x: cx + pin.x, y: cy + pin.y };
+			const abs = { x: cx + pin.x * sentido, y: cy + pin.y * sentido };
 			pines.set(borneId, abs);
 			const clave = JSON.stringify([d.id, borneId]);
 			const lista = lugares.get(clave) ?? [];
@@ -872,7 +873,7 @@ function montarRepresentaciones(
 			designacion: d.designacion ?? d.id, columna,
 			x: cx - geometria.ancho / 2, y: cy - geometria.alto / 2,
 			ancho: geometria.ancho, alto: geometria.alto,
-			trazos: geometria.trazos.map((t) => desplazar(t, cx, cy)), pines,
+			trazos: geometria.trazos.map((t) => desplazar(sentido === -1 ? girarTrazo180(t) : t, cx, cy)), pines,
 		};
 		hoja.simbolos.push(simbolo);
 		if (columna !== r.posicion.columna || fila !== r.posicion.fila) {
@@ -1055,6 +1056,16 @@ export function separarEtiquetas(
 		}
 		puestas.push({ x0, x1, y: e.p.y });
 	}
+}
+
+/** Rota geometría local sin poner los textos boca abajo. */
+function girarTrazo180(t: Trazo): Trazo {
+	const punto = (p: PuntoEsq): PuntoEsq => ({ x: -p.x, y: -p.y });
+	if (t.tipo === 'linea') return { ...t, a: punto(t.a), b: punto(t.b) };
+	if (t.tipo === 'circulo') return { ...t, c: punto(t.c) };
+	// El rótulo se reubica pero nunca se dibuja cabeza abajo.
+	return { ...t, p: punto(t.p), anclaje: t.anclaje === 'izq' ? 'der'
+		: t.anclaje === 'der' ? 'izq' : t.anclaje };
 }
 
 /** Traslada un trazo local a coordenadas absolutas de la hoja. */

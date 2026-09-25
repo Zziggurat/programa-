@@ -93,3 +93,13 @@ test('ESQ-05: invertir arrays no cambia la propuesta ni su ubicación', () => {
 	assert.deepEqual(planCopiarAparatoConVista(p, 'ps-vista', destino, ids),
 		planCopiarAparatoConVista(invertido, 'ps-vista', destino, ids));
 });
+
+test('ESQ-05: copiar una vista girada conserva la orientación, no las conexiones', () => {
+	const p = fixture();
+	p.esquema!.representaciones![0].giro = 180;
+	const plan = planCopiarAparatoConVista(p, 'ps-vista', destino, ids);
+	assert.equal(plan.ok, true);
+	if (!plan.ok) return;
+	assert.equal(plan.nuevaVista.giro, 180);
+	assert.deepEqual(p.conductores.map((c) => c.id), ['c1']);
+});

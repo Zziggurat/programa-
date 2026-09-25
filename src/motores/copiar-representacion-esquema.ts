@@ -83,7 +83,8 @@ export function planCopiarAparatoConVista(
 	}
 	const nuevaVista: RepresentacionEsquema = {
 		id: ids.vistaId, dispositivoId: ids.dispositivoId, hojaId: destino.hojaId,
-		posicion: { columna: destino.columna, fila: destino.fila }, parte: { tipo: 'completa' },
+		posicion: { columna: destino.columna, fila: destino.fila },
+		...(vista.giro === 180 ? { giro: 180 as const } : {}), parte: { tipo: 'completa' },
 	};
 	// Montar el candidato usa el mismo generador de cajas/pines que SVG y PDF. Esto ocurre solo
 	// al confirmar el pegado, jamás por pointermove o por hover.
