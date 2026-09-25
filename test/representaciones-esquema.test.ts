@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { cargarProyecto } from '../src/modelo/cargar.js';
+import { ArchivoInvalido, cargarProyecto } from '../src/modelo/cargar.js';
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import type { Proyecto, RepresentacionEsquema } from '../src/modelo/tipos.js';
+import { montarEsquema } from '../src/motores/esquema.js';
+import { calcularPotenciales } from '../src/motores/potenciales.js';
 
 const abrir = (p: unknown) => cargarProyecto(JSON.stringify(p));
 
@@ -67,6 +69,22 @@ test('ausencia legacy y lista vacía explícita sobreviven a guardar y reabrir',
 	assert.deepEqual(cargaVacia.proyecto.esquema?.representaciones, []);
 	assert.deepEqual(abrir(cargaVacia.proyecto).proyecto.esquema?.representaciones, []);
 	assert.deepEqual(cargaVacia.diagnosticos, []);
+});
+
+test('M2 vacío conserva cero folios para que la UI pueda crear el primero', () => {
+	const p = proyectoBase();
+	p.hojas = [];
+	p.esquema = { representaciones: [] };
+	const carga = abrir(p);
+	assert.deepEqual(carga.proyecto.hojas, []);
+	assert.deepEqual(carga.proyecto.esquema?.representaciones, []);
+	assert.deepEqual(carga.diagnosticos, []);
+	assert.deepEqual(abrir(carga.proyecto).proyecto.hojas, []);
+	assert.deepEqual(montarEsquema(carga.proyecto, calcularPotenciales(carga.proyecto)), []);
+	const conVista = proyectoBase();
+	conVista.hojas = [];
+	conVista.esquema = { representaciones: vistas() };
+	assert.throws(() => abrir(conVista), ArchivoInvalido);
 });
 
 test('tres vistas de un aparato conservan IDs, hojas, pares y circuito en ida y vuelta', () => {
@@ -168,13 +186,54 @@ test('IDs repetidos y bornes en dos vistas se rechazan sin ganar por posición d
 	}
 });
 
-test('una hoja duplicada no hace que su ID parezca inequívoco', () => {
+test('un ID de hoja M2 duplicado impide importar sin perder sus vistas', () => {
 	const p = proyectoBase();
 	p.hojas.push({ id: 'mando', numero: 3, titulo: 'Duplicada' });
 	p.esquema = { representaciones: [vistas()[0], vistas()[1]] };
+	for (const hojas of [p.hojas, [...p.hojas].reverse()]) {
+		p.hojas = hojas;
+		assert.throws(() => abrir(p), (e: Error) => e instanceof ArchivoInvalido
+			&& /ID de hoja repetido/i.test(e.message));
+	}
+});
+
+test('un número de hoja M2 duplicado impide referencias cruzadas ambiguas', () => {
+	const p = proyectoBase();
+	p.hojas[1].numero = p.hojas[0].numero;
+	p.esquema = { representaciones: vistas() };
+	assert.throws(() => abrir(p), (e: Error) => e instanceof ArchivoInvalido
+		&& /número de hoja repetido/i.test(e.message));
+});
+
+test('identidad M2 inválida nunca se repara eligiendo una hoja por orden', () => {
+	for (const [campo, valor] of [
+		['id', ' mando '], ['id', 'mando\u0000'], ['id', ''],
+		['numero', '2'], ['numero', 0], ['numero', 2.5],
+	] as const) {
+		const p = proyectoBase();
+		(p.hojas[1] as unknown as Record<string, unknown>)[campo] = valor;
+		p.esquema = { representaciones: vistas() };
+		assert.throws(() => abrir(p), (e: Error) => e instanceof ArchivoInvalido
+			&& /hoja.*M2|esquema M2/.test(e.message), `${campo}=${JSON.stringify(valor)}`);
+	}
+	const p = proyectoBase() as unknown as Record<string, unknown>;
+	p.esquema = { representaciones: null }; // campo presente corrupto: no es legacy implícito
+	p.hojas = [{ id: 'potencia', numero: 1, titulo: 'Potencia' },
+		{ id: 'potencia', numero: 2, titulo: 'Otro folio' }];
+	assert.throws(() => abrir(p), ArchivoInvalido);
+});
+
+test('metadatos editoriales M2 corruptos se declaran sin descartar vistas', () => {
+	const p = proyectoBase() as unknown as Record<string, unknown>;
+	p.esquema = { representaciones: vistas() };
+	p.hojas = [{ id: 'potencia', numero: 1, titulo: 'Potencia' },
+		{ id: 'mando', numero: 2, titulo: { texto: 'falso' }, clase: 'otro', columnas: 'diez' }];
 	const r = abrir(p);
-	assert.deepEqual(r.proyecto.esquema?.representaciones?.map((v) => v.id), ['vista-polos']);
-	assert.match(r.diagnosticos[0]?.motivo ?? '', /hoja inexistente o ambigua/);
+	assert.deepEqual(r.proyecto.esquema?.representaciones?.map((v) => v.id),
+		['vista-bobina', 'vista-polos', 'vista-aux']);
+	assert.deepEqual(r.proyecto.hojas[1], { id: 'mando', numero: 2, titulo: 'Hoja 2' });
+	assert.deepEqual(r.diagnosticos.map((d) => d.ruta).sort(),
+		['hojas[1].clase', 'hojas[1].columnas', 'hojas[1].titulo']);
 });
 
 test('un contacto con común compartido no puede sobrescribir su anclaje gráfico', () => {

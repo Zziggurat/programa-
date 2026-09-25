@@ -151,6 +151,35 @@ test('un proyecto sin hojas recibe una para que el esquema tenga dónde dibujars
 	assert.ok(r.arreglos.some((a) => /hoja/i.test(a)), r.arreglos.join(' | '));
 });
 
+test('hojas legacy mixtas no pierden entradas hostiles sin diagnóstico', () => {
+	const p = bueno() as unknown as Record<string, unknown>;
+	p.hojas = [{ id: 'h1', numero: 1, titulo: 'Hoja 1' }, 42,
+		{ numero: 3, titulo: 'Sin ID' }];
+	const r = abrir(p);
+	assert.deepEqual(r.proyecto.hojas.map((h) => h.id), ['h1']);
+	assert.deepEqual(r.diagnosticos.filter((d) => d.ruta.startsWith('hojas[')).map((d) => d.ruta),
+		['hojas[1]', 'hojas[2]']);
+	assert.ok(r.arreglos.length > 0, 'la reparación debe impedir sobrescritura silenciosa');
+});
+
+test('metadatos editoriales de hoja hostiles se reparan sin NaN ni clase inventada', () => {
+	const p = bueno() as unknown as Record<string, unknown>;
+	p.hojas = [{ id: 'h1', numero: 1, titulo: { inesperado: true }, clase: 'falsa', columnas: 'muchas' }];
+	const r = abrir(p);
+	assert.deepEqual(r.proyecto.hojas, [{ id: 'h1', numero: 1, titulo: 'Hoja 1' }]);
+	assert.deepEqual(r.diagnosticos.map((d) => d.ruta).sort(),
+		['hojas[0].clase', 'hojas[0].columnas', 'hojas[0].titulo']);
+	assert.ok(r.arreglos.length > 0);
+});
+
+test('clase y columnas válidas conservan identidad y valores en ida y vuelta', () => {
+	const p = bueno();
+	p.hojas[0] = { id: 'h1', numero: 1, titulo: 'Control', clase: 'plc-io', columnas: 12 };
+	const r = abrir(p);
+	assert.deepEqual(r.proyecto.hojas, p.hojas);
+	assert.deepEqual(r.diagnosticos, []);
+});
+
 test('un proyecto sin nombre no sale anónimo', () => {
 	const p = bueno();
 	p.nombre = '   ';

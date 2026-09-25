@@ -11,7 +11,7 @@
  */
 import {
 	AjustesMazo, BloqueTerminales, Borne, Canaleta, Colocacion, Conductor, Dispositivo, EntradaCable,
-	Gabinete, Hoja, LadoAparato, OpcionesProyecto, RotuloFrontal, Posicion, Proyecto, Riel, Rol,
+	ClaseHojaEsquema, Gabinete, Hoja, LadoAparato, OpcionesProyecto, RotuloFrontal, Posicion, Proyecto, Riel, Rol,
 } from './tipos.js';
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 import { leerComportamientoSimulacion, validarComportamiento } from './comportamiento.js';
@@ -154,6 +154,108 @@ function conTope(v: unknown, tope: number, nombre: string, arreglos: string[]): 
 	return v.slice(0, tope);
 }
 
+const CLASES_HOJA = new Set<ClaseHojaEsquema>(['potencia', 'mando', 'plc-io', 'bornes', 'mixta']);
+const CAMPOS_HOJA = new Set(['id', 'numero', 'titulo', 'clase', 'columnas', 'filas']);
+const numeroHojaValido = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) > 0;
+const idHojaValido = (v: unknown): v is string =>
+	typeof v === 'string' && v.length > 0 && v.length <= 120
+	&& v === v.trim() && !/[\x00-\x1F\x7F]/.test(v);
+
+/**
+ * Una vista M2 referencia `hojaId` y las referencias cruzadas citan `numero`. Una identidad
+ * ambigua no tiene reparación segura: elegir la primera hoja haría desaparecer vistas al montar
+ * o cambiaría el significado del documento. En legacy, donde las hojas persistidas no gobiernan
+ * el montaje, los metadatos recuperables sí se reparan, siempre con diagnóstico de pérdida.
+ */
+function leerHojas(bruto: unknown, arreglos: string[], m2: boolean, m2Vacio: boolean): Hoja[] {
+	if (m2 && esLista(bruto) && bruto.length > TOPES.hojas) {
+		throw new ArchivoInvalido(`El esquema M2 tenía más de ${TOPES.hojas} hojas; recortarlas perdería vistas. No se importó.`);
+	}
+	const lista = conTope(bruto, TOPES.hojas, 'hojas de esquema', arreglos);
+	if (!esLista(lista)) {
+		if (m2) throw new ArchivoInvalido('El esquema M2 no tenía una lista de hojas válida. No se importó.');
+		if (bruto !== undefined) anotar('hojas', 'las hojas debían ser una lista');
+		arreglos.push('no traía ninguna hoja de esquema');
+		return [{ id: 'h1', numero: 1, titulo: 'Hoja 1' }];
+	}
+	const numerosReservados = new Set(lista.filter(esObjeto).map((h) => h.numero)
+		.filter(numeroHojaValido));
+	let siguienteNumero = 1;
+	const hojas: Hoja[] = [];
+	const indices: number[] = [];
+	for (const [i, entrada] of lista.entries()) {
+		const ruta = `hojas[${i}]`;
+		if (!esObjeto(entrada)) {
+			if (m2) throw new ArchivoInvalido(`La hoja ${i + 1} del esquema M2 no era un objeto. No se importó.`);
+			anotar(ruta, 'la hoja no era un objeto');
+			continue;
+		}
+		if (!idHojaValido(entrada.id)) {
+			if (m2) throw new ArchivoInvalido(`La hoja ${i + 1} del esquema M2 no tenía un ID válido. No se importó.`);
+			anotar(ruta, 'la hoja no tenía un ID válido');
+			continue;
+		}
+		let numero = entrada.numero;
+		if (!numeroHojaValido(numero)) {
+			if (m2) throw new ArchivoInvalido(`La hoja ${entrada.id} del esquema M2 no tenía un número válido. No se importó.`);
+			while (numerosReservados.has(siguienteNumero)) siguienteNumero++;
+			numero = siguienteNumero++;
+			numerosReservados.add(numero as number);
+			anotar(`${ruta}.numero`, 'el número de hoja no era un entero positivo; se asignó uno libre');
+		}
+		const hoja: Hoja = { id: entrada.id, numero: numero as number, titulo: '' };
+		const titulo = typeof entrada.titulo === 'string'
+			? entrada.titulo.replace(/[\x00-\x1F\x7F]/g, '').trim().slice(0, 120) : '';
+		hoja.titulo = titulo || `Hoja ${hoja.numero}`;
+		if (hoja.titulo !== entrada.titulo) {
+			anotar(`${ruta}.titulo`, 'el título de hoja no era texto válido o excedía 120 caracteres');
+		}
+		if (entrada.clase !== undefined) {
+			if (typeof entrada.clase === 'string' && CLASES_HOJA.has(entrada.clase as ClaseHojaEsquema)) {
+				hoja.clase = entrada.clase as ClaseHojaEsquema;
+			} else anotar(`${ruta}.clase`, 'la clase de hoja no era reconocida');
+		}
+		if (entrada.columnas !== undefined) {
+			if (Number.isInteger(entrada.columnas) && Number(entrada.columnas) >= 4
+				&& Number(entrada.columnas) <= 20) hoja.columnas = entrada.columnas as number;
+			else anotar(`${ruta}.columnas`, 'las columnas de hoja requerían un entero entre 4 y 20');
+		}
+		if (entrada.filas !== undefined) {
+			if (Number.isInteger(entrada.filas) && Number(entrada.filas) >= 1
+				&& Number(entrada.filas) <= 1000) hoja.filas = entrada.filas as number;
+			else anotar(`${ruta}.filas`, 'las filas de hoja requerían un entero positivo acotado');
+		}
+		for (const campo of Object.keys(entrada)) if (!CAMPOS_HOJA.has(campo)) {
+			anotar(`${ruta}.${campo}`, 'el campo de hoja no era reconocido');
+		}
+		hojas.push(hoja);
+		indices.push(i);
+	}
+	if (hojas.length === 0) {
+		// `[]` explícito, sin ninguna vista, es el estado válido previo a crear el primer folio.
+		// No equivale a una lista ausente o reparada desde entradas corruptas.
+		if (m2Vacio && lista.length === 0) return [];
+		if (m2) throw new ArchivoInvalido('El esquema M2 no tenía ninguna hoja válida. No se importó.');
+		arreglos.push('no traía ninguna hoja de esquema');
+		return [{ id: 'h1', numero: 1, titulo: 'Hoja 1' }];
+	}
+	const ids = new Set<string>();
+	const numeros = new Set<number>();
+	for (const [posicion, hoja] of hojas.entries()) {
+		if (ids.has(hoja.id)) {
+			if (m2) throw new ArchivoInvalido(`El esquema M2 tenía un ID de hoja repetido (${hoja.id}). No se importó.`);
+			anotar(`hojas[${indices[posicion]}].id`, 'el ID de hoja estaba repetido y requiere revisión');
+		}
+		if (numeros.has(hoja.numero)) {
+			if (m2) throw new ArchivoInvalido(`El esquema M2 tenía un número de hoja repetido (${hoja.numero}). No se importó.`);
+			anotar(`hojas[${indices[posicion]}].numero`, 'el número de hoja estaba repetido y requiere revisión');
+		}
+		ids.add(hoja.id);
+		numeros.add(hoja.numero);
+	}
+	return hojas;
+}
+
 /**
  * Lee un proyecto de un texto JSON. Lanza `ArchivoInvalido` con un motivo entendible si el
  * archivo no es un proyecto; nunca devuelve algo a medias que rompa la aplicación después.
@@ -222,14 +324,11 @@ export function cargarProyecto(json: string): ResultadoCarga {
 		arreglos.push(`${antesColocaciones - gabinete.colocaciones.length} colocación(es) sin aparato o repetida(s)`);
 	}
 
-	const brutoHojas = conTope(bruto.hojas, TOPES.hojas, 'hojas de esquema', arreglos);
-	const hojas = esLista(brutoHojas)
-		? (brutoHojas.filter(esObjeto) as unknown as Hoja[]).filter((h) => texto(h.id))
-		: [];
-	if (hojas.length === 0) {
-		hojas.push({ id: 'h1', numero: 1, titulo: 'Hoja 1' });
-		arreglos.push('no traía ninguna hoja de esquema');
-	}
+	const esquemaBruto = esObjeto(bruto.esquema) ? bruto.esquema : undefined;
+	const m2 = esquemaBruto?.representaciones !== undefined;
+	const m2Vacio = m2 && esLista(esquemaBruto?.representaciones)
+		&& esquemaBruto.representaciones.length === 0;
+	const hojas = leerHojas(bruto.hojas, arreglos, m2, m2Vacio);
 
 	const proyecto: Proyecto = {
 		formato: 'tablero-studio',
