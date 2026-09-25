@@ -33,6 +33,7 @@ import { aplicarGestionHojaEsquema, previsualizarGestionHojaEsquema,
 	type SolicitudGestionHojaEsquema } from '../src/motores/gestion-hojas-esquema.js';
 import { proyectarReferenciasEsquemaM2, type UbicacionTerminalEsquema } from '../src/motores/referencias-esquema-m2.js';
 import { proyectarEstadoEsquema } from '../src/motores/estado-esquema-simulacion.js';
+import { solapesColinealesSinResolver, type SolapeColinealEsquema } from '../src/motores/cruces-esquema.js';
 import type { ResultadoSimulacion } from '../src/motores/simulacion.js';
 import { hojaASvg } from './esquema-svg.js';
 import { exportarEsquemaPDF } from './esquema-pdf.js';
@@ -182,6 +183,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let zoomEsquema = 1;
 	/** Selección de vista: el conductor sigue identificado por su id del proyecto. */
 	let conductorSeleccionado: string | undefined;
+	let solapesAbiertos = false;
+	let solapesHojaActual: SolapeColinealEsquema[] = [];
 	/** Identidad gráfica M2, distinta de la identidad eléctrica del aparato. */
 	let representacionSeleccionada: string | undefined;
 	/** Portapapeles local del esquema: nunca serializado ni mezclado entre proyectos. */
@@ -1022,6 +1025,44 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			panel.append(titulo, lista);
 			ayuda.append(panel);
 		}
+		const hojaVisible = hojasEsquema[hojaActual];
+		const solapes = hojaVisible ? solapesHojaActual : [];
+		if (solapes.length) {
+			const ids = [...new Set(solapes.flatMap((s) =>
+				[s.primero.conductorId, s.segundo.conductorId]))].sort();
+			const panel = document.createElement('details');
+			panel.id = 'esq-solapes';
+			panel.open = solapesAbiertos;
+			const titulo = document.createElement('summary');
+			titulo.textContent = `${solapes.length} solape(s) sin resolver · ${ids.length} conductores`;
+			const aviso = document.createElement('p');
+			aviso.textContent = 'La coincidencia gráfica no crea una unión. Selecciona el conductor por ID para inspeccionarlo; resuelve el trazado antes de emitir el plano.';
+			const lista = document.createElement('div'); lista.className = 'esq-solapes-lista';
+			const documento = proyecto();
+			for (const id of ids) {
+				const boton = document.createElement('button');
+				boton.type = 'button'; boton.className = 'boton';
+				boton.dataset.esqSeleccionarSolape = id;
+				boton.textContent = `Seleccionar ${id}`;
+				boton.setAttribute('aria-pressed', String(id === conductorSeleccionado));
+				boton.onclick = () => {
+					if (proyecto() !== documento || !hojasEsquema[hojaActual]?.hilos.some((h) => h.conductorId === id)) {
+						refrescarEsquema(); return;
+					}
+					limpiarGrupoRepresentaciones();
+					origenConexion = undefined;
+					conductorSeleccionado = id;
+					representacionSeleccionada = undefined;
+					refrescarEsquema();
+					[...(document.getElementById('esq-solapes')?.querySelectorAll<HTMLButtonElement>('button[data-esq-seleccionar-solape]') ?? [])]
+						.find((nuevo) => nuevo.dataset.esqSeleccionarSolape === id)?.focus();
+				};
+				lista.append(boton);
+			}
+			panel.append(titulo, aviso, lista);
+			panel.addEventListener('toggle', () => { if (panel.isConnected) solapesAbiertos = panel.open; });
+			ayuda.append(panel);
+		}
 		if (representaciones === undefined) {
 			const activar = document.createElement('button');
 			activar.id = 'esq-activar-vistas';
@@ -1297,6 +1338,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			origenConexion = undefined;
 		}
 		if (hojasEsquema.length === 0) {
+			solapesHojaActual = [];
 			limpiarGrupoRepresentaciones();
 			hojaSeleccionadaId = undefined;
 			$('esq-folios').hidden = proyecto().esquema?.representaciones === undefined;
@@ -1326,8 +1368,10 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			conductorSeleccionado = undefined;
 		}
 		const explicito = proyecto().esquema?.representaciones !== undefined;
+		solapesHojaActual = solapesColinealesSinResolver(hoja);
 		$('esq-folios').hidden = !explicito;
 		$('esquema-hoja').innerHTML = hojaASvg(hoja, {
+			solapes: solapesHojaActual,
 			proyecto: proyecto().nombre,
 			datos: proyecto().datos,
 			totalHojas: hojasEsquema.length,

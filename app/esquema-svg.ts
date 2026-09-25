@@ -8,6 +8,7 @@
 import { anchoEtiquetaMm, HojaEsq, MARGEN, NOTA_SIMBOLOGIA_ESQUEMA, resumenPendientesEsquema, rotuloEditorialHoja, Trazo } from '../src/motores/esquema.js';
 import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
 	tramosSeleccionablesDeHilo, tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
+import type { SolapeColinealEsquema } from '../src/motores/cruces-esquema.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 
 /** Texto XML 1.0 seguro: elimina controles prohibidos y escapa contenido/atributos. */
@@ -35,6 +36,8 @@ function pintarTrazo(t: Trazo, color: string): string {
 }
 
 export interface OpcionesEsquema {
+	/** Resultado del mismo montaje de hoja, para no repetir el barrido cuadrático del visor. */
+	solapes?: readonly SolapeColinealEsquema[];
 	/** Tinta y papel. En pantalla se usa el tema oscuro; en PDF, negro sobre blanco. */
 	tinta?: string;
 	papel?: string;
@@ -297,7 +300,7 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 
 	const cruces = crucesSinUnion(hoja);
 	const nudos = nudosPorBorne(hoja);
-	const solapes = solapesColinealesSinResolver(hoja);
+	const solapes = o.solapes ?? solapesColinealesSinResolver(hoja);
 	// Hilos primero: los símbolos van encima y tapan las puntas. Los números NO se colocan
 	// aquí: los coloca el motor junto con el resto del texto, para que nada tape a nada.
 	for (const hilo of hoja.hilos) {

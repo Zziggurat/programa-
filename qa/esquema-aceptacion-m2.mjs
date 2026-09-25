@@ -194,6 +194,24 @@ try {
 		['teclado', 'puntero'].includes(metodoSeleccion)
 		&& !!inspectorSeleccion && inspectorSeleccion.includes(cableA1.id)
 		&& inspectorSeleccion.includes('A1'));
+	const panelSolapes = pagina.locator('#esq-solapes');
+	const estadoPanelSolapes = {
+		paneles: await panelSolapes.count(),
+		visible: await panelSolapes.locator('summary').isVisible(),
+		resumen: await panelSolapes.locator('summary').innerText(),
+		botones: await panelSolapes.locator(`[data-esq-seleccionar-solape="${cableA1.id}"]`).count(),
+	};
+	if (estadoPanelSolapes.paneles !== 1 || !estadoPanelSolapes.visible || !/sin resolver/i.test(estadoPanelSolapes.resumen)
+		|| estadoPanelSolapes.botones !== 1) console.log('DIAGNÓSTICO panel solapes:', estadoPanelSolapes);
+	comprobar('el solape conserva una advertencia visible y un selector por ID para ratón',
+		estadoPanelSolapes.paneles === 1 && estadoPanelSolapes.visible && /sin resolver/i.test(estadoPanelSolapes.resumen)
+		&& estadoPanelSolapes.botones === 1);
+	if (!await panelSolapes.evaluate(el => el.open)) await panelSolapes.locator('summary').click();
+	await panelSolapes.locator(`[data-esq-seleccionar-solape="${cableA1.id}"]`).click();
+	comprobar('el selector por ratón enfoca el conductor ambiguo sin alterar la topología',
+		await panelSolapes.locator(`[data-esq-seleccionar-solape="${cableA1.id}"]`).getAttribute('aria-pressed') === 'true'
+		&& (await pagina.locator('#esq-ayuda').innerText()).includes(`Conductor ${cableA1.id}`)
+		&& (await proyecto()).conductores.some(c => c.id === cableA1.id));
 	await pagina.locator('#esq-desconectar').click();
 	const avisoDesconexion = await pagina.locator('#dialogo-msg').textContent();
 	comprobar('desconexión esquemática identifica el vínculo real de la bobina',
