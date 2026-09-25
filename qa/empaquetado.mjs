@@ -121,8 +121,11 @@ await cerrar('btn-cerrar-ayuda'); await page.waitForTimeout(200);
 
 await page.click('#btn-aprender');
 await page.click('#btn-ayuda');
-must('el mismo Build ID aparece discretamente en Acerca de',
-	(await page.locator('#acerca-de').innerText()).includes(buildId), await page.locator('#acerca-de').innerText());
+const acercaDe = await page.locator('#acerca-de').innerText();
+must('el mismo Build ID aparece discretamente en Acerca de', acercaDe.includes(buildId), acercaDe);
+must('la copia en desarrollo no se anuncia como una 1.0 final',
+	acercaDe.includes('preversión funcional en desarrollo')
+	&& !/TableroStudio\s+1\.0\.0\b/.test(acercaDe), acercaDe);
 await cerrar('btn-cerrar-ayuda');
 
 must('está el catálogo de aparatos', await page.evaluate(

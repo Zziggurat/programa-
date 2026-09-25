@@ -15,9 +15,6 @@ import { numerarDispositivos } from '../src/motores/numeracion.js';
 import { avisar, confirmar, escaparHtml, pedirTexto, responderDialogo } from './dialogos.js';
 import { abrirVentana, cerrarVentana } from './ventanas.js';
 
-/** Lo pone Vite a partir de package.json; el empaquetador añade el Build ID de contenido. */
-declare const __VERSION__: string;
-
 /** Lo que la ventana de inicio necesita del editor para hacer su trabajo. */
 export interface ContextoInicio {
 	/** El proyecto abierto ahora mismo (se lee para el nombre y para guardarlo como plantilla). */
@@ -79,14 +76,15 @@ export function instalarInicio(ctx: ContextoInicio): PanelInicio {
 	/*
 	 * QUÉ COPIA ES ESTA. Tercera auditoría, TS3-P3-03.
 	 *
-	 * La versión se ve también en un build web normal. En el HTML offline, el empaquetador añade a
-	 * este mismo texto el hash de contenido; no se usa el SHA del commit porque crearía una
+	 * Mientras el contrato funcional M0–M9 no esté aceptado, el número técnico heredado de
+	 * package.json NO es una versión comercial publicada. En el HTML offline, el empaquetador
+	 * añade a este mismo texto el hash de contenido; no se usa el SHA del commit porque crearía una
 	 * dependencia circular al versionar el propio artefacto generado.
 	 *
 	 * Se pone con `textContent`, no con `innerHTML`: son tres cadenas que mete el empaquetador y no
 	 * llevan marcado ninguno.
 	 */
-	$('acerca-de').textContent = `TableroStudio ${__VERSION__}`;
+	$('acerca-de').textContent = 'TableroStudio · preversión funcional en desarrollo';
 
 	($('btn-ayuda') as HTMLButtonElement).onclick = () => abrirVentana('modal-ayuda');
 	($('btn-cerrar-ayuda') as HTMLButtonElement).onclick = () => cerrarVentana('modal-ayuda');
