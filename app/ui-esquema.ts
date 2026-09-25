@@ -22,6 +22,7 @@ import {
 	planPartesDesdoblamiento, planReponerRepresentacion, type DestinosDesdoblamiento,
 } from '../src/motores/crear-representaciones-esquema.js';
 import { aplicarRenumeracionEsquema, previsualizarRenumeracionEsquema } from '../src/motores/renumeracion-esquema.js';
+import { proyectarReferenciasEsquemaM2, type UbicacionTerminalEsquema } from '../src/motores/referencias-esquema-m2.js';
 import { hojaASvg } from './esquema-svg.js';
 import { exportarEsquemaPDF } from './esquema-pdf.js';
 import { dxfDeEsquema } from './exportaciones.js';
@@ -76,6 +77,8 @@ export interface PanelEsquema {
 }
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
+type DestinoReferenciaEsquema = Pick<UbicacionTerminalEsquema, 'hojaId' | 'numeroHoja'>
+	& Partial<Pick<UbicacionTerminalEsquema, 'columna' | 'representacionId'>>;
 
 export type PropuestaConductorPendiente =
 	| { ok: true; valor: { de: RefBorne; a: RefBorne; estadoRutaFisica: 'pendiente' } }
@@ -148,6 +151,8 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let conductorSeleccionado: string | undefined;
 	/** Identidad gráfica M2, distinta de la identidad eléctrica del aparato. */
 	let representacionSeleccionada: string | undefined;
+	/** El índice se calcula al abrirse; el arrastre normal no hace análisis semántico adicional. */
+	let referenciasAbiertas = false;
 	/** El primer extremo se mantiene al cambiar de hoja; nunca es un segundo conductor. */
 	let origenConexion: { ref: RefBorne; representacionId: string; hojaId: string;
 		documento: Proyecto } | undefined;
@@ -158,6 +163,113 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 		const d = proyecto().dispositivos.find((x) => x.id === ref.dispositivoId);
 		return `${d?.designacion ?? ref.dispositivoId} [${ref.dispositivoId}] · ${ref.borneId}`;
 	};
+
+	/** Navegación por identidad persistente, nunca por rótulo o número de hoja mutable. */
+	function irAReferencia(ubicacion: DestinoReferenciaEsquema,
+		dispositivoId?: string): void {
+		const indice = hojasEsquema.findIndex((h) => h.id === ubicacion.hojaId);
+		if (indice < 0) { avisar('La hoja de esta referencia ya no existe. Actualiza el esquema.', 'info'); return; }
+		hojaActual = indice;
+		conductorSeleccionado = undefined;
+		representacionSeleccionada = ubicacion.representacionId;
+		if (dispositivoId && proyecto().dispositivos.some((d) => d.id === dispositivoId)) seleccionar(dispositivoId);
+		refrescarEsquema();
+	}
+
+	/** Índice de navegación ESQ-08. No adjudica páginas a retornos no descubiertos. */
+	function pintarReferencias(ayuda: HTMLElement): void {
+		const panel = document.createElement('details');
+		panel.id = 'esq-referencias';
+		panel.open = referenciasAbiertas;
+		panel.style.textAlign = 'left';
+		panel.style.marginTop = '5px';
+		const titulo = document.createElement('summary');
+		titulo.textContent = 'Referencias de E/S y circuitos por hoja';
+		const contenido = document.createElement('div');
+		contenido.id = 'esq-referencias-contenido';
+		contenido.style.maxHeight = 'min(30vh, 260px)';
+		contenido.style.overflowY = 'auto';
+		contenido.style.padding = '4px 8px';
+		const enlace = (texto: string, ubicacion: DestinoReferenciaEsquema, dispositivoId?: string) => {
+			const boton = document.createElement('button');
+			boton.type = 'button';
+			boton.className = 'boton';
+			boton.textContent = `${texto} · hoja ${ubicacion.numeroHoja}`
+				+ (ubicacion.columna === undefined ? '' : `, col. ${ubicacion.columna}`);
+			boton.dataset.hojaId = ubicacion.hojaId;
+			if (ubicacion.representacionId) boton.dataset.representacionId = ubicacion.representacionId;
+			boton.onclick = () => irAReferencia(ubicacion, dispositivoId);
+			return boton;
+		};
+		const render = () => {
+			if (!panel.open || !panel.isConnected) return;
+			const referencias = proyectarReferenciasEsquemaM2(proyecto(), hojasEsquema);
+			contenido.replaceChildren();
+			titulo.textContent = `Referencias de E/S y circuitos por hoja · ${referencias.canales.length} canal(es), `
+				+ `${referencias.circuitos.length} circuito(s), ${referencias.diagnosticos.length} diagnóstico(s)`;
+			const alcance = document.createElement('p');
+			alcance.textContent = 'Circuitos: solo trayectos de alimentación identificados; no es un mapa exhaustivo de retornos.';
+			contenido.append(alcance);
+			const encabezadoIO = document.createElement('strong');
+			encabezadoIO.textContent = 'Canal ↔ terminal';
+			contenido.append(encabezadoIO);
+			const listaIO = document.createElement('ul');
+			for (const ref of referencias.canales) {
+				const fila = document.createElement('li');
+				fila.dataset.referenciaConductor = ref.conductorId;
+				fila.textContent = `${ref.controladorId}:${ref.canalBorneId} (${ref.clase}, ${ref.calidad}) ↔ `
+					+ `${ref.terminal.dispositivoId}:${ref.terminal.borneId} · cable ${ref.conductorId} · `;
+				fila.append(enlace('Ver canal', ref.canal, ref.controladorId),
+					document.createTextNode(' '),
+					enlace('Ver terminal', ref.terminal.ubicacion, ref.terminal.dispositivoId));
+				listaIO.append(fila);
+			}
+			if (!referencias.canales.length) {
+				const vacio = document.createElement('li');
+				vacio.textContent = 'No hay vínculos de E/S con dos anclajes únicos verificables.';
+				listaIO.append(vacio);
+			}
+			contenido.append(listaIO);
+			const encabezadoCircuitos = document.createElement('strong');
+			encabezadoCircuitos.textContent = 'Circuito ↔ hojas';
+			contenido.append(encabezadoCircuitos);
+			const listaCircuitos = document.createElement('ul');
+			for (const ref of referencias.circuitos) {
+				const fila = document.createElement('li');
+				fila.dataset.referenciaCircuito = ref.circuitoId;
+				fila.textContent = `${ref.nombre} [${ref.circuitoId}] · topología ${ref.estadoTopologia} `
+					+ `· ${ref.conductores.length} trayecto(s) identificado(s), ${ref.conductoresSinAncla.length} sin ancla · `;
+				for (const hoja of ref.hojas) fila.append(enlace('Ver hoja', { hojaId: hoja.id, numeroHoja: hoja.numero }));
+				listaCircuitos.append(fila);
+			}
+			if (!referencias.circuitos.length) {
+				const vacio = document.createElement('li');
+				vacio.textContent = 'No hay circuitos de alimentación identificados.';
+				listaCircuitos.append(vacio);
+			}
+			contenido.append(listaCircuitos);
+			if (referencias.diagnosticos.length) {
+				const encabezado = document.createElement('strong');
+				encabezado.textContent = 'Referencias no concluyentes';
+				const lista = document.createElement('ul');
+				for (const d of referencias.diagnosticos) {
+					const fila = document.createElement('li');
+					fila.dataset.referenciaDiagnostico = d.codigo;
+					fila.textContent = `${d.codigo} · ${d.entidadId}${d.conductorId ? ` · ${d.conductorId}` : ''}: ${d.detalle}`;
+					lista.append(fila);
+				}
+				contenido.append(encabezado, lista);
+			}
+		};
+		panel.addEventListener('toggle', () => {
+			if (!panel.isConnected) return;
+			referenciasAbiertas = panel.open;
+			if (panel.open) render();
+		});
+		panel.append(titulo, contenido);
+		ayuda.append(panel);
+		if (panel.open) render();
+	}
 
 	/** Una vista repuesta apunta al MISMO aparato; nunca crea un segundo circuito. */
 	async function reponerVista(dispositivoId: string): Promise<void> {
@@ -381,6 +493,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			activar.onclick = () => { void activarRepresentacionesLegacy(); };
 			ayuda.append(document.createTextNode(' · '), activar);
 		}
+		pintarReferencias(ayuda);
 	}
 
 	async function activarRepresentacionesLegacy(): Promise<void> {
