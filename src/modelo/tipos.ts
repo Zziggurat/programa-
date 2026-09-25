@@ -380,10 +380,14 @@ export interface Conductor {
 export type ClaseConductor = 'interno' | 'puerta' | 'campo' | 'proteccion';
 
 /** Folio del esquema. Rejilla al estilo QET: columnas numeradas y filas con letra. */
+export type ClaseHojaEsquema = 'potencia' | 'mando' | 'plc-io' | 'bornes' | 'mixta';
+
 export interface Hoja {
 	id: string;
 	numero: number;
 	titulo: string;
+	/** Clasificación editorial explícita; ausente no se infiere del título ni del circuito. */
+	clase?: ClaseHojaEsquema;
 	columnas?: number; // por defecto 10
 	filas?: number;    // por defecto 6
 }
