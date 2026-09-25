@@ -52,6 +52,9 @@ test('ESQ-07: índice offline ordena folios M2 por número y escapa títulos hos
 		assert.ok(archivos.some((a) => a.ruta === ruta));
 		assert.ok(indice.includes(`href="${ruta}"`));
 	}
+	const enlaces = [...indice.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+	assert.equal(enlaces.length, archivos.length - 1, 'cada pieza del paquete tiene exactamente un enlace');
+	assert.deepEqual(enlaces.sort(), archivos.filter((a) => a.ruta !== 'index.html').map((a) => a.ruta).sort());
 	const invertido = structuredClone(p);
 	invertido.hojas.reverse();
 	const archivosInvertidos = await crearArchivosPaqueteDocumental(invertido, procedencia);

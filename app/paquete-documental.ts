@@ -45,7 +45,10 @@ function indiceHtml(proyecto: Proyecto, procedencia: ProcedenciaDocumento,
 	archivos: readonly ArchivoPaqueteDocumental[], errores: number, avisos: number,
 	rutasPendientes: number, ioDiagnosticos: number, hojas: readonly HojaEsq[]): string {
 	const p = resumenProcedenciaDocumento(procedencia);
-	const enlaces = archivos.map((a) => `<li><a href="${esc(a.ruta)}">${esc(a.ruta)}</a> <small>${esc(a.mime)}</small></li>`).join('');
+	const rutasFolio = new Set(hojas.map((h) => `esquema/hoja-${String(h.numero).padStart(3, '0')}.svg`));
+	// Cada pieza conserva un solo enlace en el índice: el SVG se presenta con su título arriba.
+	const enlaces = archivos.filter((a) => !rutasFolio.has(a.ruta))
+		.map((a) => `<li><a href="${esc(a.ruta)}">${esc(a.ruta)}</a> <small>${esc(a.mime)}</small></li>`).join('');
 	const folios = [...hojas].sort((a, b) => a.numero - b.numero || a.id.localeCompare(b.id))
 		.map((h) => `<tr><td>${h.numero}</td><td><a href="esquema/hoja-${String(h.numero).padStart(3, '0')}.svg">${esc(h.titulo)}</a></td>`
 			+ `<td>${esc(h.clase ? etiquetaClaseHojaEsquema(h.clase) : 'Sin clase declarada')}</td><td><code>${esc(h.id)}</code></td></tr>`).join('');
