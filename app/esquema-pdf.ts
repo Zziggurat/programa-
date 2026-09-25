@@ -140,6 +140,42 @@ function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number,
 	doc.text(NOTA_SIMBOLOGIA_ESQUEMA, MARGEN.izq, y + alto - 1.4);
 }
 
+/** La declaración individual debe viajar también en el PDF legible, no solo en el SVG. */
+function anexarProcedenciaPersonal(doc: jsPDF, hojas: HojaEsq[]): void {
+	const fichas = new Map<string, { autor: string; licencia: string }>();
+	for (const hoja of hojas) for (const simbolo of hoja.simbolos) {
+		const plantilla = simbolo.plantilla;
+		if (plantilla?.familia === 'personal') fichas.set(plantilla.id, {
+			autor: plantilla.autorDeclarado ?? 'NO DECLARADO', licencia: plantilla.licenciaDeclarada,
+		});
+	}
+	if (fichas.size === 0) return;
+	let y = 0;
+	const nuevaPagina = (): void => {
+		doc.addPage([420, 297], 'landscape');
+		doc.setTextColor(...TINTA); doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+		doc.text('Procedencia declarada de símbolos personales', 18, 20);
+		doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+		doc.text('Declaración de usuario: autor y licencia NO VERIFICADOS; no acredita permiso ni conformidad normativa.', 18, 28);
+		y = 42;
+	};
+	const renglon = (texto: string, negrita = false): void => {
+		doc.setFont('helvetica', negrita ? 'bold' : 'normal'); doc.setFontSize(8);
+		for (const linea of doc.splitTextToSize(texto, 380) as string[]) {
+			if (y > 276) nuevaPagina();
+			doc.text(linea, 18, y); y += 4.3;
+		}
+	};
+	nuevaPagina();
+	for (const [id, ficha] of [...fichas].sort(([a], [b]) => a.localeCompare(b))) {
+		if (y > 263) nuevaPagina();
+		renglon(`Plantilla: ${id}`, true);
+		renglon(`Autor/origen declarado: ${ficha.autor}`);
+		renglon(`Licencia declarada: ${ficha.licencia}`);
+		y += 3;
+	}
+}
+
 /** Genera el mismo PDF vectorial que la descarga individual, sin efectos de interfaz. */
 export function esquemaComoBlob(
 	hojas: HojaEsq[], proyecto: string, datos: DatosCajetin = {},
@@ -152,7 +188,7 @@ export function esquemaComoBlob(
 		.map((simbolo) => simbolo.plantilla?.id).filter((id): id is string => id !== undefined)))].sort();
 	doc.setProperties({ title: `${proyecto} — esquema eléctrico`,
 		creator: `TableroStudio · ${identidad.buildId}`, subject: identidad.estado,
-		keywords: `Plantillas de esquema locales (licencia del proyecto declarada, no verificada por plantilla): ${plantillas.join(', ') || 'ninguna'}` });
+		keywords: `Plantillas de esquema locales o personales (licencia declarada, no verificada por plantilla): ${plantillas.join(', ') || 'ninguna'}` });
 
 	hojas.forEach((hoja, i) => {
 		if (i > 0) doc.addPage([hoja.anchoMm, hoja.altoMm], 'landscape');
@@ -226,6 +262,7 @@ export function esquemaComoBlob(
 				hoja.altoMm - MARGEN.abajo + 21.3, hoja.anchoMm - MARGEN.izq - MARGEN.der - 185, 6);
 		}
 	});
+	anexarProcedenciaPersonal(doc, hojas);
 
 	return doc.output('blob') as Blob;
 }

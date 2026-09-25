@@ -13,6 +13,8 @@ import {
 } from '../src/componentes/personalizados.js';
 import { base64ABytes } from '../src/componentes/assets.js';
 import type { CarcasaParametrica } from '../src/componentes/carcasa.js';
+import type { SimboloEsquemaPersonal, SegmentoSimboloPersonal } from '../src/modelo/simbolo-personal.js';
+import { simboloDe } from '../src/motores/esquema.js';
 import { crearComponentePortatil, leerComponentePortatilDesdeArchivo } from '../src/componentes/portatil.js';
 import { congelarSubconjunto } from '../src/datos-tecnicos/hash.js';
 import { familiaDispositivo } from '../src/datos-tecnicos/resolver.js';
@@ -153,6 +155,7 @@ interface EstadoEditor {
 	parametros: ParametrosConstruccionPerfil;
 	montaje?: MontajeComponente;
 	carcasa?: CarcasaParametrica;
+	simboloEsquema?: SimboloEsquemaPersonal;
 	fichaTecnica?: DefinicionComponentePersonalizado['fichaTecnica'];
 	/** Selección de UI no aplicada hasta pulsar «Fijar revisión exacta». */
 	candidatoFichaClave?: string;
@@ -334,7 +337,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 	const huellaEditor = (e: EstadoEditor): string => JSON.stringify({
 		original: e.original && [e.original.id, e.original.revision], tipo: e.tipo,
 		datos: e.datos, terminales: e.terminales, bloquesTerminales: e.bloquesTerminales,
-		parametros: e.parametros, montaje: e.montaje, carcasa: e.carcasa,
+		parametros: e.parametros, montaje: e.montaje, carcasa: e.carcasa, simboloEsquema: e.simboloEsquema,
 		fichaTecnica: e.fichaTecnica,
 		assetId: e.assetId, assetNuevo: e.assetBytes && [e.assetBytes.byteLength, e.assetMime, e.previewUrl],
 		recorte: e.recorte, recorteAplicado: e.recorteAplicado,
@@ -489,6 +492,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 				terminales: terminalesParaEditor(d), bloquesTerminales: d.bloquesTerminales && clonar(d.bloquesTerminales),
 				parametros: parametrosDesde(d), montaje: d.montaje && clonar(d.montaje),
 				carcasa: carcasaConservadaEnRevision(d).carcasa,
+				simboloEsquema: d.simboloEsquema && clonar(d.simboloEsquema),
 				fichaTecnica: d.fichaTecnica && clonar(d.fichaTecnica),
 				anclajesPlacaBorrador: d.montaje?.metodo === 'atornillado-placa' ? clonar(d.montaje.anclajes ?? []) : undefined,
 				assetId: d.assetId, previewUrl,
@@ -543,6 +547,22 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			+ '<div class="cp-campos"><label>Plantilla de carcasa<select data-cp="carcasa-plantilla"><option value="">Sin plantilla: frente fotográfico legacy</option><option value="modulo-din">Módulo DIN ilustrativo</option><option value="caja-industrial">Caja industrial ilustrativa</option></select></label>'
 			+ '<label>Acabado<select data-cp="carcasa-acabado"><option value="gris-claro">Gris claro</option><option value="grafito">Grafito</option><option value="negro">Negro</option></select></label></div>'
 			+ '<div data-cp="carcasa-estado" role="status" aria-live="polite"></div></section>'
+			+ '<section class="cp-simbolo"><h4>Símbolo esquemático personal</h4>'
+			+ '<p>Independiente de la foto, los bornes y el perfil. Diseña un trazo vectorial para la vista completa; las vistas desdobladas siguen mostrando bobina y contactos por su función. Ninguna forma acredita IEC ni derechos de terceros.</p>'
+			+ '<label><input type="checkbox" data-cp="simbolo-activo">Usar símbolo personal en lugar de la plantilla genérica</label>'
+			+ '<div data-cp="simbolo-controles"><div class="cp-campos"><label>Forma<select data-cp="simbolo-forma"><option value="bloque">Bloque</option><option value="circulo">Círculo</option><option value="rombo">Rombo</option></select></label>'
+			+ '<label>Texto central opcional<input maxlength="24" data-cp="simbolo-rotulo" placeholder="p. ej. M o VFD"></label>'
+			+ '<label>Autor/origen declarado<input maxlength="120" data-cp="simbolo-autor" placeholder="Nombre u organización"></label>'
+			+ '<label>Licencia declarada<input maxlength="120" data-cp="simbolo-licencia" placeholder="p. ej. CC BY 4.0 o uso privado"></label></div>'
+			+ '<p>Trazo adicional en coordenadas −1…1 dentro de la forma. No admite SVG/HTML; hasta 32 segmentos.</p>'
+			+ '<div class="cp-simbolo-coordenadas"><label>X₁<input type="number" min="-1" max="1" step="0.05" data-cp="simbolo-x1" value="-0.5"></label>'
+			+ '<label>Y₁<input type="number" min="-1" max="1" step="0.05" data-cp="simbolo-y1" value="0.55"></label>'
+			+ '<label>X₂<input type="number" min="-1" max="1" step="0.05" data-cp="simbolo-x2" value="0.5"></label>'
+			+ '<label>Y₂<input type="number" min="-1" max="1" step="0.05" data-cp="simbolo-y2" value="0.55"></label>'
+			+ '<button type="button" data-cp="simbolo-agregar">Añadir trazo</button></div>'
+			+ '<div data-cp="simbolo-estado" role="status"></div><ol data-cp="simbolo-segmentos"></ol>'
+			+ '<div class="cp-simbolo-preview" data-cp="simbolo-preview" aria-label="Vista previa vectorial con terminales"></div>'
+			+ '<p class="cp-simbolo-aviso">Autor y licencia son declaraciones sin verificación de propiedad, permiso o conformidad. Revisa el plano antes de entregarlo.</p></div></section>'
 			+ '<section class="cp-ficha" data-cp="ficha-tecnica"><h4>Ficha técnica V8 exacta</h4><p>Selecciona una revisión PRODUCTO de la familia funcional y fija también su curva dependiente. El hash prueba integridad, no autenticidad, licencia ni certificación. La selección no modifica los parámetros eléctricos por sí sola.</p><div data-cp="ficha-estado" role="status" aria-live="polite"></div><div data-cp="ficha-contenido"></div></section></section>'
 			+ '<section class="cp-panel cp-paso" data-cp-paso="revision" hidden><h3 tabindex="-1">6. Revisión antes de guardar</h3>'
 			+ '<p>Confirma identidad, perfil, bornes, dimensiones y asset. Guardar crea una revisión de biblioteca; no actualiza automáticamente los aparatos colocados.</p>'
@@ -611,7 +631,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			pintarControlesCarcasa();
 		};
 		pintarFidelidad(); pintarPreview(); pintarTerminales(); pintarBloques(); pintarParametros(); pintarMontaje();
-		pintarControlesRecorte(); pintarControlesCarcasa(); void pintarApariencia();
+		pintarControlesRecorte(); pintarControlesCarcasa(); pintarControlesSimbolo(); void pintarApariencia();
 		el<HTMLButtonElement>(cuerpo, '[data-cp="validar"]').onclick = () => { validarDesdeFormulario(false); };
 		el<HTMLButtonElement>(cuerpo, '[data-cp="guardar"]').onclick = () => { void guardarDesdeFormulario(); };
 		mostrarPasoEditor(editor.paso ?? 'identidad', false);
@@ -633,7 +653,8 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		el<HTMLElement>(cuerpo, '[data-cp="acciones-revision"]').hidden = paso !== 'revision';
 		el<HTMLElement>(cuerpo, '[data-cp="progreso"]').textContent = `Paso ${indice + 1} de ${PASOS_ASISTENTE_COMPONENTE.length}`;
 		cuerpo.scrollTop = 0;
-		if (paso === 'apariencia') { capturarMontaje(); pintarControlesCarcasa(); void actualizarFichaTecnica(); void pintarApariencia(); }
+		if (paso === 'apariencia') { capturarMontaje(); pintarControlesCarcasa(); pintarControlesSimbolo();
+			void actualizarFichaTecnica(); void pintarApariencia(); }
 		if (paso === 'revision') {
 			pintarResumenEditor();
 			const errores = el<HTMLElement>(cuerpo, '[data-cp="errores"]');
@@ -644,6 +665,106 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			const encabezado = cuerpo.querySelector<HTMLElement>(`[data-cp-paso="${paso}"] h3`);
 			encabezado?.focus({ preventScroll: true });
 		}
+	}
+
+	function pintarControlesSimbolo(): void {
+		if (!editor) return;
+		const activo = el<HTMLInputElement>(cuerpo, '[data-cp="simbolo-activo"]');
+		const controles = el<HTMLElement>(cuerpo, '[data-cp="simbolo-controles"]');
+		const forma = el<HTMLSelectElement>(cuerpo, '[data-cp="simbolo-forma"]');
+		const rotulo = el<HTMLInputElement>(cuerpo, '[data-cp="simbolo-rotulo"]');
+		const autor = el<HTMLInputElement>(cuerpo, '[data-cp="simbolo-autor"]');
+		const licencia = el<HTMLInputElement>(cuerpo, '[data-cp="simbolo-licencia"]');
+		const actual = editor.simboloEsquema;
+		activo.checked = !!actual;
+		controles.hidden = !actual;
+		activo.onchange = () => {
+			if (!editor) return;
+			editor.simboloEsquema = activo.checked ? {
+				version: 1, forma: 'bloque', segmentos: [], autorDeclarado: '', licenciaDeclarada: '',
+			} : undefined;
+			pintarControlesSimbolo();
+		};
+		if (!actual) return;
+		forma.value = actual.forma;
+		rotulo.value = actual.rotulo ?? '';
+		autor.value = actual.autorDeclarado;
+		licencia.value = actual.licenciaDeclarada;
+		forma.onchange = () => { actual.forma = forma.value as SimboloEsquemaPersonal['forma']; pintarControlesSimbolo(); };
+		rotulo.oninput = () => { actual.rotulo = rotulo.value || undefined; pintarVistaPreviaSimbolo(); };
+		autor.oninput = () => { actual.autorDeclarado = autor.value; pintarVistaPreviaSimbolo(); };
+		licencia.oninput = () => { actual.licenciaDeclarada = licencia.value; pintarVistaPreviaSimbolo(); };
+		el<HTMLButtonElement>(cuerpo, '[data-cp="simbolo-agregar"]').onclick = () => {
+			const leer = (clave: string): number | undefined => {
+				const entrada = el<HTMLInputElement>(cuerpo, `[data-cp="simbolo-${clave}"]`);
+				return entrada.value !== '' && Number.isFinite(entrada.valueAsNumber)
+					&& entrada.valueAsNumber >= -1 && entrada.valueAsNumber <= 1 ? entrada.valueAsNumber : undefined;
+			};
+			const [x1, y1, x2, y2] = ['x1', 'y1', 'x2', 'y2'].map(leer);
+			const estado = el<HTMLElement>(cuerpo, '[data-cp="simbolo-estado"]');
+			if (x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined
+				|| Math.hypot(x2 - x1, y2 - y1) < 0.02 || actual.segmentos.length >= 32) {
+				estado.textContent = 'Indica dos puntos distintos entre −1 y 1; máximo 32 trazos.';
+				return;
+			}
+			actual.segmentos.push({ x1, y1, x2, y2 });
+			pintarListaSegmentos();
+		};
+		pintarListaSegmentos();
+	}
+
+	function pintarListaSegmentos(): void {
+		const actual = editor?.simboloEsquema;
+		if (!actual) return;
+		const lista = el<HTMLOListElement>(cuerpo, '[data-cp="simbolo-segmentos"]');
+		lista.replaceChildren();
+		actual.segmentos.forEach((segmento: SegmentoSimboloPersonal, indice) => {
+			const fila = document.createElement('li');
+			const quitar = document.createElement('button'); quitar.type = 'button'; quitar.textContent = 'Quitar';
+			quitar.setAttribute('aria-label', `Quitar trazo ${indice + 1}`);
+			quitar.onclick = () => { actual.segmentos.splice(indice, 1); pintarListaSegmentos(); };
+			fila.append(`(${segmento.x1}, ${segmento.y1}) → (${segmento.x2}, ${segmento.y2}) `, quitar);
+			lista.appendChild(fila);
+		});
+		el<HTMLElement>(cuerpo, '[data-cp="simbolo-estado"]').textContent =
+			`${actual.segmentos.length}/32 trazos. Los bornes provienen de la lista eléctrica, no del dibujo.`;
+		pintarVistaPreviaSimbolo();
+	}
+
+	function pintarVistaPreviaSimbolo(): void {
+		const vista = el<HTMLElement>(cuerpo, '[data-cp="simbolo-preview"]');
+		vista.replaceChildren();
+		const actual = editor?.simboloEsquema;
+		if (!actual || !editor) return;
+		const dibujo: SimboloEsquemaPersonal = { ...actual,
+			autorDeclarado: actual.autorDeclarado.trim() || 'Vista previa',
+			licenciaDeclarada: actual.licenciaDeclarada.trim() || 'Sin declarar' };
+		const geometria = simboloDe({ id: 'preview', tipo: editor.tipo,
+			bornes: terminalesDesdeEditor(editor.terminales), simboloEsquemaPersonal: dibujo });
+		const ns = 'http://www.w3.org/2000/svg';
+		const svg = document.createElementNS(ns, 'svg');
+		svg.setAttribute('viewBox', '-20 -18 40 36');
+		svg.setAttribute('role', 'img');
+		svg.setAttribute('aria-label', 'Vista previa del símbolo personal');
+		for (const trazo of geometria.trazos) {
+			if (trazo.tipo === 'linea') {
+				const linea = document.createElementNS(ns, 'line');
+				for (const [clave, valor] of [['x1', trazo.a.x], ['y1', trazo.a.y],
+					['x2', trazo.b.x], ['y2', trazo.b.y]] as const) linea.setAttribute(clave, String(valor));
+				svg.appendChild(linea);
+			} else if (trazo.tipo === 'circulo') {
+				const circulo = document.createElementNS(ns, 'circle');
+				circulo.setAttribute('cx', String(trazo.c.x)); circulo.setAttribute('cy', String(trazo.c.y));
+				circulo.setAttribute('r', String(trazo.r)); svg.appendChild(circulo);
+			} else {
+				const texto = document.createElementNS(ns, 'text');
+				texto.setAttribute('x', String(trazo.p.x)); texto.setAttribute('y', String(trazo.p.y));
+				texto.setAttribute('text-anchor', trazo.anclaje === 'centro' ? 'middle' : trazo.anclaje === 'der' ? 'end' : 'start');
+				texto.setAttribute('font-size', String(trazo.tam ?? 3.2)); texto.textContent = trazo.texto;
+				svg.appendChild(texto);
+			}
+		}
+		vista.appendChild(svg);
 	}
 
 	function pintarResumenEditor(): void {
@@ -677,6 +798,9 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 		fila('Carcasa visual', editor.carcasa
 			? `${editor.carcasa.plantilla === 'modulo-din' ? 'Módulo DIN ilustrativo' : 'Caja industrial ilustrativa'} · acabado ${editor.carcasa.acabado} · no declara montaje`
 			: 'Sin plantilla: frente fotográfico legacy');
+		fila('Símbolo esquemático', editor.simboloEsquema
+			? `${editor.simboloEsquema.forma} · ${editor.simboloEsquema.segmentos.length} trazos · autor ${editor.simboloEsquema.autorDeclarado || 'SIN DECLARAR'} · licencia ${editor.simboloEsquema.licenciaDeclarada || 'SIN DECLARAR'} · NO VERIFICADA`
+			: 'Plantilla genérica local; sin dibujo personal');
 		fila('Montaje', editor.montaje?.metodo === 'riel-din' ? 'Riel DIN declarado; ajuste físico pendiente de evaluar'
 			: editor.montaje?.metodo === 'atornillado-placa'
 				? editor.montaje.anclajes?.length
@@ -1287,6 +1411,7 @@ export function instalarUIComponentesPersonalizados(ctx: ContextoUIComponentesPe
 			...(editor.bloquesTerminales?.length ? { bloquesTerminales: clonar(editor.bloquesTerminales) } : {}),
 			...(editor.montaje ? { montaje: clonar(editor.montaje) } : {}),
 			...(editor.carcasa ? { carcasa: clonar(editor.carcasa) } : {}),
+			...(editor.simboloEsquema ? { simboloEsquema: clonar(editor.simboloEsquema) } : {}),
 			...(editor.fichaTecnica ? { fichaTecnica: clonar(editor.fichaTecnica) } : {}),
 			comportamiento: perfil.comportamiento ?? { version: 1, clase: 'sin-comportamiento', motivo: 'perfil incompleto' }, parametros: p,
 		};

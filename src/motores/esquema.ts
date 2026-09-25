@@ -19,6 +19,7 @@ import type { ClaseHojaEsquema, ParteRepresentacionEsquema, RepresentacionEsquem
 import { rotuloVisibleBorne } from '../modelo/bornes.js';
 import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { resolverComportamiento } from '../modelo/comportamiento.js';
+import { leerSimboloEsquemaPersonal, type SimboloEsquemaPersonal } from '../modelo/simbolo-personal.js';
 import { ResultadoPotenciales } from './potenciales.js';
 
 /* --------------------------------- Geometría --------------------------------- */
@@ -190,13 +191,57 @@ export function anchoColumna(hoja = HOJA_A3, columnas = 10): number {
 export interface PlantillaSimboloEsquema {
 	/** Identificador estable de la geometría local; no es una designación IEC. */
 	readonly id: string;
-	readonly familia: 'dedicado' | 'bloque-funcional' | 'generico' | 'parte';
-	readonly origen: 'trazos-generados-en-editor';
-	readonly archivo: 'src/motores/esquema.ts';
+	readonly familia: 'dedicado' | 'bloque-funcional' | 'generico' | 'parte' | 'personal';
+	readonly origen: 'trazos-generados-en-editor' | 'declaracion-usuario';
+	readonly archivo?: 'src/motores/esquema.ts';
+	readonly autorDeclarado?: string;
 	/** Declaración global de package.json, no verificación de derechos de cada trazo. */
-	readonly licenciaDeclarada: 'GPL-2.0-or-later';
+	readonly licenciaDeclarada: string;
 	readonly licenciaVerificada: false;
 	readonly conformidadNormativa: 'NO_VERIFICADA';
+}
+
+/** El perfil y los bornes no proceden del dibujo; solo su silueta y trazo central. */
+function simboloPersonalDe(d: Dispositivo, dibujo: SimboloEsquemaPersonal): GeometriaSimboloEsquema {
+	const pines = new Map<string, PuntoEsq>();
+	const trazos: Trazo[] = [];
+	const entradas = d.bornes.filter((_, i) => i % 2 === 0);
+	const salidas = d.bornes.filter((_, i) => i % 2 === 1);
+	const vias = Math.max(1, entradas.length, salidas.length);
+	const ancho = Math.max(18, Math.min(vias * 8, ANCHO_MAX_SIMBOLO));
+	const alto = 20;
+	const repartir = (bornes: typeof entradas, y: number): void => {
+		bornes.forEach((borne, indice) => {
+			const x = bornes.length === 1 ? 0 : -ancho / 2 + indice * ancho / (bornes.length - 1);
+			pines.set(borne.id, { x, y });
+			trazos.push({ tipo: 'linea', a: { x, y }, b: { x, y: y < 0 ? y + 3 : y - 3 } });
+			trazos.push({ tipo: 'texto', p: { x: x + 1, y: y < 0 ? y - 1.2 : y + 3 },
+				texto: rotuloVisibleBorne(borne), tam: 2.2, anclaje: 'izq' });
+		});
+	};
+	repartir(entradas, -alto / 2);
+	repartir(salidas, alto / 2);
+	const linea = (x1: number, y1: number, x2: number, y2: number): void => {
+		trazos.push({ tipo: 'linea', a: { x: x1, y: y1 }, b: { x: x2, y: y2 } });
+	};
+	if (dibujo.forma === 'circulo') trazos.push({ tipo: 'circulo', c: { x: 0, y: 0 }, r: 6 });
+	else if (dibujo.forma === 'rombo') {
+		linea(0, -7, 8, 0); linea(8, 0, 0, 7); linea(0, 7, -8, 0); linea(-8, 0, 0, -7);
+	} else {
+		linea(-8, -7, 8, -7); linea(8, -7, 8, 7);
+		linea(8, 7, -8, 7); linea(-8, 7, -8, -7);
+	}
+	for (const segmento of dibujo.segmentos) linea(segmento.x1 * 7, segmento.y1 * 6,
+		segmento.x2 * 7, segmento.y2 * 6);
+	if (dibujo.rotulo) trazos.push({ tipo: 'texto', p: { x: 0, y: 1.1 }, texto: dibujo.rotulo,
+		tam: Math.max(1.8, Math.min(3.2, 13 / dibujo.rotulo.length)), anclaje: 'centro' });
+	const origenId = d.componentePersonalizado
+		? `${d.componentePersonalizado.definicionId}:r${d.componentePersonalizado.revision}` : d.id;
+	const plantilla: PlantillaSimboloEsquema = Object.freeze({ id: `esq.personal.${origenId}`,
+		familia: 'personal', origen: 'declaracion-usuario', autorDeclarado: dibujo.autorDeclarado,
+		licenciaDeclarada: dibujo.licenciaDeclarada, licenciaVerificada: false,
+		conformidadNormativa: 'NO_VERIFICADA' });
+	return { ancho, alto, trazos, pines, plantilla };
 }
 
 function plantilla(id: string, familia: PlantillaSimboloEsquema['familia']): PlantillaSimboloEsquema {
@@ -355,6 +400,8 @@ function bloqueFuncional(d: Dispositivo): { ancho: number; alto: number; trazos:
  * Devuelve los trazos en coordenadas locales y los pines por nombre de borne.
  */
 export function simboloDe(d: Dispositivo): GeometriaSimboloEsquema {
+	const personal = leerSimboloEsquemaPersonal(d.simboloEsquemaPersonal);
+	if (personal) return simboloPersonalDe(d, personal);
 	const plantilla = plantillaCompleta(d);
 	if (plantilla === PLANTILLAS.bloqueFuncional) return { ...bloqueFuncional(d), plantilla };
 

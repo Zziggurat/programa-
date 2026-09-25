@@ -897,7 +897,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			const cabecera = document.createElement('summary');
 			const nombreFamilia = plantilla ? ({ dedicado: 'símbolo dedicado',
 				'bloque-funcional': 'bloque funcional', generico: 'símbolo genérico',
-				parte: 'parte funcional' } as const)[plantilla.familia] : undefined;
+				parte: 'parte funcional', personal: 'símbolo personal' } as const)[plantilla.familia] : undefined;
 			cabecera.textContent = plantilla
 				? `Simbología: ${nombreFamilia} [${plantilla.id}] · CONFORMIDAD NO VERIFICADA`
 				: 'Simbología: sin plantilla representable · NO VERIFICADO';
@@ -907,9 +907,12 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 				procedencia.dataset.familia = plantilla.familia;
 				procedencia.dataset.conformidad = plantilla.conformidadNormativa;
 				const origen = document.createElement('p');
-				origen.textContent = `Origen gráfico: trazos generados en el editor (${plantilla.archivo}). No es una biblioteca IEC certificada.`;
+				origen.textContent = plantilla.origen === 'declaracion-usuario'
+					? `Origen gráfico: dibujo personal; autor declarado: ${plantilla.autorDeclarado}. No es una biblioteca IEC certificada.`
+					: `Origen gráfico: trazos generados en el editor (${plantilla.archivo}). No es una biblioteca IEC certificada.`;
 				const licencia = document.createElement('p');
-				licencia.textContent = `Licencia del proyecto declarada: ${plantilla.licenciaDeclarada}. `
+				licencia.textContent = `${plantilla.origen === 'declaracion-usuario' ? 'Licencia del dibujo declarada'
+					: 'Licencia del proyecto declarada'}: ${plantilla.licenciaDeclarada}. `
 					+ 'La autoría y licencia individual de este símbolo no están verificadas.';
 				const norma = document.createElement('p');
 				norma.textContent = 'Conformidad normativa: NO VERIFICADA; esta vista no certifica el plano ni la fabricación.';

@@ -359,13 +359,15 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 		const procedencia = plantilla
 			? ` data-plantilla="${esc(plantilla.id)}" data-familia-simbolo="${esc(plantilla.familia)}"`
 				+ ` data-origen-simbolo="${esc(plantilla.origen)}"`
+				+ (plantilla.autorDeclarado ? ` data-autor-declarado="${esc(plantilla.autorDeclarado)}"` : '')
 				+ ` data-licencia-declarada="${esc(plantilla.licenciaDeclarada)}"`
 				+ ` data-licencia-verificada="${plantilla.licenciaVerificada ? 'si' : 'no'}"`
 				+ ` data-conformidad-normativa="${esc(plantilla.conformidadNormativa)}"`
 			: '';
 		const tituloPlantilla = plantilla
-			? `<title>${esc(`Plantilla ${plantilla.id} · trazos generados en el editor · `
-				+ `licencia ${plantilla.licenciaDeclarada} declarada por el proyecto, no verificada por plantilla · `
+			? `<title>${esc(`Plantilla ${plantilla.id} · ${plantilla.origen === 'declaracion-usuario'
+				? `autor ${plantilla.autorDeclarado} declarado por usuario` : 'trazos generados en el editor'} · `
+				+ `licencia ${plantilla.licenciaDeclarada} declarada, no verificada por plantilla · `
 				+ `conformidad normativa ${plantilla.conformidadNormativa}`)}</title>`
 			: '';
 		const teclado = o.interactivo && s.representacionId
