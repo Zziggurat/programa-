@@ -15,7 +15,7 @@
  *  - Los contactos de un aparato llevan la referencia cruzada de dónde está su bobina.
  */
 import { Dispositivo, Proyecto, RefBorne } from '../modelo/tipos.js';
-import type { ParteRepresentacionEsquema, RepresentacionEsquema } from '../modelo/tipos.js';
+import type { ClaseHojaEsquema, ParteRepresentacionEsquema, RepresentacionEsquema } from '../modelo/tipos.js';
 import { rotuloVisibleBorne } from '../modelo/bornes.js';
 import { esReferenciaVisualInerte } from '../modelo/apariencia.js';
 import { resolverComportamiento } from '../modelo/comportamiento.js';
@@ -65,6 +65,8 @@ export interface HojaEsq {
 	id: string;
 	numero: number;
 	titulo: string;
+	/** Solo la clasificación editorial declarada en un folio M2; ausente en legacy. */
+	clase?: ClaseHojaEsquema;
 	anchoMm: number;
 	altoMm: number;
 	columnas: number;
@@ -78,6 +80,21 @@ export interface HojaEsq {
 	referencias: EtiquetaEsq[];
 	/** Incidencias derivadas del montaje explícito; no cambian aparatos, cables ni colocaciones. */
 	problemas?: ProblemaEsq[];
+}
+
+const ROTULOS_CLASE_HOJA: Record<ClaseHojaEsquema, string> = {
+	potencia: 'POTENCIA', mando: 'MANDO', 'plc-io': 'PLC/E/S', bornes: 'BORNES', mixta: 'MIXTA',
+};
+
+/** Nombre editorial de una clasificación declarada; no expresa conformidad normativa. */
+export function etiquetaClaseHojaEsquema(clase: ClaseHojaEsquema): string {
+	return ROTULOS_CLASE_HOJA[clase];
+}
+
+/** Texto del folio en el cajetín; la clase declarada precede al título para no perderse al recortar. */
+export function rotuloEditorialHoja(hoja: Pick<HojaEsq, 'titulo' | 'clase'>): string {
+	const clase = hoja.clase === undefined ? undefined : etiquetaClaseHojaEsquema(hoja.clase);
+	return clase ? `Clase: ${clase} · ${hoja.titulo}` : hoja.titulo;
 }
 
 export interface ProblemaEsq {
@@ -719,6 +736,7 @@ function montarRepresentaciones(
 		.sort((a, b) => a.numero - b.numero || a.id.localeCompare(b.id))
 		.map((h) => ({
 			id: h.id, numero: h.numero, titulo: h.titulo,
+			...(h.clase === undefined ? {} : { clase: h.clase }),
 			anchoMm: papel.ancho, altoMm: papel.alto,
 			columnas: Math.max(4, Math.min(20, opciones.columnasPorHoja ?? h.columnas ?? columnasDefecto)),
 			simbolos: [], hilos: [], referencias: [], problemas: [],

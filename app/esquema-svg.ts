@@ -5,7 +5,7 @@
  * Se usa SVG y no Canvas a propósito: el esquema se lee con lupa, se imprime en A3 y se
  * exporta a PDF, y el SVG es nítido a cualquier tamaño y se puede volcar a papel tal cual.
  */
-import { anchoEtiquetaMm, HojaEsq, MARGEN, NOTA_SIMBOLOGIA_ESQUEMA, resumenPendientesEsquema, Trazo } from '../src/motores/esquema.js';
+import { anchoEtiquetaMm, HojaEsq, MARGEN, NOTA_SIMBOLOGIA_ESQUEMA, resumenPendientesEsquema, rotuloEditorialHoja, Trazo } from '../src/motores/esquema.js';
 import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
 	tramosSeleccionablesDeHilo, tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
@@ -106,6 +106,7 @@ function pintarCajetin(hoja: HojaEsq, o: OpcionesEsquema, tinta: string, suave: 
 	// Y el ancho de cada casilla en MILÍMETROS, sacado de la propia rejilla del cajetín.
 	const anchoIzq = col2 - (x + PAD) - PAD;
 	const anchoDer = col3 - (col2 + PAD) - PAD;
+	const tituloHoja = enCaja(rotuloEditorialHoja(hoja), 2.8, col3 - (x + PAD) - PAD);
 	/*
 	 * Rótulo y valor. La línea base del valor NO se pone a ojo: se calcula del cuerpo de las dos
 	 * letras, para que quede aire aunque la fuente del sistema sea otra. Y el ancho es el de la
@@ -125,8 +126,10 @@ function pintarCajetin(hoja: HojaEsq, o: OpcionesEsquema, tinta: string, suave: 
 		`<line x1="${n(x)}" y1="${n(y + 17.5)}" x2="${n(x + ancho)}" y2="${n(y + 17.5)}" stroke="${tinta}" stroke-width="0.3"/>`,
 		`<line x1="${n(col2)}" y1="${n(y + 9)}" x2="${n(col2)}" y2="${n(y + alto)}" stroke="${tinta}" stroke-width="0.3"/>`,
 		`<line x1="${n(col3)}" y1="${n(y)}" x2="${n(col3)}" y2="${n(y + alto)}" stroke="${tinta}" stroke-width="0.3"/>`,
-		// Franja superior: proyecto y nº de hoja.
-		tituloProyecto(x + PAD, y + 6.3, o.proyecto ?? 'TableroStudio', col3 - (x + PAD) - PAD, tinta),
+		// Franja superior: proyecto, título/clase editorial y nº de hoja.
+		tituloProyecto(x + PAD, y + 3.6, o.proyecto ?? 'TableroStudio', col3 - (x + PAD) - PAD, tinta),
+		`<text x="${n(x + PAD)}" y="${n(y + 7.4)}" font-size="2.8" fill="${tinta}" `
+			+ `font-family="system-ui, sans-serif"${tituloHoja.attr}>${esc(tituloHoja.texto)}</text>`,
 		/*
 		 * HOJA y su número. Iban a 2,9 y 8,3 —5,4 mm de separación— cuando un rótulo de 2,3 sobre
 		 * un número de 4,4 necesita 5,79 para no tocarse. Y el bloque entero no cabía en los 9 mm
@@ -252,8 +255,8 @@ export function baseCentrada(
  * con 44 largas se metía en la casilla de la hoja.
  */
 function tituloProyecto(cx: number, cy: number, titulo: string, anchoCaja: number, tinta: string): string {
-	const t = enCaja(titulo, 4, anchoCaja);
-	return `<text x="${n(cx)}" y="${n(cy)}" font-size="4" fill="${tinta}" `
+	const t = enCaja(titulo, 3.1, anchoCaja);
+	return `<text x="${n(cx)}" y="${n(cy)}" font-size="3.1" fill="${tinta}" `
 		+ `font-family="system-ui, sans-serif" font-weight="700"${t.attr}>${esc(t.texto)}</text>`;
 }
 

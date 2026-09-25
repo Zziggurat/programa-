@@ -6,7 +6,7 @@
  * se puede ampliar sin pixelarse y el texto se busca y se copia, como en un plano de verdad.
  */
 import { jsPDF } from 'jspdf';
-import { anchoEtiquetaMm, HojaEsq, MARGEN, NOTA_SIMBOLOGIA_ESQUEMA, resumenPendientesEsquema, Trazo } from '../src/motores/esquema.js';
+import { anchoEtiquetaMm, HojaEsq, MARGEN, NOTA_SIMBOLOGIA_ESQUEMA, resumenPendientesEsquema, rotuloEditorialHoja, Trazo } from '../src/motores/esquema.js';
 import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
 	tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
@@ -98,10 +98,12 @@ function cajetin(doc: jsPDF, hoja: HojaEsq, proyecto: string, total: number,
 		textoDeUnaLinea(doc, valor || '—', cx, cy + 4, max, 7.6);
 	};
 
-	doc.setFontSize(10);
+	doc.setFontSize(8.6);
 	doc.setFont('helvetica', 'bold');
 	doc.setTextColor(...TINTA);
-	textoDeUnaLinea(doc, proyecto, x + 3, y + 6.3, col3 - x - 6, 10);
+	textoDeUnaLinea(doc, proyecto, x + 3, y + 3.6, col3 - x - 6, 8.6);
+	doc.setFont('helvetica', 'normal');
+	textoDeUnaLinea(doc, rotuloEditorialHoja(hoja), x + 3, y + 7.4, col3 - x - 6, 7.9);
 	doc.setFontSize(5.4);
 	doc.setFont('helvetica', 'normal');
 	doc.setTextColor(...SUAVE);
