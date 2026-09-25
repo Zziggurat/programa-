@@ -1573,7 +1573,11 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	}
 
 	($('esq-folios') as HTMLButtonElement).onclick = abrirPanelFolios;
-	($('esq-folios-cerrar') as HTMLButtonElement).onclick = () => { $('esq-folios-panel').hidden = true; };
+	($('esq-folios-cerrar') as HTMLButtonElement).onclick = () => {
+		$('esq-folios-panel').hidden = true;
+		// El alto útil del lienzo vuelve a crecer: la hoja debe recuperar su ajuste visible.
+		aplicarZoomEsquema();
+	};
 	($('esq-folio-crear') as HTMLButtonElement).onclick = () => {
 		const titulo = ($('esq-folio-nuevo-titulo') as HTMLInputElement).value;
 		const clase = ($('esq-folio-nueva-clase') as HTMLSelectElement).value as ClaseHojaEsquema | '';

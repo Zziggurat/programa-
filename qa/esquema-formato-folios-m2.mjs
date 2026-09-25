@@ -108,7 +108,14 @@ try {
 	comprobar('folio A2 montado conserva vista 594×420 y etiqueta visible',
 		await pagina.locator('#esquema-hoja svg').getAttribute('viewBox') === '0 0 594 420'
 		&& /A2/.test(await pagina.locator('#esq-formato-actual').textContent()));
+	const tamanoConPanel = await pagina.locator('#esquema-hoja').boundingBox();
 	await pagina.locator('#esq-folios-cerrar').click();
+	const tamanoSinPanel = await pagina.locator('#esquema-hoja').boundingBox();
+	comprobar('cerrar Folios recupera el ajuste visible del lienzo A2',
+		!!tamanoConPanel && !!tamanoSinPanel && tamanoSinPanel.width > tamanoConPanel.width * 1.3);
+	if (process.env.ESQ07_FORMATO_CAPTURAS) {
+		await pagina.locator('#esquema-hoja').screenshot({ path: `${process.env.ESQ07_FORMATO_CAPTURAS}/folio-a2.png` });
+	}
 
 	const pA2 = await proyecto();
 	const id = await pagina.locator('#esquema-hoja .simbolo[data-representacion]')
@@ -146,6 +153,9 @@ try {
 	comprobar('segunda hoja permanece A3 en el mismo documento',
 		await pagina.locator('#esquema-hoja svg').getAttribute('viewBox') === '0 0 420 297'
 		&& /A3/.test(await pagina.locator('#esq-formato-actual').textContent()));
+	if (process.env.ESQ07_FORMATO_CAPTURAS) {
+		await pagina.locator('#esquema-hoja').screenshot({ path: `${process.env.ESQ07_FORMATO_CAPTURAS}/folio-a3.png` });
+	}
 	await pagina.evaluate(() => window.qa.esperarPersistencia());
 	await pagina.reload({ waitUntil: 'domcontentloaded' });
 	await esperarEditorListo(pagina);
