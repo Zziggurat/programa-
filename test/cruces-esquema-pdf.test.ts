@@ -13,7 +13,7 @@ Object.assign(globalThis, {
 	getComputedStyle: () => ({ getPropertyValue: () => '' }),
 	MutationObserver: class { observe(): void {} },
 });
-const { exportarEsquemaPDF } = await import('../app/esquema-pdf.js');
+const { esquemaComoBlob, exportarEsquemaPDF } = await import('../app/esquema-pdf.js');
 
 const hoja: HojaEsq = {
 	id: 'h', numero: 1, titulo: 'Cruce', anchoMm: 420, altoMm: 297, columnas: 10,
@@ -135,4 +135,26 @@ test('el PDF A3 recorta la línea continua de una T de bornes independientes', a
 	assert.ok(tiene(10, 49));
 	assert.ok(tiene(51, 90));
 	assert.equal(tiene(10, 90), false, 'PDF no debe aparentar una conexión en T');
+});
+
+test('el PDF conserva los trazos colineales y advierte expresamente el solape sin inventar un nudo', async () => {
+	const solapado: HojaEsq = { ...hoja, hilos: [
+		{ conductorId: 'a', nodos: [{ x: 10, y: 50 }, { x: 90, y: 50 }] },
+		{ conductorId: 'b', nodos: [{ x: 30, y: 50 }, { x: 70, y: 50 }] },
+	] };
+	const pdf = Buffer.from(await esquemaComoBlob([solapado], 'Solape').arrayBuffer()).toString('latin1');
+	const flujo = pdf.match(/stream\r?\n([\s\S]*?)\r?\nendstream/)?.[1];
+	assert.ok(flujo);
+	assert.match(flujo, /SOLAPE SIN RESOLVER/);
+	assert.match(flujo, /a\/b/);
+	const lineas = [...flujo.matchAll(/([\d.]+) ([\d.]+) m\s+([\d.]+) ([\d.]+) l\s+S/g)]
+		.map((m) => m.slice(1).map(Number));
+	const unidad = 72 / 25.4;
+	const tiene = (x1: number, x2: number): boolean => lineas.some((l) =>
+		Math.abs(l[0] - x1 * unidad) < 0.05
+		&& Math.abs(l[1] - (hoja.altoMm - 50) * unidad) < 0.05
+		&& Math.abs(l[2] - x2 * unidad) < 0.05
+		&& Math.abs(l[3] - (hoja.altoMm - 50) * unidad) < 0.05);
+	assert.ok(tiene(10, 90));
+	assert.ok(tiene(30, 70));
 });

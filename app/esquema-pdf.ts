@@ -7,7 +7,8 @@
  */
 import { jsPDF } from 'jspdf';
 import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
-import { crucesSinUnion, nudosPorBorne, tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
+import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
+	tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import { descargar } from './dialogos.js';
 import { textoDeUnaLinea } from './pdf-texto.js';
@@ -157,6 +158,7 @@ export function esquemaComoBlob(
 		doc.setLineWidth(0.3);
 		const cruces = crucesSinUnion(hoja);
 		const nudos = nudosPorBorne(hoja);
+		const solapes = solapesColinealesSinResolver(hoja);
 		for (const hilo of hoja.hilos) {
 			for (const tramo of tramosVisiblesDeHilo(hilo, cruces, 1, nudos)) {
 				doc.line(tramo.a.x, tramo.a.y, tramo.b.x, tramo.b.y);
@@ -165,6 +167,18 @@ export function esquemaComoBlob(
 		// El punto negro solo marca un borne compartido, nunca una coincidencia XY.
 		doc.setFillColor(...TINTA);
 		for (const { punto } of nudos) doc.circle(punto.x, punto.y, 0.9, 'F');
+		// El símbolo de aviso no es un nudo ni un conductor nuevo: obliga a resolver
+		// rutas coincidentes antes de interpretar/usar el plano en montaje.
+		for (const solape of solapes) {
+			const x = (solape.inicio.x + solape.fin.x) / 2;
+			const y = (solape.inicio.y + solape.fin.y) / 2;
+			doc.setFillColor(255, 247, 230);
+			doc.rect(x - 2, y - 2, 4, 4, 'F');
+			doc.setTextColor(155, 75, 0);
+			doc.setFont('helvetica', 'bold');
+			doc.setFontSize(9);
+			doc.text('!', x, y + 1.1, { align: 'center' });
+		}
 
 		// Símbolos con su designación.
 		doc.setDrawColor(...TINTA);
@@ -191,6 +205,14 @@ export function esquemaComoBlob(
 		}
 
 		cajetin(doc, hoja, proyecto, hojas.length, datos, procedencia, rutasPendientes);
+		if (solapes.length) {
+			const ids = [...new Set(solapes.map((s) => `${s.primero.conductorId}/${s.segundo.conductorId} ${Math.round(s.longitudMm * 10) / 10} mm`))];
+			const resumen = `SOLAPE SIN RESOLVER: ${solapes.length} tramo(s) (${ids.join(', ')}). Reubicar hilos; no asumir union.`;
+			doc.setFont('helvetica', 'bold');
+			doc.setTextColor(155, 75, 0);
+			textoDeUnaLinea(doc, resumen, MARGEN.izq,
+				hoja.altoMm - MARGEN.abajo + 19, hoja.anchoMm - MARGEN.izq - MARGEN.der - 185, 6);
+		}
 	});
 
 	return doc.output('blob') as Blob;

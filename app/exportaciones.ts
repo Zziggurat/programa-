@@ -10,7 +10,8 @@ import { ResultadoPotenciales } from '../src/motores/potenciales.js';
 import { todasLasTiras } from '../src/motores/etiquetas.js';
 import { EntidadDXF, generarDXF, rectangulo, sinAcentos } from '../src/motores/dxf.js';
 import { HojaEsq } from '../src/motores/esquema.js';
-import { crucesSinUnion, nudosPorBorne, tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
+import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
+	tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 
 /* ------------------------------ Etiquetas imprimibles ------------------------------ */
 
@@ -172,6 +173,7 @@ export function dxfDeEsquema(hoja: HojaEsq, opciones: OpcionesDxfEsquema = {}): 
 	const e: EntidadDXF[] = [];
 	const cruces = crucesSinUnion(hoja);
 	const nudos = nudosPorBorne(hoja);
+	const solapes = solapesColinealesSinResolver(hoja);
 	for (const hilo of hoja.hilos) {
 		for (const tramo of tramosVisiblesDeHilo(hilo, cruces, 1, nudos)) {
 			e.push({ capa: 'CABLES', trazo: {
@@ -183,6 +185,15 @@ export function dxfDeEsquema(hoja: HojaEsq, opciones: OpcionesDxfEsquema = {}): 
 	}
 	for (const { punto } of nudos) {
 		e.push({ capa: 'CABLES', trazo: { tipo: 'circulo', x: punto.x, y: punto.y, r: 0.9 } });
+	}
+	// Una anotación ajena a CABLES no representa una unión eléctrica ni oculta
+	// el trazado coincidente: exige corregir el plano antes de usarlo.
+	for (const solape of solapes) {
+		const x = (solape.inicio.x + solape.fin.x) / 2;
+		const y = (solape.inicio.y + solape.fin.y) / 2;
+		e.push({ capa: 'TEXTO', trazo: { tipo: 'texto', x: x + 2.5, y: y - 2.5,
+			texto: textoSeguroEsquemaDxf(`SOLAPE SIN RESOLVER ${solape.primero.conductorId}/${solape.segundo.conductorId} ${Math.round(solape.longitudMm * 10) / 10} mm`),
+			alto: 2.4 } });
 	}
 	for (const s of hoja.simbolos) {
 		for (const t of s.trazos) {
@@ -219,6 +230,13 @@ export function dxfDeEsquema(hoja: HojaEsq, opciones: OpcionesDxfEsquema = {}): 
 		anotacion(pie + 9.2, lineas[3]);
 		anotacion(pie + 13.4, lineas[4]);
 		anotacion(pie + 17.6, lineas[5]);
+	}
+	if (solapes.length) {
+		const ids = [...new Set(solapes.map((s) => `${s.primero.conductorId}/${s.segundo.conductorId} ${Math.round(s.longitudMm * 10) / 10} mm`))];
+		const texto = textoSeguroEsquemaDxf(`SOLAPE SIN RESOLVER: ${solapes.length} tramo(s) (${ids.join(', ')}). Reubicar hilos; no asumir union.`);
+		e.push({ capa: 'TEXTO', trazo: { tipo: 'texto', x: 20, y: hoja.altoMm - 34 + 22.2,
+			texto: texto.slice(0, 180), alto: 2.2 } });
+		comentarios += `999\n${texto.slice(0, 240)}\n`;
 	}
 	e.push(...rectangulo('COTAS', 0, 0, hoja.anchoMm, hoja.altoMm));
 	const dibujo = generarDXF(e, hoja.altoMm);

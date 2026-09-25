@@ -6,7 +6,8 @@
  * exporta a PDF, y el SVG es nítido a cualquier tamaño y se puede volcar a papel tal cual.
  */
 import { anchoEtiquetaMm, HojaEsq, MARGEN, Trazo } from '../src/motores/esquema.js';
-import { crucesSinUnion, nudosPorBorne, tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
+import { crucesSinUnion, nudosPorBorne, solapesColinealesSinResolver,
+	tramosSeleccionablesDeHilo, tramosVisiblesDeHilo } from '../src/motores/cruces-esquema.js';
 import { resumenProcedenciaDocumento, type ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 
 /** Texto XML 1.0 seguro: elimina controles prohibidos y escapa contenido/atributos. */
@@ -293,6 +294,7 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 
 	const cruces = crucesSinUnion(hoja);
 	const nudos = nudosPorBorne(hoja);
+	const solapes = solapesColinealesSinResolver(hoja);
 	// Hilos primero: los símbolos van encima y tapan las puntas. Los números NO se colocan
 	// aquí: los coloca el motor junto con el resto del texto, para que nada tape a nada.
 	for (const hilo of hoja.hilos) {
@@ -304,13 +306,28 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 			: hilo.nodos.map((p, i) => `${i ? 'L' : 'M'}${n(p.x)} ${n(p.y)}`).join(' ');
 		const seleccionado = hilo.conductorId === o.resaltadoConductor;
 		const id = esc(hilo.conductorId);
+		const dAgarre = o.interactivo && solapes.length
+			? tramosSeleccionablesDeHilo(hilo, cruces, solapes, nudos).map((tramo) =>
+				`M${n(tramo.a.x)} ${n(tramo.a.y)} L${n(tramo.b.x)} ${n(tramo.b.y)}`).join(' ')
+			: d;
 		const agarre = o.interactivo
-			? `<path class="hilo-agarre" d="${d}" fill="none" stroke="transparent" stroke-width="4.5" pointer-events="stroke"/>`
+			? `<path class="hilo-agarre" d="${dAgarre}" fill="none" stroke="transparent" stroke-width="4.5" pointer-events="stroke"/>`
 			: '';
 		partes.push(`<g data-conductor="${id}" class="hilo"${o.interactivo
 			? ` tabindex="0" role="button" aria-label="Seleccionar conductor ${id}" style="cursor:pointer"` : ''}>`
 			+ `<path d="${d}" fill="none" stroke="${seleccionado ? '#2ea3ff' : tinta}" `
-			+ `stroke-width="${seleccionado ? '1.2' : '0.45'}" stroke-linejoin="round"/>${agarre}</g>`);
+			+ `stroke-width="${seleccionado ? '1.2' : '0.45'}" stroke-linejoin="round"${o.interactivo
+				? ' pointer-events="none"' : ''}/>${agarre}</g>`);
+	}
+	for (const solape of solapes) {
+		const x = (solape.inicio.x + solape.fin.x) / 2;
+		const y = (solape.inicio.y + solape.fin.y) / 2;
+		const detalle = `SOLAPE SIN RESOLVER: ${solape.primero.conductorId} / ${solape.segundo.conductorId}, ${n(solape.longitudMm)} mm`;
+		partes.push(`<g class="solape-alerta" pointer-events="none" aria-label="${esc(detalle)}">`
+			+ `<title>${esc(detalle)}</title>`
+			+ `<circle cx="${n(x)}" cy="${n(y)}" r="2.2" fill="${papel}" stroke="#b45f00" stroke-width="0.7"/>`
+			+ `<text x="${n(x)}" y="${n(y + 1.1)}" font-size="3" text-anchor="middle" fill="#9a4b00" `
+			+ `font-family="system-ui, sans-serif" font-weight="700">!</text></g>`);
 	}
 
 	// Solo los conductores que comparten un borne REAL forman una unión; XY no conecta.
@@ -376,6 +393,15 @@ export function hojaASvg(hoja: HojaEsq, o: OpcionesEsquema = {}): string {
 	}
 
 	partes.push(pintarCajetin(hoja, o, tinta, suave), pintarProcedencia(hoja, o, tinta, suave));
+	if (solapes.length) {
+		const ids = solapes.map((s) => `${s.primero.conductorId}/${s.segundo.conductorId} ${n(s.longitudMm)} mm`);
+		const unico = [...new Set(ids)];
+		const resumen = `SOLAPE SIN RESOLVER: ${solapes.length} tramo(s) (${unico.join(', ')}). Reubicar hilos; no asumir unión.`;
+		const ancho = hoja.anchoMm - MARGEN.izq - MARGEN.der - 185;
+		const valor = enCaja(resumen, 2.2, ancho);
+		partes.push(`<text class="aviso-solape" x="${n(MARGEN.izq)}" y="${n(hoja.altoMm - MARGEN.abajo + 19)}" `
+			+ `font-size="2.2" fill="#9a4b00" font-family="system-ui, sans-serif"${valor.attr}>${esc(valor.texto)}</text>`);
+	}
 	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${hoja.anchoMm} ${hoja.altoMm}" `
 		+ `width="100%" height="100%" preserveAspectRatio="xMidYMid meet">${partes.join('')}</svg>`;
 }

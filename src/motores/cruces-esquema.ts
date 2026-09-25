@@ -7,8 +7,8 @@
  * para crear un conductor, un potencial o un nudo persistente.
  *
  * Se consideran intersecciones interiores y contactos puntuales en T o entre
- * extremos de bornes distintos. Los paralelos y solapes colineales necesitan
- * otras reglas gráficas y no se presentan como cruces puntuales.
+ * extremos de bornes distintos. Un solape colineal no es un cruce puntual:
+ * se diagnostica aparte, sin desplazar bornes ni fingir un tendido alternativo.
  */
 import type { HiloEsq, HojaEsq, PuntoEsq } from './esquema.js';
 import type { RefBorne } from '../modelo/tipos.js';
@@ -30,6 +30,16 @@ export interface NudoEsquema {
 	punto: PuntoEsq;
 	borne: RefBorne;
 	conductores: string[];
+}
+
+/** Dos trazos coincidentes no prueban continuidad eléctrica ni una sola alma física. */
+export interface SolapeColinealEsquema {
+	primero: TramoCruceEsquema;
+	segundo: TramoCruceEsquema;
+	inicio: PuntoEsq;
+	fin: PuntoEsq;
+	longitudMm: number;
+	tipo: 'PARCIAL' | 'TOTAL';
 }
 
 export interface TramoVisibleEsquema {
@@ -107,6 +117,50 @@ function borneEnExtremo(segmento: Segmento, t: number): RefBorne | undefined {
 
 function mismoBorne(a: RefBorne | undefined, b: RefBorne | undefined): boolean {
 	return !!a && !!b && a.dispositivoId === b.dispositivoId && a.borneId === b.borneId;
+}
+
+/**
+ * Detecta longitud positiva compartida por segmentos colineales de hilos distintos.
+ * Un borne real compartido solo explica el punto de salida, no decenas de mm
+ * coincidentes. Se informa la ambigüedad sin inventar una unión o un desvío.
+ */
+export function solapesColinealesSinResolver(hoja: Pick<HojaEsq, 'hilos'>): SolapeColinealEsquema[] {
+	const segmentos = segmentosDe(hoja.hilos);
+	const salida: SolapeColinealEsquema[] = [];
+	for (let i = 0; i < segmentos.length; i++) {
+		const a = segmentos[i];
+		for (let j = i + 1; j < segmentos.length; j++) {
+			const b = segmentos[j];
+			if (a.conductorId === b.conductorId) continue;
+			if (Math.max(a.a.x, a.b.x) + TOLERANCIA_MM < Math.min(b.a.x, b.b.x)
+				|| Math.max(b.a.x, b.b.x) + TOLERANCIA_MM < Math.min(a.a.x, a.b.x)
+				|| Math.max(a.a.y, a.b.y) + TOLERANCIA_MM < Math.min(b.a.y, b.b.y)
+				|| Math.max(b.a.y, b.b.y) + TOLERANCIA_MM < Math.min(a.a.y, a.b.y)) continue;
+			if (Math.abs(cruz(a.dx, a.dy, b.dx, b.dy)) > TOLERANCIA_ANGULAR * a.largo * b.largo
+				|| Math.abs(cruz(b.a.x - a.a.x, b.a.y - a.a.y, a.dx, a.dy)) > TOLERANCIA_MM * a.largo
+				|| Math.abs(cruz(b.b.x - a.a.x, b.b.y - a.a.y, a.dx, a.dy)) > TOLERANCIA_MM * a.largo) continue;
+			const ux = a.dx / a.largo, uy = a.dy / a.largo;
+			const posA = (b.a.x - a.a.x) * ux + (b.a.y - a.a.y) * uy;
+			const posB = (b.b.x - a.a.x) * ux + (b.b.y - a.a.y) * uy;
+			const desde = Math.max(0, Math.min(posA, posB));
+			const hasta = Math.min(a.largo, Math.max(posA, posB));
+			if (hasta - desde <= TOLERANCIA_MM) continue;
+			const longitudMm = hasta - desde;
+			salida.push({
+				primero: { conductorId: a.conductorId, segmento: a.segmento },
+				segundo: { conductorId: b.conductorId, segmento: b.segmento },
+				inicio: { x: a.a.x + ux * desde, y: a.a.y + uy * desde },
+				fin: { x: a.a.x + ux * hasta, y: a.a.y + uy * hasta },
+				longitudMm,
+				tipo: Math.abs(longitudMm - a.largo) <= TOLERANCIA_MM
+					&& Math.abs(longitudMm - b.largo) <= TOLERANCIA_MM ? 'TOTAL' : 'PARCIAL',
+			});
+		}
+	}
+	return salida.sort((a, b) => compararIds(a.primero.conductorId, b.primero.conductorId)
+		|| compararIds(a.segundo.conductorId, b.segundo.conductorId)
+		|| a.primero.segmento - b.primero.segmento || a.segundo.segmento - b.segundo.segmento
+		|| a.inicio.x - b.inicio.x || a.inicio.y - b.inicio.y);
 }
 
 /**
@@ -253,4 +307,43 @@ export function tramosVisiblesDeHilo(
 		if (desde < 1) visibles.push({ a: punto(desde), b: punto(1), segmento });
 	}
 	return visibles;
+}
+
+/**
+ * Un clic sobre dos hilos colineales no puede elegir uno por orden del DOM.
+ * El área de agarre excluye el tramo compartido y una guarda del ancho de agarre SVG.
+ * La tinta no se desplaza: el solape sigue siendo una incidencia visible por resolver.
+ */
+export function tramosSeleccionablesDeHilo(
+	hilo: HiloEsq, cruces: readonly CruceEsquema[], solapes: readonly SolapeColinealEsquema[],
+	nudos: readonly NudoEsquema[] = [], margenMm = 2.3,
+): TramoVisibleEsquema[] {
+	const visibles = tramosVisiblesDeHilo(hilo, cruces, 1, nudos);
+	const propios = solapes.filter((s) => s.primero.conductorId === hilo.conductorId
+		|| s.segundo.conductorId === hilo.conductorId);
+	if (!propios.length) return visibles;
+	const seleccionables: TramoVisibleEsquema[] = [];
+	for (const tramo of visibles) {
+		const dx = tramo.b.x - tramo.a.x, dy = tramo.b.y - tramo.a.y;
+		const largo = Math.hypot(dx, dy);
+		if (largo <= TOLERANCIA_MM) continue;
+		const punto = (t: number): PuntoEsq => ({ x: tramo.a.x + dx * t, y: tramo.a.y + dy * t });
+		const intervalos = propios.filter((s) => (s.primero.conductorId === hilo.conductorId
+			? s.primero.segmento : s.segundo.segmento) === tramo.segmento)
+			.map((s) => {
+				const t1 = ((s.inicio.x - tramo.a.x) * dx + (s.inicio.y - tramo.a.y) * dy) / (largo * largo);
+				const t2 = ((s.fin.x - tramo.a.x) * dx + (s.fin.y - tramo.a.y) * dy) / (largo * largo);
+				return [Math.max(0, Math.min(t1, t2) - margenMm / largo),
+					Math.min(1, Math.max(t1, t2) + margenMm / largo)] as const;
+			}).filter(([inicio, fin]) => fin > inicio).sort((a, b) => a[0] - b[0]);
+		let desde = 0;
+		for (const [inicio, fin] of intervalos) {
+			if (inicio > desde + TOLERANCIA_MM / largo)
+				seleccionables.push({ a: punto(desde), b: punto(inicio), segmento: tramo.segmento });
+			desde = Math.max(desde, fin);
+		}
+		if (desde < 1 - TOLERANCIA_MM / largo)
+			seleccionables.push({ a: punto(desde), b: punto(1), segmento: tramo.segmento });
+	}
+	return seleccionables;
 }
