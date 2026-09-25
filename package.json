@@ -67,7 +67,7 @@
     "qa:tablero": "node qa/tablero-desde-cero.mjs",
     "qa:riel": "node qa/riel.mjs",
     "qa:nuevas": "node qa/riel-ejemplos-vista.mjs",
-    "qa:mejoras": "node qa/mejoras.mjs",
+    "qa:mejoras": "vite build app --mode qa && node qa/mejoras.mjs",
     "qa:profesional": "node qa/profesional.mjs",
     "qa:entregables": "node qa/entregables.mjs",
     "qa:correcciones": "node qa/correcciones.mjs",

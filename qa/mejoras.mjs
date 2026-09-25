@@ -7,27 +7,29 @@
  */
 import { chromium } from 'playwright-core';
 
-import { join } from 'node:path';
-import { abrirNavegador, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
+import { abrirNavegador, esperarEditorListo, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
-const { servidor: server } = await servidorDeQA();
-const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
-
-const browser = await abrirNavegador(chromium);
-const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+const inicio = Date.now();
+let server, browser, page;
 const errs = [];
-page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
-page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errs.push(m.text()); });
 
-let fallos = 0;
-const must = (n, c, extra = '') => { if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${extra ? ' → ' + extra : ''}`); };
+let fallos = 0, casos = 0;
+const must = (n, c, extra = '') => { casos++; if (!c) fallos++; console.log(`${c ? 'OK  ' : 'FAIL'}  ${n}${extra ? ' → ' + extra : ''}`); };
 const info = (t) => console.log('     ' + t);
 const jsClick = (id) => page.evaluate((i) => document.getElementById(i)?.click(), id);
 const qa = (f, ...a) => page.evaluate(([n, g]) => window.qa[n](...g), [f, a]);
 const nItems = () => page.evaluate(() => document.querySelectorAll('#catalogo .item-catalogo').length);
 const nombres = () => page.evaluate(() => [...document.querySelectorAll('#catalogo .item-catalogo .nombre')].map((e) => e.textContent));
 
-await page.goto(url); await page.waitForTimeout(900);
+try {
+const entorno = await servidorDeQA(); server = entorno.servidor;
+browser = await abrirNavegador(chromium);
+page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
+page.setDefaultTimeout(20_000);
+page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
+page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errs.push(m.text()); });
+await page.goto(`${entorno.url}/?qa=1&inicio=0`, { waitUntil: 'domcontentloaded' });
+await esperarEditorListo(page);
 if (await page.isVisible('#modal-ayuda')) { await jsClick('btn-cerrar-ayuda'); await page.waitForTimeout(200); }
 await jsClick('btn-empezar-ejemplo'); await page.waitForTimeout(350);
 if (await page.isVisible('#modal-ejemplos')) {
@@ -36,6 +38,8 @@ if (await page.isVisible('#modal-dialogo')) { await page.evaluate(() => document
 	await jsClick('btn-cerrar-explicacion'); await trabajarSobreCopia(page);
 }
 await jsClick('modo-editor'); await page.waitForTimeout(300);
+await page.locator('#hta-anadir').click();
+await page.locator('#buscar-catalogo').waitFor({ state: 'visible' });
 
 /* ---------------------------- 1. Buscador del catálogo ---------------------------- */
 console.log('\n--- 1. Buscador del catálogo ---');
@@ -69,6 +73,7 @@ await page.fill('#buscar-catalogo', ''); await page.waitForTimeout(150);
 
 /* ------------------------------ 2. Duplicar (Ctrl+D) ------------------------------ */
 console.log('\n--- 2. Duplicar un aparato con Ctrl+D ---');
+await page.locator('#hta-seleccionar').click();
 const p0 = await qa('proyecto');
 const conCol = p0.gabinete.colocaciones.find((c) => {
 	const d = p0.dispositivos.find((x) => x.id === c.dispositivoId);
@@ -98,7 +103,7 @@ must('la copia nace SIN cables', !p1.conductores.some((c) => c.de.dispositivoId 
 
 const colCopia = p1.gabinete.colocaciones.find((c) => c.dispositivoId === copia.id);
 must('la copia queda colocada en la placa', !!colCopia);
-if (!colCopia) { console.log('\n=== ' + fallos + ' FALLOS ✗ ==='); await browser.close(); server.close(); process.exit(1); }
+if (!colCopia) throw new Error('El duplicado no obtuvo colocación física.');
 must('la copia cabe dentro de la placa', colCopia.x >= 0 && colCopia.x + colCopia.ancho <= p1.gabinete.ancho,
 	`x=${colCopia.x} ancho=${colCopia.ancho} placa=${p1.gabinete.ancho}`);
 must('la copia queda anclada a un riel', !!colCopia.rielId, colCopia.rielId);
@@ -133,5 +138,21 @@ must('sin cables fantasma', (await qa('cablesDibujados')) === fin.conductores.le
 must('sin errores de JavaScript', errs.length === 0, errs.slice(0, 3).join(' | '));
 
 console.log(fallos === 0 ? '\n=== TODO OK ✔ ===' : `\n=== ${fallos} FALLOS ✗ ===`);
-await browser.close(); server.close();
-process.exit(fallos === 0 ? 0 : 1);
+console.log(`Catálogo y duplicación: ${casos - fallos}/${casos}, JS ${errs.length}, ${((Date.now() - inicio) / 1000).toFixed(1)} s`);
+if (fallos) process.exitCode = 1;
+} catch (error) {
+	console.error(error);
+	if (errs.length) console.error('Errores JS:', errs);
+	if (page) console.error('Estado inicial:', await page.evaluate(() => ({
+		clases: document.body.className, inerte: document.body.inert,
+		qa: typeof window.qa?.proyecto, inicio: document.getElementById('inicio')?.hidden,
+	})).catch(() => 'página no disponible'));
+	process.exitCode = 1;
+} finally {
+	try { await page?.close(); } catch (error) { console.error('Página no cerró:', error); process.exitCode = 1; }
+	try { await browser?.close(); } catch (error) { console.error('Chromium no cerró:', error); process.exitCode = 1; }
+	try {
+		server?.closeAllConnections?.();
+		if (server) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+	} catch (error) { console.error('Servidor no cerró:', error); process.exitCode = 1; }
+}
