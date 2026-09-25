@@ -149,7 +149,8 @@ if (pc) {
 	await page.mouse.click(pc.x, pc.y, { button: 'right' }); await page.waitForTimeout(250);
 	must('un solo clic derecho NO crea unión',
 		((await proyecto()).conductores.find((c) => c.id === idCable).trazado ?? []).length === puntos0);
-	await page.mouse.dblclick(pc.x, pc.y); await page.waitForTimeout(350);
+	await page.mouse.dblclick(pc.x, pc.y);
+	await page.locator('#ruteo-estado').waitFor({ state: 'hidden', timeout: 30_000 });
 	const puntos1 = ((await proyecto()).conductores.find((c) => c.id === idCable).trazado ?? []).length;
 	must('doble clic crea una unión', puntos1 === puntos0 + 1, `${puntos0}→${puntos1}`);
 
@@ -166,7 +167,8 @@ if (pc) {
 	must('la vista previa no acumula materiales clonados en movimientos sucesivos',
 		Math.max(...clonesPorMovimiento) - Math.min(...clonesPorMovimiento) <= 1,
 		clonesPorMovimiento.join('→'));
-	await page.mouse.up(); await page.waitForTimeout(250);
+	await page.mouse.up();
+	await page.locator('#ruteo-estado').waitFor({ state: 'hidden', timeout: 30_000 });
 	const despues = JSON.stringify((await proyecto()).conductores.find((c) => c.id === idCable).trazado);
 	must('arrastrar mueve la unión', antes !== despues);
 	must('arrastrar no añade uniones de más',

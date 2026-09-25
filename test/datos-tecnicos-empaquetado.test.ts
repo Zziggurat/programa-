@@ -20,6 +20,7 @@ test('V8 offline: CSS modular conserva cascada, CSP, Build ID y bytes idénticos
         const a = empaquetar(opciones), css = '.x{color:red}\n.x{color:blue}';
         assert.ok(a.salida.includes(`<style>${css}</style>`));
         assert.ok(a.salida.includes(`style-src 'sha256-${createHash('sha256').update(css).digest('base64')}'`));
+        assert.ok(a.salida.includes('worker-src blob:'), 'solo el Worker local del bundle puede ejecutarse');
         assert.ok(!a.salida.includes('href="/assets/'));
         assert.deepEqual(readFileSync(opciones.destino), readFileSync(opciones.desktop));
         // Vite con base './' emite este prefijo en producción; las tres formas son equivalentes.
@@ -31,6 +32,9 @@ test('V8 offline: CSS modular conserva cascada, CSP, Build ID y bytes idénticos
         }
         writeFileSync(join(distApp, 'assets', 'a.css'), '.x{color:green}');
         const b = empaquetar(opciones); assert.notEqual(b.buildId, a.buildId);
+        writeFileSync(join(distApp, 'assets', 'worker-externo.js'), 'self.onmessage=()=>{}');
+        assert.throws(() => empaquetar(opciones), /único bundle JS/, 'un Worker externo rompe el HTML offline');
+        rmSync(join(distApp, 'assets', 'worker-externo.js'));
         for (const ruta of ['../secreto.css', './assets/../../secreto.css', '//assets/a.css',
             'https://example.com/a.css', 'assets/sub/a.css', './assets/a.css?externo']) {
             writeFileSync(join(distApp, 'index.html'), html.replace('/assets/a.css', ruta));

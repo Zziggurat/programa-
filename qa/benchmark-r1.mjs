@@ -4,6 +4,7 @@
  *   node qa/benchmark-r1.mjs
  *   R1_GL=hardware node qa/benchmark-r1.mjs   # opt-in: comprobar renderer real en el informe
  *   R1_FOCAL=1 node qa/benchmark-r1.mjs         # una selección + un drag para perfilar causas
+ *   node qa/benchmark-r1.mjs --focal --offline   # empaqueta el build QA temporalmente y prueba file://
  *
  * Importa un JSON por la misma entrada de archivo visible que usa una persona; el QA hook solo
  * observa identidad, picking, geometría y métricas. Selección/drag/guardar/validar usan ratón real.
@@ -14,10 +15,12 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir, cpus, totalmem, platform, release, arch } from 'node:os';
 import { join, resolve, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { ARGS_NAVEGADOR, ejecutableNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
 import { crearDensidadR1, MANIFIESTO_R1, verificarDensidadR1 } from './lib/densidad-r1.mjs';
+import { empaquetar } from '../app/empaquetar.mjs';
 
 const numeroMuestras = (nombre, valor, minimo, maximo) => {
 	const n = Number(process.env[nombre] ?? valor);
@@ -25,7 +28,8 @@ const numeroMuestras = (nombre, valor, minimo, maximo) => {
 		throw new Error(`${nombre} exige un entero entre ${minimo} y ${maximo}`);
 	return n;
 };
-const focal = process.env.R1_FOCAL === '1';
+const focal = process.env.R1_FOCAL === '1' || process.argv.includes('--focal');
+const offline = process.argv.includes('--offline');
 const repeticiones = numeroMuestras('R1_MUESTRAS', focal ? 1 : 5, focal ? 1 : 2, 20);
 const aperturas = numeroMuestras('R1_APERTURAS', focal ? 0 : 5, focal ? 0 : 2, 20);
 const glSolicitado = process.env.R1_GL === 'hardware' ? 'hardware' : 'swiftshader';
@@ -42,7 +46,7 @@ const invariantes = verificarDensidadR1(fixture);
 const bytesFixture = Buffer.from(JSON.stringify(fixture));
 const hashFixture = createHash('sha256').update(bytesFixture).digest('hex');
 const resultado = {
-	metodo: `R1 sintético · exploratorio · ${focal ? 'perfil causal corto' : 'navegador local'}`,
+	metodo: `R1 sintético · exploratorio · ${focal ? 'perfil causal corto' : 'navegador local'} · ${offline ? 'HTML offline' : 'servidor QA'}`,
 	manifiesto: MANIFIESTO_R1, fixtureSha256: hashFixture,
 	entorno, muestras: { aperturas, operaciones: repeticiones },
 	mediciones: {}, advertencias: [], erroresJs: [],
@@ -218,7 +222,11 @@ const leerCronometroEditor = async () => {
 
 try {
 	const inicioTotal = ahora();
-	({ servidor, url: resultado.urlLocal } = await servidorDeQA());
+	if (offline) {
+		const { destino } = empaquetar({ destino: join(temporal, 'offline', 'TableroStudio.html'),
+			desktop: join(temporal, 'offline', 'desktop.html'), silencioso: true });
+		resultado.urlLocal = pathToFileURL(destino).href;
+	} else ({ servidor, url: resultado.urlLocal } = await servidorDeQA());
 	navegador = await abrirChromium();
 	contexto = await navegador.newContext({ viewport: { width: 1500, height: 950 }, acceptDownloads: true });
 	pagina = await contexto.newPage();
@@ -229,7 +237,7 @@ try {
 			resultado.erroresJs.push(`console: ${m.text()}`);
 	});
 	entorno.chromium = navegador.version();
-	await pagina.goto(`${resultado.urlLocal}/?qa=1&inicio=0`, { waitUntil: 'load' });
+	await pagina.goto(`${resultado.urlLocal}${offline ? '?' : '/?'}qa=1&inicio=0`, { waitUntil: 'load' });
 	await esperarEditorListo(pagina);
 	await cerrarSuperficies();
 	const tImportar = ahora();
@@ -342,6 +350,7 @@ try {
 	// desplazamientos ni llevar el objeto a otro circuito. Un drag sin cambio real NO se cuenta.
 	const dragId = agarrables.find((a) => a.id === 'aux-b')?.id ?? agarrables[0].id;
 	const tiemposDrag = [];
+	const tiemposHastaRutas = [];
 	const tiemposPersistencia = [];
 	const tareasDrag = [];
 	const detalleDrag = [];
@@ -370,8 +379,13 @@ try {
 		try { seisMovimientos = await faseHost(() => pagina.mouse.move(q.x + avance, q.y, { steps: 6 })); }
 		finally { soltar = await faseHost(() => pagina.mouse.up()); }
 		const totalDragMs = msDesde(t);
+		// El gesto puede entregar el control antes de que termine el reparto. No leer rutas viejas:
+		// la espera usa el estado visible de la UI, no un hook secreto que enmascare el coste.
+		await pagina.locator('#ruteo-estado').waitFor({ state: 'hidden', timeout: 60_000 });
+		const hastaRutasMs = msDesde(t);
 		const cdpDespues = await metricasCDP();
 		tiemposDrag.push(totalDragMs);
+		tiemposHastaRutas.push(hastaRutasMs);
 		const eventos = await tomarEventos();
 		const editor = await leerCronometroEditor();
 		const rutasDespues = await instantaneaRutas();
@@ -391,6 +405,7 @@ try {
 		const persistenciaMs = msDesde(tGuardar);
 		tiemposPersistencia.push(persistenciaMs);
 		detalleDrag.push({ id: dragId, totalHostMs: redondear(totalDragMs),
+			rutasListasHostMs: redondear(hastaRutasMs),
 			hoverHostMs: hover.ms, pointerdownHostMs: bajar.ms,
 			seisMovimientosHostMs: seisMovimientos?.ms ?? null, pointerupHostMs: soltar?.ms ?? null,
 			canvas: resumirEventos(eventos),
@@ -400,9 +415,10 @@ try {
 			rutas: diferenciarRutas(rutasAntes, rutasDespues),
 			flushHostMs: redondear(persistenciaMs), flushNavegadorMs: redondear(msNavegador) });
 		tareasDrag.push(...await pagina.evaluate(() => window.qa.contadores().tareasLargas));
-		console.log(`Drag ${i + 1}/${repeticiones}: ${redondear(tiemposDrag.at(-1))} ms; flush ${redondear(tiemposPersistencia.at(-1))} ms`);
+		console.log(`Drag ${i + 1}/${repeticiones}: gesto ${redondear(totalDragMs)} ms, rutas ${redondear(hastaRutasMs)} ms; flush ${redondear(persistenciaMs)} ms`);
 	}
 	resultado.mediciones.dragExtremoAExtremo = resumen(tiemposDrag);
+	resultado.mediciones.dragHastaRutas = resumen(tiemposHastaRutas);
 	resultado.mediciones.dragPorFase = detalleDrag;
 	resultado.mediciones.dragFases = Object.fromEntries(
 		['hoverHostMs', 'pointerdownHostMs', 'seisMovimientosHostMs', 'pointerupHostMs',
@@ -413,6 +429,11 @@ try {
 		n: tareasDrag.length,
 		peorMs: Math.max(0, ...tareasDrag.map((e) => e.ms)),
 	};
+	const medirListener = (muestras, tipo) => resumen(muestras.flatMap((m) =>
+		m.canvas[tipo]?.muestrasMs ?? []));
+	console.log(`R1 resumen: selección host p95 ${resultado.mediciones.seleccionExtremoAExtremo.p95Ms} ms / listener pointerup p95 ${medirListener(detalleSeleccion, 'pointerup').p95Ms} ms; `
+		+ `drag host p95 ${resultado.mediciones.dragExtremoAExtremo.p95Ms} ms / listener pointerup p95 ${medirListener(detalleDrag, 'pointerup').p95Ms} ms; `
+		+ `rutas listas p95 ${resultado.mediciones.dragHastaRutas.p95Ms} ms; tareas largas ${tareasDrag.length}`);
 	if (focal && controlFocal) {
 		// En Editor los cables son deliberadamente no seleccionables. El rail visible
 		// activa Trabajo mediante Cablear; las pastillas antiguas de modo están ocultas.
@@ -460,9 +481,63 @@ try {
 			throw new Error('Rehacer el drag no recuperó las rutas R1');
 		if (await pagina.evaluate(() => window.qa.cablesDibujados()) !== 100)
 			throw new Error('Undo/redo dejó geometrías de cable faltantes o fantasma');
+		// Cancelar usa la acción visible; no permite que el worker publique rutas obsoletas.
+		await pagina.locator('#hta-seleccionar').click();
+		const antesCancelacion = await posicion(dragId);
+		const rutasAntesCancelacion = await instantaneaRutas();
+		const puntoCancelar = await puntoAparato(dragId);
+		if (!puntoCancelar) throw new Error('No hay punto visible para probar cancelación R1');
+		await pagina.mouse.click(puntoCancelar.x, puntoCancelar.y);
+		await pagina.waitForFunction((id) => window.qa.seleccion()?.id === id, dragId);
+		await pagina.mouse.move(puntoCancelar.x, puntoCancelar.y);
+		await pagina.mouse.down();
+		await pagina.mouse.move(puntoCancelar.x - 12, puntoCancelar.y, { steps: 6 });
+		await pagina.mouse.up();
+		await pagina.locator('#ruteo-estado').waitFor({ state: 'visible', timeout: 5_000 });
+		await pagina.locator('#ruteo-cancelar').click();
+		await pagina.locator('#ruteo-estado').waitFor({ state: 'hidden', timeout: 10_000 });
+		const posicionCancelada = await posicion(dragId);
+		const rutasCanceladas = await instantaneaRutas();
+		if (JSON.stringify(posicionCancelada) !== JSON.stringify(antesCancelacion)
+			|| JSON.stringify(rutasCanceladas) !== JSON.stringify(rutasAntesCancelacion)
+			|| await pagina.evaluate(() => window.qa.cablesDibujados()) !== 100)
+			throw new Error('Cancelar el reparto no restauró posición, rutas y geometría R1');
+		// El gesto manual de cable tiene el mismo presupuesto de respuesta que mover un aparato.
+		await pagina.locator('#hta-conectar').click();
+		const puntoManual = await pagina.evaluate((id) => window.qa.puntoParaAgarrar(id, 31), puntoCable.id);
+		if (!puntoManual) throw new Error(`No hay punto de agarre manual para ${puntoCable.id}`);
+		await pagina.mouse.click(puntoManual.x, puntoManual.y);
+		await pagina.waitForFunction((id) => window.qa.seleccion()?.id === id, puntoCable.id);
+		const unionesIniciales = (await pagina.evaluate((id) =>
+			window.qa.proyecto().conductores.find((c) => c.id === id)?.trazado ?? [], puntoCable.id));
+		await pagina.mouse.dblclick(puntoManual.x, puntoManual.y);
+		await pagina.locator('#ruteo-estado').waitFor({ state: 'hidden', timeout: 60_000 });
+		const uniones = (await pagina.evaluate((id) =>
+			window.qa.proyecto().conductores.find((c) => c.id === id)?.trazado ?? [], puntoCable.id));
+		if (uniones.length !== unionesIniciales.length + 1)
+			throw new Error('El doble clic humano no creó una unión nueva para mover');
+		const indiceUnion = uniones.findIndex((p) => !unionesIniciales.some((q) =>
+			p.x === q.x && p.y === q.y && p.z === q.z));
+		const puntoUnion = await pagina.evaluate(({ id, indice }) =>
+			window.qa.puntoDeUnion(id, indice), { id: puntoCable.id, indice: indiceUnion });
+		if (!puntoUnion) throw new Error('La unión creada no tiene tirador visible');
+		const manualAntes = JSON.stringify(uniones);
+		const inicioManual = ahora();
+		await pagina.mouse.move(puntoUnion.x, puntoUnion.y);
+		await pagina.mouse.down();
+		await pagina.mouse.move(puntoUnion.x + 45, puntoUnion.y + 24, { steps: 6 });
+		await pagina.mouse.up();
+		const gestoManualMs = redondear(msDesde(inicioManual));
+		await pagina.locator('#ruteo-estado').waitFor({ state: 'hidden', timeout: 60_000 });
+		const manualDespues = JSON.stringify((await pagina.evaluate((id) =>
+			window.qa.proyecto().conductores.find((c) => c.id === id)?.trazado, puntoCable.id)) ?? []);
+		if (manualDespues === manualAntes || await pagina.evaluate(() => window.qa.cablesDibujados()) !== 100)
+			throw new Error('El arrastre manual R1 no modificó el recorrido o dejó geometrías fantasma');
+		console.log(`Cable manual R1: gesto ${gestoManualMs} ms, unión movida, 100/100 geometrías listas`);
 		resultado.mediciones.verificacionFocal = {
 			cableSeleccionado: puntoCable.id, hover: cursorHover,
 			undoRutasIdenticas: true, redoRutasIdenticas: true, geometriaTrasRedo: 100,
+			cancelacionRestauroModeloYRutas: true, gestoCableManualMs: gestoManualMs,
 		};
 	}
 

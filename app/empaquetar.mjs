@@ -28,8 +28,9 @@ export function empaquetar({
 	silencioso = false,
 } = {}) {
 	const html = textoCanonico(readFileSync(join(distApp, 'index.html'), 'utf8'));
-	const jsFile = readdirSync(join(distApp, 'assets')).filter((f) => f.endsWith('.js')).sort()[0];
-	if (!jsFile) throw new Error('No se encontró el bundle JS. Ejecuta primero: npm run editor:build');
+	const jsFiles = readdirSync(join(distApp, 'assets')).filter((f) => f.endsWith('.js')).sort();
+	if (jsFiles.length !== 1) throw new Error(`El entregable offline requiere un único bundle JS; se encontraron ${jsFiles.length}.`);
+	const jsFile = jsFiles[0];
 	const js = textoCanonico(readFileSync(join(distApp, 'assets', jsFile), 'utf8'));
 	// Vite extrae CSS importado por módulos. También pertenece al artefacto offline,
 	// a su Build ID y a la política CSP; no debe quedar como URL ausente en file://.
@@ -66,6 +67,8 @@ export function empaquetar({
 		"style-src-attr 'unsafe-inline'",
 		'img-src data: blob:',
 		'frame-src blob:',
+		// El Worker de rutas va dentro del bundle verificado y se materializa como Blob local.
+		'worker-src blob:',
 		'font-src data:',
 		"connect-src 'none'",
 		"form-action 'none'",
