@@ -8,6 +8,7 @@ import { hashSnapshotTecnico } from '../src/datos-tecnicos/hash.js';
 import { revisarTablero } from '../src/motores/revision.js';
 import { prepararMarcadores } from '../src/motores/marcadores.js';
 import { proyectarLongitudesDocumentales } from '../src/motores/longitudes-documentales.js';
+import { proyectarReferenciasEsquemaM2 } from '../src/motores/referencias-esquema-m2.js';
 import { longitudesDibujadasMm } from './escena3d.js';
 import { hojaASvg } from './esquema-svg.js';
 import { esquemaComoBlob } from './esquema-pdf.js';
@@ -80,6 +81,7 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 			snapshotId, buildId: procedencia.buildId, generadoEn: procedencia.generadoEn,
 			procedencia: structuredClone(procedencia) } });
 	const io = generarListaSenalesIO(copia);
+	const referenciasEsquema = proyectarReferenciasEsquemaM2(copia, revision.hojasEsquema);
 	const pendientes = copia.conductores.filter((c) => c.estadoRutaFisica === 'pendiente').length;
 	const archivos: ArchivoPaqueteDocumental[] = [];
 	const agregar = (ruta: string, contenido: string | Uint8Array, mime: string) =>
@@ -151,6 +153,28 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 			? r.contactos.map((c) => [r.maestroId, r.designacion, r.posicion, c.dispositivoId, c.contacto, c.posicion])
 			: [[r.maestroId, r.designacion, r.posicion, '', '', '']]),
 		'Referencias cruzadas de funciones reales; posiciones gráficas derivadas del esquema de la revisión.');
+	csv('listas/referencias-plc-terminales.csv', ['Controlador ID', 'Canal borne ID', 'Clase', 'Origen', 'Calidad',
+		'Conductor ID', 'Hoja canal ID', 'Hoja canal número', 'Columna canal', 'Representación canal ID',
+		'Terminal dispositivo ID', 'Terminal borne ID', 'Hoja terminal ID', 'Hoja terminal número',
+		'Columna terminal', 'Representación terminal ID'],
+		referenciasEsquema.canales.map((r) => [r.controladorId, r.canalBorneId, r.clase, r.origen, r.calidad,
+			r.conductorId, r.canal.hojaId, r.canal.numeroHoja, r.canal.columna, r.canal.representacionId,
+			r.terminal.dispositivoId, r.terminal.borneId, r.terminal.ubicacion.hojaId,
+			r.terminal.ubicacion.numeroHoja, r.terminal.ubicacion.columna,
+			r.terminal.ubicacion.representacionId]),
+		'Referencias de canal PLC a terminal real con anclaje único en ambas vistas; extremos ambiguos u omitidos constan en diagnósticos.');
+	csv('listas/referencias-circuitos-hojas.csv', ['Circuito ID', 'Nombre', 'Estado topología', 'Alcance',
+		'Conductores identificados', 'Conductores sin ancla única', 'Hoja ID', 'Hoja número'],
+		referenciasEsquema.circuitos.flatMap((r) => r.hojas.length
+			? r.hojas.map((h) => [r.circuitoId, r.nombre, r.estadoTopologia, r.alcance,
+				r.conductores.join(' / '), r.conductoresSinAncla.join(' / '), h.id, h.numero])
+			: [[r.circuitoId, r.nombre, r.estadoTopologia, r.alcance,
+				r.conductores.join(' / '), r.conductoresSinAncla.join(' / '), '', '']]),
+		'Solo trayectos de alimentación identificados; no afirma retorno exhaustivo ni ubica conductores sin ancla única.');
+	if (referenciasEsquema.diagnosticos.length)
+		csv('listas/referencias-esquema-diagnosticos.csv', ['Código', 'Entidad ID', 'Conductor ID', 'Detalle'],
+			referenciasEsquema.diagnosticos.map((d) => [d.codigo, d.entidadId, d.conductorId, d.detalle]),
+			'Diagnósticos de referencias no verificables o ambiguas; no se elige una hoja por orden de arrays.');
 	csv('listas/senales-io.csv', ['Dispositivo ID', 'Designación', 'Borne', 'Rótulo', 'Clase', 'Origen', 'Origen perfil', 'Calidad', 'Etiquetas', 'Común', 'Unidad', 'Rango', 'Conexiones', 'Estado'],
 		io.filas.map((f) => [f.dispositivoId, f.designacion, f.borneId, f.rotulo, f.clase,
 			f.origen, f.origenPerfil, f.calidad, f.etiquetas.join(' / '), f.comun, f.unidad,
