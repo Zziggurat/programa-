@@ -35,7 +35,7 @@ test('ESQ-07: índice offline ordena folios M2 por número y escapa títulos hos
 	p.gabinete = { ancho: 400, alto: 400, rieles: [], canaletas: [], colocaciones: [] };
 	p.hojas = [
 		{ id: 'bornes', numero: 2, titulo: 'Bornes <img src=x onerror=alert(1)>', clase: 'bornes' },
-		{ id: 'potencia', numero: 1, titulo: 'Potencia & fuerza', clase: 'potencia' },
+		{ id: 'potencia', numero: 1, titulo: 'Potencia & fuerza', clase: 'potencia', formatoPapel: 'A2' },
 	];
 	p.esquema = { representaciones: [] };
 	const antes = JSON.stringify(p);
@@ -44,8 +44,8 @@ test('ESQ-07: índice offline ordena folios M2 por número y escapa títulos hos
 	const indice = String(archivos.find((a) => a.ruta === 'index.html')?.contenido ?? '');
 	assert.ok(indice.indexOf('Potencia &amp; fuerza') < indice.indexOf('Bornes &lt;img'),
 		'el orden editorial no depende del array');
-	assert.match(indice, /<td>POTENCIA<\/td><td><code>potencia<\/code>/);
-	assert.match(indice, /<td>BORNES<\/td><td><code>bornes<\/code>/);
+	assert.match(indice, /<td>POTENCIA<\/td><td>594 × 420 mm<\/td><td><code>potencia<\/code>/);
+	assert.match(indice, /<td>BORNES<\/td><td>420 × 297 mm<\/td><td><code>bornes<\/code>/);
 	assert.doesNotMatch(indice, /<img src=x onerror=/);
 	for (const numero of ['001', '002']) {
 		const ruta = `esquema/hoja-${numero}.svg`;
