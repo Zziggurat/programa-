@@ -33,6 +33,7 @@ import { aplicarEliminacionDispositivos, planificarEliminacionDispositivos,
 	type PlanEliminacionDispositivos } from '../src/motores/eliminar-dispositivos.js';
 import { revisarTablero, RevisionTablero } from '../src/motores/revision.js';
 import { montarEsquema } from '../src/motores/esquema.js';
+import { planCopiarAparatoConVista } from '../src/motores/copiar-representacion-esquema.js';
 import { generarInformeHTML } from '../src/motores/documentacion.js';
 import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import {
@@ -3131,12 +3132,22 @@ function cancelarColocacion(): void {
  * designación libre de su clase. NO se copian los cables: la copia nace sin conectar, que es lo
  * que se espera de un aparato nuevo.
  */
-function duplicarDispositivo(id: string): void {
+function duplicarDispositivo(id: string, copiaEsquema?: {
+	vistaId: string; destino: { hojaId: string; columna: number; fila: number }; documento: Proyecto;
+}): string | undefined {
+	if (copiaEsquema && proyecto !== copiaEsquema.documento) {
+		avisar('El proyecto cambió; vuelve a copiar la vista antes de pegar.', 'info');
+		return undefined;
+	}
 	const g = proyecto.gabinete;
 	const original = proyecto.dispositivos.find((d) => d.id === id);
 	const col = g?.colocaciones.find((c) => c.dispositivoId === id);
 	if (!g || !original || !col) { avisar('Selecciona un aparato colocado para duplicarlo.', 'info'); return; }
 	if (esReferenciaVisualInerte(original)) { avisar('Las imágenes de referencia no se duplican.', 'info'); return; }
+	if (copiaEsquema && col.montaje === 'puerta') {
+		avisar('La copia desde esquema aún no calcula un hueco físico sobre la puerta.', 'info');
+		return undefined;
+	}
 
 	const clase = original.clase ?? CLASE_POR_TIPO[original.tipo];
 	let maximo = 0;
@@ -3150,6 +3161,12 @@ function duplicarDispositivo(id: string): void {
 		numero,
 		designacion: (original.designacion ?? '').replace(/\d+$/, '') + numero,
 	};
+	const planVista = copiaEsquema ? planCopiarAparatoConVista(proyecto, copiaEsquema.vistaId,
+		copiaEsquema.destino, { dispositivoId: copia.id, vistaId: idUnico('r') }) : undefined;
+	if (planVista && (!planVista.ok || planVista.origenDispositivoId !== id)) {
+		avisar(planVista.ok ? 'La vista copiada ya no pertenece al aparato esperado.' : planVista.motivo, 'info');
+		return undefined;
+	}
 
 	/*
 	 * PRIMERO se busca sitio, y solo si lo hay se toca el proyecto.
@@ -3180,6 +3197,7 @@ function duplicarDispositivo(id: string): void {
 	}
 	if (!capturar()) return;
 	proyecto.dispositivos.push(copia);
+	if (planVista?.ok) proyecto.esquema!.representaciones!.push(planVista.nuevaVista);
 	const nueva = { dispositivoId: copia.id, x, y, ancho: col.ancho, alto: col.alto, rielId, z: col.z };
 	g.colocaciones.push(nueva);
 	const rielCopia = extenderRielPara(nueva);
@@ -3188,6 +3206,7 @@ function duplicarDispositivo(id: string): void {
 	actualizarConservandoAparatos();
 	seleccionar(copia.id);
 	avisar(`Duplicado: ${copia.designacion ?? copia.id}`, 'ok');
+	return copia.id;
 }
 
 /** Alarga (si hace falta) el riel bajo un aparato para que quede totalmente apoyado sobre él. */
@@ -8034,6 +8053,15 @@ const panelEsq = instalarEsquema({
 		else avisar('Datos técnicos no está disponible todavía.', 'info');
 	},
 	puedeEditar: sePuedeEditar,
+	duplicarAparatoConVista: (vistaId, destino, documentoEsperado) => {
+		if (proyecto !== documentoEsperado) {
+			avisar('El proyecto cambió; vuelve a copiar la vista antes de pegar.', 'info');
+			return undefined;
+		}
+		const vista = proyecto.esquema?.representaciones?.find((r) => r.id === vistaId);
+		if (!vista) { avisar('La vista copiada ya no existe.', 'info'); return undefined; }
+		return duplicarDispositivo(vista.dispositivoId, { vistaId, destino, documento: documentoEsperado });
+	},
 	eliminarDispositivo,
 	desconectarConductor: (id) => {
 		if (!proyecto.conductores.some((c) => c.id === id)) return false;

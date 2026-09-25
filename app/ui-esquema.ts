@@ -60,6 +60,9 @@ export interface ContextoEsquema {
 	verDatosTecnicos?: (dispositivoId: string) => void;
 	/** Consulta de solo lectura antes de ofrecer una eliminación; no crea entrada de deshacer. */
 	puedeEditar: () => boolean;
+	/** Crea un aparato nuevo sin conductores y su vista completa M2 con un solo Undo. */
+	duplicarAparatoConVista: (vistaId: string, destino: PosicionMovimientoRepresentacion,
+		proyectoEsperado: Proyecto) => string | undefined;
 	/** El editor central elimina el conductor real y gestiona historial, recálculo y guardado. */
 	desconectarConductor: (conductorId: string) => boolean;
 	/** Elimina el aparato eléctrico real, sus conexiones y vistas tras mostrar el alcance. */
@@ -179,6 +182,28 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	let conductorSeleccionado: string | undefined;
 	/** Identidad gráfica M2, distinta de la identidad eléctrica del aparato. */
 	let representacionSeleccionada: string | undefined;
+	/** Portapapeles local del esquema: nunca serializado ni mezclado entre proyectos. */
+	let vistaCopiada: { documento: Proyecto; vistaId: string } | undefined;
+	function pintarAccionesCopia(): void {
+		const documento = proyecto();
+		const lista = documento.esquema?.representaciones;
+		const explicito = esquemaAbierto && lista !== undefined;
+		if (vistaCopiada && (vistaCopiada.documento !== documento
+			|| !lista?.some((r) => r.id === vistaCopiada!.vistaId))) vistaCopiada = undefined;
+		const seleccion = lista?.find((r) => r.id === representacionSeleccionada);
+		const copiables = !!seleccion && seleccion.parte.tipo === 'completa'
+			&& lista?.filter((r) => r.dispositivoId === seleccion.dispositivoId).length === 1
+			&& documento.gabinete?.colocaciones.filter((c) => c.dispositivoId === seleccion.dispositivoId
+				&& c.montaje !== 'puerta').length === 1;
+		const copiar = $('esq-copiar-vista') as HTMLButtonElement;
+		const pegar = $('esq-pegar-vista') as HTMLButtonElement;
+		const estado = $('esq-copia-estado');
+		copiar.hidden = pegar.hidden = !explicito;
+		copiar.disabled = !copiables || !!documento.esEjemplo;
+		pegar.disabled = !vistaCopiada || !!documento.esEjemplo;
+		estado.hidden = !explicito || !vistaCopiada;
+		estado.textContent = vistaCopiada ? `Copia preparada: ${vistaCopiada.vistaId} · sin cables` : '';
+	}
 	/** Selección editorial transitoria: jamás se serializa ni duplica dispositivos o conductores. */
 	const grupoVistaIds = new Set<string>();
 	let grupoAnclaId: string | undefined;
@@ -784,6 +809,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 
 	/** Inspector de conexiones, vistas y problemas. Todo dato del proyecto entra como texto. */
 	function pintarConductorSeleccionado(): void {
+		pintarAccionesCopia();
 		const ayuda = $('esq-ayuda');
 		ayuda.replaceChildren();
 		const c = proyecto().conductores.find((x) => x.id === conductorSeleccionado);
@@ -1698,6 +1724,7 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 			origenConexion = undefined;
 			conductorSeleccionado = undefined;
 			representacionSeleccionada = undefined;
+			vistaCopiada = undefined;
 			localizacion = undefined;
 			arrastrandoVista = false;
 			document.getElementById('esq-desdoblar-formulario')?.remove();
@@ -1767,6 +1794,73 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	($('esq-alinear-fila') as HTMLButtonElement).onclick = () => { void alinearGrupo('fila'); };
 	($('esq-alinear-columna') as HTMLButtonElement).onclick = () => { void alinearGrupo('columna'); };
 	($('esq-grupo-limpiar') as HTMLButtonElement).onclick = limpiarGrupoRepresentaciones;
+	($('esq-copiar-vista') as HTMLButtonElement).onclick = () => {
+		if (!esquemaAbierto || !ctx.puedeEditar()) return;
+		const lista = proyecto().esquema?.representaciones;
+		const vista = lista?.find((r) => r.id === representacionSeleccionada);
+		if (!vista || vista.parte.tipo !== 'completa'
+			|| lista?.filter((r) => r.dispositivoId === vista.dispositivoId).length !== 1) {
+			avisar('Selecciona una vista completa y única; las vistas funcionales desdobladas no se copian por separado.', 'info');
+			return;
+		}
+		vistaCopiada = { documento: proyecto(), vistaId: vista.id };
+		pintarAccionesCopia();
+		avisar('Aparato preparado para copiar. El pegado crea otro aparato sin conexiones.', 'info');
+	};
+	($('esq-pegar-vista') as HTMLButtonElement).onclick = async () => {
+		if (!esquemaAbierto || !ctx.puedeEditar()) return;
+		const documento = proyecto();
+		const copia = vistaCopiada;
+		if (!copia || copia.documento !== documento
+			|| !documento.esquema?.representaciones?.some((r) => r.id === copia.vistaId)) {
+			vistaCopiada = undefined;
+			pintarAccionesCopia();
+			avisar('La vista preparada ya no existe en este proyecto; vuelve a copiarla.', 'info');
+			return;
+		}
+		const hoja = hojasEsquema[hojaActual];
+		if (!hoja) return;
+		const ocupadas = new Set(documento.esquema.representaciones
+			.filter((r) => r.hojaId === hoja.id)
+			.map((r) => `${r.posicion.columna}.${r.posicion.fila}`));
+		let sugerencia = `${hoja.numero}.1.1`;
+		buscarCasilla: for (let fila = 1; fila <= FILAS_ESQ; fila++) {
+			for (let columna = 1; columna <= hoja.columnas; columna++) {
+				if (!ocupadas.has(`${columna}.${fila}`)) {
+					sugerencia = `${hoja.numero}.${columna}.${fila}`;
+					break buscarCasilla;
+				}
+			}
+		}
+		const firma = JSON.stringify(documento);
+		const texto = await pedirTexto(
+			`Pegar un aparato eléctrico nuevo, sin cables. Indica hoja.columna.fila (p. ej. ${sugerencia}). `
+			+ `Folios: ${documento.hojas.map((h) => `${h.numero} ${h.titulo}`).join(' · ')}`,
+			sugerencia,
+		);
+		if (texto === null) return;
+		if (proyecto() !== documento || JSON.stringify(documento) !== firma || vistaCopiada !== copia) {
+			avisar('El proyecto cambió mientras elegías el destino. Vuelve a intentarlo.', 'info');
+			refrescarEsquema();
+			return;
+		}
+		const partes = /^(\d+)\.(\d+)\.(\d+)$/.exec(texto.trim());
+		const folios = partes ? documento.hojas.filter((h) => h.numero === Number(partes[1])) : [];
+		if (!partes || folios.length !== 1) {
+			avisar('Indica una hoja única y una casilla válida con formato hoja.columna.fila.', 'error');
+			return;
+		}
+		const destino = { hojaId: folios[0].id, columna: Number(partes[2]), fila: Number(partes[3]) };
+		const nuevoId = ctx.duplicarAparatoConVista(copia.vistaId, destino, documento);
+		if (!nuevoId) return;
+		const nuevaVista = documento.esquema?.representaciones?.find((r) => r.dispositivoId === nuevoId);
+		if (nuevaVista) {
+			representacionSeleccionada = nuevaVista.id;
+			conductorSeleccionado = undefined;
+			hojaSeleccionadaId = nuevaVista.hojaId;
+		}
+		refrescarEsquema();
+	};
 	($('esq-renumerar') as HTMLButtonElement).onclick = async () => {
 		if (!ctx.puedeEditar()) return;
 		const documento = proyecto();
