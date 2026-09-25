@@ -1300,7 +1300,8 @@
 	/* Vista de esquema: se superpone al lienzo 3D, como el modo Visualización. */
 	/* Justo por debajo de la barra (46 px): 2 px de más dejaban asomar el lienzo 3D. */
 	#panel-esquema { position: fixed; inset: 46px 0 0 0; z-index: var(--capa-herramienta); background: #11151a; display: flex; flex-direction: column; }
-	#esquema-barra { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--panel); border-bottom: 1px solid var(--borde); flex: none; }
+	#esquema-barra { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: var(--panel); border-bottom: 1px solid var(--borde); flex: none; min-width: 0; overflow-x: auto; }
+	#esquema-barra > * { flex-shrink: 0; }
 	#esquema-barra .sep { width: 1px; height: 20px; background: var(--borde); margin: 0 4px; }
 	#esq-indicador { font-size: 12.5px; min-width: 86px; text-align: center; color: var(--texto-suave); }
 	#esq-titulo { font-size: 13px; font-weight: 600; margin-left: 6px; }
@@ -1532,6 +1533,7 @@
 			Columnas <input type="number" id="esq-columnas" min="4" max="20" step="1" value="10">
 		</label>
 		<button class="boton" id="esq-titulo-editar" title="Poner un título propio a esta hoja">✎ Título</button>
+		<button class="boton" id="esq-renumerar" title="Previsualizar y aplicar designaciones sin cambiar IDs ni hojas">Renumerar…</button>
 		<button class="boton" id="esq-auto" title="Deshacer las colocaciones a mano y volver a ordenar el esquema solo">⟲ Ordenar solo</button>
 		<div class="sep"></div>
 		<button class="boton" id="esq-svg" title="Descargar la hoja en SVG (vectorial, para editarla o imprimirla en A3)">Descargar SVG</button>

@@ -3240,8 +3240,9 @@ async function eliminarAparatos(ids: readonly string[]): Promise<void> {
 	let plan: PlanEliminacionDispositivos;
 	try { plan = planificarEliminacionDispositivos(documento, ids); }
 	catch (error) { avisar(error instanceof Error ? error.message : 'No se pudo preparar la eliminación.', 'error'); return; }
+	const firmaInicial = JSON.stringify(documento);
 	if (!(await confirmar(descripcionEliminacion(plan), { ok: 'Eliminar aparato y dependencias', peligro: true }))) return;
-	if (proyecto !== documento || !sePuedeEditar()) {
+	if (proyecto !== documento || JSON.stringify(documento) !== firmaInicial || !sePuedeEditar()) {
 		avisar('El proyecto cambió mientras confirmabas. Revisa de nuevo la eliminación.', 'info');
 		return;
 	}
@@ -8035,6 +8036,7 @@ const panelEsq = instalarEsquema({
 		return conductor.id;
 	},
 	capturar,
+	descartarCapturaSiIgual,
 	marcarSucio,
 	actualizarTodo,
 	nombreArchivo,

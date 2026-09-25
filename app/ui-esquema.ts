@@ -21,6 +21,7 @@ import {
 	planActivacionRepresentaciones, planDesdoblamientoRepresentacion,
 	planPartesDesdoblamiento, type DestinosDesdoblamiento,
 } from '../src/motores/crear-representaciones-esquema.js';
+import { aplicarRenumeracionEsquema, previsualizarRenumeracionEsquema } from '../src/motores/renumeracion-esquema.js';
 import { hojaASvg } from './esquema-svg.js';
 import { exportarEsquemaPDF } from './esquema-pdf.js';
 import { dxfDeEsquema } from './exportaciones.js';
@@ -48,6 +49,8 @@ export interface ContextoEsquema {
 	 * `false`; `test/solo-lectura.test.ts` comprueba que nadie se lo salte.
 	 */
 	capturar: () => boolean;
+	/** Descarta la captura si una propuesta envejeció antes de la aplicación. */
+	descartarCapturaSiIgual: () => void;
 	marcarSucio: () => void;
 	actualizarTodo: () => void;
 	/** Nombre base de archivo del proyecto, ya saneado. */
@@ -870,6 +873,47 @@ export function instalarEsquema(ctx: ContextoEsquema): PanelEsquema {
 	($('esq-acercar') as HTMLButtonElement).onclick = () => { zoomEsquema = Math.min(6, zoomEsquema * 1.3); aplicarZoomEsquema(); };
 	($('esq-alejar') as HTMLButtonElement).onclick = () => { zoomEsquema = Math.max(0.4, zoomEsquema / 1.3); aplicarZoomEsquema(); };
 	($('esq-ajustar') as HTMLButtonElement).onclick = () => { zoomEsquema = 1; aplicarZoomEsquema(); };
+	($('esq-renumerar') as HTMLButtonElement).onclick = async () => {
+		if (!ctx.puedeEditar()) return;
+		const documento = proyecto();
+		let plan;
+		try { plan = previsualizarRenumeracionEsquema(documento); }
+		catch (error) { avisar(error instanceof Error ? error.message : 'No se pudo preparar la numeración.', 'error'); return; }
+		if (!plan.filas.length) { avisar('No hay aparatos eléctricos que renumerar.', 'info'); return; }
+		const firmaInicial = JSON.stringify(documento);
+		const filas = plan.filas.map((fila) => {
+			const ubicacion = fila.ubicacion.hojaId
+				? `hoja ${fila.ubicacion.numeroHoja} [${fila.ubicacion.hojaId}], ${fila.ubicacion.columna ?? '—'}.${fila.ubicacion.fila ?? '—'}`
+				: 'sin vista';
+			return `${fila.dispositivoId} (${ubicacion}): ${fila.designacionAnterior ?? '(sin designación)'} → `
+				+ `${fila.designacionPropuesta ?? '(sin propuesta)'}${fila.congelado ? ' · CONGELADA' : ''}`;
+		});
+		const conflicto = plan.conflictos.length > 0;
+		const mensaje = [
+			`Renumeración propuesta: ${plan.cambios} cambio(s) en ${plan.filas.length} aparato(s). Los IDs, bornes, conductores, vistas y hojas no cambian.`,
+			...filas,
+			conflicto ? `CONFLICTOS (${plan.conflictos.length}):\n${plan.conflictos.map((x) => `${x.codigo}: ${x.detalle}`).join('\n')}\nNo se aplicará ningún cambio.` : '',
+			'Cancelar deja el proyecto idéntico. Aplicar permite Ctrl+Z/Redo y guarda las designaciones.',
+		].filter(Boolean).join('\n\n');
+		if (conflicto) { await confirmar(mensaje, { ok: 'Entendido', peligro: true }); return; }
+		if (!plan.cambios) { avisar('Las designaciones ya coinciden con la propuesta; no hay cambios.', 'info'); return; }
+		if (!(await confirmar(mensaje, { ok: 'Aplicar numeración' }))) return;
+		if (proyecto() !== documento || JSON.stringify(documento) !== firmaInicial || !ctx.puedeEditar()) {
+			avisar('El proyecto cambió mientras confirmabas. Previsualiza de nuevo.', 'info');
+			return;
+		}
+		if (!capturar()) return;
+		try { aplicarRenumeracionEsquema(documento, plan); }
+		catch (error) {
+			ctx.descartarCapturaSiIgual();
+			avisar(error instanceof Error ? error.message : 'La numeración no se aplicó.', 'error');
+			return;
+		}
+		marcarSucio();
+		actualizarTodo();
+		refrescarEsquema();
+		avisar(`${plan.cambios} designación(es) actualizadas; Ctrl+Z permite deshacer.`, 'ok');
+	};
 
 	function cancelarConexionPendiente(): boolean {
 		if (!esquemaAbierto || !origenConexion) return false;
