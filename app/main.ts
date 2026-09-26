@@ -53,7 +53,7 @@ import {
 import RuteoWorker from './ruteo-worker.ts?worker&inline';
 import { proyectoParaRuteo } from './proyecto-ruteo.js';
 import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, invasionesDeCanaletas, RedCanaletas } from './canaletas-red.js';
-import { contactoEnTramosDelNodo, primerSolidoEnPunto, primerSolidoEnTramosDelNodo,
+import { contactoEnTramos, primerSolidoEnPunto, primerSolidoEnTramos,
 	RejillaCables } from './colisiones-cables.js';
 import { actualizarMazoPuerta, ajustesDeMazo, trazasDeMazo } from './mazo-puerta.js';
 import {
@@ -101,7 +101,8 @@ import {
 import { longitudCoincidente3D } from './colisiones-cables.js';
 import { aplicarPropuestaAltaCable, proponerAltaCable } from './propuesta-alta-cable.js';
 import { longitudPlanRutaAutomaticaMm } from '../src/modelo/plan-ruta-automatica.js';
-import { admiteRutaEnPlaca, desplazarTramoInteriorM6, MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
+import { admiteRutaEnPlaca, desplazarTramoInteriorM6, leerRutaFisicaV1, leerRutaFisicaV2,
+	MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
 import { GestorDocumentos, EstadoGuardadoDocumento } from './gestor-documentos.js';
@@ -4646,6 +4647,7 @@ function pintarPanelEstructura(s: Seleccion): void {
 function avisosDiagnosticoRutaM6(id: string): string[] {
 	const d = diagnosticoRutaManual(proyecto, id);
 	return [
+		...d.radios.map((v) => `Radio declarado no cumplido en codo ${v.indice} (${v.estado})`),
 		...(d.contacto ? [`Cercanía a ${d.contacto.b}: holgura ${d.contacto.holgura.toFixed(1)} mm`] : []),
 		...d.solidos.map((v) => `Invade ${v.b}: ${(-v.holgura).toFixed(1)} mm`),
 		...d.canaletas.map((v) => `Invade ${v.b}: ${(-v.holgura).toFixed(1)} mm`),
@@ -4669,7 +4671,7 @@ function pintarPanelCable(id: string): void {
 		<div class="sub">${escaparHtml(`${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}`)}</div>
 		<dl>
 			<dt>Recorrido</dt><dd>${pendiente ? 'Ruta física pendiente · sin metraje ni canaleta asignada'
-				: c.rutaFisica ? `Ruta M6 XYZ (${c.rutaFisica.nodos.length} nodos · polilínea)`
+			: c.rutaFisica ? `Ruta M6 XYZ (${c.rutaFisica.nodos.length} nodos · ${c.rutaFisica.version === 2 ? 'arcos circulares' : 'polilínea'})`
 				: manual ? `A mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : 'Directo (en L, automático)'}</dd>
 			<dt>${pendiente ? 'Clase prevista' : 'Clase'}</dt><dd>${escaparHtml(NOMBRE_CLASE[claseDeConductor(proyecto, c)])}${c.clase ? '' : ' <span class="pista">(deducida)</span>'}</dd>
 		</dl>
@@ -4684,6 +4686,9 @@ function pintarPanelCable(id: string): void {
 			</select>
 		</div>
 		${c.rutaFisica ? `<p class="sub">Ruta manual M6: los puntos XYZ son literales. La malla no separa ni recoloca esta ruta; las interferencias requieren revisión. Longitud de referencia espacial: ${Math.round(largoDibujadoMm(proyecto, c))} mm; no es longitud de corte verificada.</p>
+			<div class="cbl-geometria-m6"><label>Geometría de referencia <select id="cbl-geometria-m6"><option value="POLILINEA" ${c.rutaFisica.version === 1 ? 'selected' : ''}>Polilínea literal</option><option value="ARCO_CIRCULAR" ${c.rutaFisica.version === 2 ? 'selected' : ''}>Arcos circulares declarados</option></select></label>
+			<label>Radio circular declarado (mm) <input id="cbl-radio-m6" type="number" min="0.1" max="500" step="0.1" placeholder="Indicar radio" value="${c.rutaFisica.version === 2 ? c.rutaFisica.radioMm : ''}"></label></div>
+			<p class="sub">Los arcos son parte de la ruta guardada, no un suavizado visual. Si el radio no cabe, se conserva el codo literal y se informa en el diagnóstico; no se reduce el radio en silencio. Las salidas de bornes también requieren revisión.</p>
 			<button class="boton" id="cbl-diagnostico-m6" type="button">Revisar interferencias</button><p class="sub" id="cbl-resultado-m6" role="status"></p>
 			<div class="cbl-nodos">${c.rutaFisica.nodos.map((n, i) => `<div class="fila-estructura"><span class="id">${escaparHtml(n.id)}</span>${(['x', 'y', 'z'] as const).map((eje) => `<label>${eje.toUpperCase()} <input type="number" step="0.1" min="-5000" max="5000" data-ruta-nodo="${i}" data-eje="${eje}" value="${n[eje]}"></label>`).join('')}<button class="boton" type="button" data-ruta-quitar="${i}" aria-label="Quitar nodo ${escaparHtml(n.id)}">Quitar</button></div>`).join('')}</div>
 			${c.rutaFisica.nodos.length >= 2 ? `<fieldset id="cbl-tramo-m6"><legend>Desplazar tramo entre nodos interiores</legend><label>Tramo <select id="cbl-tramo-indice">${c.rutaFisica.nodos.slice(0, -1).map((n, i) => `<option value="${i}">${escaparHtml(n.id)} → ${escaparHtml(c.rutaFisica!.nodos[i + 1].id)}</option>`).join('')}</select></label>${(['x', 'y', 'z'] as const).map((eje) => `<label>Δ${eje.toUpperCase()} mm <input id="cbl-tramo-${eje}" type="number" step="0.1" value="0"></label>`).join('')}<button class="boton" id="cbl-mover-tramo-m6" type="button">Desplazar tramo</button><p class="sub">Mueve ambos nodos del tramo; los bornes permanecen anclados. Los enlaces vecinos se recalculan y requieren revisión de interferencias.</p></fieldset>` : ''}` : ''}
@@ -4721,8 +4726,38 @@ function pintarPanelCable(id: string): void {
 		if (!resultado || !proyecto.conductores.some((actual) => actual.id === id && actual.rutaFisica)) return;
 		const avisos = avisosDiagnosticoRutaM6(id);
 		resultado.textContent = avisos.length ? `Peor aviso por categoría: ${avisos.join(' · ')}. La ruta se conservó; revisar fabricabilidad.`
-			: 'Sin interferencias detectadas por este diagnóstico. Radios y fabricabilidad aún no verificados.';
+			: c.rutaFisica?.version === 2
+				? 'El radio declarado cabe en los nodos editables. Las transiciones de borne, el diámetro externo y la fabricación aún no están verificados.'
+				: 'Sin interferencias detectadas por este diagnóstico. Radios y fabricabilidad aún no verificados.';
 	});
+	const modoRuta = panel.querySelector<HTMLSelectElement>('#cbl-geometria-m6');
+	const radioRuta = panel.querySelector<HTMLInputElement>('#cbl-radio-m6');
+	const actualizarGeometria = (): void => {
+		if (!c.rutaFisica || !modoRuta || !radioRuta) return;
+		const radio = radioRuta.value.trim() === '' ? NaN : Number(radioRuta.value);
+		let nueva: Conductor['rutaFisica'];
+		try {
+			nueva = modoRuta.value === 'ARCO_CIRCULAR'
+				? leerRutaFisicaV2({ version: 2, modo: 'MANUAL', marco: 'PLACA',
+					geometria: 'ARCO_CIRCULAR', radioMm: radio, nodos: c.rutaFisica.nodos })
+				: leerRutaFisicaV1({ version: 1, modo: 'MANUAL', marco: 'PLACA',
+					geometria: 'POLILINEA', nodos: c.rutaFisica.nodos });
+		} catch {
+			modoRuta.value = c.rutaFisica.version === 2 ? 'ARCO_CIRCULAR' : 'POLILINEA';
+			avisar('Indica un radio circular válido entre 0 y 500 mm; no se cambió la ruta.', 'error');
+			return;
+		}
+		if (JSON.stringify(nueva) === JSON.stringify(c.rutaFisica)) return;
+		if (!capturarEdicionRutaCable(id)) return;
+		c.rutaFisica = nueva;
+		recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
+		const faltan = rutaProvisional(proyecto, id)?.codosSinRadio?.length ?? 0;
+		if (faltan) avisar(`El radio declarado no cabe en ${faltan} codos. Corrige nodos o radio; no se redujo automáticamente.`, 'info');
+	};
+	if (modoRuta) modoRuta.onchange = actualizarGeometria;
+	if (radioRuta) radioRuta.onchange = () => {
+		if (modoRuta?.value === 'ARCO_CIRCULAR') actualizarGeometria();
+	};
 	(panel.querySelector('#cbl-replan') as HTMLButtonElement | null)?.addEventListener('click', async () => {
 		const sesion = proyecto;
 		const base = JSON.stringify(proyecto);
@@ -6656,24 +6691,30 @@ function previsualizarCable(conductorId: string, indiceNodo?: number): void {
 	if (!conductor) return;
 	const indiceRuta = indiceNodo === undefined ? undefined : ruta.indicesNodos?.[indiceNodo];
 	if (!motivoInvalido && indiceRuta !== undefined && antesArrastreCableM6?.id === conductorId) {
-		const obstaculo = primerSolidoEnTramosDelNodo(ruta.puntos, indiceRuta, ruta.radio,
+		const rango = ruta.rangosAfectadosNodos?.[indiceNodo!] ?? [
+			Math.max(0, indiceRuta - 1), Math.min(ruta.puntos.length - 1, indiceRuta + 1),
+		];
+		const obstaculo = primerSolidoEnTramos(ruta.puntos, rango[0], rango[1], ruta.radio,
 			antesArrastreCableM6.solidos, antesArrastreCableM6.propios);
 		if (obstaculo) motivoInvalido = `el tramo atraviesa ${obstaculo.id}`;
 		else if (proyecto.gabinete?.canaletas.length) {
-			const puntos = ruta.puntos.slice(Math.max(0, indiceRuta - 1), Math.min(ruta.puntos.length, indiceRuta + 2));
+			const puntos = ruta.puntos.slice(rango[0], rango[1] + 1);
 			const plastico = invasionesDeCanaletas(antesArrastreCableM6.red, proyecto.gabinete.canaletas,
 				[{ id: conductorId, radio: ruta.radio, puntos }])[0];
 			if (plastico) motivoInvalido = `el tramo atraviesa ${plastico.parte} de la canaleta ${plastico.canaleta}`;
 		}
 		if (!motivoInvalido) {
-			const contacto = contactoEnTramosDelNodo(antesArrastreCableM6.contactos, {
+			const contacto = contactoEnTramos(antesArrastreCableM6.contactos, {
 				id: conductorId, radio: ruta.radio, puntos: ruta.puntos,
 				bornes: [`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
 					`${conductor.a.dispositivoId}:${conductor.a.borneId}`],
 				extremos: [ruta.de, ruta.a],
-			}, indiceRuta, HOLGURA_CABLE);
+			}, rango[0], rango[1], HOLGURA_CABLE);
 			if (contacto) motivoInvalido = `el tramo se acerca a ${contacto.b} (holgura ${contacto.holgura.toFixed(1)} mm)`;
 		}
+	}
+	if (!motivoInvalido && ruta.codosSinRadio?.length) {
+		motivoInvalido = `el radio declarado no cabe en ${ruta.codosSinRadio.length} codos`;
 	}
 	// La vista previa se reemplaza en cada movimiento. No conservar clones de selección
 	// apuntando a mallas que `liberar` destruirá, ni acumular uno nuevo por píxel.
