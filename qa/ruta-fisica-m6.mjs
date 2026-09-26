@@ -132,6 +132,22 @@ try {
 	comprobar('perder foco descarta la vista previa y restaura el historial',
 		JSON.stringify((await cable()).rutaFisica.nodos[0]) === nodoAntesDePerderFoco
 		&& JSON.stringify(await pagina.evaluate(() => window.qa.historial())) === JSON.stringify(historiaAntesDePerderFoco));
+	const antesDeSoltar = JSON.stringify((await cable()).rutaFisica.nodos[0]);
+	const tiradorSoltar = await pagina.evaluate(() => window.qa.puntoDeUnion('w1', 0));
+	await pagina.mouse.move(tiradorSoltar.x, tiradorSoltar.y);
+	await pagina.mouse.down();
+	await pagina.mouse.move(tiradorSoltar.x + 42, tiradorSoltar.y + 12, { steps: 6 });
+	await pagina.mouse.up();
+	await pagina.waitForFunction(() => !document.body.classList.contains('ruteando'));
+	await pagina.waitForFunction(() => /Revisa ruta w1:.*Invade aparato obstaculo/s.test(
+		document.querySelector('#toast')?.textContent ?? ''));
+	const nodoSoltado = (await cable()).rutaFisica.nodos[0];
+	comprobar('al soltar se avisa de la invasión del tramo y se conserva la ruta elegida',
+		JSON.stringify(nodoSoltado) !== antesDeSoltar && nodoSoltado.x < 205
+		&& /Invade aparato obstaculo/.test(await pagina.locator('#toast').innerText()));
+	await pagina.locator('#btn-deshacer').click();
+	comprobar('Undo restaura el arrastre confirmado tras el diagnóstico',
+		JSON.stringify((await cable()).rutaFisica.nodos[0]) === antesDeSoltar);
 	const extremos = await pagina.evaluate(() => [window.qa.puntoDeUnion('w1', 0), window.qa.puntoDeUnion('w1', 1)]);
 	assert.ok(extremos[0] && extremos[1], 'la polilínea M6 debe mantener ambos tiradores');
 	const pixelNuevo = { x: extremos[0].x + (extremos[1].x - extremos[0].x) * 0.32,
