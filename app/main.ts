@@ -3415,34 +3415,38 @@ function pintarPaneles(): void {
 
 	const lista = $('lista-dispositivos');
 	lista.innerHTML = '';
-	const internos = proyecto.dispositivos.filter((x) => !x.campo);
+	const dispositivosDeLista = proyecto.dispositivos;
+	const montajes = new Map(proyecto.gabinete?.colocaciones.map(c => [c.dispositivoId, c.montaje]) ?? []);
+	const lugarDe = (d: Dispositivo) => d.campo ? 'Campo' : montajes.get(d.id) === 'puerta' ? 'Puerta' : 'Placa';
 	const restaurarVista = $('vista-montaje-restaurar') as HTMLButtonElement;
 	restaurarVista.hidden = !vistaMontaje.ocultos.size && !vistaMontaje.aislados;
 	restaurarVista.textContent = `Restaurar vista · ${vistaMontaje.ocultos.size} oculto(s)`
 		+ (vistaMontaje.aislados ? ' · aislamiento activo' : '');
 	const normalizar = (texto: string) => texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 	const terminos = normalizar(($('buscar-dispositivos') as HTMLInputElement).value).split(/\s+/).filter(Boolean);
-	const encontrados = internos.filter((d) => {
-		const texto = normalizar(`${d.designacion ?? ''} ${d.id} ${d.descripcion ?? ''} ${d.fabricante ?? ''} ${d.referencia ?? ''}`);
+	const encontrados = dispositivosDeLista.filter((d) => {
+		const texto = normalizar(`${d.designacion ?? ''} ${d.id} ${d.tipo} ${d.descripcion ?? ''} ${d.fabricante ?? ''} ${d.referencia ?? ''} ${lugarDe(d)}`);
 		return terminos.every((termino) => texto.includes(termino));
 	});
 	$('contador-dispositivos').textContent = terminos.length
-		? `(${encontrados.length}/${internos.length})` : `(${internos.length})`;
+		? `(${encontrados.length}/${dispositivosDeLista.length})` : `(${dispositivosDeLista.length})`;
 	if (!encontrados.length && terminos.length) {
 		const li = document.createElement('li');
 		li.className = 'sin-coincidencias';
-		li.textContent = `Sin coincidencias; ${internos.length} dispositivo(s) siguen en el tablero.`;
+		li.textContent = `Sin coincidencias; ${dispositivosDeLista.length} dispositivo(s) siguen en el tablero.`;
 		lista.appendChild(li);
 	}
 	for (const d of encontrados) {
 		const li = document.createElement('li');
+		li.dataset.dispositivoId = d.id;
 		li.className = [
 			d.id === idDispositivoSel() ? 'seleccionado' : '',
 			aparatoVisibleEnVista(vistaMontaje, d.id) ? '' : 'oculto',
 			vistaMontaje.aislados?.has(d.id) ? 'aislado' : '',
 		].filter(Boolean).join(' ');
 		li.innerHTML = `<span class="des">${escaparHtml(d.designacion ?? d.id)}</span>`
-			+ `<span class="desc">${escaparHtml(d.descripcion ?? '')}</span>`;
+			+ `<span class="desc">${escaparHtml(d.descripcion ?? '')}</span>`
+			+ `<span class="lugar">${lugarDe(d)}</span>`;
 		li.onclick = () => seleccionar(d.id);
 		li.tabIndex = 0;
 		li.onkeydown = (ev) => {
