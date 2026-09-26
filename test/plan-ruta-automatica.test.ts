@@ -189,6 +189,34 @@ test('CAB-24: importacion rechaza plan obsoleto, version falsa o dos escritores'
 	assert.throws(() => cargarProyecto(JSON.stringify(dosEscritores)), /simultáneos/);
 });
 
+test('CAB-24: normalizar el orden de campos de una bornera no invalida un plan fisico', () => {
+	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
+	const w4 = proyecto.conductores.find((c) => c.id === 'w4')!;
+	const aparato = proyecto.dispositivos.find((d) => d.id === w4.a.dispositivoId)!;
+	assert.ok(proyecto.gabinete!.colocaciones.some((c) => c.dispositivoId === aparato.id));
+	aparato.terminales = [{ lado: 'arriba', bornes: [w4.a.borneId], desde: 0.1,
+		hasta: 0.9, rotulo: 'Mando', color: '#ffffff', extraible: true }];
+	assert.ok(asignarPlanesAutomaticos(proyecto) > 0);
+	const antes = proyecto.conductores.find((c) => c.id === 'w4')!.planRutaAutomatica;
+	assert.ok(antes);
+	const firmaVieja = JSON.parse(antes.entorno) as unknown[];
+	const aparatoEnFirma = (firmaVieja[0] as unknown[][]).find((fila) => fila[0] === aparato.id);
+	assert.ok(aparatoEnFirma, 'el aparato de destino debe formar parte del entorno local');
+	aparatoEnFirma[9] = structuredClone(aparato.terminales);
+	antes.entorno = JSON.stringify(firmaVieja); // formato V4 anterior: claves en orden del catálogo
+	assert.notEqual(antes.entorno, firmaEntornoRutaAutomatica(proyecto,
+		geometriaDelPlanRuta(antes).puntos, antes.radio));
+	const reabierto = cargarProyecto(JSON.stringify(proyecto));
+	assert.deepEqual(reabierto.arreglos, []);
+	assert.deepEqual(reabierto.proyecto.conductores.find((c) => c.id === 'w4')!.planRutaAutomatica, antes);
+	assert.deepEqual(idsDePlanesObsoletos(reabierto.proyecto), []);
+	assert.doesNotThrow(() => rutasDeCables(reabierto.proyecto), 'el render acepta la firma V4 anterior');
+	const cambiado = structuredClone(reabierto.proyecto);
+	cambiado.dispositivos.find((d) => d.id === aparato.id)!.terminales![0].desde = 0.2;
+	assert.ok(idsDePlanesObsoletos(cambiado).includes('w4'),
+		'mover el bloque de bornes sí modifica el entorno físico del plan');
+});
+
 test('CAB-24: mover una canaleta marca planes afectados pendientes sin perder su ruta anterior', () => {
 	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
 	assert.ok(asignarPlanesAutomaticos(proyecto) > 0);

@@ -14,7 +14,7 @@ export { aparatosDeCampo, entradaDeCampo, yEntradasCampo } from '../src/modelo/e
 import { longitudPolilineaMm } from '../src/modelo/ruta-fisica.js';
 import { firmaFuentePlanRuta, geometriaDelPlanRuta, planDesdeRutaAutomatica,
 	type PlanRutaAutomaticaV1 } from '../src/modelo/plan-ruta-automatica.js';
-import { firmaEntornoRutaAutomatica } from '../src/modelo/dependencias-ruta.js';
+import { firmaEntornoRutaAutomatica, mismoEntornoRutaAutomatica } from '../src/modelo/dependencias-ruta.js';
 import {
 	ajustesDeMazo, alturaDeMazo, anclajeFijoDeMazo, carrilDeMazo, construirMazoPuerta, desvioDeCarril,
 	enLaPuerta, Mazo,
@@ -2233,7 +2233,8 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 			if (!mismoExtremo(p.de, guardada.de) || !mismoExtremo(p.a, guardada.a)
 				|| radio !== conductor.planRutaAutomatica.radio
 				|| conductor.planRutaAutomatica.fuente !== firmaFuentePlanRuta(conductor)
-				|| conductor.planRutaAutomatica.entorno !== firmaEntornoRutaAutomatica(proyecto, guardada.puntos, radio)) {
+				|| !mismoEntornoRutaAutomatica(conductor.planRutaAutomatica.entorno,
+					firmaEntornoRutaAutomatica(proyecto, guardada.puntos, radio))) {
 				throw new Error(`Plan automático de ${conductor.id} desactualizado: cambió un anclaje o su entorno; requiere revisión.`);
 			}
 			const ruta: RutaCable = { conductorId: conductor.id, ...guardada, radio,

@@ -6,6 +6,25 @@ import { anclajeCampo, aparatosDeCampo } from './entradas-campo.js';
 export interface PuntoRutaDependiente { x: number; y: number }
 type Caja = { x0: number; x1: number; y0: number; y1: number };
 
+/** Los planes V4 anteriores serializaban bloques de bornes con el orden de claves del catálogo.
+ * El cargador reconstruye esos bloques en otro orden sin alterar su significado. La comparación
+ * semántica conserva esos archivos; el camino normal sigue siendo la comparación directa de cadenas.
+ */
+export function mismoEntornoRutaAutomatica(guardado: string, actual: string): boolean {
+	if (guardado === actual) return true;
+	const ordenado = (valor: unknown): string => {
+		if (Array.isArray(valor)) return `[${valor.map(ordenado).join(',')}]`;
+		if (valor !== null && typeof valor === 'object') {
+			const objeto = valor as Record<string, unknown>;
+			return `{${Object.keys(objeto).sort().map((clave) =>
+				`${JSON.stringify(clave)}:${ordenado(objeto[clave])}`).join(',')}}`;
+		}
+		return JSON.stringify(valor) ?? 'null';
+	};
+	try { return ordenado(JSON.parse(guardado)) === ordenado(JSON.parse(actual)); }
+	catch { return false; } // una firma hostil o truncada no se acepta como entorno vigente
+}
+
 /**
  * Huellas cuya geometría puede afectar físicamente una ruta ya asignada.
  * Es conservador: un falso positivo pide revisión; un falso negativo dibuja una
@@ -34,7 +53,10 @@ export function firmaEntornoRutaAutomatica(
 		.map((c) => {
 			const d = proyecto.dispositivos.find((x) => x.id === c.dispositivoId);
 			return [c.dispositivoId, c.x, c.y, c.ancho, c.alto, c.z, c.montaje,
-				d?.profundidad, d?.bornes.map((b) => [b.id, b.u, b.v]), d?.terminales,
+				d?.profundidad, d?.bornes.map((b) => [b.id, b.u, b.v]),
+				d?.terminales?.map((b) => ({ lado: b.lado, bornes: b.bornes,
+					rotulo: b.rotulo, margen: b.margen, desde: b.desde, hasta: b.hasta,
+					color: b.color, extraible: b.extraible })),
 				Boolean(d?.imagen), Boolean(d?.componentePersonalizado)];
 		}).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
 	const canaletas = g.canaletas.filter((c) => c.orientacion === 'h'
@@ -71,8 +93,8 @@ export function idsDePlanesObsoletos(proyecto: Proyecto): string[] {
 		return !!plan && c.estadoRutaFisica !== 'pendiente'
 			&& (plan.fuente !== firmaFuentePlanRuta(c)
 				|| anclajeCampoCambiado(c.de, plan.de) || anclajeCampoCambiado(c.a, plan.a)
-				|| plan.entorno !== firmaEntornoRutaAutomatica(proyecto,
-					geometriaDelPlanRuta(plan).puntos, plan.radio));
+				|| !mismoEntornoRutaAutomatica(plan.entorno, firmaEntornoRutaAutomatica(proyecto,
+					geometriaDelPlanRuta(plan).puntos, plan.radio)));
 	}).map((c) => c.id).sort();
 }
 
