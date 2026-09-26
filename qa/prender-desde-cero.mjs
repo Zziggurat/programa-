@@ -17,6 +17,7 @@
  *   node qa/prender-desde-cero.mjs
  */
 import { chromium } from 'playwright-core';
+import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,7 +31,7 @@ const url = `http://127.0.0.1:${server.address().port}/?qa=1&inicio=0`;
 const browser = await abrirNavegador(chromium);
 const page = await browser.newPage({ viewport: { width: 1600, height: 950 } });
 const errs = [];
-page.on('pageerror', (e) => errs.push('PAGEERROR: ' + e.message));
+page.on('pageerror', (e) => errs.push('PAGEERROR: ' + (e.stack ?? e.message)));
 page.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) errs.push(m.text()); });
 
 let fallos = 0;
@@ -43,6 +44,8 @@ const filas = () => page.evaluate(() => [...document.querySelectorAll('#sim-func
 
 /** Saca un aparato del catálogo por su nombre, como quien lo busca en la lista. */
 async function sacarDelCatalogo(nombre) {
+	await page.locator('#hta-anadir').click();
+	await page.locator('#seccion-catalogo').waitFor({ state: 'visible' });
 	const b = page.locator('#catalogo button', { hasText: nombre }).first();
 	if (!(await b.count())) return undefined;
 	const antes = (await proyecto()).dispositivos.map((d) => d.id);
@@ -63,7 +66,15 @@ async function cablear(deId, deBorne, aId, aBorne) {
 	if (!p1 || !p2) return { ok: false, motivo: `no se ven los bornes ${deBorne}/${aBorne}` };
 	const antes = (await proyecto()).conductores.length;
 	await page.mouse.click(p1.x, p1.y); await page.waitForTimeout(160);
-	await page.mouse.click(p2.x, p2.y); await page.waitForTimeout(260);
+	await page.mouse.click(p2.x, p2.y);
+	await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad
+		|| !document.getElementById('modal-dialogo')?.hidden, antes, { timeout: 10_000 });
+	if (await page.locator('#modal-dialogo').isVisible()) {
+		assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
+		await page.locator('#dialogo-ok').click();
+	}
+	await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad,
+		antes, { timeout: 10_000 });
 	const ahora = (await proyecto()).conductores.length;
 	return { ok: ahora > antes, motivo: ahora > antes ? '' : 'el clic no tendió cable' };
 }
@@ -98,7 +109,16 @@ async function cablearPorPanel(deId, deBorne, aId, aBorne) {
 		boton.click();
 		return '';
 	}, [deBorne, aId, aBorne]);
-	await page.waitForTimeout(280);
+	if (!puesto) {
+		await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad
+			|| !document.getElementById('modal-dialogo')?.hidden, antes, { timeout: 10_000 });
+		if (await page.locator('#modal-dialogo').isVisible()) {
+			assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
+			await page.locator('#dialogo-ok').click();
+		}
+		await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad,
+			antes, { timeout: 10_000 });
+	}
 	const ahora = (await proyecto()).conductores.length;
 	return { ok: !puesto && ahora > antes, motivo: puesto || (ahora > antes ? '' : 'no se creó el cable') };
 }
@@ -206,22 +226,34 @@ for (const [nombre, a, ba, b, bb] of [...potencia, ...mando]) {
 }
 const cablesMotor = (await proyecto()).conductores.length;
 must('quedan cableados los nueve tramos del arranque', cablesMotor >= 13, `${cablesMotor} cables en total`);
+let limiteGuardado;
+const documentoGuardado = await Promise.race([
+	qa('esperarPersistencia'),
+	new Promise((_, reject) => { limiteGuardado = setTimeout(() => reject(new Error(
+		'El circuito construido desde cero no terminó de guardarse en 60 s.')), 60_000); }),
+]).finally(() => clearTimeout(limiteGuardado));
+must('el circuito construido desde cero está guardado en la biblioteca',
+	documentoGuardado?.proyecto?.conductores.length === cablesMotor);
 
 console.log('\n--- 6. Se energiza, se pulsa MARCHA y el motor GIRA ---');
 await click('btn-energizar'); await page.waitForTimeout(800);
 must('el motor NO arranca solo al dar tensión',
 	!(await filas()).some((f) => /girando/i.test(f)), (await filas()).join(' | '));
-await qa('accionar', s1.id); await page.waitForTimeout(700);
+await qa('accionar', s1.id);
+await page.waitForFunction(() => [...document.querySelectorAll('#sim-funcionando .fila-sim')]
+	.some((f) => /girando/i.test(f.textContent ?? '')), undefined, { timeout: 8_000 });
 const arrancado = await filas();
-must('al pulsar MARCHA el motor GIRA', arrancado.some((f) => /girando/i.test(f)),
+must('al pulsar MARCHA el motor acelera y llega a girar', arrancado.some((f) => /girando/i.test(f)),
 	arrancado.join(' | ') || '(no funciona nada)');
 must('y el contactor aparece con la bobina metida', arrancado.some((f) => /bobina/i.test(f)),
 	arrancado.join(' | '));
 await page.screenshot({ path: join(SAL, 'motor-girando.png') });
 
-await qa('accionar', s1.id); await page.waitForTimeout(700);
-must('sin enclavamiento, al soltar el pulsador el motor se para',
-	!(await filas()).some((f) => /girando/i.test(f)), (await filas()).join(' | '));
+await qa('accionar', s1.id);
+await page.waitForFunction(() => [...document.querySelectorAll('#sim-funcionando .fila-sim')]
+	.some((f) => /DETENIDO/i.test(f.textContent ?? '')), undefined, { timeout: 8_000 });
+must('sin enclavamiento, al soltar el pulsador el motor desacelera hasta detenerse',
+	(await filas()).some((f) => /DETENIDO/i.test(f)), (await filas()).join(' | '));
 
 console.log('\n--- 7. Sin errores ---');
 must('ningún error de JavaScript en todo el montaje', errs.length === 0, errs.slice(0, 3).join(' | '));

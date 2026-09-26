@@ -71,8 +71,22 @@ try {
 	await pagina.locator('#cable-borne-destino').selectOption('3/L2');
 	await pagina.locator('#cable-seccion').selectOption('6');
 	await pagina.locator('#btn-conectar').click();
-	comprobar('el alta advierte contactos físicos del plan sin ocultarlos',
-		/Recorrido de .* asignado con \d+ contacto\(s\)/.test(await pagina.locator('#toast').textContent() ?? ''));
+	comprobar('el alta muestra trayecto, longitud y avisos antes de aceptarse',
+		/Propuesta para .*puntos.*referencia espacial.*Avisos:.*fabricabilidad no verificadas/s
+			.test(await pagina.locator('#modal-dialogo').innerText()));
+	const rutasDurantePropuesta = await rutas();
+	comprobar('el preview no añade cable ni altera planes vigentes',
+		await pagina.evaluate(() => window.qa.proyecto().conductores.length === 28)
+		&& Object.entries(reabierto).every(([id, ruta]) => firma(ruta) === firma(rutasDurantePropuesta[id])));
+	await pagina.locator('#dialogo-cancelar').click();
+	const rutasTrasCancelar = await rutas();
+	comprobar('cancelar conserva proyecto y recorridos sin crear conexión',
+		await pagina.evaluate(() => window.qa.proyecto().conductores.length === 28)
+		&& Object.entries(reabierto).every(([id, ruta]) => firma(ruta) === firma(rutasTrasCancelar[id])));
+	await pagina.locator('#btn-conectar').click();
+	await pagina.locator('#dialogo-ok').click();
+	comprobar('aceptar conserva visible el diagnóstico del plan',
+		/Recorrido de .* aceptado con \d+ aviso\(s\)/.test(await pagina.locator('#toast').textContent() ?? ''));
 	await pagina.waitForFunction(() => window.qa.proyecto().conductores.length === 29);
 	const conNuevo = await pagina.evaluate(() => window.qa.proyecto());
 	const nuevo = conNuevo.conductores.find((c) => !fixture.conductores.some((original) => original.id === c.id));

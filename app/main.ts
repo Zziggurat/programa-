@@ -99,6 +99,7 @@ import {
 	redondearEsquinas,
 } from './geometria-cables.js';
 import { longitudCoincidente3D } from './colisiones-cables.js';
+import { proponerAltaCable } from './propuesta-alta-cable.js';
 import { admiteRutaEnPlaca, desplazarTramoInteriorM6, MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
@@ -946,14 +947,17 @@ function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void, guardarAlFina
  * `xLibreCercano` y `buscarHueco` leen el proyecto global, y hacerlos trabajar sobre un borrador
  * sería reescribir media placa—; lo que se guarda es la foto de antes, para poder volver.
  */
-function mutarProyecto(cambiar: () => void, confirmadoEnRepositorio = false): void {
+function mutarProyecto(
+	cambiar: () => void, confirmadoEnRepositorio = false,
+	actualizar: () => void = actualizarTodo,
+): boolean {
 	/*
 	 * El veto del ejemplo también aquí, y no por precaución: `mutarProyecto` lleva su propio
 	 * historial y NO pasa por `capturar()`, así que se quedaba fuera del bloqueo. Lo cazó la
 	 * prueba: en un ejemplo, Ctrl+V pegaba. `reemplazarProyecto` sí puede seguir —cambiar el
 	 * tablero entero es justo lo que hace abrir un ejemplo—.
 	 */
-	if (!confirmadoEnRepositorio) { if (!sePuedeEditar()) return; }
+	if (!confirmadoEnRepositorio) { if (!sePuedeEditar()) return false; }
 	const instantanea = JSON.stringify(proyecto);
 	const pilaAntes = [...pila];
 	const rehacerAntes = [...rehacerPila];
@@ -961,7 +965,7 @@ function mutarProyecto(cambiar: () => void, confirmadoEnRepositorio = false): vo
 	guardadoCongelado = true;
 	try {
 		cambiar();
-		actualizarTodo();
+		actualizar();
 	} catch (fallo) {
 		proyecto = JSON.parse(instantanea) as Proyecto;
 		pila.length = 0; pila.push(...pilaAntes);
@@ -979,6 +983,7 @@ function mutarProyecto(cambiar: () => void, confirmadoEnRepositorio = false): vo
 	rehacerPila.length = 0;
 	actualizarBotonesHistorial();
 	if (!confirmadoEnRepositorio) autoguardar();
+	return true;
 }
 
 /** Prepara una operación ligada a la sesión actual; el callback no puede aplicarse a otro tablero. */
@@ -1580,6 +1585,46 @@ function capturarConPlanesAutomaticos(): boolean {
 
 function capturarEdicionRutaCable(id: string): boolean {
 	return proyecto.conductores.some((c) => c.id === id) && capturarConPlanesAutomaticos();
+}
+
+let altaAutomaticaEnCurso = false;
+
+/** Prepara el alta sobre una copia y nunca escribe el cable antes de aceptar sus avisos. */
+async function aceptarAltaAutomatica(nuevo: Conductor, alAplicar?: () => void): Promise<void> {
+	if (altaAutomaticaEnCurso || !sePuedeEditar()) return;
+	altaAutomaticaEnCurso = true;
+	const sesion = proyecto;
+	const base = JSON.stringify(proyecto);
+	try {
+		const propuesta = proponerAltaCable(proyecto, nuevo);
+		const conAvisos = propuesta.contactos > 0 || propuesta.invasiones > 0;
+		if (conAvisos) {
+			const aceptada = await confirmar(
+				`Propuesta para ${nuevo.id}: ${propuesta.puntos} puntos y ${Math.round(propuesta.longitudReferenciaMm)} mm de referencia espacial, no longitud de corte. `
+				+ `Avisos: ${propuesta.contactos} cercanías o contactos entre cables y ${propuesta.invasiones} invasiones de sólido o canaleta. `
+				+ 'Capacidad del borne, ocupación exacta y fabricabilidad no verificadas. Cancelar conserva el tablero y permite revisar el tendido. ¿Aceptar esta ruta con avisos?',
+				{ ok: 'Aceptar ruta con avisos' },
+			);
+			if (!aceptada) return;
+		}
+		if (proyecto !== sesion || JSON.stringify(proyecto) !== base) {
+			avisar('El tablero cambió mientras se revisaba el recorrido; no se creó el cable.', 'info');
+			return;
+		}
+		const aplicada = mutarProyecto(() => {
+			proyecto.conductores = propuesta.documento.conductores;
+			proyecto.version = propuesta.documento.version;
+		}, false, actualizarConservandoAparatos);
+		if (!aplicada) return;
+		alAplicar?.();
+		avisar(conAvisos
+			? `Recorrido de ${nuevo.id} aceptado con ${propuesta.contactos} aviso(s) entre cables y ${propuesta.invasiones} invasión(es). Revisa antes de fabricar.`
+			: 'Cable conectado', conAvisos ? 'info' : 'ok');
+	} catch (error) {
+		avisar(`No se creó el cable: ${String(error)}`, 'error');
+	} finally {
+		altaAutomaticaEnCurso = false;
+	}
 }
 
 /** Una edición que vuelve a dejar el cable en automático acepta solo su nuevo reparto. */
@@ -4087,7 +4132,6 @@ function pintarFichaDeLoElegido(): void {
 		btnConectar.onclick = () => {
 			const destino = selDestino.value;
 			if (!destino) return;
-			if (!capturarConPlanesAutomaticos()) return;
 			const nuevo: Conductor = {
 				id: idUnico('c'),
 				de: { dispositivoId: d.id, borneId: (panel.querySelector('#cable-borne-origen') as HTMLSelectElement).value },
@@ -4095,12 +4139,7 @@ function pintarFichaDeLoElegido(): void {
 				seccion: Number((panel.querySelector('#cable-seccion') as HTMLSelectElement).value),
 				color: (panel.querySelector('#cable-color') as HTMLSelectElement).value,
 			};
-			proyecto.conductores.push(nuevo);
-			recalcular();
-			fijarPlanAutomaticoDe(nuevo.id);
-			reconstruirCables();
-			pintarPaneles();
-			pintarSeleccion();
+			void aceptarAltaAutomatica(nuevo);
 		};
 		(panel.querySelector('#btn-elegir-destino') as HTMLButtonElement).onclick = () => {
 			eligiendoDestino = !eligiendoDestino;
@@ -5901,7 +5940,6 @@ function completarCableado(destino: RefBorne): void {
 		|| (c.a.dispositivoId === origen.dispositivoId && c.a.borneId === origen.borneId
 			&& c.de.dispositivoId === destino.dispositivoId && c.de.borneId === destino.borneId));
 	if (yaExiste) { avisar('Esos dos bornes ya están conectados.', 'info'); cancelarCableado(); return; }
-	if (!capturarConPlanesAutomaticos()) return;
 	const codos = codosCableado.slice(); // los codos marcados al tender el cable quedan fijados
 	const nuevo: Conductor = {
 		id: idUnico('c'),
@@ -5911,15 +5949,19 @@ function completarCableado(destino: RefBorne): void {
 		color: 'negro',
 		...(codos.length ? { trazado: codos } : {}),
 	};
+	if (!codos.length) {
+		void aceptarAltaAutomatica(nuevo, cancelarCableado);
+		return;
+	}
+	if (!capturarConPlanesAutomaticos()) return;
 	proyecto.conductores.push(nuevo);
 	cancelarCableado();
 	recalcular();
-	const estadoPlan = !codos.length ? fijarPlanAutomaticoDe(nuevo.id) : 'sin-cambio';
 	reconstruirCables();
 	reconstruirBornes();
 	pintarPaneles();
 	pintarSeleccion();
-	if (estadoPlan === 'asignado' || codos.length) avisar('Cable conectado', 'ok');
+	avisar('Cable conectado', 'ok');
 }
 
 /* ------------------------ Tiradores (handles) ------------------------ */
