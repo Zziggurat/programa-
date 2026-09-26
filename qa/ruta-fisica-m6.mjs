@@ -118,6 +118,7 @@ try {
 	await pagina.locator('#btn-deshacer').click(); // deja una operación Redo que cancelar no debe borrar
 	const historiaAntes = await pagina.evaluate(() => window.qa.historial());
 	const nodoAntes = JSON.stringify((await cable()).rutaFisica.nodos[0]);
+	const proyectoAntesDeCancelar = JSON.stringify(await pagina.evaluate(() => window.qa.proyecto()));
 	const tirador = await pagina.evaluate(() => window.qa.puntoDeUnion('w1', 0));
 	assert.ok(tirador && tirador.x > 0 && tirador.y > 0, 'el nodo M6 necesita un tirador visible');
 	await pagina.mouse.move(tirador.x, tirador.y);
@@ -136,7 +137,8 @@ try {
 	await pagina.mouse.up();
 	comprobar('Escape cancela el arrastre M6 sin ruta intermedia ni Undo fantasma',
 		JSON.stringify((await cable()).rutaFisica.nodos[0]) === nodoAntes
-		&& JSON.stringify(await pagina.evaluate(() => window.qa.historial())) === JSON.stringify(historiaAntes));
+		&& JSON.stringify(await pagina.evaluate(() => window.qa.historial())) === JSON.stringify(historiaAntes)
+		&& JSON.stringify(await pagina.evaluate(() => window.qa.proyecto())) === proyectoAntesDeCancelar);
 	await pagina.locator('#btn-rehacer').click();
 	comprobar('Escape también conserva el Redo que existía antes del gesto',
 		(await cable()).rutaFisica.nodos[0].x === 145);
