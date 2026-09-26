@@ -9,6 +9,7 @@ import { construirUnCable, diagnosticoRutaManual, largoDibujadoMm, liberar, long
 	rutasDeCables, salidasDeCable } from '../app/escena3d.js';
 import { indiceDeInsercion, indiceDeInsercionM6, proyectarEnPolilinea } from '../app/edicion-cables.js';
 import { primerSolidoEnPunto, primerSolidoEnTramosDelNodo } from '../app/colisiones-cables.js';
+import { dientesDe, invasionesDeCanaletas, ranurasDe, RedCanaletas } from '../app/canaletas-red.js';
 import { rutearConductores } from '../src/motores/ruteo.js';
 import { proyectarLongitudesDocumentales } from '../src/motores/longitudes-documentales.js';
 import { simularFisicaProyecto } from '../src/fisica/topologia-proyecto.js';
@@ -37,6 +38,20 @@ test('CAB-10: preview local detecta un tramo invasor aunque el nodo esté fuera 
 	assert.equal(primerSolidoEnPunto({ x: 215, y: 130, z: 70 }, 2, [obstaculo]), undefined,
 		'un nodo proyectado sobre el aparato pero por encima en Z no debe marcarse como invasión');
 	assert.equal(primerSolidoEnPunto({ x: 215, y: 130, z: 35 }, 2, [obstaculo])?.id, obstaculo.id);
+});
+
+test('CAB-11: preview local admite corredor y ranura, pero advierte diente atravesado', () => {
+	const c = { id: 'd1', x: 20, y: 100, largo: 200, orientacion: 'h' as const, ancho: 40, alto: 40 };
+	const red = new RedCanaletas([c]);
+	const invadir = (puntos: { x: number; y: number; z: number }[]) =>
+		invasionesDeCanaletas(red, [c], [{ id: 'w1', radio: 2, puntos }], 1);
+	assert.deepEqual(invadir([{ x: 20, y: 100, z: 20 }, { x: 220, y: 100, z: 20 }]), [],
+		'el volumen interior útil no es una caja sólida');
+	const ranura = ranurasDe(c)[3];
+	assert.deepEqual(invadir([{ x: ranura, y: 65, z: 20 }, { x: ranura, y: 100, z: 20 }]), [],
+		'la entrada por una ranura no debe recibir aviso de pared');
+	const diente = dientesDe(c)[3];
+	assert.equal(invadir([{ x: diente, y: 65, z: 20 }, { x: diente, y: 100, z: 20 }])[0]?.parte, 'diente');
 });
 
 test('CAB-29: fixture V9 conserva identidades, conexión, XYZ, color y largo declarado', () => {

@@ -1,10 +1,10 @@
-/** CAB-02/05/09/29/30: adopción, edición, Undo y reapertura de una ruta XYZ literal. */
+/** CAB-02/05/09/10/11/29/30: edición XYZ, diagnóstico, canaleta, Undo y reapertura. */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
 
 const inicio = Date.now();
-let servidor, navegador, pagina, casos = 0;
+let servidor, navegador, pagina, contextoDucto, casos = 0;
 const erroresJS = [];
 const comprobar = (nombre, condicion) => {
 	casos++;
@@ -35,6 +35,18 @@ const fixture = {
 		{ dispositivoId: 'obstaculo', x: 205, y: 110, ancho: 40, alto: 45 },
 	] },
 };
+
+const fixtureDucto = structuredClone(fixture);
+fixtureDucto.version = 3;
+fixtureDucto.nombre = 'QA canaleta M6';
+fixtureDucto.dispositivos = fixtureDucto.dispositivos.filter((d) => d.id !== 'obstaculo');
+fixtureDucto.gabinete.colocaciones = fixtureDucto.gabinete.colocaciones.filter((c) => c.dispositivoId !== 'obstaculo');
+fixtureDucto.gabinete.canaletas = [{ id: 'd1', x: 20, y: 100, largo: 200, orientacion: 'h', ancho: 40, alto: 40 }];
+fixtureDucto.conductores = [fixtureDucto.conductores[0]];
+delete fixtureDucto.conductores[0].trazado;
+fixtureDucto.conductores[0].rutaFisica = { version: 1, modo: 'MANUAL', marco: 'PLACA', geometria: 'POLILINEA',
+	nodos: [{ id: 'w1:n1', x: 81, y: 65, z: 20 }, { id: 'w1:n2', x: 81, y: 100, z: 20 },
+		{ id: 'w1:n3', x: 150, y: 100, z: 20 }] };
 
 try {
 	const entorno = await servidorDeQA(); servidor = entorno.servidor;
@@ -232,12 +244,55 @@ try {
 		const rendimiento = await pagina.evaluate(() => window.qa.simularArrastre('w1', 0, 30, 1, 0));
 		console.log(`M6 listener 30 movimientos: ${JSON.stringify(rendimiento)}`);
 	}
+	contextoDucto = await navegador.newContext({ viewport: { width: 1450, height: 900 } });
+	const ducto = await contextoDucto.newPage();
+	ducto.on('pageerror', (e) => erroresJS.push(e.message));
+	ducto.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/i.test(m.text())) erroresJS.push(m.text()); });
+	await ducto.goto(`${entorno.url}/?qa=1&inicio=0`, { waitUntil: 'domcontentloaded' });
+	await esperarEditorListo(ducto);
+	if (await ducto.locator('#btn-cerrar-ayuda').isVisible()) await ducto.locator('#btn-cerrar-ayuda').click();
+	await ducto.locator('#btn-archivo').click();
+	const abrirDucto = ducto.waitForEvent('filechooser');
+	await ducto.locator('#btn-abrir').click();
+	await (await abrirDucto).setFiles({ name: 'canaleta-m6.tablero.json', mimeType: 'application/json',
+		buffer: Buffer.from(JSON.stringify(fixtureDucto)) });
+	await ducto.waitForFunction(() => window.qa.proyecto().nombre === 'QA canaleta M6');
+	await ducto.locator('#hta-conectar').click();
+	await ducto.locator('#lista-cables li').first().click();
+	const puntoRanura = await ducto.evaluate(() => window.qa.puntoDeUnion('w1', 1));
+	assert.ok(puntoRanura, 'el nodo de entrada a la ranura debe ser visible');
+	await ducto.mouse.move(puntoRanura.x, puntoRanura.y);
+	await ducto.mouse.down();
+	await ducto.mouse.move(puntoRanura.x, puntoRanura.y + 12, { steps: 3 });
+	comprobar('M6 permite circular por el interior y entrar por ranura sin aviso de plástico',
+		!/Aviso:.*canaleta d1/.test(await ducto.locator('#ayuda').innerText()));
+	await ducto.keyboard.press('Escape');
+	await ducto.mouse.up();
+	await ducto.locator('[data-ruta-nodo="1"][data-eje="x"]').fill('74');
+	await ducto.locator('[data-ruta-nodo="1"][data-eje="x"]').press('Tab');
+	await ducto.waitForFunction(() => window.qa.proyecto().conductores[0]?.rutaFisica?.nodos[1].x === 74);
+	const puntoDiente = await ducto.evaluate(() => window.qa.puntoDeUnion('w1', 1));
+	await ducto.mouse.move(puntoDiente.x, puntoDiente.y);
+	await ducto.mouse.down();
+	await ducto.mouse.move(puntoDiente.x, puntoDiente.y + 12, { steps: 3 });
+	const avisoDiente = await ducto.locator('#ayuda').innerText();
+	if (!/Aviso: el tramo atraviesa diente de la canaleta d1/.test(avisoDiente)) {
+		console.error('Diagnóstico del gesto sobre diente:', JSON.stringify({ avisoDiente,
+			estado: await ducto.evaluate(() => ({ problema: window.qa.problemaArrastre(),
+				nodo: window.qa.proyecto().conductores[0]?.rutaFisica?.nodos[1] })) }));
+	}
+	comprobar('M6 advierte durante drag cuando el tramo atraviesa un diente',
+		/Aviso: el tramo atraviesa diente de la canaleta d1/.test(avisoDiente));
+	await ducto.keyboard.press('Escape');
+	await ducto.mouse.up();
+	comprobar('la prueba de canaleta no produjo errores JavaScript', erroresJS.length === 0);
 	console.log(`QA ruta física M6: ${casos}/${casos}, ${((Date.now() - inicio) / 1000).toFixed(1)} s`);
 } catch (error) {
 	console.error(error);
 	process.exitCode = 1;
 } finally {
 	try { await pagina?.close(); } catch (error) { console.error(error); process.exitCode = 1; }
+	try { await contextoDucto?.close(); } catch (error) { console.error(error); process.exitCode = 1; }
 	try { await navegador?.close(); } catch (error) { console.error(error); process.exitCode = 1; }
 	if (servidor) {
 		servidor.closeAllConnections?.();
