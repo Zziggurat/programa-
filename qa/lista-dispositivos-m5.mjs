@@ -33,8 +33,8 @@ try {
 	if (!await pagina.locator('#seccion-dispositivos').evaluate((e) => e.open))
 		await pagina.locator('#seccion-dispositivos summary').click();
 	const antes = await pagina.evaluate(() => JSON.stringify(window.qa.proyecto()));
-	const total = await pagina.evaluate(() => window.qa.proyecto().dispositivos.filter((d) => !d.campo).length);
-	comprobar('la lista inicia con todos los aparatos internos, sin cero ficticio',
+	const total = await pagina.evaluate(() => window.qa.proyecto().dispositivos.length);
+	comprobar('la lista inicia con todos los aparatos del tablero, sin cero ficticio',
 		await pagina.locator('#lista-dispositivos li').count() === total
 		&& await pagina.locator('#contador-dispositivos').innerText() === `(${total})`);
 	await pagina.locator('#buscar-dispositivos').fill('linea motor');
@@ -122,6 +122,27 @@ try {
 	comprobar('cambiar de tablero borra la ocultación temporal aunque reutilice KM1',
 		(await pagina.evaluate(() => window.qa.vistaDeAparato('km1'))).visible
 		&& await pagina.locator('#vista-montaje-restaurar').isHidden());
+	if (await pagina.locator('#modal-explicacion').isVisible()) await pagina.locator('#btn-cerrar-explicacion').click();
+	await pagina.locator('#hta-seleccionar').click();
+	await pagina.locator('#buscar-dispositivos').fill('campo motor');
+	comprobar('la lista localiza el motor de campo por función y ubicación',
+		await pagina.locator('#lista-dispositivos li[data-dispositivo-id="m1"]').count() === 1
+		&& /Campo/.test(await pagina.locator('#lista-dispositivos li[data-dispositivo-id="m1"] .lugar').innerText()));
+	await pagina.locator('#lista-dispositivos li[data-dispositivo-id="m1"] .des').click();
+	comprobar('un aparato de campo se puede seleccionar por la misma lista',
+		(await pagina.evaluate(() => window.qa.seleccion()))?.id === 'm1');
+	await pagina.locator('#buscar-dispositivos').fill('puerta piloto');
+	comprobar('la lista diferencia pilotos de puerta sin otra identidad',
+		await pagina.locator('#lista-dispositivos li[data-dispositivo-id="hr"]').count() === 1
+		&& /Puerta/.test(await pagina.locator('#lista-dispositivos li[data-dispositivo-id="hr"] .lugar').innerText()));
+	const hr = pagina.locator('#lista-dispositivos li[data-dispositivo-id="hr"]');
+	await hr.locator('.accion-vista', { hasText: 'Ocultar' }).click();
+	comprobar('la misma lista recupera un piloto oculto de puerta',
+		!(await pagina.evaluate(() => window.qa.vistaDeAparato('hr'))).visible);
+	await hr.locator('.des').click();
+	comprobar('seleccionar piloto oculto lo hace visible sin recrear el aparato',
+		(await pagina.evaluate(() => window.qa.vistaDeAparato('hr'))).visible
+		&& (await pagina.evaluate(() => window.qa.seleccion()))?.id === 'hr');
 	comprobar('ningún error JavaScript', erroresJS.length === 0);
 	console.log(`MON-04 lista y visibilidad de aparatos: ${casos}/${casos}, 0 JS`);
 } catch (fallo) {
