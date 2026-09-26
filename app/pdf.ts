@@ -679,7 +679,7 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 		['Ocupación de la placa', `${ficha.ocupacionPlacaPct} %`],
 		['Riel DIN', `${ficha.rieles.cantidad} tramo${ficha.rieles.cantidad === 1 ? '' : 's'} · ${metros(ficha.rieles.largoTotalMm)} en total`],
 		['Canaleta', `${ficha.canaletas.cantidad} tramo${ficha.canaletas.cantidad === 1 ? '' : 's'} · ${metros(ficha.canaletas.largoTotalMm)} en total`],
-		['Llenado máximo de canaleta', ficha.canaletas.cantidad ? `${ficha.canaletas.llenadoMaxPct} % del máximo admisible` : '—'],
+		['Índice estimado de canaleta', ficha.canaletas.cantidad ? `${ficha.canaletas.llenadoMaxPct} % del criterio legacy; no verifica capacidad` : '—'],
 		['Aparatos en la placa', String(ficha.aparatos.enPlaca)],
 		['Aparatos de campo (fuera del tablero)', String(ficha.aparatos.deCampo)],
 		['Conexiones eléctricas', String(ficha.conductores.total)],

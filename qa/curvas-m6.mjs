@@ -58,6 +58,25 @@ try {
 	comprobar('modo circular declarado guarda 8 mm y modifica la trayectoria visible',
 		(await cable()).rutaFisica.radioMm === 8 && curva.length > recta.length
 		&& JSON.stringify(curva) !== JSON.stringify(recta));
+	await pagina.locator('#cbl-diametro-exterior').fill('6');
+	await pagina.locator('#cbl-diametro-exterior').press('Tab');
+	await pagina.locator('#cbl-radio-minimo').fill('10');
+	await pagina.locator('#cbl-radio-minimo').press('Tab');
+	comprobar('la cubierta y el radio mínimo se declaran sin deducirlos de la sección',
+		(await cable()).fisica.diametroExteriorMm === 6
+		&& (await cable()).fisica.radioMinimoCurvaturaMm === 10);
+	const radioDibujado = await pagina.evaluate(() => window.qa.rutas().find((r) => r.id === 'w1')?.radio);
+	assert.equal(radioDibujado, 3, 'el tubo debe seguir el diámetro exterior de 6 mm');
+	comprobar('el radio 3D y de reparto toma el diámetro exterior declarado', radioDibujado === 3);
+	comprobar('DRC detecta el radio nominal de 8 mm inferior al mínimo declarado de 10 mm',
+		(await pagina.evaluate(() => window.qa.drc())).some((h) => h.regla === 'R18-radio-manual-inferior'
+			&& h.conductorId === 'w1'));
+	await pagina.locator('#cbl-radio-minimo').fill('6');
+	await pagina.locator('#cbl-radio-minimo').press('Tab');
+	comprobar('con mínimo de 6 mm desaparece solo ese aviso parcial',
+		!(await pagina.evaluate(() => window.qa.drc())).some((h) => h.regla === 'R18-radio-manual-inferior')
+		&& /bornes, puerta y codos sin espacio siguen sin verificar/i.test(
+			await pagina.locator('.cbl-datos-cubierta').innerText()));
 	const nodoAntes = JSON.stringify((await cable()).rutaFisica.nodos[0]);
 	const tirador = await pagina.evaluate(() => window.qa.puntoDeUnion('w1', 0));
 	assert.ok(tirador && tirador.x > 0 && tirador.y > 0);
@@ -127,6 +146,9 @@ try {
 	comprobar('reapertura conserva política eléctrica y metros declarados separados',
 		(await cable()).fisica.politicaLongitudElectrica === 'RUTA_XYZ'
 		&& (await cable()).fisica.longitudManualM === 3.2);
+	comprobar('reapertura conserva diámetro exterior y radio mínimo declarados',
+		(await cable()).fisica.diametroExteriorMm === 6
+		&& (await cable()).fisica.radioMinimoCurvaturaMm === 6);
 	comprobar('sin errores JavaScript', erroresJS.length === 0);
 	console.log(`RESULTADO ${casos}/${casos} en ${((Date.now() - inicio) / 1000).toFixed(1)} s; errores JS ${erroresJS.length}`);
 } catch (error) {

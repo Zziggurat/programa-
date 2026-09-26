@@ -4669,6 +4669,8 @@ function pintarPanelCable(id: string): void {
 		? longitudPlanRutaAutomaticaMm(c.planRutaAutomatica)
 		: c.rutaFisica ? largoDibujadoMm(proyecto, c) : undefined;
 	const longitudRevisionMm = revision.longitudesElectricasMm.get(id);
+	const radioNodosMm = c.rutaFisica?.version === 2 ? c.rutaFisica.radioMm : undefined;
+	const radioMinimoMm = c.fisica?.radioMinimoCurvaturaMm;
 
 	panel.style.display = 'block';
 	panel.innerHTML = `
@@ -4703,6 +4705,17 @@ function pintarPanelCable(id: string): void {
 				La ruta XYZ solo entra al cálculo si la eliges; sigue siendo una estimación física, no corte verificado. Al faltar la fuente elegida, el cálculo queda indeterminado.</p>
 			<p class="sub" id="cbl-longitud-efectiva">DRC actual: ${longitudRevisionMm === undefined
 				? 'sin longitud evaluable' : `${Math.round(longitudRevisionMm)} mm`}. Origen: ${c.fisica?.politicaLongitudElectrica ?? 'compatibilidad V9'}.</p>
+		</fieldset>
+		<fieldset class="cbl-datos-cubierta"><legend>Cubierta y curvatura declaradas</legend>
+			<label>Diámetro exterior (mm) <input id="cbl-diametro-exterior" type="number" min="0.1" max="200" step="0.1"
+				value="${c.fisica?.diametroExteriorMm ?? ''}" placeholder="Sin declarar"></label>
+			<label>Radio mínimo (mm) <input id="cbl-radio-minimo" type="number" min="0.1" max="5000" step="0.1"
+				value="${radioMinimoMm ?? ''}" placeholder="Sin declarar"></label>
+			<p class="sub">Son datos del cable aportados por quien diseña, no inferidos de los mm² de cobre.
+				${radioNodosMm === undefined ? 'Esta ruta no tiene radio nominal de nodos manuales evaluable.'
+					: radioMinimoMm === undefined ? `Los nodos manuales declaran ${radioNodosMm} mm; falta radio mínimo del cable.`
+						: radioNodosMm < radioMinimoMm ? `Los nodos manuales declaran ${radioNodosMm} mm, menos que el mínimo de ${radioMinimoMm} mm.`
+							: `Los nodos manuales declaran ${radioNodosMm} mm frente a un mínimo de ${radioMinimoMm} mm; bornes, puerta y codos sin espacio siguen sin verificar.`}</p>
 		</fieldset>
 		${c.rutaFisica ? `<p class="sub">Ruta manual M6: los puntos XYZ son literales. La malla no separa ni recoloca esta ruta; las interferencias requieren revisión. Longitud de referencia espacial: ${Math.round(largoDibujadoMm(proyecto, c))} mm; no es longitud de corte verificada.</p>
 			<div class="cbl-geometria-m6"><label>Geometría de referencia <select id="cbl-geometria-m6"><option value="POLILINEA" ${c.rutaFisica.version === 1 ? 'selected' : ''}>Polilínea literal</option><option value="ARCO_CIRCULAR" ${c.rutaFisica.version === 2 ? 'selected' : ''}>Arcos circulares declarados</option></select></label>
@@ -4769,6 +4782,27 @@ function pintarPanelCable(id: string): void {
 		if (Object.values(nueva).some((v) => v !== undefined)) c.fisica = nueva; else delete c.fisica;
 		recalcular(); panelSim.recalcular(); pintarPanelCable(id); pintarPaneles();
 	};
+	for (const [selector, propiedad, maximo] of [
+		['#cbl-diametro-exterior', 'diametroExteriorMm', 200],
+		['#cbl-radio-minimo', 'radioMinimoCurvaturaMm', 5000],
+	] as const) {
+		(panel.querySelector(selector) as HTMLInputElement).onchange = (e) => {
+			const input = e.target as HTMLInputElement;
+			const valor = input.value.trim() === '' ? undefined : Number(input.value);
+			if (valor !== undefined && (!Number.isFinite(valor) || valor <= 0 || valor > maximo)) {
+				input.value = String(c.fisica?.[propiedad] ?? '');
+				avisar(`Indica un valor positivo de hasta ${maximo} mm; no se cambió el dato.`, 'error');
+				return;
+			}
+			if (valor === c.fisica?.[propiedad]) return;
+			if (!capturar()) { input.value = String(c.fisica?.[propiedad] ?? ''); return; }
+			const nueva = { ...c.fisica, [propiedad]: valor };
+			if (Object.values(nueva).some((v) => v !== undefined)) c.fisica = nueva; else delete c.fisica;
+			recalcular();
+			if (propiedad === 'diametroExteriorMm') reconstruirCables();
+			pintarPanelCable(id); pintarPaneles();
+		};
+	}
 	(panel.querySelector('#cbl-diagnostico-m6') as HTMLButtonElement | null)?.addEventListener('click', () => {
 		const resultado = panel.querySelector<HTMLElement>('#cbl-resultado-m6');
 		if (!resultado || !proyecto.conductores.some((actual) => actual.id === id && actual.rutaFisica)) return;
@@ -6911,7 +6945,7 @@ function arrastrarUnion(
 	medirEtapa('2b validez', () => {
 		const wp = puntosDeCable(c)[indice];
 		if (!wp) return;
-		const v = validezDelPunto(wp, radioDeCable(c.seccion), c.rutaFisica ? antesArrastreCableM6 : undefined);
+		const v = validezDelPunto(wp, radioDeCable(c.seccion, c.fisica?.diametroExteriorMm), c.rutaFisica ? antesArrastreCableM6 : undefined);
 		motivoInvalido = v.ok ? undefined : v.motivo;
 	});
 	medirEtapa('3 previsualizar el cable', () => previsualizarCable(c.id, indice));
@@ -7022,7 +7056,7 @@ function moverWaypoint(
 	 * radio. Así, al quitar la tapa el cable está ahí, y al ponerla queda tapado porque lo tapa la
 	 * tapa, no porque nadie lo haya ocultado.
 	 */
-	const radio = radioDeCable(c.seccion);
+	const radio = radioDeCable(c.seccion, c.fisica?.diametroExteriorMm);
 	const encaje = asistir
 		? encajarEnCanaleta(new RedCanaletas(proyecto.gabinete?.canaletas ?? []), { x: nx, y: ny, z: zPedida }, radio)
 		: undefined;
@@ -11082,7 +11116,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		/** Radio de curvatura con el que se dibuja ese cable: es lo que recorta las esquinas. */
 		radioCodoDe: (conductorId: string) => {
 			const c = proyecto.conductores.find((k) => k.id === conductorId);
-			return c ? radioCodo(radioDeCable(c.seccion)) : undefined;
+			return c ? radioCodo(radioDeCable(c.seccion, c.fisica?.diametroExteriorMm)) : undefined;
 		},
 		/** Los puntos que el usuario ha fijado a mano, tal cual se guardan. */
 		trazadoDe: (conductorId: string) =>

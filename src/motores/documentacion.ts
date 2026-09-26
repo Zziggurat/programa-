@@ -204,12 +204,14 @@ ${tabla(['Borna', 'Interna', 'Externa', 'Nº cond.', 'Puentes', 'Avisos'],
 			]))}`);
 	}
 
-	secciones.push(`<h2>7. Ocupación de canaletas</h2>
-${tabla(['Canaleta', 'Ocupación', 'Estado'],
+	secciones.push(`<h2>7. Índice estimado de canaletas</h2>
+<p>El ruteo 2D utiliza dimensiones nominales de ducto; donde falta diámetro exterior se estima la cubierta. Un índice bajo no verifica empaque, entradas, tapa ni capacidad térmica.</p>
+${tabla(['Canaleta', 'Índice', 'Diámetros', 'Estado'],
 		d.ruteo.ocupaciones.map((o) => [
 			o.canaletaId,
-			`${Math.round(o.ocupacion * 100)} % del máximo recomendado`,
-			o.excedida ? 'EXCEDIDA' : 'ok',
+			`${Math.round(o.ocupacion * 100)} % del criterio legacy`,
+			`${o.diametrosDeclarados ?? 0} declarados / ${o.diametrosEstimados ?? 0} estimados`,
+			o.excedida ? 'REVISAR: estimación alta' : 'NO VERIFICADO',
 		]))}`);
 
 	const sync = d.sincronizacion;
