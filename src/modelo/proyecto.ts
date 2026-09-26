@@ -9,7 +9,7 @@ import {
 export function crearProyecto(nombre: string, opciones?: OpcionesProyecto): Proyecto {
 	return {
 		formato: 'tablero-studio',
-		version: 2,
+		version: 3,
 		nombre,
 		hojas: [],
 		dispositivos: [],

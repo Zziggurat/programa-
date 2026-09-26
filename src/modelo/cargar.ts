@@ -16,6 +16,7 @@ import {
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 import { leerComportamientoSimulacion, validarComportamiento } from './comportamiento.js';
 import { leerFisicaConductor, leerFisicaDispositivo } from './fisica.js';
+import { admiteRutaEnPlaca, leerRutaFisicaV1 } from './ruta-fisica.js';
 import { leerConfiguracionIngenieria } from './ingenieria.js';
 import { validarConfiguracionTecnica } from '../datos-tecnicos/schema.js';
 import { leerMontajeDeclarado } from '../componentes/montaje.js';
@@ -25,7 +26,7 @@ import { leerSimboloEsquemaPersonal } from './simbolo-personal.js';
 import type { ConfiguracionProgramaPLC, EtiquetaPLC } from './programa-plc.js';
 
 /** Versión de formato que escribe este programa. */
-export const VERSION_FORMATO = 2;
+export const VERSION_FORMATO = 3;
 
 export interface ResultadoCarga {
 	proyecto: Proyecto;
@@ -319,7 +320,7 @@ export function cargarProyecto(json: string): ResultadoCarga {
 	 */
 	const bornesDe = new Map(dispositivos.map((d) => [d.id, new Set(d.bornes.map((b) => b.id))]));
 	const conductores = leerConductores(
-		conTope(bruto.conductores, TOPES.conductores, 'cables', arreglos), bornesDe, arreglos);
+		conTope(bruto.conductores, TOPES.conductores, 'cables', arreglos), bornesDe, arreglos, version);
 
 	// Una colocación que apunta a un aparato que ya no existe deja un hueco fantasma. Y dos
 	// colocaciones del mismo aparato lo dibujan dos veces: se queda la primera.
@@ -332,6 +333,11 @@ export function cargarProyecto(json: string): ResultadoCarga {
 	});
 	if (gabinete.colocaciones.length !== antesColocaciones) {
 		arreglos.push(`${antesColocaciones - gabinete.colocaciones.length} colocación(es) sin aparato o repetida(s)`);
+	}
+	for (const cable of conductores) {
+		if (cable.rutaFisica && !admiteRutaEnPlaca(cable, gabinete.colocaciones, dispositivos)) {
+			throw new ArchivoInvalido(`Cable ${cable.id}: ruta M6 en marco PLACA con extremo móvil, de campo o sin colocación; se conservó el archivo original.`);
+		}
 	}
 
 	const esquemaBruto = esObjeto(bruto.esquema) ? bruto.esquema : undefined;
@@ -1167,7 +1173,7 @@ function leerBornes(bruto: unknown): Borne[] {
 }
 
 function leerConductores(
-	bruto: unknown, bornesDe: Map<string, Set<string>>, arreglos: string[],
+	bruto: unknown, bornesDe: Map<string, Set<string>>, arreglos: string[], version: number,
 ): Conductor[] {
 	if (!esLista(bruto)) {
 		if (bruto !== undefined) arreglos.push('la lista de cables estaba corrupta');
@@ -1206,14 +1212,24 @@ function leerConductores(
 		// La ruta pendiente es incompatible con un peinado o una longitud ya declarados. Se
 		// omite el registro entero para no perder silenciosamente ni la conexión ni la medición.
 		if (c.estadoRutaFisica === 'pendiente' && (c.trazado !== undefined
-			|| (esObjeto(c.fisica) && c.fisica.longitudManualM !== undefined))) {
+			|| c.rutaFisica !== undefined || (esObjeto(c.fisica) && c.fisica.longitudManualM !== undefined))) {
 			anotar(`conductores[${c.id}]`, 'ruta física pendiente incompatible con trazado o longitud manual; se omitió la conexión');
 			continue;
+		}
+		if (c.rutaFisica !== undefined && c.trazado !== undefined) {
+			throw new ArchivoInvalido(`Cable ${c.id}: ruta M6 y trazado legacy simultáneos; elige una fuente sin perder la otra.`);
+		}
+		let rutaFisica: Conductor['rutaFisica'];
+		if (c.rutaFisica !== undefined) {
+			if (version < 3) throw new ArchivoInvalido(`Cable ${c.id}: ruta M6 en un archivo anterior a la versión 3.`);
+			try { rutaFisica = leerRutaFisicaV1(c.rutaFisica); }
+			catch { throw new ArchivoInvalido(`Cable ${c.id}: ruta M6 desconocida o dañada; no se sustituyó por un ruteo automático.`); }
 		}
 		vistos.add(c.id as string);
 		salida.push({
 			...(c as unknown as Conductor),
 			...(c.estadoRutaFisica === 'pendiente' ? { estadoRutaFisica: 'pendiente' as const } : {}),
+			...(rutaFisica ? { rutaFisica } : {}),
 			// Una sección que no es un número deja al DRC sin poder comparar nada: mejor «sin
 			// declarar», que el programa sabe avisarlo, que un 0 inventado o un NaN silencioso.
 			seccion: enRango(c.seccion, 0, 1000),

@@ -336,6 +336,8 @@ export interface Conductor {
 	 * no declara trazado manual ni longitud física, y no ocupa canaletas ni aporta metraje.
 	 */
 	estadoRutaFisica?: 'pendiente';
+	/** Ruta manual M6 versionada. Exclusiva de `trazado` legacy y del estado pendiente. */
+	rutaFisica?: import('./ruta-fisica.js').RutaFisicaV1;
 	/** Sección en mm². */
 	seccion?: number;
 	/** Material, longitud o reactancia declarados para la capa fisica V5. */
@@ -658,8 +660,8 @@ export interface Proyecto {
 	 */
 	esEjemplo?: boolean;
 	formato: 'tablero-studio';
-	/** V1 legacy se acepta al leer; V2 distingue conexión eléctrica de ruta física pendiente. */
-	version: 1 | 2;
+	/** V1 legacy se acepta al leer; V2 separa ruta pendiente y V3 añade ruta XYZ explícita. */
+	version: 1 | 2 | 3;
 	nombre: string;
 	/** Cliente, obra, proyectista y revisión (cajetín del plano y portada del dossier). */
 	datos?: DatosProyecto;

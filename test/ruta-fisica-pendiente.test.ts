@@ -41,7 +41,7 @@ function tablero(): Proyecto {
 
 test('ruta pendiente sobrevive JSON/carga; ausencia de discriminante conserva legacy', () => {
 	const p = tablero();
-	assert.equal(p.version, 2, 'el formato nuevo debe impedir que un lector V1 materialice la ruta');
+	assert.equal(p.version, VERSION_FORMATO, 'el formato nuevo debe impedir que un lector anterior materialice una ruta desconocida');
 	const primera = cargarProyecto(JSON.stringify(p));
 	assert.deepEqual(primera.arreglos, []);
 	const segunda = cargarProyecto(JSON.stringify(primera.proyecto));
