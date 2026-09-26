@@ -1220,7 +1220,7 @@ export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, bor
 	const puntas: { clave: string; x: number; y: number; radio: number }[] = [];
 	for (const c of proyecto.conductores) {
 		if (c.estadoRutaFisica === 'pendiente') continue;
-		const radio = radioDeCable(c.seccion);
+		const radio = radioDeCable(c.seccion, c.fisica?.diametroExteriorMm);
 		for (const extremo of [c.de, c.a]) {
 			const a = anclajeBorne(proyecto, extremo.dispositivoId, extremo.borneId);
 			if (!a) continue;
@@ -1292,7 +1292,7 @@ export function abanicoDeSalida(proyecto: Proyecto): (dispositivoId: string, bor
 	const porAparato = new Map<string, { clave: string; borne: string; radio: number }[]>();
 	for (const c of proyecto.conductores) {
 		if (c.estadoRutaFisica === 'pendiente') continue;
-		const radio = radioDeCable(c.seccion);
+		const radio = radioDeCable(c.seccion, c.fisica?.diametroExteriorMm);
 		for (const extremo of [c.de, c.a]) {
 			const l = porAparato.get(extremo.dispositivoId) ?? [];
 			l.push({ clave: `${extremo.dispositivoId}|${extremo.borneId}|${c.id}`, borne: extremo.borneId, radio });
@@ -1355,7 +1355,7 @@ export function salidasDeCable(
 	const a = anclajeBorne(proyecto, conductor.de.dispositivoId, conductor.de.borneId);
 	const b = anclajeBorne(proyecto, conductor.a.dispositivoId, conductor.a.borneId);
 	if (!a || !b) return undefined; // solo si falta el aparato entero (se limpia al eliminarlo)
-	const radio = radioDeCable(conductor.seccion);
+	const radio = radioDeCable(conductor.seccion, conductor.fisica?.diametroExteriorMm);
 	/**
 	 * Tramo recto perpendicular a la cara del aparato antes del primer codo.
 	 *
@@ -1482,9 +1482,11 @@ export function longitudesParaRevisionMm(proyecto: Proyecto): Map<string, number
 	return visuales;
 }
 
-/** Radio del tubo de un conductor. Lo comparten el dibujo, el reparto y las pruebas. */
-export function radioDeCable(seccion?: number): number {
-	return 0.9 + (seccion ?? 1.5) * 0.35;
+/** Radio exterior declarado cuando existe; sin él, conserva la aproximación visual V9.
+ * El radio calculado de cobre nunca se presenta como diámetro certificado de cubierta. */
+export function radioDeCable(seccion?: number, diametroExteriorMm?: number): number {
+	return diametroExteriorMm !== undefined && Number.isFinite(diametroExteriorMm)
+		&& diametroExteriorMm > 0 ? diametroExteriorMm / 2 : 0.9 + (seccion ?? 1.5) * 0.35;
 }
 
 /** Radio mínimo de curvatura del codo: cuanto más grueso el cable, más abierto dobla. */
@@ -1539,7 +1541,8 @@ function firmaDelRuteo(proyecto: Proyecto): string {
 	const ordenar = <T>(lista: T[] | undefined, clave: (elemento: T) => string): T[] | undefined =>
 		lista?.slice().sort((a, b) => clave(a).localeCompare(clave(b)));
 	return JSON.stringify([
-		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado, c.rutaFisica, c.planRutaAutomatica, c.estadoRutaFisica, c.clase]),
+		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado,
+			c.rutaFisica, c.planRutaAutomatica, c.estadoRutaFisica, c.clase, c.fisica?.diametroExteriorMm]),
 		// El anclaje depende de la disposición de bornes, pines de imagen y bloques reales.
 		// No incluir los bytes de la imagen: su presencia, no su contenido, cambia el ruteo.
 		proyecto.dispositivos.map((d) => [d.id, d.tipo, d.bornes.map((b) => [b.id, b.u, b.v]),
@@ -2307,13 +2310,14 @@ function repartirCables(proyecto: Proyecto,
 		.filter((c) => c.estadoRutaFisica !== 'pendiente')
 		.map((c) => ({ c }))
 		.sort((p, q) => Number(!!q.c.planRutaAutomatica) - Number(!!p.c.planRutaAutomatica)
-			|| radioDeCable(q.c.seccion) - radioDeCable(p.c.seccion)
+			|| radioDeCable(q.c.seccion, q.c.fisica?.diametroExteriorMm)
+				- radioDeCable(p.c.seccion, p.c.fisica?.diametroExteriorMm)
 			|| p.c.id.localeCompare(q.c.id));
 
 	for (const { c: conductor } of orden) {
 		const p = salidasDeCable(proyecto, conductor, abanico);
 		if (!p) continue;
-		const radio = radioDeCable(conductor.seccion);
+		const radio = radioDeCable(conductor.seccion, conductor.fisica?.diametroExteriorMm);
 		if (conductor.rutaFisica) {
 			const ruta = rutaManualResuelta(conductor, p, radio);
 			const trazo: Trazo = { id: conductor.id, radio, puntos: ruta.puntos,
@@ -2871,7 +2875,7 @@ export function rutaProvisional(proyecto: Proyecto, conductorId: string): RutaCa
 	if (!conductor) return undefined;
 	const p = salidasDeCable(proyecto, conductor);
 	if (!p) return undefined;
-	const radio = radioDeCable(conductor.seccion);
+	const radio = radioDeCable(conductor.seccion, conductor.fisica?.diametroExteriorMm);
 	if (conductor.rutaFisica) return rutaManualResuelta(conductor, p, radio);
 	const codo = radioCodo(radio);
 	// La z de referencia para los puntos que no la tienen: la que ya tenía el cable dibujado.

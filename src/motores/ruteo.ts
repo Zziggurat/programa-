@@ -11,7 +11,7 @@
  */
 import { Canaleta, Colocacion, Proyecto } from '../modelo/tipos.js';
 import { opcionesDe } from '../modelo/proyecto.js';
-import { areaConductorAisladoMm2 } from './electrico.js';
+import { areaConductorAisladoMm2, areaExteriorConductorMm2 } from './electrico.js';
 
 export interface Punto { x: number; y: number }
 
@@ -34,13 +34,16 @@ export interface RutaConductor {
 
 export interface OcupacionCanaleta {
 	canaletaId: string;
-	/** Suma de secciones de los conductores que la atraviesan (mm²). */
+	/** Área circular estimada/mixta de cubiertas en una ruta 2D, no packing verificado (mm²). */
 	seccionOcupadaMm2: number;
-	/** Sección útil de la canaleta (mm²). */
+	/** Rectángulo nominal ancho × alto; falta una declaración de sección interior útil. */
 	seccionUtilMm2: number;
-	/** 0..1 respecto del máximo recomendado. */
+	/** Índice legacy respecto del criterio configurado/default; no capacidad certificada. */
 	ocupacion: number;
 	excedida: boolean;
+	/** Procedencia del área de cable usada en este índice provisional. */
+	diametrosDeclarados?: number;
+	diametrosEstimados?: number;
 }
 
 export interface ResultadoRuteo {
@@ -194,6 +197,8 @@ export function rutearConductores(proyecto: Proyecto): ResultadoRuteo {
 		return { rutas, ocupaciones: [], avisos: ['El gabinete no tiene canaletas'] };
 	}
 	const opciones = opcionesDe(proyecto);
+	const declaradosEnCanaleta = new Map<string, number>();
+	const estimadosEnCanaleta = new Map<string, number>();
 	const colocacionDe = new Map(gabinete.colocaciones.map((c) => [c.dispositivoId, c]));
 
 	// Punto de entrada de cada dispositivo colocado: proyección sobre su canaleta más cercana.
@@ -266,9 +271,14 @@ export function rutearConductores(proyecto: Proyecto): ResultadoRuteo {
 			canaletasUsadas: resultado.canaletas,
 		});
 		const seccion = conductor.seccion ?? 1.5;
+		const diametro = conductor.fisica?.diametroExteriorMm;
+		const areaCubierta = diametro !== undefined
+			? areaExteriorConductorMm2(diametro) : areaConductorAisladoMm2(seccion);
 		for (const canId of resultado.canaletas) {
 			seccionEnCanaleta.set(canId, (seccionEnCanaleta.get(canId) ?? 0) + seccion);
-			areaEnCanaleta.set(canId, (areaEnCanaleta.get(canId) ?? 0) + areaConductorAisladoMm2(seccion));
+			areaEnCanaleta.set(canId, (areaEnCanaleta.get(canId) ?? 0) + areaCubierta);
+			const conteo = diametro !== undefined ? declaradosEnCanaleta : estimadosEnCanaleta;
+			conteo.set(canId, (conteo.get(canId) ?? 0) + 1);
 		}
 	}
 
@@ -276,17 +286,19 @@ export function rutearConductores(proyecto: Proyecto): ResultadoRuteo {
 		avisos.push(`${conductoresDeCampo} conductores van a aparatos de campo y no se rutean por canaleta`);
 	}
 
-	// Ocupación de canaletas con la geometría REAL del conductor aislado (cobre + aislación),
-	// no un factor a ojo: es lo que decide si la tapa cierra y si los cables se calientan.
+	// Índice de área provisional: rutas 2D y dimensiones nominales, no empaque ni tapa verificados.
+	// Donde falta diámetro exterior se usa explícitamente la estimación legacy, nunca un dato real.
 	const ocupaciones: OcupacionCanaleta[] = gabinete.canaletas.map((can) => {
 		const util = can.ancho * can.alto;
 		const ocupada = areaEnCanaleta.get(can.id) ?? 0;
 		const ocupacion = ocupada / (util * opciones.ocupacionMaxCanaleta);
 		const excedida = ocupacion > 1;
 		if (excedida) {
-			avisos.push(`Canaleta ${can.id} sobrepasa el llenado recomendado (${Math.round(ocupacion * 100)} %)`);
+			avisos.push(`Estimación de canaleta ${can.id} supera el criterio legacy (${Math.round(ocupacion * 100)} %); verificar diámetro exterior, sección útil y tendido real`);
 		}
-		return { canaletaId: can.id, seccionOcupadaMm2: ocupada, seccionUtilMm2: util, ocupacion, excedida };
+		return { canaletaId: can.id, seccionOcupadaMm2: ocupada, seccionUtilMm2: util, ocupacion, excedida,
+			diametrosDeclarados: declaradosEnCanaleta.get(can.id) ?? 0,
+			diametrosEstimados: estimadosEnCanaleta.get(can.id) ?? 0 };
 	});
 
 	return { rutas, ocupaciones, avisos };

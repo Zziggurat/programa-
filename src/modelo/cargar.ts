@@ -1235,6 +1235,15 @@ function leerConductores(
 			&& c.fisica.politicaLongitudElectrica !== 'RUTA_XYZ') {
 			throw new ArchivoInvalido(`Cable ${c.id}: política de longitud eléctrica desconocida; no se sustituyó por la política legacy.`);
 		}
+		if (esObjeto(c.fisica)) for (const [campo, maximo] of [
+			['diametroExteriorMm', 200], ['radioMinimoCurvaturaMm', 5000],
+		] as const) {
+			const valor = c.fisica[campo];
+			if (valor !== undefined && (typeof valor !== 'number' || !Number.isFinite(valor)
+				|| valor <= 0 || valor > maximo)) {
+				throw new ArchivoInvalido(`Cable ${c.id}: ${campo} inválido; no se sustituyó por una estimación.`);
+			}
+		}
 		let rutaFisica: Conductor['rutaFisica'];
 		if (c.rutaFisica !== undefined) {
 			if (version < 3) throw new ArchivoInvalido(`Cable ${c.id}: ruta M6 en un archivo anterior a la versión 3.`);

@@ -203,9 +203,8 @@ export function seccionPE(seccionFaseMm2: number): number {
 }
 
 /**
- * Ocupación de una canaleta en TANTO POR UNO: qué fracción de su sección útil llenan los
- * conductores que van por dentro. Se cuenta el diámetro EXTERIOR del conductor aislado
- * (aprox. sección + aislante) y se admite el llenado máximo que fije el proyecto.
+ * Estimación legacy de ocupación en TANTO POR UNO a partir de sección de cobre y un
+ * multiplicador supuesto de aislación. No es diámetro exterior declarado ni packing verificado.
  */
 export function ocupacionCanaleta(datos: {
 	anchoMm: number;
@@ -220,8 +219,8 @@ export function ocupacionCanaleta(datos: {
 }
 
 /**
- * Área (mm²) que ocupa de verdad un conductor aislado: el cobre más la aislación. Regla
- * práctica de taller: el diámetro exterior es del orden de 2,4× el diámetro del cobre.
+ * Área aproximada de cubierta cuando solo se conoce la sección del cobre. El factor 2,4
+ * es un supuesto legacy, no ficha de producto ni dato válido para aprobar una canaleta.
  */
 export function areaConductorAisladoMm2(seccionCobreMm2: number): number {
 	const s = sano(seccionCobreMm2);
@@ -230,4 +229,10 @@ export function areaConductorAisladoMm2(seccionCobreMm2: number): number {
 	const dExterior = dCobre * 2.4;
 	const area = (Math.PI * dExterior * dExterior) / 4;
 	return Number.isFinite(area) ? area : 0;
+}
+
+/** Sección circular de cubierta declarada. Ni este área ni su suma prueban que cierre la tapa. */
+export function areaExteriorConductorMm2(diametroExteriorMm: number): number {
+	const d = sano(diametroExteriorMm);
+	return Number.isFinite(d) ? Math.PI * d * d / 4 : 0;
 }

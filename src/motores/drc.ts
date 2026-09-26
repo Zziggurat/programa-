@@ -31,7 +31,7 @@ export interface ContextoFisico {
 	/** Longitud real de cada conductor en mm, por id. Sin ella no se calcula la caída de tensión. */
 	longitudesMm?: Map<string, number>;
 	/**
-	 * Ocupación real de cada canaleta (la calcula el motor de ruteo con la geometría del cable).
+	 * Índice estimado de canaleta del ruteo legacy, no capacidad útil/fabricación verificada.
 	 * Se pasa el DATO, no el texto del aviso: filtrar mensajes por palabras es frágil y ya
 	 * coló una vez un aviso que no tenía nada que ver.
 	 */
@@ -588,16 +588,27 @@ export function verificarProyecto(
 		}
 	}
 
-	// R12 — Llenado de canaletas. Una canaleta demasiado llena no cierra la tapa y calienta los
-	// conductores; es de las primeras cosas que mira un inspector.
+	// R12 — Un índice alto exige revisar dimensiones interiores, diámetro y tendido. El índice
+	// legacy no demuestra por sí solo que una tapa cierre o que exista capacidad térmica.
 	for (const c of fisico.canaletas ?? []) {
 		if (!c.excedida) continue;
 		hallazgos.push({
 			regla: 'R12-canaleta-llena',
 			severidad: 'aviso',
-			mensaje: `La canaleta ${c.canaletaId} va al ${Math.round(c.ocupacion * 100)} % del llenado `
-				+ 'recomendado: usa una más ancha o reparte los conductores.',
+			mensaje: `La estimación de la canaleta ${c.canaletaId} alcanza el ${Math.round(c.ocupacion * 100)} % `
+				+ 'del criterio legacy. No equivale a ocupación verificada por diámetro exterior y sección útil.',
 		});
+	}
+
+	// R18 — Solo puede compararse un radio realmente declarado para los nodos M6 V2.
+	// Cumplir esta comparación parcial NO certifica salidas de borne, codos sin espacio ni puerta.
+	for (const c of proyecto.conductores) {
+		const minimo = c.fisica?.radioMinimoCurvaturaMm;
+		if (minimo === undefined || c.estadoRutaFisica === 'pendiente' || c.rutaFisica?.version !== 2
+			|| c.rutaFisica.radioMm >= minimo) continue;
+		hallazgos.push({ regla: 'R18-radio-manual-inferior', severidad: 'aviso', conductorId: c.id,
+			mensaje: `Cable ${c.id}: radio nominal de nodos M6 ${c.rutaFisica.radioMm} mm inferior `
+				+ `al mínimo declarado ${minimo} mm. Las demás curvas siguen sin verificar.` });
 	}
 
 	// R13 — Poder de corte contra la corriente de cortocircuito presunta.

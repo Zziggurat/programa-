@@ -15,6 +15,10 @@ export interface ConfiguracionFisicaConductor {
 	/** Ausente conserva la política V9. RUTA_XYZ adopta explícitamente la referencia espacial,
 	 * todavía estimada físicamente; DECLARADA exige longitudManualM y no usa un atajo 2D. */
 	politicaLongitudElectrica?: 'DECLARADA' | 'RUTA_XYZ';
+	/** Diámetro exterior de la cubierta, declarado por quien diseña (mm); no se deduce de la sección de cobre. */
+	diametroExteriorMm?: number;
+	/** Radio mínimo declarado de tendido (mm), no una homologación del cable ni de salidas de borne. */
+	radioMinimoCurvaturaMm?: number;
 	/** Temperatura a la que se calcula la resistencia. */
 	temperaturaC?: number;
 	/** Reactancia serie declarada, en ohm/km. Si falta no se inventa. */
@@ -163,11 +167,15 @@ export function leerFisicaConductor(v: unknown): ConfiguracionFisicaConductor | 
 		if (nombre && rho20OhmM !== undefined && alphaPorC !== undefined) materialPersonalizado = { nombre, rho20OhmM, alphaPorC };
 	}
 	if (material === 'PERSONALIZADO' && !materialPersonalizado) return undefined;
+	const diametroExteriorMm = numero(v.diametroExteriorMm, false);
+	const radioMinimoCurvaturaMm = numero(v.radioMinimoCurvaturaMm, false);
 	const salida: ConfiguracionFisicaConductor = {
 		material,
 		longitudManualM: numero(v.longitudManualM, false),
 		...(v.politicaLongitudElectrica === 'DECLARADA' || v.politicaLongitudElectrica === 'RUTA_XYZ'
 			? { politicaLongitudElectrica: v.politicaLongitudElectrica } : {}),
+		...(diametroExteriorMm !== undefined ? { diametroExteriorMm } : {}),
+		...(radioMinimoCurvaturaMm !== undefined ? { radioMinimoCurvaturaMm } : {}),
 		temperaturaC: typeof v.temperaturaC === 'number' && Number.isFinite(v.temperaturaC) ? v.temperaturaC : undefined,
 		xOhmPorKm: numero(v.xOhmPorKm), materialPersonalizado,
 	};
