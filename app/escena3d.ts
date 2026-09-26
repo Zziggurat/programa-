@@ -6,8 +6,11 @@
  * hacia el frente. Todo se centra en el origen para orbitar cómodo.
  */
 import * as THREE from 'three';
-import { Canaleta, Colocacion, Conductor, Dispositivo, EntradaCable, Gabinete, Proyecto } from '../src/modelo/tipos.js';
+import { Canaleta, Colocacion, Conductor, Dispositivo, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
+import { anclajeCampo, aparatosDeCampo, entradaDeCampo, xEntradaCampo,
+	yEntradasCampo } from '../src/modelo/entradas-campo.js';
+export { aparatosDeCampo, entradaDeCampo, yEntradasCampo } from '../src/modelo/entradas-campo.js';
 import { longitudPolilineaMm } from '../src/modelo/ruta-fisica.js';
 import { firmaFuentePlanRuta, geometriaDelPlanRuta, planDesdeRutaAutomatica,
 	type PlanRutaAutomaticaV1 } from '../src/modelo/plan-ruta-automatica.js';
@@ -2906,61 +2909,6 @@ export function corredoresLibresDe(proyecto: Proyecto): Banda[] {
 }
 
 /* ------------------- Entradas de campo (prensaestopas del gabinete) ------------------- */
-
-/** Aparatos que no están sobre la placa (acometida y aparatos de campo), en orden estable. */
-export function aparatosDeCampo(proyecto: Proyecto): Dispositivo[] {
-	const colocados = new Set(proyecto.gabinete?.colocaciones.map((c) => c.dispositivoId) ?? []);
-	return proyecto.dispositivos.filter((d) => !colocados.has(d.id));
-}
-
-/** Y (mm) de la regleta de entrada de campo: justo por debajo de la placa, dentro de la caja. */
-export function yEntradasCampo(proyecto: Proyecto): number {
-	return (proyecto.gabinete?.alto ?? 0) + 26;
-}
-
-/**
- * LA ENTRADA DECLARADA que le toca a un aparato de campo, si el proyecto declara alguna.
- *
- * Aquí está la frontera del tablero. Lo que entra por un prensaestopas ya no lo tiende este
- * programa: lo trae el instalador y muere en una bornera. Mientras el proyecto no diga por dónde
- * entra, se reparten a ojo a lo ancho de la envolvente —que es una propuesta razonable y no una
- * decisión—; en cuanto declara entradas, mandan las suyas, con su diámetro y su rosca, porque
- * dónde se taladra la chapa no lo decide un reparto automático.
- */
-export function entradaDeCampo(proyecto: Proyecto, dispositivoId: string): EntradaCable | undefined {
-	const abajo = (proyecto.gabinete?.entradas ?? []).filter((e) => e.cara === 'inferior');
-	if (!abajo.length) return undefined;
-	const campo = aparatosDeCampo(proyecto);
-	const i = campo.findIndex((d) => d.id === dispositivoId);
-	if (i < 0) return undefined;
-	// Más aparatos que entradas es el caso normal: por un prensaestopas de M25 pasa más de un
-	// cable. Se reparten en orden, y al que no le toca entrada propia comparte la última.
-	return abajo[Math.min(i, abajo.length - 1)];
-}
-
-/** Centro X (mm) del prensaestopas de un aparato de campo, repartidos a lo ancho del gabinete. */
-function xEntradaCampo(proyecto: Proyecto, dispositivoId: string): number | undefined {
-	const declarada = entradaDeCampo(proyecto, dispositivoId);
-	if (declarada) return Math.round(declarada.x);
-	const campo = aparatosDeCampo(proyecto);
-	const i = campo.findIndex((d) => d.id === dispositivoId);
-	if (i < 0) return undefined;
-	const ancho = proyecto.gabinete?.ancho ?? 0;
-	return Math.round(((i + 1) * ancho) / (campo.length + 1));
-}
-
-/** Anclaje de un borne de un aparato de campo: sobre su prensaestopas, un punto por borne. */
-function anclajeCampo(
-	proyecto: Proyecto,
-	d: Dispositivo,
-	borneId: string,
-): { x: number; y: number; z: number } | undefined {
-	const cx = xEntradaCampo(proyecto, d.id);
-	if (cx === undefined) return undefined;
-	const j = Math.max(0, d.bornes.findIndex((b) => b.id === borneId));
-	const n = Math.max(1, d.bornes.length);
-	return { x: Math.round(cx + (j - (n - 1) / 2) * 13), y: yEntradasCampo(proyecto), z: 30 };
-}
 
 /**
  * EL CUERPO DE UN APARATO DE CAMPO, colgado por debajo de su prensaestopas.

@@ -1,6 +1,7 @@
 import type { Proyecto } from './tipos.js';
 import { firmaFuentePlanRuta, geometriaDelPlanRuta } from './plan-ruta-automatica.js';
 import { cajaDeGabinete } from './proyecto.js';
+import { anclajeCampo, aparatosDeCampo } from './entradas-campo.js';
 
 export interface PuntoRutaDependiente { x: number; y: number }
 type Caja = { x0: number; x1: number; y0: number; y1: number };
@@ -57,10 +58,19 @@ export function firmaEntornoRutaAutomatica(
 
 /** Detecta solo planes activos afectados; el plan viejo se preserva para revisión/Undo. */
 export function idsDePlanesObsoletos(proyecto: Proyecto): string[] {
+	const campo = new Map(aparatosDeCampo(proyecto).map((d) => [d.id, d]));
+	const anclajeCampoCambiado = (ref: { dispositivoId: string; borneId: string },
+		anterior: readonly number[]): boolean => {
+		const d = campo.get(ref.dispositivoId);
+		if (!d) return false; // los montados se cubren por la firma local de huellas
+		const actual = anclajeCampo(proyecto, d, ref.borneId);
+		return !actual || actual.x !== anterior[0] || actual.y !== anterior[1] || actual.z !== anterior[2];
+	};
 	return proyecto.conductores.filter((c) => {
 		const plan = c.planRutaAutomatica;
 		return !!plan && c.estadoRutaFisica !== 'pendiente'
 			&& (plan.fuente !== firmaFuentePlanRuta(c)
+				|| anclajeCampoCambiado(c.de, plan.de) || anclajeCampoCambiado(c.a, plan.a)
 				|| plan.entorno !== firmaEntornoRutaAutomatica(proyecto,
 					geometriaDelPlanRuta(plan).puntos, plan.radio));
 	}).map((c) => c.id).sort();

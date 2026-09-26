@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
-import { asignarPlanesAutomaticos, prepararAsignacionPlanesAutomaticos, rutasDeCables } from '../app/escena3d.js';
+import { anclajeBorne, asignarPlanesAutomaticos, prepararAsignacionPlanesAutomaticos,
+	rutasDeCables } from '../app/escena3d.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
 import { leerRutaFisicaV1 } from '../src/modelo/ruta-fisica.js';
 import { geometriaDelPlanRuta, leerPlanRutaAutomaticaV1,
 	MAX_PUNTOS_PLAN_AUTO, planDesdeRutaAutomatica } from '../src/modelo/plan-ruta-automatica.js';
-import { firmaEntornoRutaAutomatica, marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
+import { firmaEntornoRutaAutomatica, idsDePlanesObsoletos,
+	marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
 import { conflictosDe, longitudCoincidente3D, longitudCoincidenteFueraDeBornes3D,
 	type Trazo } from '../app/colisiones-cables.js';
 
@@ -211,6 +213,31 @@ test('CAB-24: mover una canaleta marca planes afectados pendientes sin perder su
 	assert.equal(cargado.proyecto.conductores.find((c) => c.id === ids[0])!.fisica?.longitudManualM, 2.5,
 		'la medición declarada no se pierde aunque la ruta ya no se use');
 	assert.equal(rutasDeCables(cargado.proyecto).length, proyecto.conductores.length - ids.length);
+});
+
+test('CAB-24: un nuevo aparato de campo invalida anclajes redistribuidos antes de dibujar', () => {
+	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
+	const colocados = new Set(proyecto.gabinete!.colocaciones.map((c) => c.dispositivoId));
+	const campo = proyecto.dispositivos.find((d) => !colocados.has(d.id))!;
+	const afectado = proyecto.conductores.find((c) => c.de.dispositivoId === campo.id
+		|| c.a.dispositivoId === campo.id)!;
+	const borne = afectado.de.dispositivoId === campo.id ? afectado.de.borneId : afectado.a.borneId;
+	assert.ok(asignarPlanesAutomaticos(proyecto) > 0);
+	assert.doesNotThrow(() => cargarProyecto(JSON.stringify(proyecto)), 'el plan V4 anterior continúa legible');
+	const antes = anclajeBorne(proyecto, campo.id, borne)!;
+	proyecto.dispositivos.push({ ...structuredClone(campo), id: 'nuevo-campo' });
+	const despues = anclajeBorne(proyecto, campo.id, borne)!;
+	assert.notDeepEqual(despues, antes, 'la entrada implícita cambió de posición');
+	assert.ok(idsDePlanesObsoletos(proyecto).includes(afectado.id),
+		'el plan no puede seguir vigente con el extremo en el prensaestopas anterior');
+	assert.throws(() => cargarProyecto(JSON.stringify(proyecto)), /plan automático no corresponde/,
+		'un archivo con anclaje antiguo activo no se acepta como ruta vigente');
+	const pendientes = marcarPlanesObsoletosPendientes(proyecto);
+	assert.ok(pendientes.includes(afectado.id));
+	assert.equal(proyecto.conductores.find((c) => c.id === afectado.id)!.estadoRutaFisica, 'pendiente');
+	assert.doesNotThrow(() => cargarProyecto(JSON.stringify(proyecto)),
+		'el plan anterior queda como referencia pendiente al guardar');
+	assert.doesNotThrow(() => rutasDeCables(proyecto));
 });
 
 test('CAB-24: plan truncado, hostil o demasiado grande se rechaza sin rerouting', () => {

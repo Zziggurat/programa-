@@ -17,8 +17,8 @@ import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 import { leerComportamientoSimulacion, validarComportamiento } from './comportamiento.js';
 import { leerFisicaConductor, leerFisicaDispositivo } from './fisica.js';
 import { admiteRutaEnPlaca, leerRutaFisicaV1 } from './ruta-fisica.js';
-import { firmaFuentePlanRuta, geometriaDelPlanRuta, leerPlanRutaAutomaticaV1 } from './plan-ruta-automatica.js';
-import { firmaEntornoRutaAutomatica } from './dependencias-ruta.js';
+import { leerPlanRutaAutomaticaV1 } from './plan-ruta-automatica.js';
+import { idsDePlanesObsoletos } from './dependencias-ruta.js';
 import { leerConfiguracionIngenieria } from './ingenieria.js';
 import { validarConfiguracionTecnica } from '../datos-tecnicos/schema.js';
 import { leerMontajeDeclarado } from '../componentes/montaje.js';
@@ -362,15 +362,10 @@ export function cargarProyecto(json: string): ResultadoCarga {
 		dossier: leerAjustesDossier(bruto.dossier),
 		ingenieria: leerConfiguracionIngenieria(bruto.ingenieria),
 	};
-	for (const c of proyecto.conductores) {
-		const plan = c.planRutaAutomatica;
-		if (!plan) continue;
-		if (c.estadoRutaFisica !== 'pendiente' && (plan.fuente !== firmaFuentePlanRuta(c)
-			|| plan.entorno !== firmaEntornoRutaAutomatica(proyecto,
-				geometriaDelPlanRuta(plan).puntos, plan.radio))) {
-			throw new ArchivoInvalido(`Cable ${c.id}: el plan automático no corresponde al conductor o a su entorno; se conservó el archivo original.`);
-		}
-	}
+	const obsoleto = idsDePlanesObsoletos(proyecto)[0];
+	if (obsoleto) throw new ArchivoInvalido(
+		`Cable ${obsoleto}: el plan automático no corresponde al conductor o a su entorno; se conservó el archivo original.`,
+	);
 	if (bruto.datosTecnicos !== undefined) {
 		validarConfiguracionTecnica(bruto.datosTecnicos);
 		proyecto.datosTecnicos = structuredClone(bruto.datosTecnicos);
