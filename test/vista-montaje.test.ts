@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-	alternarAislamiento, alternarOcultacion, aparatoVisibleEnVista,
-	depurarVistaMontaje, revelarAparato, vistaMontajeInicial,
+	alternarAislamiento, alternarBloqueoEnVista, alternarOcultacion,
+	aparatoBloqueadoEnVista, aparatoVisibleEnVista, depurarVistaMontaje,
+	restaurarVisibilidad, revelarAparato, vistaMontajeInicial,
 } from '../src/modelo/vista-montaje.js';
 
 test('ocultar no cambia los IDs ni la vista anterior y se puede recuperar', () => {
@@ -43,4 +44,24 @@ test('seleccionar desde lista recupera una pieza oculta o aislada fuera', () => 
 	assert.equal(aparatoVisibleEnVista(recuperada, 'm1'), true);
 	const oculta = alternarOcultacion(vistaMontajeInicial(), 'm1');
 	assert.equal(aparatoVisibleEnVista(revelarAparato(oculta, 'm1'), 'm1'), true);
+});
+
+test('bloqueo de edición es reversible y no cambia selección ni visibilidad', () => {
+	const inicio = vistaMontajeInicial();
+	const bloqueada = alternarBloqueoEnVista(inicio, 'km1');
+	assert.equal(aparatoBloqueadoEnVista(inicio, 'km1'), false);
+	assert.equal(aparatoBloqueadoEnVista(bloqueada, 'km1'), true);
+	assert.equal(aparatoVisibleEnVista(bloqueada, 'km1'), true);
+	assert.equal(aparatoBloqueadoEnVista(alternarBloqueoEnVista(bloqueada, 'km1'), 'km1'), false);
+});
+
+test('ocultar, aislar y restaurar vista no desbloquean; la depuración elimina IDs viejos', () => {
+	const bloqueada = alternarBloqueoEnVista(vistaMontajeInicial(), 'km1');
+	const oculta = alternarOcultacion(bloqueada, 'km1');
+	const aislada = alternarAislamiento(oculta, ['q1']);
+	const restaurada = restaurarVisibilidad(aislada);
+	assert.equal(aparatoBloqueadoEnVista(restaurada, 'km1'), true);
+	assert.equal(aparatoVisibleEnVista(restaurada, 'km1'), true);
+	assert.equal(aparatoBloqueadoEnVista(depurarVistaMontaje(restaurada, new Set(['q1'])), 'km1'), false);
+	assert.equal(aparatoBloqueadoEnVista(vistaMontajeInicial(), 'km1'), false);
 });

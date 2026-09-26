@@ -1017,7 +1017,7 @@
 
 	/* Listas */
 	ul { list-style: none; margin: 0; padding: 0; }
-	#lista-dispositivos li { padding: 4px 8px; border-radius: 7px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+	#lista-dispositivos li { padding: 4px 8px; border-radius: 7px; cursor: pointer; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 	#lista-dispositivos li:hover { background: var(--panel-2); }
 	#lista-dispositivos li.seleccionado { background: #29405c; }
 	#lista-dispositivos .des { font-weight: 600; min-width: 40px; }
@@ -1027,6 +1027,7 @@
 	#lista-dispositivos .accion-vista { flex: none; font-size: 11px; padding: 3px 5px; }
 	#lista-dispositivos li.oculto { opacity: .58; }
 	#lista-dispositivos li.aislado { outline: 1px solid var(--acento); }
+	#lista-dispositivos li.bloqueado { border-left: 3px solid var(--acento); }
 	#vista-montaje-restaurar { width: 100%; margin-bottom: 5px; font-size: 11px; }
 	#lista-dispositivos .sin-coincidencias { cursor: default; color: var(--texto-suave); font-size: 12px; }
 	.hallazgo { padding: 3px 0 3px 14px; position: relative; color: var(--texto-suave); }

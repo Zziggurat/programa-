@@ -115,8 +115,9 @@ import { buscarColocacionPlaca, evaluarCompatibilidadMontaje } from '../src/comp
 import { planMedidasRiel } from '../src/motores/medidas-riel.js';
 import { planPosicionAparato } from '../src/motores/posicion-aparato.js';
 import {
-	alternarAislamiento, alternarOcultacion, aparatoVisibleEnVista,
-	depurarVistaMontaje, revelarAparato, vistaMontajeInicial, type VistaMontaje,
+	alternarAislamiento, alternarBloqueoEnVista, alternarOcultacion,
+	aparatoBloqueadoEnVista, aparatoVisibleEnVista, depurarVistaMontaje,
+	restaurarVisibilidad, revelarAparato, vistaMontajeInicial, type VistaMontaje,
 } from '../src/modelo/vista-montaje.js';
 import { abrirAdopcionComponente } from './ui-adopcion-componente.js';
 import type { PreparacionAdopcionComponente } from '../src/componentes/adopcion.js';
@@ -2077,6 +2078,7 @@ function pintarPanelComponenteFrontal(id: string): void {
 		const el = document.getElementById(`fp-${i}`) as HTMLInputElement | HTMLSelectElement | null;
 		if (!el) return;
 		el.onchange = () => {
+			if (!permiteEditarAparatos([id])) { pintarSeleccion(); return; }
 			if (!capturar()) return;
 			const bruto = el.value.trim();
 			const objeto = d as unknown as Record<string, unknown>;
@@ -2097,6 +2099,7 @@ function pintarPanelComponenteFrontal(id: string): void {
 	});
 	const mover = (cual: 'x' | 'y') => () => {
 		const el = $(`fp-${cual}`) as HTMLInputElement;
+		if (!permiteEditarAparatos([id])) { pintarSeleccion(); return; }
 		if (!capturar()) return;
 		const hoja = hojaDeLaPuerta();
 		const pieza = piezasFrontal().find((q) => q.clase === 'aparato' && q.id === id) ?? { ancho: 30, alto: 30 };
@@ -2486,6 +2489,7 @@ function duplicarFrontal(): void {
 
 function borrarFrontal(): void {
 	const piezas = seleccionFrontal();
+	if (!permiteEditarAparatos(piezas.filter(p => p.clase === 'aparato').map(p => p.id))) return;
 	if (!piezas.length || !capturar()) return;
 	const g = proyecto.gabinete!;
 	for (const p of piezas) {
@@ -3072,18 +3076,21 @@ function colocarComponentePersonalizado(
 /** La biblioteca conserva sus revisiones; un aparato ya colocado solo cambia por esta operación explícita. */
 async function revisarRevisionDeComponente(dispositivoId: string): Promise<void> {
 	if (!repositorioDocumentos || !sePuedeEditar()) return;
+	if (!permiteEditarAparatos([dispositivoId])) return;
 	if (panelSim.energizado()) throw new Error('Detén la simulación antes de adoptar una revisión de componente.');
 	const d = proyecto.dispositivos.find((x) => x.id === dispositivoId);
 	const origen = d?.componentePersonalizado;
 	if (!origen) throw new Error('Esta instancia ya no tiene procedencia personal.');
 	const repositorio = repositorioDocumentos;
 	const nueva = await repositorio.abrirComponente(origen.definicionId);
+	if (!permiteEditarAparatos([dispositivoId])) return;
 	if (nueva.revision <= origen.revision) throw new Error('No hay una revisión posterior que adoptar.');
 	const base = JSON.stringify(proyecto);
 	const documentoId = gestorDocumentos?.documentoActivo()?.id;
 	const aplicar = async (preparacion: PreparacionAdopcionComponente, sigueAbierta: () => boolean): Promise<void> => {
 		const comprobarVigencia = (): void => {
 			if (!sigueAbierta() || !sePuedeEditar()) throw new Error('La operación fue cancelada o el proyecto ya no es editable.');
+			if (!permiteEditarAparatos([dispositivoId])) throw new Error('La edición del aparato está bloqueada.');
 			if (panelSim.energizado()) throw new Error('Detén la simulación antes de adoptar una revisión.');
 			if (gestorDocumentos?.documentoActivo()?.id !== documentoId || JSON.stringify(proyecto) !== base) {
 				throw new Error('El tablero cambió mientras revisabas la adopción. Cierra y vuelve a abrir la vista previa.');
@@ -3376,12 +3383,14 @@ function descripcionEliminacion(plan: PlanEliminacionDispositivos): string {
 
 async function eliminarAparatos(ids: readonly string[]): Promise<void> {
 	if (!sePuedeEditar()) return; // antes de preguntar, también para ejemplos de solo lectura
+	if (!permiteEditarAparatos(ids)) return;
 	const documento = proyecto;
 	let plan: PlanEliminacionDispositivos;
 	try { plan = planificarEliminacionDispositivos(documento, ids); }
 	catch (error) { avisar(error instanceof Error ? error.message : 'No se pudo preparar la eliminación.', 'error'); return; }
 	const firmaInicial = JSON.stringify(documento);
 	if (!(await confirmar(descripcionEliminacion(plan), { ok: 'Eliminar aparato y dependencias', peligro: true }))) return;
+	if (!permiteEditarAparatos(ids)) return;
 	if (proyecto !== documento || JSON.stringify(documento) !== firmaInicial || !sePuedeEditar()) {
 		avisar('El proyecto cambió mientras confirmabas. Revisa de nuevo la eliminación.', 'info');
 		return;
@@ -3418,6 +3427,14 @@ function refrescarVistaMontaje(): void {
 	pintar();
 }
 
+/** El bloqueo de sesión impide editar un aparato incluso dentro de una selección múltiple. */
+function permiteEditarAparatos(ids: readonly string[]): boolean {
+	const bloqueado = ids.find(id => aparatoBloqueadoEnVista(vistaMontaje, id));
+	if (!bloqueado) return true;
+	avisar(`${bloqueado} tiene la edición bloqueada. Desbloquéalo en la lista de aparatos.`, 'info');
+	return false;
+}
+
 function pintarPaneles(): void {
 	($('nombre-proyecto') as HTMLInputElement).value = proyecto.nombre;
 
@@ -3451,6 +3468,7 @@ function pintarPaneles(): void {
 			d.id === idDispositivoSel() ? 'seleccionado' : '',
 			aparatoVisibleEnVista(vistaMontaje, d.id) ? '' : 'oculto',
 			vistaMontaje.aislados?.has(d.id) ? 'aislado' : '',
+			aparatoBloqueadoEnVista(vistaMontaje, d.id) ? 'bloqueado' : '',
 		].filter(Boolean).join(' ');
 		li.innerHTML = `<span class="des">${escaparHtml(d.designacion ?? d.id)}</span>`
 			+ `<span class="desc">${escaparHtml(d.descripcion ?? '')}</span>`
@@ -3497,6 +3515,21 @@ function pintarPaneles(): void {
 			refrescarVistaMontaje();
 		};
 		li.appendChild(aislar);
+		const bloqueo = document.createElement('button');
+		bloqueo.className = 'boton accion-vista accion-bloqueo';
+		bloqueo.type = 'button';
+		bloqueo.textContent = aparatoBloqueadoEnVista(vistaMontaje, d.id) ? 'Desbloquear' : 'Bloquear';
+		bloqueo.title = `${bloqueo.textContent} edición de ${d.designacion ?? d.id} en esta sesión`;
+		bloqueo.setAttribute('aria-label', bloqueo.title);
+		bloqueo.setAttribute('aria-pressed', String(aparatoBloqueadoEnVista(vistaMontaje, d.id)));
+		bloqueo.onclick = ev => {
+			ev.stopPropagation();
+			vistaMontaje = alternarBloqueoEnVista(vistaMontaje, d.id);
+			construirHandles();
+			pintarPaneles();
+			pintarSeleccion();
+		};
+		li.appendChild(bloqueo);
 		lista.appendChild(li);
 	}
 
@@ -3912,7 +3945,7 @@ function pintarFichaDeLoElegido(): void {
 		${bloqueAcciones}
 	`;
 	(panel.querySelector('#pos-aparato-aplicar') as HTMLButtonElement | null)?.addEventListener('click', () => {
-		if (!col || !sePuedeEditar()) return;
+		if (!col || !sePuedeEditar() || !permiteEditarAparatos([d.id])) return;
 		if (proyecto.gabinete?.colocaciones.find((c) => c.dispositivoId === d.id) !== col
 			|| proyecto.dispositivos.find((item) => item.id === d.id) !== d) {
 			avisar('La colocación cambió; selecciona de nuevo el aparato.', 'info'); return;
@@ -4032,6 +4065,7 @@ function pintarFichaDeLoElegido(): void {
 		 */
 		const aplicar = (cambio: () => void, rehacerModelo = false) => {
 			const enfocado = (document.activeElement as HTMLElement | null)?.id;
+			if (!permiteEditarAparatos([d.id])) { pintarSeleccion(); return; }
 			if (!capturar()) return;
 			cambio();
 			recalcular();
@@ -4185,6 +4219,7 @@ function pintarFichaDeLoElegido(): void {
 			const campo = panel.querySelector(`#${id}`) as HTMLInputElement | null;
 			if (!campo || !col) continue;
 			campo.onchange = () => {
+				if (!permiteEditarAparatos([d.id])) { pintarSeleccion(); return; }
 				const v = numeroDe(campo.value);
 				if (v === undefined || v < 5) { pintarSeleccion(); return; }
 				const antes = col[dim];
@@ -4232,6 +4267,7 @@ function pintarFichaDeLoElegido(): void {
 		 */
 		const moverEnZ = (paso: number) => {
 			if (!col) return;
+			if (!permiteEditarAparatos([d.id])) return;
 			if (!capturar()) return;
 			const z = col.z ?? 0;
 			const destino = paso > 0
@@ -4255,6 +4291,7 @@ function pintarFichaDeLoElegido(): void {
 			fila.innerHTML = `<span class="num">◉</span><span>${escaparHtml(b.id)}</span>
 				<button class="quitar" title="Quitar punto">✕</button>`;
 			(fila.querySelector('.quitar') as HTMLButtonElement).onclick = () => {
+				if (!permiteEditarAparatos([d.id])) return;
 				if (!capturar()) return;
 				d.bornes = d.bornes.filter((x) => x.id !== b.id);
 				proyecto.conductores = proyecto.conductores.filter(
@@ -4324,6 +4361,7 @@ function pintarPanelEstructura(s: Seleccion): void {
 	};
 	(panel.querySelector('#e-aplicar') as HTMLButtonElement).onclick = () => {
 		if (!sePuedeEditar()) return;
+		if (!can && !permiteEditarAparatos(aparatosDelRiel(s.id).map(c => c.dispositivoId))) return;
 		if (proyecto.gabinete !== g || (can ? !g.canaletas.includes(can) : !g.rieles.includes(obj as typeof g.rieles[number]))) {
 			avisar('La estructura cambió; selecciónala de nuevo antes de aplicar medidas.', 'info');
 			return;
@@ -4712,7 +4750,20 @@ function aplicarEstructuraCambio(): void {
 function aplicarEstructura(): void {
 	if (!sePuedeEditar()) return;
 	try {
-		mutarProyecto(aplicarEstructuraCambio);
+		mutarProyecto(() => {
+			const bloqueados = proyecto.gabinete?.colocaciones
+				.filter(c => aparatoBloqueadoEnVista(vistaMontaje, c.dispositivoId))
+				.map(c => ({ ...c })) ?? [];
+			aplicarEstructuraCambio();
+			for (const antes of bloqueados) {
+				const despues = proyecto.gabinete?.colocaciones.find(c => c.dispositivoId === antes.dispositivoId);
+				if (!despues || despues.x !== antes.x || despues.y !== antes.y
+					|| despues.ancho !== antes.ancho || despues.alto !== antes.alto
+					|| despues.rielId !== antes.rielId) {
+					throw new Error(`${antes.dispositivoId} tiene la edición bloqueada; no se movió la estructura.`);
+				}
+			}
+		});
 		pintarEstructura();
 		encuadrar();
 	} catch (fallo) {
@@ -5055,6 +5106,7 @@ function alinearSeleccionados(como: Alineacion): void {
 	const g = proyecto.gabinete;
 	const ids = aparatosSeleccionados();
 	if (!g || ids.length < 2) { avisar('Selecciona dos o más aparatos con Shift para alinearlos.', 'info'); return; }
+	if (!permiteEditarAparatos(ids)) return;
 	const cols = ids.map((id) => g.colocaciones.find((c) => c.dispositivoId === id)).filter((c): c is NonNullable<typeof c> => !!c);
 	if (cols.length < 2) return;
 	if (!capturar()) return;
@@ -5811,6 +5863,8 @@ function etiquetaSprite(texto: string, posicion: THREE.Vector3, colorFondo: stri
 function construirHandles(): void {
 	vaciar(escenario.handles);
 	if (!sel) return;
+	if (sel.tipo === 'dispositivo' && aparatoBloqueadoEnVista(vistaMontaje, sel.id)) return;
+	if (sel.tipo === 'riel' && aparatosDelRiel(sel.id).some(c => aparatoBloqueadoEnVista(vistaMontaje, c.dispositivoId))) return;
 	const g = proyecto.gabinete!;
 	const esfera = (p: THREE.Vector3, datos: DatosHandle, color = 0x4da3ff): void => {
 		const m = new THREE.Mesh(
@@ -6776,9 +6830,13 @@ function anadirPin(ev: PointerEvent): boolean {
 	const u = (p.x - col.x) / col.ancho;
 	const v = (p.y - col.y) / col.alto;
 	if (u < 0 || u > 1 || v < 0 || v > 1) return false; // clic fuera de la imagen
+	if (!permiteEditarAparatos([id])) return true;
 	void (async () => {
+		const documento = proyecto;
 		const etiqueta = await pedirTexto('Nombre del punto de conexión (p. ej. L1, GND, +24):', `P${d.bornes.length + 1}`);
 		if (etiqueta === null) return;
+		if (proyecto !== documento || !proyecto.dispositivos.includes(d)
+			|| !proyecto.gabinete?.colocaciones.includes(col) || !permiteEditarAparatos([id])) return;
 		if (!capturar()) return;
 		d.bornes.push({ id: etiqueta.trim() || `P${d.bornes.length + 1}`, u, v });
 		actualizarTodo();
@@ -6914,6 +6972,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 			clicPendiente = () => seleccionarFrontal(pieza.clase, pieza.id);
 			return;
 		}
+		if (!permiteEditarAparatos(seleccionFrontal().filter(p => p.clase === 'aparato').map(p => p.id))) return;
 		const p = puntoEnLaPuerta(ev);
 		if (!p) return;
 		// Se agarran TODAS las marcadas, cada una con su desfase: mover un grupo alineado no puede
@@ -6987,6 +7046,9 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 	// Tiradores (redimensionar estructura en Editor, ordenar cable en Trabajo): máxima prioridad.
 	const handle = handleBajoElPuntero(ev);
 	if (handle) {
+		if (handle.sel.tipo === 'dispositivo' && !permiteEditarAparatos([handle.sel.id])) return;
+		if (handle.sel.tipo === 'riel'
+			&& !permiteEditarAparatos(aparatosDelRiel(handle.sel.id).map(c => c.dispositivoId))) return;
 		handleArrastrado = handle;
 		arrastrando = true;
 		capturadoEsteArrastre = false;
@@ -7086,6 +7148,9 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 		return;
 	}
 	if (!elem || modo !== 'editor') return;
+	if (elem.tipo === 'dispositivo' && !permiteEditarAparatos(aparatosSeleccionados())) return;
+	if (elem.tipo === 'riel'
+		&& !permiteEditarAparatos(aparatosDelRiel(elem.id).map(c => c.dispositivoId))) return;
 
 	// Preparar arrastre (mover). Los aparatos normales y las imágenes/canaletas/rieles
 	// se pueden mover; los aparatos sin colocación no.
@@ -7626,6 +7691,7 @@ window.addEventListener('keydown', (ev) => {
 			const piezas = seleccionFrontal();
 			if (!piezas.length) return;
 			ev.preventDefault();
+			if (!permiteEditarAparatos(piezas.filter(p => p.clase === 'aparato').map(p => p.id))) return;
 			if (!capturar()) return;
 			const cuanto = ev.shiftKey ? 10 : 1;
 			const hoja = hojaDeLaPuerta();
@@ -7838,9 +7904,11 @@ function reconstruirDispositivoUno(id: string): void {
 
 async function eliminarEstructura(s: Seleccion): Promise<void> {
 	if (!sePuedeEditar()) return;
+	if (s.tipo === 'riel' && !permiteEditarAparatos(aparatosDelRiel(s.id).map(c => c.dispositivoId))) return;
 	const g = proyecto.gabinete!;
 	const nombre = s.tipo === 'canaleta' ? 'la canaleta' : 'el riel';
 	if (!(await confirmar(`¿Eliminar ${nombre} «${s.id}»?`, { ok: 'Eliminar', peligro: true }))) return;
+	if (s.tipo === 'riel' && !permiteEditarAparatos(aparatosDelRiel(s.id).map(c => c.dispositivoId))) return;
 	if (!capturar()) return;
 	if (s.tipo === 'canaleta') g.canaletas = g.canaletas.filter((c) => c.id !== s.id);
 	else g.rieles = g.rieles.filter((r) => r.id !== s.id);
@@ -9599,7 +9667,7 @@ encuadrar(); // ahora que el lienzo ya mide, el encuadre sale bien
 		if (ev.key === 'Escape') { buscador.value = ''; pintarPaneles(); buscador.blur(); }
 	};
 	($('vista-montaje-restaurar') as HTMLButtonElement).onclick = () => {
-		vistaMontaje = vistaMontajeInicial();
+		vistaMontaje = restaurarVisibilidad(vistaMontaje);
 		refrescarVistaMontaje();
 	};
 }
@@ -9940,6 +10008,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			visible: grupoDe(id)?.visible ?? false,
 			oculto: vistaMontaje.ocultos.has(id),
 			aislado: !!vistaMontaje.aislados?.has(id),
+			bloqueado: aparatoBloqueadoEnVista(vistaMontaje, id),
 			bornesVisibles: escenario.bornes.children.filter(m =>
 				m.userData.borneDispositivoId === id && m.visible).length,
 		}),

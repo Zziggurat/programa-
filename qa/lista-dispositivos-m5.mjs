@@ -1,7 +1,7 @@
 /** MON-04 parcial: encontrar, seleccionar y enfocar sin alterar el tablero. */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
-import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
+import { abrirNavegador, esperarEditorListo, servidorDeQA, trabajarSobreCopia } from './lib/entorno.mjs';
 
 let servidor, navegador, pagina;
 let casos = 0;
@@ -112,6 +112,49 @@ try {
 	comprobar('ocultación y aislamiento no mutan Proyecto ni crean historial',
 		await pagina.evaluate(() => JSON.stringify(window.qa.proyecto())) === antes
 		&& (await pagina.evaluate(() => window.qa.historial())).deshacer === 0);
+	assert.equal(await trabajarSobreCopia(pagina), true, 'el ejemplo debe producir una copia editable');
+	await pagina.locator('#buscar-dispositivos').fill('linea motor');
+	const filaEditable = pagina.locator('#lista-dispositivos li[data-dispositivo-id="km1"]');
+	const antesBloqueo = await pagina.evaluate(() => JSON.stringify(window.qa.proyecto()));
+	const undoBloqueo = (await pagina.evaluate(() => window.qa.historial())).deshacer;
+	await filaEditable.locator('.accion-bloqueo').click();
+	comprobar('Bloquear muestra estado accesible sin alterar proyecto ni historial',
+		await filaEditable.locator('.accion-bloqueo').getAttribute('aria-pressed') === 'true'
+		&& await pagina.evaluate(() => JSON.stringify(window.qa.proyecto())) === antesBloqueo
+		&& (await pagina.evaluate(() => window.qa.historial())).deshacer === undoBloqueo);
+	await filaEditable.locator('.des').click();
+	comprobar('el aparato bloqueado sigue seleccionable por identidad',
+		(await pagina.evaluate(() => window.qa.seleccion()))?.id === 'km1');
+	await pagina.locator('#pos-aparato-aplicar').waitFor({ state: 'visible' });
+	const posicion = await pagina.evaluate(() => window.qa.proyecto().gabinete.colocaciones.find(c => c.dispositivoId === 'km1'));
+	await pagina.locator('#pos-aparato-x').fill(String(posicion.x + 5));
+	await pagina.locator('#pos-aparato-aplicar').click();
+	comprobar('la posición numérica no mueve un aparato bloqueado ni crea Undo',
+		await pagina.evaluate(() => JSON.stringify(window.qa.proyecto())) === antesBloqueo
+		&& (await pagina.evaluate(() => window.qa.historial())).deshacer === undoBloqueo);
+	await pagina.locator('#dev-descripcion').fill('Cambio que debe rechazarse');
+	await pagina.locator('#dev-descripcion').press('Tab');
+	comprobar('la ficha tampoco modifica un aparato bloqueado',
+		await pagina.evaluate(() => JSON.stringify(window.qa.proyecto())) === antesBloqueo
+		&& (await pagina.evaluate(() => window.qa.historial())).deshacer === undoBloqueo);
+	await filaEditable.locator('.des').click();
+	await pagina.keyboard.press('Delete');
+	comprobar('Supr no borra un aparato bloqueado ni abre confirmación',
+		await pagina.evaluate(() => JSON.stringify(window.qa.proyecto())) === antesBloqueo
+		&& (await pagina.evaluate(() => window.qa.historial())).deshacer === undoBloqueo
+		&& await pagina.locator('#modal-dialogo').isHidden());
+	await filaEditable.locator('.accion-vista', { hasText: 'Ocultar' }).click();
+	await pagina.locator('#vista-montaje-restaurar').click();
+	comprobar('restaurar visibilidad no desbloquea la edición',
+		await filaEditable.locator('.accion-bloqueo').getAttribute('aria-pressed') === 'true');
+	await filaEditable.locator('.accion-bloqueo').click();
+	await filaEditable.locator('.des').click();
+	await pagina.locator('#pos-aparato-x').fill(String(posicion.x + 5));
+	await pagina.locator('#pos-aparato-aplicar').click();
+	comprobar('desbloquear habilita la misma edición real',
+		(await pagina.evaluate(() => window.qa.proyecto().gabinete.colocaciones.find(c => c.dispositivoId === 'km1').x)) === posicion.x + 5
+		&& (await pagina.evaluate(() => window.qa.historial())).deshacer === undoBloqueo + 1);
+	await filaEditable.locator('.accion-bloqueo').click();
 	await pagina.locator('#lista-dispositivos li .accion-vista', { hasText: 'Ocultar' }).click();
 	await pagina.locator('#btn-aprender').click();
 	await pagina.locator('#btn-ejemplos').click();
@@ -122,6 +165,8 @@ try {
 	comprobar('cambiar de tablero borra la ocultación temporal aunque reutilice KM1',
 		(await pagina.evaluate(() => window.qa.vistaDeAparato('km1'))).visible
 		&& await pagina.locator('#vista-montaje-restaurar').isHidden());
+	comprobar('cambiar de tablero también limpia el bloqueo temporal del mismo ID',
+		(await pagina.evaluate(() => window.qa.vistaDeAparato('km1'))).bloqueado === false);
 	if (await pagina.locator('#modal-explicacion').isVisible()) await pagina.locator('#btn-cerrar-explicacion').click();
 	await pagina.locator('#hta-seleccionar').click();
 	await pagina.locator('#buscar-dispositivos').fill('campo motor');
