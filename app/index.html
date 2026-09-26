@@ -1023,6 +1023,10 @@
 	#lista-dispositivos .des { font-weight: 600; min-width: 40px; }
 	#lista-dispositivos .desc { color: var(--texto-suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
 	#lista-dispositivos .foco { margin-left: auto; flex: none; min-width: 28px; }
+	#lista-dispositivos .accion-vista { flex: none; font-size: 11px; padding: 3px 5px; }
+	#lista-dispositivos li.oculto { opacity: .58; }
+	#lista-dispositivos li.aislado { outline: 1px solid var(--acento); }
+	#vista-montaje-restaurar { width: 100%; margin-bottom: 5px; font-size: 11px; }
 	#lista-dispositivos .sin-coincidencias { cursor: default; color: var(--texto-suave); font-size: 12px; }
 	.hallazgo { padding: 3px 0 3px 14px; position: relative; color: var(--texto-suave); }
 	.hallazgo::before { content: '●'; position: absolute; left: 0; font-size: 9px; top: 6px; }
@@ -1705,6 +1709,7 @@
 		<summary>Dispositivos <span id="contador-dispositivos"></span></summary>
 		<div class="contenido">
 			<input id="buscar-dispositivos" type="search" placeholder="Buscar por marcado, descripción o referencia…" aria-label="Buscar dispositivos del tablero" autocomplete="off">
+			<button class="boton" id="vista-montaje-restaurar" type="button" hidden>Mostrar todos los aparatos</button>
 			<ul id="lista-dispositivos"></ul>
 		</div>
 	</details>

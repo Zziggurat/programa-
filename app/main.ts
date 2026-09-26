@@ -110,6 +110,10 @@ import {
 import { buscarColocacionPlaca, evaluarCompatibilidadMontaje } from '../src/componentes/montaje.js';
 import { planMedidasRiel } from '../src/motores/medidas-riel.js';
 import { planPosicionAparato } from '../src/motores/posicion-aparato.js';
+import {
+	alternarAislamiento, alternarOcultacion, aparatoVisibleEnVista,
+	depurarVistaMontaje, revelarAparato, vistaMontajeInicial, type VistaMontaje,
+} from '../src/modelo/vista-montaje.js';
 import { abrirAdopcionComponente } from './ui-adopcion-componente.js';
 import type { PreparacionAdopcionComponente } from '../src/componentes/adopcion.js';
 import type { RepositorioProyectos } from '../src/persistencia/tipos.js';
@@ -252,6 +256,8 @@ function nombreDeError(e: unknown): string {
 
 const cargaInicial = cargarInicial();
 let proyecto: Proyecto = cargaInicial.proyecto;
+/** Solo afecta a la inspección de esta sesión: nunca se serializa con Proyecto. */
+let vistaMontaje: VistaMontaje = vistaMontajeInicial();
 let gestorDocumentos: GestorDocumentos | undefined;
 let panelDatosTecnicos: PanelDatosTecnicos | undefined;
 let repositorioDocumentos: RepositorioProyectos | undefined;
@@ -843,6 +849,7 @@ function avisarQueEsEjemplo(): void {
  */
 function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void, guardarAlFinal = true): void {
 	const anterior = proyecto;
+	const vistaAnterior = vistaMontaje;
 	const pilaAntes = [...pila];
 	const rehacerAntes = [...rehacerPila];
 	const congeladoAntes = guardadoCongelado;
@@ -869,10 +876,12 @@ function reemplazarProyecto(nuevo: Proyecto, ajustes?: () => void, guardarAlFina
 	};
 	try {
 		proyecto = nuevo;
+		vistaMontaje = vistaMontajeInicial();
 		pintarloTodo();
 		encuadrar();
 	} catch (fallo) {
 		proyecto = anterior;
+		vistaMontaje = vistaAnterior;
 		pila.length = 0; pila.push(...pilaAntes);
 		rehacerPila.length = 0; rehacerPila.push(...rehacerAntes);
 		actualizarBotonesHistorial();
@@ -1652,6 +1661,19 @@ function reconstruirBornes(): void {
 	const esferas = [...construirBornes(proyecto, escenario.aEscena).children];
 	if (esferas.length) escenario.bornes.add(...esferas); // add() sin argumentos da error en three
 	escenario.bornes.visible = bornesALaVista();
+	aplicarVistaMontaje();
+}
+
+/** Visibilidad de sesión sobre cuerpos y bornes de agarre; el circuito y cables no se tocan. */
+function aplicarVistaMontaje(): void {
+	for (const grupo of escenario.aparatos) {
+		const id = grupo.userData.dispositivoId as string | undefined;
+		if (id) grupo.visible = aparatoVisibleEnVista(vistaMontaje, id);
+	}
+	for (const esfera of escenario.bornes.children) {
+		const id = esfera.userData.borneDispositivoId as string | undefined;
+		if (id) esfera.visible = aparatoVisibleEnVista(vistaMontaje, id);
+	}
 }
 
 /**
@@ -1686,6 +1708,7 @@ function montarEscenario(): void {
 	escena.add(escenario.raiz);
 	reconstruirCables();
 	reconstruirBornes();
+	aplicarVistaMontaje();
 	reconstruirCotas();
 	// En Visualización se ve el tablero terminado: tapas de canaleta puestas y sin rótulos
 	// flotantes ni cotas (en la vida real no existen), para que se vea tal cual quedaría.
@@ -1787,6 +1810,7 @@ function piezaFrontalBajoElPuntero(ev: MouseEvent, tolerancia = 12): PiezaFronta
 	const piezas = piezasFrontal();
 	let mejor: { p: PiezaFrontal; d: number } | undefined;
 	for (const p of piezas) {
+		if (p.clase === 'aparato' && !aparatoVisibleEnVista(vistaMontaje, p.id)) continue;
 		const m = escenario.frontal.find((f) => f.id === p.id && f.tipo === p.clase);
 		if (!m) continue;
 		const c = m.grupo.getWorldPosition(new THREE.Vector3());
@@ -2103,6 +2127,7 @@ function rehacerComponenteFrontal(id: string): void {
 	escenario.frontal[i] = { tipo: 'aparato', id, grupo: nuevo };
 	const j = escenario.aparatos.findIndex((g) => g.userData.dispositivoId === id);
 	if (j >= 0) escenario.aparatos[j] = nuevo;
+	aplicarVistaMontaje();
 	if (espacio === 'frontal') resaltarFrontal();
 }
 
@@ -2722,6 +2747,7 @@ function ajustarSombras(): void {
 
 /** Recalcula, reconstruye y repinta todo (tras un cambio estructural). */
 function actualizarTodo(): void {
+	vistaMontaje = depurarVistaMontaje(vistaMontaje, new Set(proyecto.dispositivos.map(d => d.id)));
 	panelDatosTecnicos?.invalidar();
 	pintarChipEjemplo();   // el aviso de «esto es un ejemplo» sigue al tablero que haya abierto
 	recalcular();
@@ -2742,6 +2768,7 @@ function actualizarTodo(): void {
  * Quien mueva la ESTRUCTURA (caja, placa, rieles, canaletas) sigue usando `actualizarTodo()`.
  */
 function actualizarConservandoAparatos(): void {
+	vistaMontaje = depurarVistaMontaje(vistaMontaje, new Set(proyecto.dispositivos.map(d => d.id)));
 	recalcular();
 	reconstruirCables();
 	reconstruirBornes();
@@ -2754,6 +2781,8 @@ function actualizarConservandoAparatos(): void {
 
 /** Tras reemplazar el objeto `proyecto` (deshacer/rehacer/abrir/nuevo). */
 function trasCambiarProyecto(): void {
+	vistaMontaje = depurarVistaMontaje(vistaMontaje,
+		new Set(proyecto.dispositivos.map(d => d.id)));
 	const existe = sel && (sel.tipo === 'dispositivo'
 		? proyecto.dispositivos.some((d) => d.id === sel!.id)
 		: sel.tipo === 'canaleta'
@@ -3368,12 +3397,29 @@ async function eliminarDispositivo(id: string): Promise<void> {
 
 /* --------------------------- Paneles laterales --------------------------- */
 
+/** Reaplica un estado puramente visual sin crear historial ni recalcular el circuito. */
+function refrescarVistaMontaje(): void {
+	aplicarVistaMontaje();
+	seleccionExtra = seleccionExtra.filter(id => aparatoVisibleEnVista(vistaMontaje, id));
+	const seleccionVigente = sel?.tipo === 'dispositivo'
+		&& !aparatoVisibleEnVista(vistaMontaje, sel.id) ? undefined : sel;
+	if (!seleccionVigente) seleccionExtra = [];
+	construyendoSeleccion = true;
+	try { aplicarSeleccion(seleccionVigente); }
+	finally { construyendoSeleccion = false; }
+	pintar();
+}
+
 function pintarPaneles(): void {
 	($('nombre-proyecto') as HTMLInputElement).value = proyecto.nombre;
 
 	const lista = $('lista-dispositivos');
 	lista.innerHTML = '';
 	const internos = proyecto.dispositivos.filter((x) => !x.campo);
+	const restaurarVista = $('vista-montaje-restaurar') as HTMLButtonElement;
+	restaurarVista.hidden = !vistaMontaje.ocultos.size && !vistaMontaje.aislados;
+	restaurarVista.textContent = `Restaurar vista · ${vistaMontaje.ocultos.size} oculto(s)`
+		+ (vistaMontaje.aislados ? ' · aislamiento activo' : '');
 	const normalizar = (texto: string) => texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 	const terminos = normalizar(($('buscar-dispositivos') as HTMLInputElement).value).split(/\s+/).filter(Boolean);
 	const encontrados = internos.filter((d) => {
@@ -3390,7 +3436,11 @@ function pintarPaneles(): void {
 	}
 	for (const d of encontrados) {
 		const li = document.createElement('li');
-		li.className = d.id === idDispositivoSel() ? 'seleccionado' : '';
+		li.className = [
+			d.id === idDispositivoSel() ? 'seleccionado' : '',
+			aparatoVisibleEnVista(vistaMontaje, d.id) ? '' : 'oculto',
+			vistaMontaje.aislados?.has(d.id) ? 'aislado' : '',
+		].filter(Boolean).join(' ');
 		li.innerHTML = `<span class="des">${escaparHtml(d.designacion ?? d.id)}</span>`
 			+ `<span class="desc">${escaparHtml(d.descripcion ?? '')}</span>`;
 		li.onclick = () => seleccionar(d.id);
@@ -3406,6 +3456,35 @@ function pintarPaneles(): void {
 		foco.textContent = '⌕';
 		foco.onclick = (ev) => { ev.stopPropagation(); seleccionar(d.id); enfocarSeleccion(); };
 		li.appendChild(foco);
+		const ocultar = document.createElement('button');
+		ocultar.className = 'boton accion-vista';
+		ocultar.type = 'button';
+		ocultar.textContent = aparatoVisibleEnVista(vistaMontaje, d.id) ? 'Ocultar' : 'Mostrar';
+		ocultar.title = `${ocultar.textContent} ${d.designacion ?? d.id} solo en esta vista; los cables permanecen`;
+		ocultar.setAttribute('aria-label', ocultar.title);
+		ocultar.setAttribute('aria-pressed', String(!aparatoVisibleEnVista(vistaMontaje, d.id)));
+		ocultar.onclick = ev => {
+			ev.stopPropagation();
+			vistaMontaje = aparatoVisibleEnVista(vistaMontaje, d.id)
+				? alternarOcultacion(vistaMontaje, d.id) : revelarAparato(vistaMontaje, d.id);
+			refrescarVistaMontaje();
+		};
+		li.appendChild(ocultar);
+		const aislar = document.createElement('button');
+		aislar.className = 'boton accion-vista';
+		aislar.type = 'button';
+		aislar.textContent = 'Aislar';
+		aislar.title = `Aislar ${d.designacion ?? d.id} o la selección múltiple; los cables permanecen`;
+		aislar.setAttribute('aria-label', aislar.title);
+		aislar.setAttribute('aria-pressed', String(!!vistaMontaje.aislados?.has(d.id)));
+		aislar.onclick = ev => {
+			ev.stopPropagation();
+			const seleccionados = aparatosSeleccionados();
+			vistaMontaje = alternarAislamiento(vistaMontaje,
+				seleccionados.includes(d.id) ? seleccionados : [d.id]);
+			refrescarVistaMontaje();
+		};
+		li.appendChild(aislar);
 		lista.appendChild(li);
 	}
 
@@ -4926,6 +5005,10 @@ function resaltarSeleccionExtra(): void {
 }
 
 function aplicarSeleccion(nueva: Seleccion | undefined): void {
+	if (nueva?.tipo === 'dispositivo') {
+		const revelada = revelarAparato(vistaMontaje, nueva.id);
+		if (revelada !== vistaMontaje) { vistaMontaje = revelada; aplicarVistaMontaje(); }
+	}
 	// Cambiar de selección principal deshace la múltiple, salvo que se esté construyendo con Shift.
 	if (!construyendoSeleccion) seleccionExtra = [];
 	limpiarResaltado();
@@ -5036,6 +5119,7 @@ function elementoBajoElPuntero(ev: PointerEvent): Seleccion | undefined {
 	let distanciaCable = Infinity;
 	for (const i of impactos) {
 		const u = i.object.userData;
+		if (u.dispositivoId && !aparatoVisibleEnVista(vistaMontaje, u.dispositivoId as string)) continue;
 		/*
 		 * UN CABLE QUE PASA CLARAMENTE POR DELANTE SE QUEDA EL CLIC.
 		 *
@@ -5107,6 +5191,7 @@ function componentePuertaCerca(ev: MouseEvent): Seleccion | undefined {
 	let mejor: { id: string; d: number } | undefined;
 	for (const g of escenario.aparatos) {
 		if (g.userData.montaje !== 'puerta') continue;
+		if (!aparatoVisibleEnVista(vistaMontaje, g.userData.dispositivoId as string)) continue;
 		const centro = g.getWorldPosition(new THREE.Vector3());
 		const p = aPixeles(centro.x, centro.y, centro.z, px.ancho, px.alto);
 		if (p.w <= 0) continue;
@@ -5343,7 +5428,8 @@ function cableEstaDelante(ev: MouseEvent, golpe?: CableSenalado): boolean {
 	 * piloto —a dos centímetros de él y perfectamente a la vista— se declaraba tapado.
 	 */
 	const dAparato = raycaster.intersectObjects(escenario.raiz.children, true)
-		.find((i) => i.object.userData.dispositivoId && !i.object.userData.agarre)?.distance ?? Infinity;
+		.find((i) => i.object.userData.dispositivoId && !i.object.userData.agarre
+			&& aparatoVisibleEnVista(vistaMontaje, i.object.userData.dispositivoId as string))?.distance ?? Infinity;
 	return c.profundidad <= dAparato + 2;
 }
 
@@ -5376,7 +5462,9 @@ function borneBajoElPunteroCon(ev: MouseEvent): { borne: RefBorne; distancia: nu
 	const r = renderer.domElement.getBoundingClientRect();
 	puntero.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
 	raycaster.setFromCamera(puntero, camaraViva());
-	const h = raycaster.intersectObjects(escenario.bornes.children, true).find((i) => i.object.userData.borneId);
+	const h = raycaster.intersectObjects(escenario.bornes.children, true).find((i) =>
+		i.object.userData.borneId
+		&& aparatoVisibleEnVista(vistaMontaje, i.object.userData.borneDispositivoId as string));
 	if (!h) return undefined;
 	return {
 		borne: { dispositivoId: h.object.userData.borneDispositivoId, borneId: h.object.userData.borneId },
@@ -7506,6 +7594,7 @@ function reconstruirDispositivoUno(id: string): void {
 		escenario.aparatos.push(nuevo);
 		escenario.etiquetas.push(...etq);
 	}
+	aplicarVistaMontaje();
 }
 
 async function eliminarEstructura(s: Seleccion): Promise<void> {
@@ -8150,6 +8239,7 @@ function abrirTableroDesdeLaPlanta(nuevo: Proyecto, resumen: string): void {
 function abrirTableroDesdeLaPlantaSinPreguntar(nuevo: Proyecto, resumen: string): void {
 	if (!capturar()) return;
 	proyecto = nuevo;
+	vistaMontaje = vistaMontajeInicial();
 	numerarDispositivos(proyecto);
 	panelInicio.olvidarEjemplo();
 	aplicarSeleccion(undefined);
@@ -9269,6 +9359,10 @@ encuadrar(); // ahora que el lienzo ya mide, el encuadre sale bien
 		ev.stopPropagation();
 		if (ev.key === 'Escape') { buscador.value = ''; pintarPaneles(); buscador.blur(); }
 	};
+	($('vista-montaje-restaurar') as HTMLButtonElement).onclick = () => {
+		vistaMontaje = vistaMontajeInicial();
+		refrescarVistaMontaje();
+	};
 }
 
 pintarCatalogo();
@@ -9602,6 +9696,22 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Qué hay seleccionado ahora mismo (para distinguir a quién agarró un clic). */
 		seleccion: () => (sel ? { tipo: sel.tipo, id: sel.id } : undefined),
+		/** Solo observación: contrasta la vista 3D con el Proyecto, sin modificar ninguno. */
+		vistaDeAparato: (id: string) => ({
+			visible: grupoDe(id)?.visible ?? false,
+			oculto: vistaMontaje.ocultos.has(id),
+			aislado: !!vistaMontaje.aislados?.has(id),
+			bornesVisibles: escenario.bornes.children.filter(m =>
+				m.userData.borneDispositivoId === id && m.visible).length,
+		}),
+		centroEnPantallaAparato: (id: string) => {
+			const g = grupoDe(id);
+			return g ? aPantalla(new THREE.Box3().setFromObject(g).getCenter(new THREE.Vector3())) : undefined;
+		},
+		aparatoEnPixel: (x: number, y: number) => {
+			const s = elementoBajoElPuntero(new PointerEvent('pointermove', { clientX: x, clientY: y }));
+			return s?.tipo === 'dispositivo' ? s.id : undefined;
+		},
 		/** Selecciona un aparato, para poder abrir su ficha desde las pruebas. */
 		elegir: (id: string) => { seleccionar(id); },
 		/** Selecciona un aparato por id, como si se hubiera pinchado en él. */
