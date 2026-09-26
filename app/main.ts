@@ -99,7 +99,7 @@ import {
 	redondearEsquinas,
 } from './geometria-cables.js';
 import { longitudCoincidente3D } from './colisiones-cables.js';
-import { proponerAltaCable, type PropuestaAltaCable } from './propuesta-alta-cable.js';
+import { aplicarPropuestaAltaCable, proponerAltaCable, type PropuestaAltaCable } from './propuesta-alta-cable.js';
 import { admiteRutaEnPlaca, desplazarTramoInteriorM6, MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
@@ -1661,7 +1661,6 @@ async function aceptarAltaAutomatica(nuevo: Conductor, alFinalizar?: () => void)
 	if (altaAutomaticaEnCurso || !sePuedeEditar()) return;
 	altaAutomaticaEnCurso = true;
 	const sesion = proyecto;
-	const base = JSON.stringify(proyecto);
 	let vista: ReturnType<typeof vistaPreviaAltaCable> | undefined;
 	const dialogo = $('modal-dialogo');
 	try {
@@ -1681,13 +1680,14 @@ async function aceptarAltaAutomatica(nuevo: Conductor, alFinalizar?: () => void)
 			{ ok: conAvisos ? 'Aceptar ruta con avisos' : 'Aceptar ruta', detalle: vista.detalle },
 		);
 		if (!aceptada) return;
-		if (proyecto !== sesion || JSON.stringify(proyecto) !== base) {
+		if (proyecto !== sesion) {
 			avisar('El tablero cambió mientras se revisaba el recorrido; no se creó el cable.', 'info');
 			return;
 		}
+		const documento = aplicarPropuestaAltaCable(proyecto, propuesta);
 		const aplicada = mutarProyecto(() => {
-			proyecto.conductores = propuesta.documento.conductores;
-			proyecto.version = propuesta.documento.version;
+			proyecto.conductores = documento.conductores;
+			proyecto.version = documento.version;
 		}, false, actualizarConservandoAparatos);
 		if (!aplicada) return;
 		avisar(conAvisos

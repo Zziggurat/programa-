@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
-import { proponerAltaCable } from '../app/propuesta-alta-cable.js';
+import { aplicarPropuestaAltaCable, proponerAltaCable } from '../app/propuesta-alta-cable.js';
 import { rutasDeCables } from '../app/escena3d.js';
 
 test('CAB-23: la propuesta de alta no modifica el tablero base y es reproducible', () => {
@@ -21,6 +21,18 @@ test('CAB-23: la propuesta de alta no modifica el tablero base y es reproducible
 		'la propuesta declara cuántas rutas legacy quedarán fijadas junto con el alta');
 	assert.ok(base.conductores.every((c) => !c.planRutaAutomatica));
 	assert.ok(rutasDeCables(primera.documento).some((r) => r.conductorId === nuevo.id));
+	const aceptada = aplicarPropuestaAltaCable(base, primera);
+	assert.deepEqual(aceptada, primera.documento);
+	assert.notEqual(aceptada, primera.documento, 'aceptar entrega un documento independiente del borrador');
+	assert.deepEqual(aplicarPropuestaAltaCable(base, primera), aceptada,
+		'repetir la operación sobre la misma base es determinista y no duplica conexiones');
+	assert.throws(() => aplicarPropuestaAltaCable(aceptada, primera), /cambió/,
+		'una propuesta consumida no puede incorporar dos veces el mismo conductor');
+	const otraBase = structuredClone(base);
+	otraBase.nombre = 'Cambio mientras se revisa';
+	assert.throws(() => aplicarPropuestaAltaCable(otraBase, primera), /cambió/,
+		'cualquier cambio de BASE invalida la propuesta ya calculada');
+	assert.equal(JSON.stringify(base), original, 'cancelar sigue dejando BASE y el historial intactos');
 });
 
 test('CAB-23: las altas densas avisan del contacto sin alterar rutas aceptadas', () => {

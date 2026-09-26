@@ -6,6 +6,8 @@ import {
 
 /** Un borrador aislado: calcularlo no incorpora el conductor ni toca planes del tablero base. */
 export interface PropuestaAltaCable {
+	/** Foto exacta del documento que autorizó calcular esta propuesta. */
+	firmaBase: string;
 	documento: Proyecto;
 	conductorId: string;
 	longitudReferenciaMm: number;
@@ -20,6 +22,7 @@ export function proponerAltaCable(base: Proyecto, nuevo: Conductor): PropuestaAl
 	if (base.conductores.some((c) => c.id === nuevo.id)) {
 		throw new Error(`Ya existe un conductor con el ID ${nuevo.id}.`);
 	}
+	const firmaBase = JSON.stringify(base);
 	const documento = structuredClone(base);
 	const planesAntes = new Set(base.conductores.filter((c) => c.planRutaAutomatica).map((c) => c.id));
 	// La foto de los recorridos actuales se prepara solo en el borrador. En el commit se
@@ -34,7 +37,7 @@ export function proponerAltaCable(base: Proyecto, nuevo: Conductor): PropuestaAl
 	const cable = documento.conductores.find((c) => c.id === nuevo.id)!;
 	const diagnostico = diagnosticoCables(documento);
 	return {
-		documento, conductorId: nuevo.id,
+		firmaBase, documento, conductorId: nuevo.id,
 		longitudReferenciaMm: largoDibujadoMm(documento, cable),
 		puntos: preparado[0].plan.puntosXYZ.length / 3,
 		contactos: diagnostico.conflictos.filter((v) => v.a === nuevo.id || v.b === nuevo.id).length,
@@ -42,4 +45,12 @@ export function proponerAltaCable(base: Proyecto, nuevo: Conductor): PropuestaAl
 		planesExistentesFijados: documento.conductores.filter((c) => c.id !== nuevo.id
 			&& !!c.planRutaAutomatica && !planesAntes.has(c.id)).length,
 	};
+}
+
+/** Aplica solo sobre la BASE exacta; devuelve una copia para no compartir el borrador con el editor. */
+export function aplicarPropuestaAltaCable(base: Proyecto, propuesta: PropuestaAltaCable): Proyecto {
+	if (JSON.stringify(base) !== propuesta.firmaBase) {
+		throw new Error('El tablero cambió mientras se revisaba el recorrido; la propuesta quedó obsoleta.');
+	}
+	return structuredClone(propuesta.documento);
 }
