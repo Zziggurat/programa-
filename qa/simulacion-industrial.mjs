@@ -8,6 +8,7 @@
  *   node qa/simulacion-industrial.mjs
  */
 import { chromium } from 'playwright-core';
+import assert from 'node:assert/strict';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -83,13 +84,41 @@ async function abrirEjemplo(titulo, nombreProyecto) {
 	const tarjeta = page.locator('.tarjeta-ejemplo', { hasText: titulo }).first();
 	if (!(await tarjeta.count())) throw new Error(`no aparece el ejemplo «${titulo}»`);
 	await tarjeta.getByRole('button', { name: /Abrir y estudiar/i }).click();
-	// Si el documento anterior necesitara confirmación, se acepta por la UI real.
-	await Promise.race([
-		page.locator('#modal-dialogo').waitFor({ state: 'visible', timeout: 800 }).then(() => true).catch(() => false),
-		page.waitForFunction((nombre) => window.qa.proyecto().nombre === nombre, nombreProyecto, { timeout: 800 }).then(() => true).catch(() => false),
-	]);
-	if (await page.locator('#modal-dialogo').isVisible().catch(() => false)) await clickId('dialogo-ok');
-	await page.waitForFunction((nombre) => window.qa.proyecto().nombre === nombre, nombreProyecto, { timeout: 30_000 });
+	// La confirmación puede aparecer después de los primeros 800 ms cuando el tablero tiene
+	// muchos cables. Esperar el resultado real evita perder el diálogo por una carrera del QA.
+	try {
+		await page.waitForFunction((nombre) => window.qa.proyecto().nombre === nombre
+			|| !document.getElementById('modal-dialogo')?.hidden, nombreProyecto, { timeout: 30_000 });
+	} catch (error) {
+		const estado = await page.evaluate(() => ({
+			proyecto: window.qa.proyecto().nombre,
+			modalEjemplos: !document.getElementById('modal-ejemplos')?.hidden,
+			dialogo: !document.getElementById('modal-dialogo')?.hidden,
+			mensaje: document.getElementById('dialogo-msg')?.textContent,
+			toast: document.getElementById('toast')?.textContent,
+			guardado: document.getElementById('estado-guardado')?.textContent,
+		}));
+		console.error(`Diagnóstico al abrir «${titulo}»: ${JSON.stringify(estado)}; errores JS: ${erroresJS.join(' | ')}`);
+		throw error;
+	}
+	if (await page.locator('#modal-dialogo').isVisible()) {
+		assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Tienes cambios sin guardar/);
+		await clickId('dialogo-ok');
+	}
+	try {
+		await page.waitForFunction((nombre) => window.qa.proyecto().nombre === nombre, nombreProyecto, { timeout: 30_000 });
+	} catch (error) {
+		const estado = await page.evaluate(() => ({
+			proyecto: window.qa.proyecto().nombre,
+			modalEjemplos: !document.getElementById('modal-ejemplos')?.hidden,
+			dialogo: !document.getElementById('modal-dialogo')?.hidden,
+			mensaje: document.getElementById('dialogo-msg')?.textContent,
+			toast: document.getElementById('toast')?.textContent,
+			guardado: document.getElementById('estado-guardado')?.textContent,
+		}));
+		console.error(`Diagnóstico tras confirmar «${titulo}»: ${JSON.stringify(estado)}; errores JS: ${erroresJS.join(' | ')}`);
+		throw error;
+	}
 	await cerrarSiVisible('#modal-explicacion', 'btn-cerrar-explicacion');
 	await clickId('modo-trabajo');
 	await page.waitForFunction(() => document.body.classList.contains('modo-trabajo'));
@@ -242,6 +271,12 @@ async function cablearPorPanel(deId, deBorne, aId, aBorne) {
 		return '';
 	}, [deBorne, aId, aBorne]);
 	if (problema) return problema;
+	await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad
+		|| !document.getElementById('modal-dialogo')?.hidden, antes, { timeout: 10_000 });
+	if (await page.locator('#modal-dialogo').isVisible()) {
+		assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
+		await page.locator('#dialogo-ok').click();
+	}
 	await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad, antes, { timeout: 10_000 });
 	return '';
 }
@@ -638,6 +673,25 @@ try {
 	comprobar('OFF→ON no conserva el valor manual de la sonda', (await qa('estadoSim')).length === 0,
 		JSON.stringify(await qa('estadoSim')));
 	await energizar(false);
+	const inicioFlushVfd = Date.now();
+	let limiteFlushVfd;
+	const documentoVfd = await Promise.race([
+		page.evaluate(async () => {
+			try { return await window.qa.esperarPersistencia(); }
+			catch (error) {
+				const causas = [];
+				for (let actual = error, i = 0; actual && i < 5; actual = actual.cause, i++) {
+					causas.push(actual.message ?? String(actual));
+				}
+				throw new Error(`El circuito VFD no se pudo guardar: ${causas.join(' -> ')}`);
+			}
+		}),
+		new Promise((_, reject) => { limiteFlushVfd = setTimeout(() => reject(new Error(
+			'El guardado del circuito VFD no terminó en 60 s antes de cambiar de ejemplo.')), 60_000); }),
+	]).finally(() => clearTimeout(limiteFlushVfd));
+	comprobar('el circuito VFD queda guardado antes de cambiar de ejemplo',
+		documentoVfd?.proyecto?.conductores?.length === (await qa('proyecto')).conductores.length,
+		`${documentoVfd?.proyecto?.conductores?.length ?? 'sin documento'} cables; ${(Date.now() - inicioFlushVfd) / 1000} s de flush`);
 
 	console.log('\n=== 5. Fixture V2: sobrecarga, térmico y rearme por la UI ===');
 	await abrirEjemplo('Fixture V2: motor, térmico y fallos', 'Fixture V2 — fallos de motor y relé térmico');
