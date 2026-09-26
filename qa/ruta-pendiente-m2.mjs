@@ -60,7 +60,7 @@ try {
 	await pagina.waitForFunction(() => window.qa.proyecto().nombre === 'QA ruta física pendiente M2');
 	const cargado = await proyecto();
 	comprobar('el archivo V2 conserva una conexión lógica y un cable físico',
-		cargado.version === 2 && cargado.conductores.length === 2
+		cargado.version === 3 && cargado.conductores.length === 2
 		&& cargado.conductores.find((c) => c.id === 'pendiente')?.estadoRutaFisica === 'pendiente');
 	comprobar('el 3D solo dibuja el conductor físicamente tendido',
 		await pagina.evaluate(() => window.qa.cablesDibujados()) === 1);
@@ -98,7 +98,7 @@ try {
 	await esperarEditorListo(pagina);
 	const reabierto = await proyecto();
 	comprobar('reabrir conserva conectividad, sección prevista y ausencia de ruta',
-		reabierto.version === 2 && reabierto.conductores.length === 2
+		reabierto.version === 3 && reabierto.conductores.length === 2
 		&& reabierto.conductores.find((c) => c.id === 'pendiente')?.seccion === 2.5
 		&& reabierto.conductores.find((c) => c.id === 'pendiente')?.estadoRutaFisica === 'pendiente'
 		&& await pagina.evaluate(() => window.qa.cablesDibujados()) === 1);

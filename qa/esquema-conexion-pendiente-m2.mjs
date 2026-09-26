@@ -107,7 +107,7 @@ try {
 	const creado = await estado();
 	const c = creado.proyecto.conductores[0];
 	comprobar('una identidad eléctrica entre dos hojas, sin sección/color/ruta/metros',
-		creado.proyecto.version === 2 && creado.proyecto.conductores.length === 1
+		creado.proyecto.version === 3 && creado.proyecto.conductores.length === 1
 		&& c.estadoRutaFisica === 'pendiente' && c.seccion === undefined && c.color === undefined
 		&& c.trazado === undefined && c.fisica === undefined && creado.cables3d === 0
 		&& creado.historial.deshacer === base.historial.deshacer + 1);
