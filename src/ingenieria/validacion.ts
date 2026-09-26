@@ -52,6 +52,7 @@ export interface ResultadoReglaIngenieria {
 export interface EngineeringIssue extends ResultadoReglaIngenieria { id: string }
 
 export interface ContextoValidacionIngenieria {
+	referenciasManualesMm?: ReadonlyMap<string, number>;
 	prospectiva?: ReadonlyMap<string, ResultadoProspectivaProteccion>;
 	tecnica?: ResultadoProyectoTecnico;
 	proyecto: Proyecto;
@@ -168,6 +169,7 @@ export const REGLA_TOPOLOGIA_CIRCUITOS: EngineeringRule = {
 };
 
 export function validarIngenieria(entrada: {
+	referenciasManualesMm?: ReadonlyMap<string, number>;
 	prospectiva?: ReadonlyMap<string, ResultadoProspectivaProteccion>;
 	tecnica?: ResultadoProyectoTecnico;
 	proyecto: Proyecto;
@@ -176,7 +178,9 @@ export function validarIngenieria(entrada: {
 	reglas?: readonly EngineeringRule[];
 }): ResultadoValidacionIngenieria {
 	const circuitos = entrada.circuitos ?? descubrirCircuitos(entrada.proyecto).circuitos;
-	const contexto: ContextoValidacionIngenieria = { proyecto: entrada.proyecto, circuitos, fisica: entrada.fisica, tecnica: entrada.tecnica, prospectiva: entrada.prospectiva };
+	const contexto: ContextoValidacionIngenieria = { proyecto: entrada.proyecto, circuitos,
+		fisica: entrada.fisica, tecnica: entrada.tecnica, prospectiva: entrada.prospectiva,
+		referenciasManualesMm: entrada.referenciasManualesMm };
 	const reglas = [...(entrada.reglas ?? [REGLA_TOPOLOGIA_CIRCUITOS])]
 		.sort((a, b) => a.code.localeCompare(b.code) || a.scope.localeCompare(b.scope));
 	const bloqueados = [...(entrada.tecnica?.problemas ?? []).map(p => ({ id: p.entidadId, campo: undefined as string | undefined, motivo: p.motivo })),

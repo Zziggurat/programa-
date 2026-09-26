@@ -45,6 +45,7 @@ export function ejecutarIngenieria(entrada: {
 	const fisica = simularFisicaProyecto(proyecto, entrada.contextoFisico);
 	const prospectiva = proyecto.datosTecnicos ? analizarProspectivaProtecciones(proyecto, entrada.contextoFisico) : undefined;
 	const validacion = validarIngenieria({ proyecto, circuitos, fisica, tecnica, prospectiva,
+		referenciasManualesMm: entrada.contextoFisico?.referenciasManualesMm,
 		reglas: entrada.reglas ?? REGLAS_INGENIERIA_V7 });
 	const potencia = resumirPotenciaIngenieria({ proyecto, circuitos, fisica });
 	return { circuitos, fisica, validacion, potencia, tecnica, prospectiva };

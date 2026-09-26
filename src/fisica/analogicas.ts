@@ -1,6 +1,7 @@
 import type { Proyecto } from '../modelo/tipos.js';
 import type { OrigenDatoFisico } from '../modelo/fisica.js';
 import { calcularConductorFisico, resolverLongitudConductor } from './conductores.js';
+import { longitudRutaXYZMm } from '../modelo/longitud-ruta-xyz.js';
 
 export interface ResultadoLazoAnalogicoFisico {
 	fuenteId?: string;
@@ -60,7 +61,8 @@ export function resolverSenal010(datos: {
 }
 
 /** Menor resistencia declarada entre dos bornes, usando solo cables y puentes pasivos. */
-export function resistenciaCaminoAnalogico(proyecto: Proyecto, desde: string, hasta: string): {
+export function resistenciaCaminoAnalogico(proyecto: Proyecto, desde: string, hasta: string,
+	referenciasManualesMm?: ReadonlyMap<string, number>): {
 	ohm?: number; origen: OrigenDatoFisico;
 } {
 	const vecinos = new Map<string, { nodo: string; ohm: number; origen: OrigenDatoFisico }[]>();
@@ -69,8 +71,12 @@ export function resistenciaCaminoAnalogico(proyecto: Proyecto, desde: string, ha
 		const y = vecinos.get(b) ?? []; y.push({ nodo: a, ohm, origen }); vecinos.set(b, y);
 	};
 	for (const c of proyecto.conductores) {
+		if (c.estadoRutaFisica === 'pendiente') continue;
 		if (!(c.seccion && c.seccion > 0)) continue;
-		const longitud = resolverLongitudConductor(c.fisica);
+		const rutaXYZMm = c.fisica?.politicaLongitudElectrica === 'RUTA_XYZ'
+			? longitudRutaXYZMm(c, referenciasManualesMm) : undefined;
+		const longitud = resolverLongitudConductor(c.fisica,
+			rutaXYZMm === undefined ? undefined : rutaXYZMm / 1000);
 		if (longitud.metros <= 0) continue;
 		const datos = calcularConductorFisico({ seccionMm2: c.seccion, longitud, config: c.fisica });
 		unir(`${c.de.dispositivoId}::${c.de.borneId}`, `${c.a.dispositivoId}::${c.a.borneId}`, datos.rOhm, longitud.origen);

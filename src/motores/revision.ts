@@ -31,6 +31,7 @@
  * perezosos: no se calculan hasta que alguien los lee, y entonces se calculan una sola vez.
  */
 import { Proyecto } from '../modelo/tipos.js';
+import { longitudRutaXYZMm } from '../modelo/longitud-ruta-xyz.js';
 import { calcularPotenciales, ResultadoPotenciales } from './potenciales.js';
 import { numerarConductores, numerarDispositivos } from './numeracion.js';
 import { Hallazgo, Severidad, verificarProyecto } from './drc.js';
@@ -66,6 +67,8 @@ export interface OpcionesRevision {
 	 * por canaletas, también estimado y disponible solo para las rutas resueltas.
 	 */
 	longitudesMm?: Map<string, number>;
+	/** Medición M6 del mismo snapshot 3D; solo se adopta con política explícita RUTA_XYZ. */
+	referenciasManualesMm?: ReadonlyMap<string, number>;
 	/** Montaje del armario para el balance térmico, si se quiere forzar. */
 	montaje?: Montaje;
 	/** Columnas por hoja del esquema montado, si se quiere forzar. */
@@ -78,7 +81,7 @@ export interface ResumenRevision {
 	potenciales: number;
 	errores: number;
 	avisos: number;
-	/** Suma de las longitudes ruteadas dentro del gabinete, en mm. */
+	/** Suma 2D legacy estimada; excluye referencias XYZ que no son ese recorrido. */
 	longitudCableMm: number;
 	sincronizado: boolean;
 }
@@ -87,6 +90,8 @@ export interface RevisionTablero {
 	proyecto: Proyecto;
 	potenciales: ResultadoPotenciales;
 	ruteo: ResultadoRuteo;
+	/** Metros eléctricos efectivos usados por el DRC en este snapshot, no metraje de corte. */
+	longitudesElectricasMm: ReadonlyMap<string, number>;
 	/** Verificación eléctrica MÁS los hallazgos físicos de la sincronización, ya ordenados. */
 	hallazgos: Hallazgo[];
 	hojasEsquema: HojaEsq[];
@@ -146,7 +151,20 @@ export function revisarTablero(
 	// Se copia el mapa: el caller conserva su instantánea original para otros cálculos.
 	const pendientes = new Set(proyecto.conductores
 		.filter((c) => c.estadoRutaFisica === 'pendiente').map((c) => c.id));
+	const rutasXYZ = new Set(proyecto.conductores
+		.filter((c) => !!c.rutaFisica || !!c.planRutaAutomatica).map((c) => c.id));
 	const longitudesMm = new Map([...longitudesBase].filter(([id]) => !pendientes.has(id)));
+	for (const c of proyecto.conductores) {
+		if (pendientes.has(c.id)) continue;
+		if (c.fisica?.politicaLongitudElectrica === 'RUTA_XYZ') {
+			const mm = longitudRutaXYZMm(c, opciones.referenciasManualesMm);
+			if (mm === undefined) longitudesMm.delete(c.id); else longitudesMm.set(c.id, mm);
+		} else if (c.fisica?.politicaLongitudElectrica === 'DECLARADA') {
+			const m = c.fisica.longitudManualM;
+			if (m === undefined || !Number.isFinite(m) || m <= 0) longitudesMm.delete(c.id);
+			else longitudesMm.set(c.id, m * 1000);
+		}
+	}
 
 	const hallazgos = verificarProyecto(proyecto, potenciales, {
 		longitudesMm,
@@ -184,6 +202,7 @@ export function revisarTablero(
 		proyecto,
 		potenciales,
 		ruteo,
+		longitudesElectricasMm: longitudesMm,
 		hallazgos,
 		hojasEsquema,
 		posicionesEsquema,
@@ -194,7 +213,8 @@ export function revisarTablero(
 			potenciales: potenciales.potenciales.length,
 			errores: hallazgos.filter((h) => h.severidad === 'error').length,
 			avisos: hallazgos.filter((h) => h.severidad === 'aviso').length,
-			longitudCableMm: ruteo.rutas.reduce((suma, r) => suma + r.longitudMm, 0),
+			longitudCableMm: ruteo.rutas.reduce((suma, r) => suma
+				+ (pendientes.has(r.conductorId) || rutasXYZ.has(r.conductorId) ? 0 : r.longitudMm), 0),
 			sincronizado: sincronizacion.sincronizado,
 		},
 		get referencias() { return referencias(); },

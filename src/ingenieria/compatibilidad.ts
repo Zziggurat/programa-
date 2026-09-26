@@ -330,7 +330,8 @@ function fuentesAnalogicas(proyecto: Proyecto): FuenteAnalogica[] {
 	});
 }
 
-function resultadosAnalogicos(proyecto: Proyecto, fisica: Parameters<EngineeringRule['evaluate']>[0]['fisica']): Resultado[] {
+function resultadosAnalogicos(proyecto: Proyecto, fisica: Parameters<EngineeringRule['evaluate']>[0]['fisica'],
+	referenciasManualesMm?: ReadonlyMap<string, number>): Resultado[] {
 	const conectado = conectividadPasiva(proyecto); const fuentes = fuentesAnalogicas(proyecto); const salida: Resultado[] = [];
 	for (const plc of [...proyecto.dispositivos].sort((a, b) => a.id.localeCompare(b.id))) {
 		const p = resolverComportamiento(plc); if (p?.clase !== 'controlador') continue;
@@ -355,8 +356,8 @@ function resultadosAnalogicos(proyecto: Proyecto, fisica: Parameters<Engineering
 			let calidad: string | undefined;
 			if (!tipoIncompatible && !modoIncompatible) {
 				const configF = fuente.dispositivo.fisica?.analogica; const configI = plc.fisica?.analogica;
-				const ida = resistenciaCaminoAnalogico(proyecto, nodo(fuente.dispositivo.id, fuente.borne), nodo(plc.id, ai.borne));
-				const vuelta = resistenciaCaminoAnalogico(proyecto, nodo(fuente.dispositivo.id, fuente.comun), nodo(plc.id, ai.comun));
+				const ida = resistenciaCaminoAnalogico(proyecto, nodo(fuente.dispositivo.id, fuente.borne), nodo(plc.id, ai.borne), referenciasManualesMm);
+				const vuelta = resistenciaCaminoAnalogico(proyecto, nodo(fuente.dispositivo.id, fuente.comun), nodo(plc.id, ai.comun), referenciasManualesMm);
 				const rCable = ida.ohm !== undefined && vuelta.ohm !== undefined ? ida.ohm + vuelta.ohm : undefined;
 				if (ai.unidad === 'mA') {
 					if (configF?.tensionComplianceV === undefined) faltan.push('tensión de compliance');
@@ -441,7 +442,7 @@ export const REGLA_COMPATIBILIDAD_EQUIPOS: EngineeringRule = {
 			...resultadosDoBobina(contexto),
 			...resultadosTensionFrecuencia(contexto.proyecto, contexto.circuitos),
 			...resultadosMotorVfd(contexto.proyecto, contexto.circuitos, contexto.fisica),
-			...resultadosAnalogicos(contexto.proyecto, contexto.fisica),
+			...resultadosAnalogicos(contexto.proyecto, contexto.fisica, contexto.referenciasManualesMm),
 			...resultadosPe(contexto.proyecto),
 		];
 		return resultados.length ? resultados : [{ code: 'TS-EQUIPMENT-NONE', category: 'CIRCUIT', severity: 'INFO', status: 'NOT_APPLICABLE',

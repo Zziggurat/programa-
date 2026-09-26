@@ -1230,6 +1230,11 @@ function leerConductores(
 		if (c.planRutaAutomatica !== undefined && (c.rutaFisica !== undefined || c.trazado !== undefined)) {
 			throw new ArchivoInvalido(`Cable ${c.id}: plan automático y ruta manual simultáneos; no se eligió un escritor por ti.`);
 		}
+		if (esObjeto(c.fisica) && c.fisica.politicaLongitudElectrica !== undefined
+			&& c.fisica.politicaLongitudElectrica !== 'DECLARADA'
+			&& c.fisica.politicaLongitudElectrica !== 'RUTA_XYZ') {
+			throw new ArchivoInvalido(`Cable ${c.id}: política de longitud eléctrica desconocida; no se sustituyó por la política legacy.`);
+		}
 		let rutaFisica: Conductor['rutaFisica'];
 		if (c.rutaFisica !== undefined) {
 			if (version < 3) throw new ArchivoInvalido(`Cable ${c.id}: ruta M6 en un archivo anterior a la versión 3.`);

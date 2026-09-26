@@ -4,6 +4,7 @@ import { resolverProyectoTecnico } from '../datos-tecnicos/resolver.js';
 import { claveRevision, referenciaTecnica, type RevisionTecnica } from '../datos-tecnicos/tipos.js';
 import { verificarRevision } from '../datos-tecnicos/hash.js';
 import type { OrigenDatoFisico } from '../modelo/fisica.js';
+import { longitudRutaXYZMm } from '../modelo/longitud-ruta-xyz.js';
 import { calcularConductorFisico, resolverLongitudConductor, type ResultadoConductorFisico } from './conductores.js';
 import { complejo, magnitud, polar } from './complejos.js';
 import type { FallaFisicaRuntime, ResultadoFallaFisica } from './fallas.js';
@@ -29,6 +30,8 @@ const Z_CONTACTO_OHM = complejo(1e-6);
 export interface ContextoTopologiaFisica {
 	conexionesCerradas?: ReadonlyMap<string, readonly (readonly [string, string])[]>;
 	longitudesM?: ReadonlyMap<string, { metros: number; origen: OrigenDatoFisico }>;
+	/** Solo hace falta para M6 manual: el plan V4 se mide desde el propio Proyecto. */
+	referenciasManualesMm?: ReadonlyMap<string, number>;
 	seccionesMm2?: ReadonlyMap<string, number>;
 	fallas?: readonly FallaFisicaRuntime[];
 	bornesEnergizados?: ReadonlySet<string>;
@@ -416,14 +419,17 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		const de = proyecto.dispositivos.find((d) => d.id === c.de.dispositivoId)?.posicion;
 		const a = proyecto.dispositivos.find((d) => d.id === c.a.dispositivoId)?.posicion;
 		// Una ruta XYZ explícita no autoriza volver a estimar metros por la distancia entre
-		// dispositivos. Hasta CAB-27 solo una longitud declarada o un contexto inyectado
-		// puede alimentar la impedancia: el atajo 2D contradiría el recorrido que se ve.
+		// dispositivos. Solo RUTA_XYZ persistente adopta esa referencia como ESTIMADO;
+		// sin ella, el atajo 2D contradiría el recorrido que se ve.
 		const estimacionM = !rutaPendiente && !c.rutaFisica && de && a
 			? Math.hypot(de.x - a.x, de.y - a.y) / 1000 : undefined;
 		const declarada = rutaPendiente ? undefined : contexto.longitudesM?.get(c.id);
+		const rutaXYZMm = c.fisica?.politicaLongitudElectrica === 'RUTA_XYZ'
+			? longitudRutaXYZMm(c, contexto.referenciasManualesMm) : undefined;
 		const longitud = rutaPendiente
 			? { metros: 0, origen: 'NO_MODELADO' as const }
-			: declarada ?? resolverLongitudConductor(c.fisica, undefined, estimacionM);
+			: declarada ?? resolverLongitudConductor(c.fisica,
+				rutaXYZMm === undefined ? undefined : rutaXYZMm / 1000, estimacionM);
 		const seccionMm2 = contexto.seccionesMm2?.get(c.id) ?? c.seccion;
 		if (rutaPendiente || conductoresTecnicosPendientes.has(c.id) || !(seccionMm2 && seccionMm2 > 0) || longitud.metros <= 0) {
 			diagnosticos.push({ codigo: 'CONFIGURACION_INVALIDA', mensaje: conductoresTecnicosPendientes.has(c.id)

@@ -1666,6 +1666,7 @@ function leerEntradaAnalogica(
 	estado: EstadoTablero,
 	vivos: Map<string, BorneVivo>,
 	memoria?: MemoriaTiempos,
+	referenciasManualesMm?: ReadonlyMap<string, number>,
 ): EstadoEntradaAnalogica {
 	const rango = rangoDeReferencia(entrada)!;
 	const base = {
@@ -1705,8 +1706,8 @@ function leerEntradaAnalogica(
 	const ajusteEntrada = estado[`@fisica:analog:${controlador.id}`]?.ajustesAnalogicos;
 	const configEntrada = controlador.fisica?.analogica || ajusteEntrada
 		? { ...(controlador.fisica?.analogica ?? {}), ...(ajusteEntrada ?? {}) } : undefined;
-	const ida = resistenciaCaminoAnalogico(proyecto, `${fuente.dispositivo.id}::${fuente.borne}`, `${controlador.id}::${entrada.borne}`);
-	const vuelta = resistenciaCaminoAnalogico(proyecto, `${fuente.dispositivo.id}::${fuente.comun}`, `${controlador.id}::${entrada.comun}`);
+	const ida = resistenciaCaminoAnalogico(proyecto, `${fuente.dispositivo.id}::${fuente.borne}`, `${controlador.id}::${entrada.borne}`, referenciasManualesMm);
+	const vuelta = resistenciaCaminoAnalogico(proyecto, `${fuente.dispositivo.id}::${fuente.comun}`, `${controlador.id}::${entrada.comun}`, referenciasManualesMm);
 	const resistenciaCableOhm = ida.ohm !== undefined && vuelta.ohm !== undefined ? ida.ohm + vuelta.ohm : undefined;
 	if (senal.calidad === 'normal' && senal.valorElectrico !== undefined && resistenciaCableOhm !== undefined
 		&& senal.unidadElectrica === 'mA' && configEntrada?.burdenOhm !== undefined
@@ -1749,13 +1750,14 @@ function leerControlador(
 	estado: EstadoTablero,
 	salidasPrevias: Set<string>,
 	memoria?: MemoriaTiempos,
+	referenciasManualesMm?: ReadonlyMap<string, number>,
 ): LecturaControlador & { entradasAnalogicas: EstadoEntradaAnalogica[] } {
 	const activos = new Set<string>();
 	const valores: Record<string, number> = {};
 	const perfil = resolverComportamiento(d);
 	const entradasAnalogicas = perfil?.clase === 'controlador'
 		? (perfil.entradasAnalogicas ?? []).map((entrada) =>
-			leerEntradaAnalogica(d, entrada, proyecto, estado, vivos, memoria)) : [];
+			leerEntradaAnalogica(d, entrada, proyecto, estado, vivos, memoria, referenciasManualesMm)) : [];
 	const reservados = perfil?.clase === 'controlador' ? new Set([
 		...perfil.alimentacion.entradas, ...perfil.alimentacion.retornos,
 		...perfil.salidasDigitales.flatMap((s) => [s.borne, s.comun]),
@@ -1934,6 +1936,7 @@ export function simular(
 	estadoOriginal: EstadoTablero = {},
 	activosPrevios?: ReadonlySet<string>,
 	reloj?: { ahora: number; memoria: MemoriaTiempos; logica?: MemoriaLogica },
+	referenciasManualesMm?: ReadonlyMap<string, number>,
 ): ResultadoSimulacion {
 	proyecto = resolverProyectoTecnico(proyecto).proyecto;
 	const efectosFallasEquipo = resolverFallasEquipo(Object.values(estadoOriginal).flatMap((s) => s.fallasEquipos ?? []));
@@ -2088,7 +2091,7 @@ export function simular(
 			const capturas = [...programas].sort(([a], [b]) => a.localeCompare(b)).map(([id, programa]) => {
 				const d = aparatos.find((x) => x.id === id)!;
 				const lectura = leerControlador(d, proyecto, vivos, estado,
-					salidasDePrograma.get(id) ?? new Set(), reloj?.memoria);
+					salidasDePrograma.get(id) ?? new Set(), reloj?.memoria, referenciasManualesMm);
 				return { id, d, programa, alimentado: controladorAlimentado(d, vivos) && estado[id]?.fallo !== true,
 					imagen: imagenEntradasPLC(d, programa, lectura) };
 			});
@@ -2388,7 +2391,7 @@ export function simular(
 	for (const [id, programa] of programas) {
 		const d = aparatos.find((x) => x.id === id)!;
 		const lectura = leerControlador(d, proyecto, vivos, estado,
-			salidasDePrograma.get(id) ?? new Set(), reloj?.memoria);
+			salidasDePrograma.get(id) ?? new Set(), reloj?.memoria, referenciasManualesMm);
 		const mios = erroresPrograma.filter((e) => e.startsWith(`${d.designacion ?? d.id},`));
 		const runtime = runtimesPLC.get(id)!;
 		const reglasLegacy = programa.compilado.legacy?.reglas ?? [];
@@ -2517,6 +2520,7 @@ export function simular(
 		motores: new Map(motores.map((m) => [m.dispositivoId, m])),
 		variadores: new Map(variadores.map((v) => [v.dispositivoId, v satisfies EstadoVfdParaFisica])),
 		longitudesM: longitudesFisicas, seccionesMm2: seccionesFisicas,
+		referenciasManualesMm,
 	};
 	let fisica = simularFisicaProyecto(proyecto, contextoFisico);
 	let recalcularMotores = false;

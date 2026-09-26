@@ -10,8 +10,11 @@ export type MaterialConductor = 'COBRE' | 'ALUMINIO' | 'PERSONALIZADO';
 
 export interface ConfiguracionFisicaConductor {
 	material?: MaterialConductor;
-	/** Longitud electrica decidida por el usuario. Tiene prioridad sobre una ruta estimada. */
+	/** Longitud eléctrica declarada: prioridad V9 salvo elección explícita RUTA_XYZ. */
 	longitudManualM?: number;
+	/** Ausente conserva la política V9. RUTA_XYZ adopta explícitamente la referencia espacial,
+	 * todavía estimada físicamente; DECLARADA exige longitudManualM y no usa un atajo 2D. */
+	politicaLongitudElectrica?: 'DECLARADA' | 'RUTA_XYZ';
 	/** Temperatura a la que se calcula la resistencia. */
 	temperaturaC?: number;
 	/** Reactancia serie declarada, en ohm/km. Si falta no se inventa. */
@@ -163,6 +166,8 @@ export function leerFisicaConductor(v: unknown): ConfiguracionFisicaConductor | 
 	const salida: ConfiguracionFisicaConductor = {
 		material,
 		longitudManualM: numero(v.longitudManualM, false),
+		...(v.politicaLongitudElectrica === 'DECLARADA' || v.politicaLongitudElectrica === 'RUTA_XYZ'
+			? { politicaLongitudElectrica: v.politicaLongitudElectrica } : {}),
 		temperaturaC: typeof v.temperaturaC === 'number' && Number.isFinite(v.temperaturaC) ? v.temperaturaC : undefined,
 		xOhmPorKm: numero(v.xOhmPorKm), materialPersonalizado,
 	};

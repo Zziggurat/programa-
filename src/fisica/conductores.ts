@@ -27,6 +27,16 @@ export function resolverLongitudConductor(
 	longitudRutaM?: number,
 	estimacionM?: number,
 ): LongitudFisica {
+	if (config?.politicaLongitudElectrica === 'RUTA_XYZ') {
+		return longitudRutaM !== undefined && Number.isFinite(longitudRutaM) && longitudRutaM > 0
+			? { metros: longitudRutaM, origen: 'ESTIMADO' }
+			: { metros: 0, origen: 'NO_MODELADO' };
+	}
+	if (config?.politicaLongitudElectrica === 'DECLARADA') {
+		return config.longitudManualM !== undefined
+			? { metros: positivo('longitud manual', config.longitudManualM), origen: 'CONFIGURADO' }
+			: { metros: 0, origen: 'NO_MODELADO' };
+	}
 	if (config?.longitudManualM !== undefined) return { metros: positivo('longitud manual', config.longitudManualM), origen: 'CONFIGURADO' };
 	if (longitudRutaM !== undefined && Number.isFinite(longitudRutaM) && longitudRutaM > 0) {
 		return { metros: longitudRutaM, origen: 'CALCULADO' };
