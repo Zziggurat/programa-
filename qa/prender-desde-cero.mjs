@@ -69,10 +69,10 @@ async function cablear(deId, deBorne, aId, aBorne) {
 	await page.mouse.click(p2.x, p2.y);
 	await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad
 		|| !document.getElementById('modal-dialogo')?.hidden, antes, { timeout: 10_000 });
-	if (await page.locator('#modal-dialogo').isVisible()) {
-		assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
-		await page.locator('#dialogo-ok').click();
-	}
+	assert.equal(await page.locator('#modal-dialogo').isVisible(), true);
+	assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
+	assert.equal(await page.locator('#dialogo-msg svg path').count(), 1);
+	await page.locator('#dialogo-ok').click();
 	await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad,
 		antes, { timeout: 10_000 });
 	const ahora = (await proyecto()).conductores.length;
@@ -112,12 +112,15 @@ async function cablearPorPanel(deId, deBorne, aId, aBorne) {
 	if (!puesto) {
 		await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad
 			|| !document.getElementById('modal-dialogo')?.hidden, antes, { timeout: 10_000 });
-		if (await page.locator('#modal-dialogo').isVisible()) {
-			assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
-			await page.locator('#dialogo-ok').click();
-		}
+		assert.equal(await page.locator('#modal-dialogo').isVisible(), true,
+			'un alta automática limpia también requiere revisar su ruta antes de aceptar');
+		assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
+		assert.equal(await page.locator('#dialogo-msg svg path').count(), 1);
+		assert.equal((await page.evaluate(() => window.qa.vistaPropuestaAlta())).visible, true);
+		await page.locator('#dialogo-ok').click();
 		await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad,
 			antes, { timeout: 10_000 });
+		assert.equal((await page.evaluate(() => window.qa.vistaPropuestaAlta())).visible, false);
 	}
 	const ahora = (await proyecto()).conductores.length;
 	return { ok: !puesto && ahora > antes, motivo: puesto || (ahora > antes ? '' : 'no se creó el cable') };

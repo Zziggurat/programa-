@@ -273,10 +273,11 @@ async function cablearPorPanel(deId, deBorne, aId, aBorne) {
 	if (problema) return problema;
 	await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad
 		|| !document.getElementById('modal-dialogo')?.hidden, antes, { timeout: 10_000 });
-	if (await page.locator('#modal-dialogo').isVisible()) {
-		assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
-		await page.locator('#dialogo-ok').click();
-	}
+	assert.equal(await page.locator('#modal-dialogo').isVisible(), true,
+		'un cable automático limpio también necesita aceptar su propuesta visible');
+	assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
+	assert.equal(await page.locator('#dialogo-msg svg path').count(), 1);
+	await page.locator('#dialogo-ok').click();
 	await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad, antes, { timeout: 10_000 });
 	return '';
 }

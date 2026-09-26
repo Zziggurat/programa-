@@ -22,6 +22,13 @@
 | M8 · UX integrada | PENDIENTE | Consolidar recorridos, no abrir subsistemas duplicados. |
 | M9 · cierre funcional | PENDIENTE | No iniciar hasta completar y verificar los flujos obligatorios. |
 
+## Último checkpoint CAB-23 — propuesta de cable visible, 2026-09-26
+
+- La conexión automática por formulario y por bornes ahora exige revisar la propuesta incluso cuando el diagnóstico no tiene avisos. Un documento borrador contiene el plan; la línea 3D y el SVG frontal muestran sus mismos puntos XYZ. Cancelar no incorpora el conductor ni los planes vecinos y limpia la línea, también al terminar el gesto 3D. La confirmación conserva la comprobación de base antes de una única operación Undo.
+- El diálogo identifica extremos, referencia espacial, avisos y límites no verificables; no confunde esa referencia con longitud de corte. En la captura del arranque directo el tablero y el preview permanecen visibles. No se ha hecho inspección humana exhaustiva de ocupación, radio ni fabricación.
+- TypeScript app/core, Node **1805/1805**, build QA **443 módulos**, `qa/localidad-planes-m6.mjs` **23/23** (última pasada 142,0 s), `qa/prender-desde-cero.mjs` con 13 cables y `qa/simulacion-industrial.mjs` **123/123** (310,6 s) verdes, 0 errores JavaScript. La QA de localidad se repitió después del último ajuste textual; la industrial y la de conexión desde cero se ejecutaron antes de ese ajuste textual, sobre el mismo comportamiento.
+- **CAB-23 parcial:** solo existe una propuesta automática por alta; faltan alternativas físicas seleccionables. CAB-24, M6, M9 y versión 1.0 permanecen sin aceptación integral. El siguiente paso es obtener alternativas del mismo motor de rutas sin cambiar planes aceptados ni presentar desplazamientos cosméticos como opciones físicas.
+
 ## Siguiente acción y recuperación
 
 1. R1: Worker inline evita bloqueos largos en mover aparatos y editar uniones, con Undo/cancelación, pero el reparto global tarda ~4,5 s por gesto. Revisar la experiencia mientras espera, la creación de cables y el hardware de referencia adicional; no confundir latencia host Playwright con listener real ni aceptar R1 por una sola GPU.

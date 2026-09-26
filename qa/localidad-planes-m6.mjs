@@ -74,6 +74,17 @@ try {
 	comprobar('el alta muestra trayecto, longitud y avisos antes de aceptarse',
 		/Propuesta para .*puntos.*referencia espacial.*Avisos:.*fabricabilidad no verificadas/s
 			.test(await pagina.locator('#modal-dialogo').innerText()));
+	const vista = await pagina.locator('#dialogo-msg .vista-propuesta-cable').evaluate((el) => ({
+		puntos: Number(el.dataset.puntos),
+		trazo: el.querySelector('svg path')?.getAttribute('d') ?? '',
+	}));
+	const trazo3d = await pagina.evaluate(() => window.qa.vistaPropuestaAlta());
+	comprobar('la propuesta muestra la misma ruta XYZ en el tablero y su proyección frontal',
+		vista.puntos >= 2 && vista.trazo.startsWith('M') && trazo3d.visible
+			&& trazo3d.puntos === vista.puntos);
+	if (process.env.CAPTURA_PREVIEW_CAB23) {
+		await pagina.screenshot({ path: process.env.CAPTURA_PREVIEW_CAB23 });
+	}
 	const rutasDurantePropuesta = await rutas();
 	comprobar('el preview no añade cable ni altera planes vigentes',
 		await pagina.evaluate(() => window.qa.proyecto().conductores.length === 28)
@@ -83,11 +94,15 @@ try {
 	comprobar('cancelar conserva proyecto y recorridos sin crear conexión',
 		await pagina.evaluate(() => window.qa.proyecto().conductores.length === 28)
 		&& Object.entries(reabierto).every(([id, ruta]) => firma(ruta) === firma(rutasTrasCancelar[id])));
+	comprobar('cancelar libera el trazo provisional sin dejar un cable seleccionable',
+		!(await pagina.evaluate(() => window.qa.vistaPropuestaAlta().visible)));
 	await pagina.locator('#btn-conectar').click();
 	await pagina.locator('#dialogo-ok').click();
 	comprobar('aceptar conserva visible el diagnóstico del plan',
 		/Recorrido de .* aceptado con \d+ aviso\(s\)/.test(await pagina.locator('#toast').textContent() ?? ''));
 	await pagina.waitForFunction(() => window.qa.proyecto().conductores.length === 29);
+	comprobar('aceptar retira el trazo provisional y deja el cable persistente',
+		!(await pagina.evaluate(() => window.qa.vistaPropuestaAlta().visible)));
 	const conNuevo = await pagina.evaluate(() => window.qa.proyecto());
 	const nuevo = conNuevo.conductores.find((c) => !fixture.conductores.some((original) => original.id === c.id));
 	assert.ok(nuevo, 'el formulario no creó un conductor identificable');
