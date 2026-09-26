@@ -169,21 +169,62 @@ interface Barra {
 	vistoEn: number;
 }
 
+interface ZonaBorne { centro: Punto3; radio: number }
+
+/** Trozos de un segmento que quedan fuera de las zonas legítimas del borne compartido. */
+function fueraDeZonas(p0: Punto3, p1: Punto3, zonas: readonly ZonaBorne[]): [Punto3, Punto3][] {
+	const v = resta(p1, p0);
+	const a = punto(v, v);
+	let intervalos: [number, number][] = [[0, 1]];
+	for (const { centro, radio } of zonas) {
+		const w = resta(p0, centro);
+		if (a < 1e-12) {
+			if (punto(w, w) < radio * radio) return [];
+			continue;
+		}
+		const b = 2 * punto(v, w);
+		const discriminante = b * b - 4 * a * (punto(w, w) - radio * radio);
+		if (discriminante <= 0) continue;
+		const raiz = Math.sqrt(discriminante);
+		const entrada = Math.max(0, (-b - raiz) / (2 * a));
+		const salida = Math.min(1, (-b + raiz) / (2 * a));
+		if (salida <= entrada) continue;
+		const restantes: [number, number][] = [];
+		for (const [inicio, fin] of intervalos) {
+			if (entrada > inicio) restantes.push([inicio, Math.min(entrada, fin)]);
+			if (salida < fin) restantes.push([Math.max(salida, inicio), fin]);
+		}
+		intervalos = restantes.filter(([inicio, fin]) => fin - inicio > 1e-9);
+		if (!intervalos.length) return [];
+	}
+	const en = (t: number): Punto3 => ({ x: p0.x + v.x * t, y: p0.y + v.y * t, z: p0.z + v.z * t });
+	return intervalos.map(([inicio, fin]) => [en(inicio), en(fin)]);
+}
+
 /**
- * Si dos cables van al mismo tornillo, el contacto que se produce JUNTO a ese tornillo es
- * legítimo. Devuelve `true` cuando hay que perdonarlo.
+ * Un mínimo situado en el tornillo no perdona el resto de dos segmentos colineales largos.
+ * Solo se exime el volumen de salida compartido; fuera de él vuelve a medirse la distancia 3D.
  */
-function esElPropioBorne(a: Trazo, b: Trazo, donde: Punto3): boolean {
-	if (!a.bornes || !b.bornes || !a.extremos || !b.extremos) return false;
-	for (let i = 0; i < 2; i++) {
-		for (let j = 0; j < 2; j++) {
-			if (a.bornes[i] !== b.bornes[j]) continue;
-			const p = a.extremos[i];
-			const zona = Math.max(RADIO_BORNE, radioZonaSalidaBorne(a.radio), radioZonaSalidaBorne(b.radio));
-			if (Math.hypot(donde.x - p.x, donde.y - p.y, donde.z - p.z) <= zona) return true;
+function distanciaFueraDeBorneCompartido(
+	a: Trazo, b: Trazo, p0: Punto3, p1: Punto3, q0: Punto3, q1: Punto3,
+	medida: { d: number; donde: Punto3 },
+): { d: number; donde: Punto3 } | undefined {
+	if (!a.bornes || !b.bornes || !a.extremos || !b.extremos) return medida;
+	const zonas: ZonaBorne[] = [];
+	for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+		if (a.bornes[i] === b.bornes[j]) zonas.push({ centro: a.extremos[i],
+			radio: Math.max(RADIO_BORNE, radioZonaSalidaBorne(a.radio), radioZonaSalidaBorne(b.radio)) });
+	}
+	if (!zonas.some(({ centro, radio }) => Math.hypot(
+		medida.donde.x - centro.x, medida.donde.y - centro.y, medida.donde.z - centro.z) <= radio)) return medida;
+	let fuera: { d: number; donde: Punto3 } | undefined;
+	for (const [ap, aq] of fueraDeZonas(p0, p1, zonas)) {
+		for (const [bp, bq] of fueraDeZonas(q0, q1, zonas)) {
+			const candidato = distanciaSegmentos(ap, aq, bp, bq);
+			if (!fuera || candidato.d < fuera.d) fuera = candidato;
 		}
 	}
-	return false;
+	return fuera;
 }
 
 /**
@@ -305,11 +346,14 @@ export class RejillaCables {
 					if (barra.x0 - x1 > limite || x0 - barra.x1 > limite
 						|| barra.y0 - y1 > limite || y0 - barra.y1 > limite
 						|| barra.z0 - z1 > limite || z0 - barra.z1 > limite) continue;
-					const { d, donde } = distanciaSegmentos(p0, p1, barra.p0, barra.p1);
+					const original = distanciaSegmentos(p0, p1, barra.p0, barra.p1);
+					if (original.d - trazo.radio - barra.radio >= margen) continue;
+					const medida = distanciaFueraDeBorneCompartido(trazo, barra.trazo,
+						p0, p1, barra.p0, barra.p1, original);
+					if (!medida) continue;
+					const { d, donde } = medida;
 					const holgura = d - trazo.radio - barra.radio;
 					if (holgura >= margen) continue;
-					// Dos hilos que van al mismo tornillo se juntan ahí, y está bien que lo hagan.
-					if (esElPropioBorne(trazo, barra.trazo, donde)) continue;
 					if (!peor || holgura < peor.holgura) {
 						peor = { a: trazo.id, b: barra.id, holgura, distanciaEjes: d, donde };
 						if (holgura <= rendirse) return peor;   // ya no puede ganar: se deja de mirar
@@ -349,6 +393,20 @@ export interface Solido {
 	x0: number; x1: number;
 	y0: number; y1: number;
 	z0: number; z1: number;
+}
+
+/**
+ * Vista previa local: solo los dos tramos contiguos al nodo que se está moviendo.
+ * La rejilla contiene exclusivamente los demás conductores y se prepara al iniciar el gesto.
+ * Conservamos bornes y extremos para perdonar únicamente la zona física de un tornillo común.
+ */
+export function contactoEnTramosDelNodo(
+	rejilla: RejillaCables, trazo: Trazo, indiceNodo: number, margen: number,
+): Conflicto | undefined {
+	if (!Number.isInteger(indiceNodo) || indiceNodo < 0 || indiceNodo >= trazo.puntos.length) return undefined;
+	const desde = Math.max(0, indiceNodo - 1);
+	const hasta = Math.min(trazo.puntos.length, indiceNodo + 2);
+	return rejilla.peorConflicto({ ...trazo, puntos: trazo.puntos.slice(desde, hasta) }, margen);
 }
 
 const EJES_CAJA = ['x', 'y', 'z'] as const;

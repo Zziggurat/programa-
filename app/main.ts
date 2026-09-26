@@ -41,7 +41,7 @@ import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	adoptarRutasCalculadas, diagnosticoCables, diagnosticoRutaManual, firmaRuteo, largoDibujadoMm, liberar,
-	longitudesParaRevisionMm, rutasDeCables, salidasDeCable,
+	longitudesParaRevisionMm, rutasDeCables, salidasDeCable, trazosDeCables, HOLGURA_CABLE,
 	solidosDelTablero,
 	construirUnCable, contadores, radioCodo, radioDeCable, reconciliarCablesDibujados,
 	reiniciarContadores, rutaProvisional,
@@ -52,7 +52,8 @@ import {
 import RuteoWorker from './ruteo-worker.ts?worker&inline';
 import { proyectoParaRuteo } from './proyecto-ruteo.js';
 import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, invasionesDeCanaletas, RedCanaletas } from './canaletas-red.js';
-import { primerSolidoEnPunto, primerSolidoEnTramosDelNodo } from './colisiones-cables.js';
+import { contactoEnTramosDelNodo, primerSolidoEnPunto, primerSolidoEnTramosDelNodo,
+	RejillaCables } from './colisiones-cables.js';
 import { actualizarMazoPuerta, ajustesDeMazo, trazasDeMazo } from './mazo-puerta.js';
 import {
 	Bloqueo, distanciaASegmento, Eje, indiceDeInsercion, indiceDeInsercionM6, normalDeArrastre, P3,
@@ -5939,14 +5940,19 @@ let pendienteCable: { id: string; indice: number; x: number; y: number } | undef
 let antesArrastreCableM6: {
 	id: string; rehacer: string[]; sinExportar: boolean;
 	solidos: ReturnType<typeof solidosDelTablero>; propios: string[]; red: RedCanaletas;
+	contactos: RejillaCables;
 } | undefined;
 
 function respaldoArrastreCableM6(id: string): typeof antesArrastreCableM6 {
 	const c = proyecto.conductores.find((actual) => actual.id === id && !!actual.rutaFisica);
-	return c ? { id, rehacer: rehacerPila.slice(), sinExportar: hayCambiosSinExportar,
+	if (!c) return undefined;
+	const contactos = new RejillaCables();
+	for (const trazo of trazosDeCables(proyecto)) if (trazo.id !== id) contactos.anadir(trazo);
+	return { id, rehacer: rehacerPila.slice(), sinExportar: hayCambiosSinExportar,
 		solidos: solidosDelTablero(proyecto),
 		red: new RedCanaletas(proyecto.gabinete?.canaletas ?? []),
-		propios: [`aparato ${c.de.dispositivoId}`, `aparato ${c.a.dispositivoId}`] } : undefined;
+		contactos,
+		propios: [`aparato ${c.de.dispositivoId}`, `aparato ${c.a.dispositivoId}`] };
 }
 
 /** Escape/pointercancel descartan el preview M6, incluida la foto Undo y el vaciado de Redo. */
@@ -6279,8 +6285,9 @@ function medirEtapa<T>(etapa: string, fn: () => T): T {
  *
  * El editor manual y el ruteo automático son dos problemas distintos aunque compartan geometría.
  * Mientras el usuario tiene el ratón apretado hace falta una cosa: que el cable siga al cursor. Lo
- * demás —encontrarle sitio en las canaletas, reservar carriles, comprobarlo contra los otros
- * cincuenta y uno, pasar el DRC— es trabajo de cuando suelta.
+ * demás —encontrarle sitio en las canaletas, reservar carriles y pasar el DRC— es trabajo de
+ * cuando suelta. La proximidad a otros cables sí se advierte localmente con una rejilla preparada
+ * al empezar el gesto, sin volver a repartirlos.
  *
  * Antes no había esa separación y se pagaba entera en cada píxel de movimiento. Medido sobre el
  * estrella-triángulo: 5.215 ms por movimiento del ratón, 50 cables reconstruidos y 50
@@ -6315,6 +6322,15 @@ function previsualizarCable(conductorId: string, indiceNodo?: number): void {
 			const plastico = invasionesDeCanaletas(antesArrastreCableM6.red, proyecto.gabinete.canaletas,
 				[{ id: conductorId, radio: ruta.radio, puntos }])[0];
 			if (plastico) motivoInvalido = `el tramo atraviesa ${plastico.parte} de la canaleta ${plastico.canaleta}`;
+		}
+		if (!motivoInvalido) {
+			const contacto = contactoEnTramosDelNodo(antesArrastreCableM6.contactos, {
+				id: conductorId, radio: ruta.radio, puntos: ruta.puntos,
+				bornes: [`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
+					`${conductor.a.dispositivoId}:${conductor.a.borneId}`],
+				extremos: [ruta.de, ruta.a],
+			}, indiceRuta, HOLGURA_CABLE);
+			if (contacto) motivoInvalido = `el tramo se acerca a ${contacto.b} (holgura ${contacto.holgura.toFixed(1)} mm)`;
 		}
 	}
 	// La vista previa se reemplaza en cada movimiento. No conservar clones de selección
