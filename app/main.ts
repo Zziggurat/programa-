@@ -40,7 +40,7 @@ import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.
 import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
-	adoptarRutasCalculadas, diagnosticoCables, firmaRuteo, largoDibujadoMm, liberar,
+	adoptarRutasCalculadas, diagnosticoCables, diagnosticoRutaManual, firmaRuteo, largoDibujadoMm, liberar,
 	longitudesParaRevisionMm, rutasDeCables, salidasDeCable,
 	construirUnCable, contadores, radioCodo, radioDeCable, reconciliarCablesDibujados,
 	reiniciarContadores, rutaProvisional,
@@ -4397,6 +4397,7 @@ function pintarPanelCable(id: string): void {
 			</select>
 		</div>
 		${c.rutaFisica ? `<p class="sub">Ruta manual M6: los puntos XYZ son literales. La malla no separa ni recoloca esta ruta; las interferencias requieren revisión. Longitud de referencia espacial: ${Math.round(largoDibujadoMm(proyecto, c))} mm; no es longitud de corte verificada.</p>
+			<button class="boton" id="cbl-diagnostico-m6" type="button">Revisar interferencias</button><p class="sub" id="cbl-resultado-m6" role="status"></p>
 			<div class="cbl-nodos">${c.rutaFisica.nodos.map((n, i) => `<div class="fila-estructura"><span class="id">${escaparHtml(n.id)}</span>${(['x', 'y', 'z'] as const).map((eje) => `<label>${eje.toUpperCase()} <input type="number" step="0.1" min="-5000" max="5000" data-ruta-nodo="${i}" data-eje="${eje}" value="${n[eje]}"></label>`).join('')}</div>`).join('')}</div>` : ''}
 		<div class="botonera">
 			${adoptable ? '<button class="boton" id="cbl-adoptar-m6">Adoptar XYZ como ruta fija</button>' : ''}
@@ -4424,6 +4425,18 @@ function pintarPanelCable(id: string): void {
 		if (v) c.clase = v as ClaseConductor; else delete c.clase;
 		recalcular(); reconstruirCables(); pintarPaneles();
 	};
+	(panel.querySelector('#cbl-diagnostico-m6') as HTMLButtonElement | null)?.addEventListener('click', () => {
+		const resultado = panel.querySelector<HTMLElement>('#cbl-resultado-m6');
+		if (!resultado || !proyecto.conductores.some((actual) => actual.id === id && actual.rutaFisica)) return;
+		const d = diagnosticoRutaManual(proyecto, id);
+		const avisos = [
+			...(d.contacto ? [`Cercanía a ${d.contacto.b}: holgura ${d.contacto.holgura.toFixed(1)} mm`] : []),
+			...d.solidos.map((v) => `Invade ${v.b}: ${(-v.holgura).toFixed(1)} mm`),
+			...d.canaletas.map((v) => `Invade ${v.b}: ${(-v.holgura).toFixed(1)} mm`),
+		];
+		resultado.textContent = avisos.length ? `Peor aviso por categoría: ${avisos.join(' · ')}. La ruta se conservó; revisar fabricabilidad.`
+			: 'Sin interferencias detectadas por este diagnóstico. Radios y fabricabilidad aún no verificados.';
+	});
 	panel.querySelectorAll<HTMLInputElement>('[data-ruta-nodo][data-eje]').forEach((input) => {
 		input.onchange = () => {
 			const indice = Number(input.dataset.rutaNodo);

@@ -4,11 +4,12 @@ import { Mesh, TubeGeometry, Vector3 } from 'three';
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import { cargarProyecto, VERSION_FORMATO } from '../src/modelo/cargar.js';
 import { admiteRutaEnPlaca, leerRutaFisicaV1, longitudPolilineaMm, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
-import { construirUnCable, largoDibujadoMm, liberar, longitudesParaRevisionMm,
+import { construirUnCable, diagnosticoRutaManual, largoDibujadoMm, liberar, longitudesParaRevisionMm,
 	rutasDeCables, salidasDeCable } from '../app/escena3d.js';
 import { proyectarEnPolilinea } from '../app/edicion-cables.js';
 import { rutearConductores } from '../src/motores/ruteo.js';
 import { proyectarLongitudesDocumentales } from '../src/motores/longitudes-documentales.js';
+import { simularFisicaProyecto } from '../src/fisica/topologia-proyecto.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
 
 function legadoV9(): Proyecto {
@@ -71,6 +72,12 @@ test('CAB-02/09: ruta M6 es literal, estable al invertir arrays y no expulsa dos
 	assert.deepEqual(recargado.arreglos, []);
 	assert.deepEqual(datos(recargado.proyecto), rutas);
 	assert.equal(recargado.proyecto.conductores[0].rutaFisica?.nodos[0].z, 28);
+	const intacto = JSON.stringify(p.conductores);
+	const aviso = diagnosticoRutaManual(p, a.id);
+	assert.equal(aviso.contacto?.b, b.id,
+		'la coincidencia manual se informa, no se elimina ni se convierte en unión');
+	assert.equal(JSON.stringify(p.conductores), intacto,
+		'el diagnóstico jamás corrige ni desplaza la ruta manual');
 });
 
 test('CAB-26: la longitud M6 mide XYZ entre bornes y nodos, no la proyección XY', () => {
@@ -133,6 +140,14 @@ test('CAB-27 pendiente: medir una ruta no sustituye la longitud eléctrica decla
 	assert.equal(fila.longitudReferencia3DMm, largoDibujadoMm(p, c));
 	assert.equal(fila.longitudRutaMm, undefined);
 	assert.equal(fila.propuestaCorteMm, undefined);
+	const fuente = p.dispositivos.find((d) => d.id === c.de.dispositivoId)!;
+	fuente.fisica = { version: 1, fuente: { sistema: 'DC', tensionNominalV: 24,
+		referencia: fuente.bornes[1].id, fases: [{ borne: fuente.bornes[0].id, fase: 'POSITIVO' }] } };
+	const fisica = simularFisicaProyecto(p);
+	assert.equal(fisica.activo, true);
+	assert.equal(fisica.conductores.has(c.id), false,
+		'el solver no debe recuperar una falsa distancia recta para una ruta M6 sin política CAB-27');
+	assert.equal(fisica.red.ramas.get(`conductor:${c.id}`)?.origen, 'NO_MODELADO');
 });
 
 test('CAB-30: ruta hostil o contradictoria no se degrada silenciosamente a legacy', () => {

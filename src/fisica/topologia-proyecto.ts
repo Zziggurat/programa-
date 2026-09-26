@@ -415,7 +415,11 @@ export function simularFisicaProyecto(proyecto: Proyecto, contexto: ContextoTopo
 		const rutaPendiente = c.estadoRutaFisica === 'pendiente';
 		const de = proyecto.dispositivos.find((d) => d.id === c.de.dispositivoId)?.posicion;
 		const a = proyecto.dispositivos.find((d) => d.id === c.a.dispositivoId)?.posicion;
-		const estimacionM = !rutaPendiente && de && a ? Math.hypot(de.x - a.x, de.y - a.y) / 1000 : undefined;
+		// Una ruta XYZ explícita no autoriza volver a estimar metros por la distancia entre
+		// dispositivos. Hasta CAB-27 solo una longitud declarada o un contexto inyectado
+		// puede alimentar la impedancia: el atajo 2D contradiría el recorrido que se ve.
+		const estimacionM = !rutaPendiente && !c.rutaFisica && de && a
+			? Math.hypot(de.x - a.x, de.y - a.y) / 1000 : undefined;
 		const declarada = rutaPendiente ? undefined : contexto.longitudesM?.get(c.id);
 		const longitud = rutaPendiente
 			? { metros: 0, origen: 'NO_MODELADO' as const }

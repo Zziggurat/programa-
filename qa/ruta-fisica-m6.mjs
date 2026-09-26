@@ -20,6 +20,7 @@ const fixture = {
 	dispositivos: [
 		{ id: 'a', tipo: 'rele', designacion: '-K1', bornes: [{ id: '1' }, { id: '2' }] },
 		{ id: 'b', tipo: 'rele', designacion: '-K2', bornes: [{ id: '1' }, { id: '2' }] },
+		{ id: 'obstaculo', tipo: 'rele', designacion: '-K3', bornes: [{ id: '1' }, { id: '2' }] },
 	],
 	conductores: [
 		{ id: 'w1', de: { dispositivoId: 'a', borneId: '1' }, a: { dispositivoId: 'b', borneId: '1' },
@@ -31,6 +32,7 @@ const fixture = {
 	gabinete: { ancho: 500, alto: 300, rieles: [], canaletas: [], colocaciones: [
 		{ dispositivoId: 'a', x: 20, y: 35, ancho: 45, alto: 65 },
 		{ dispositivoId: 'b', x: 330, y: 35, ancho: 45, alto: 65 },
+		{ dispositivoId: 'obstaculo', x: 205, y: 110, ancho: 40, alto: 45 },
 	] },
 };
 
@@ -74,6 +76,11 @@ try {
 	comprobar('la geometría real atraviesa ambos nodos XYZ sin expulsión',
 		(await ruta()).some((p) => p.x === 130 && p.y === 130 && p.z === 35)
 		&& (await ruta()).some((p) => p.x === 260 && p.y === 130 && p.z === 35));
+	const rutaAntesDiagnostico = JSON.stringify(await ruta());
+	await pagina.locator('#cbl-diagnostico-m6').click();
+	comprobar('interferencia manual se informa sin mover ni bloquear el cable',
+		/Invade aparato obstaculo/.test(await pagina.locator('#cbl-resultado-m6').innerText())
+		&& JSON.stringify(await ruta()) === rutaAntesDiagnostico);
 	const x = pagina.locator('[data-ruta-nodo="0"][data-eje="x"]');
 	await x.fill('145'); await x.press('Tab');
 	await pagina.waitForFunction(() => window.qa.proyecto().conductores.find((c) => c.id === 'w1')?.rutaFisica?.nodos[0].x === 145);

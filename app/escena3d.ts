@@ -2613,6 +2613,31 @@ function curvaVisibleCable(
 	return segmentos;
 }
 
+/**
+ * CAB-10/11: diagnóstico puntual y bajo demanda de una ruta manual.
+ * Nunca modifica la ruta ni usa el resultado para expulsar nodos. Los contactos entre cables
+ * son avisos de revisión, no uniones eléctricas ni un veto de edición.
+ */
+export function diagnosticoRutaManual(proyecto: Proyecto, conductorId: string): {
+	contacto?: Conflicto;
+	solidos: Conflicto[];
+	canaletas: Conflicto[];
+} {
+	const trazos = trazosDeCables(proyecto);
+	const propio = trazos.find((t) => t.id === conductorId);
+	if (!propio) return { solidos: [], canaletas: [] };
+	const rejilla = new RejillaCables();
+	for (const trazo of trazos) if (trazo.id !== conductorId) rejilla.anadir(trazo);
+	const canaletas = proyecto.gabinete?.canaletas ?? [];
+	return {
+		contacto: rejilla.peorConflicto(propio, HOLGURA_CABLE),
+		solidos: invasionesDe([propio], solidosDelTablero(proyecto)),
+		canaletas: invasionesDeCanaletas(new RedCanaletas(canaletas), canaletas, [propio])
+			.map((i) => ({ a: i.cable, b: `${i.parte} de canaleta ${i.canaleta}`,
+				holgura: -i.dentro, distanciaEjes: 0, donde: i.donde })),
+	};
+}
+
 export function construirCables(
 	proyecto: Proyecto,
 	aEscena: Escenario['aEscena'],
