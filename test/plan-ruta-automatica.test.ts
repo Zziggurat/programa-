@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
-import { asignarPlanesAutomaticos, rutasDeCables } from '../app/escena3d.js';
+import { asignarPlanesAutomaticos, prepararAsignacionPlanesAutomaticos, rutasDeCables } from '../app/escena3d.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
 import { leerRutaFisicaV1 } from '../src/modelo/ruta-fisica.js';
 import { geometriaDelPlanRuta, leerPlanRutaAutomaticaV1,
 	MAX_PUNTOS_PLAN_AUTO, planDesdeRutaAutomatica } from '../src/modelo/plan-ruta-automatica.js';
-import { firmaEntornoRutaAutomatica } from '../src/modelo/dependencias-ruta.js';
+import { firmaEntornoRutaAutomatica, marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
+import { longitudCoincidente3D } from '../app/colisiones-cables.js';
 
 test('CAB-24: el plan automatico conserva XYZ exacto sin depender de la malla', () => {
 	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
@@ -49,6 +50,34 @@ test('CAB-24: planes asignados mantienen rutas ajenas al editar un solo cable y 
 	assert.deepEqual(obtener(abierto.proyecto), obtener(proyecto));
 });
 
+test('CAB-24: la aceptación focal no asigna planes ajenos de manera implícita', () => {
+	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
+	const preparados = prepararAsignacionPlanesAutomaticos(proyecto, new Set(['w4']));
+	assert.deepEqual(preparados.map((p) => p.conductorId), ['w4']);
+	assert.equal(asignarPlanesAutomaticos(proyecto, preparados), 1);
+	assert.equal(proyecto.conductores.filter((c) => c.planRutaAutomatica).length, 1);
+});
+
+test('CAB-24: un cable nuevo de mayor sección comparte borne sin mover planes aceptados', () => {
+	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
+	assert.equal(asignarPlanesAutomaticos(proyecto), 28);
+	const antes = new Map(rutasDeCables(proyecto).map((r) => [r.conductorId, r.puntos]));
+	const w4 = proyecto.conductores.find((c) => c.id === 'w4')!;
+	const w5 = proyecto.conductores.find((c) => c.id === 'w5')!;
+	proyecto.conductores.push({ id: 'w29', de: { ...w4.de }, a: { ...w5.a }, seccion: 6 });
+	assert.deepEqual(marcarPlanesObsoletosPendientes(proyecto), [], 'agregar no invalida al vecino');
+	const despues = new Map(rutasDeCables(proyecto).map((r) => [r.conductorId, r.puntos]));
+	for (const [id, puntos] of antes) assert.deepEqual(despues.get(id), puntos, id);
+	assert.ok(despues.has('w29'));
+	assert.ok(longitudCoincidente3D(despues.get('w29')!, despues.get('w4')!) <= 4,
+		'compartir tornillo no permite un mismo eje durante decenas de milímetros');
+	assert.equal(asignarPlanesAutomaticos(proyecto, prepararAsignacionPlanesAutomaticos(proyecto,
+		new Set(['w29']))), 1);
+	const reabierto = cargarProyecto(JSON.stringify(proyecto)).proyecto;
+	assert.deepEqual(rutasDeCables(reabierto).find((r) => r.conductorId === 'w29')?.puntos,
+		despues.get('w29'));
+});
+
 test('CAB-24: un plan con anclaje cambiado no se repara silenciosamente', () => {
 	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
 	assert.ok(asignarPlanesAutomaticos(proyecto) > 0);
@@ -68,6 +97,18 @@ test('CAB-24: la dependencia espacial distingue ducto cercano de aparato lejano'
 	assert.equal(firmaEntornoRutaAutomatica(proyecto, ruta, 2), antes);
 	proyecto.gabinete!.canaletas[0].alto += 5;
 	assert.notEqual(firmaEntornoRutaAutomatica(proyecto, ruta, 2), antes);
+});
+
+test('CAB-24: declarar la caja implicita no invalida planes fisicamente identicos', () => {
+	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
+	const ruta = rutasDeCables(proyecto).find((r) => r.conductorId === 'w4')!;
+	const antes = firmaEntornoRutaAutomatica(proyecto, ruta.puntos, ruta.radio);
+	const g = proyecto.gabinete!;
+	g.caja = { ancho: g.ancho + 60, alto: g.alto + 60, profundidad: 160,
+		bisagras: 'izquierda', bonding: { puesto: false, seccion: 6 } };
+	assert.equal(firmaEntornoRutaAutomatica(proyecto, ruta.puntos, ruta.radio), antes);
+	g.caja.profundidad += 20;
+	assert.notEqual(firmaEntornoRutaAutomatica(proyecto, ruta.puntos, ruta.radio), antes);
 });
 
 test('CAB-24: la asignacion captura los cinco ejemplos sin cambiar su geometria visible', () => {
@@ -99,6 +140,32 @@ test('CAB-24: importacion rechaza plan obsoleto, version falsa o dos escritores'
 	const dosEscritores = structuredClone(proyecto);
 	dosEscritores.conductores.find((c) => c.id === cable.id)!.trazado = [{ x: 10, y: 10 }];
 	assert.throws(() => cargarProyecto(JSON.stringify(dosEscritores)), /simultáneos/);
+});
+
+test('CAB-24: mover una canaleta marca planes afectados pendientes sin perder su ruta anterior', () => {
+	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
+	assert.ok(asignarPlanesAutomaticos(proyecto) > 0);
+	const previo = new Map(proyecto.conductores.map((c) => [c.id, c.planRutaAutomatica]));
+	const canaleta = proyecto.gabinete!.canaletas[0];
+	canaleta.alto += 5;
+	const ids = marcarPlanesObsoletosPendientes(proyecto);
+	assert.ok(ids.length > 0);
+	assert.ok(ids.length < proyecto.conductores.length,
+		'la dependencia local no debe poner todo el tablero en revisión');
+	for (const id of ids) {
+		const c = proyecto.conductores.find((x) => x.id === id)!;
+		assert.equal(c.estadoRutaFisica, 'pendiente');
+		assert.deepEqual(c.planRutaAutomatica, previo.get(id), 'el plan anterior no se descarta');
+	}
+	proyecto.conductores.find((c) => c.id === ids[0])!.fisica =
+		{ material: 'COBRE', longitudManualM: 2.5 };
+	const cargado = cargarProyecto(JSON.stringify(proyecto));
+	assert.deepEqual(cargado.arreglos, []);
+	assert.deepEqual(cargado.proyecto.conductores.filter((c) => c.estadoRutaFisica === 'pendiente')
+		.map((c) => c.id).sort(), ids);
+	assert.equal(cargado.proyecto.conductores.find((c) => c.id === ids[0])!.fisica?.longitudManualM, 2.5,
+		'la medición declarada no se pierde aunque la ruta ya no se use');
+	assert.equal(rutasDeCables(cargado.proyecto).length, proyecto.conductores.length - ids.length);
 });
 
 test('CAB-24: plan truncado, hostil o demasiado grande se rechaza sin rerouting', () => {

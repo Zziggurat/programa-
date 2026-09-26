@@ -365,9 +365,9 @@ export function cargarProyecto(json: string): ResultadoCarga {
 	for (const c of proyecto.conductores) {
 		const plan = c.planRutaAutomatica;
 		if (!plan) continue;
-		if (plan.fuente !== firmaFuentePlanRuta(c)
+		if (c.estadoRutaFisica !== 'pendiente' && (plan.fuente !== firmaFuentePlanRuta(c)
 			|| plan.entorno !== firmaEntornoRutaAutomatica(proyecto,
-				geometriaDelPlanRuta(plan).puntos, plan.radio)) {
+				geometriaDelPlanRuta(plan).puntos, plan.radio))) {
 			throw new ArchivoInvalido(`Cable ${c.id}: el plan automático no corresponde al conductor o a su entorno; se conservó el archivo original.`);
 		}
 	}
@@ -1220,14 +1220,12 @@ function leerConductores(
 			anotar(`conductores[${c.id}].estadoRutaFisica`, 'estado de ruta física desconocido; se omitió la conexión');
 			continue;
 		}
-		if (c.estadoRutaFisica === 'pendiente' && c.planRutaAutomatica !== undefined) {
-			throw new ArchivoInvalido(`Cable ${c.id}: plan automático y estado pendiente simultáneos; se conservó el archivo original.`);
-		}
-		// La ruta pendiente es incompatible con un peinado o una longitud ya declarados. Se
-		// omite el registro entero para no perder silenciosamente ni la conexión ni la medición.
+		// Un plan obsoleto pendiente puede conservar su metraje declarado, pero no se dibuja.
+		// Sin esa referencia física, un peinado o metraje manual simultáneo sería ambiguo.
 		if (c.estadoRutaFisica === 'pendiente' && (c.trazado !== undefined
-			|| c.rutaFisica !== undefined || c.planRutaAutomatica !== undefined
-			|| (esObjeto(c.fisica) && c.fisica.longitudManualM !== undefined))) {
+			|| c.rutaFisica !== undefined
+			|| (c.planRutaAutomatica === undefined && esObjeto(c.fisica)
+				&& c.fisica.longitudManualM !== undefined))) {
 			anotar(`conductores[${c.id}]`, 'ruta física pendiente incompatible con trazado o longitud manual; se omitió la conexión');
 			continue;
 		}

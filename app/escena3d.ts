@@ -9,7 +9,8 @@ import * as THREE from 'three';
 import { Canaleta, Colocacion, Conductor, Dispositivo, EntradaCable, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
 import { longitudPolilineaMm } from '../src/modelo/ruta-fisica.js';
-import { firmaFuentePlanRuta, geometriaDelPlanRuta, planDesdeRutaAutomatica } from '../src/modelo/plan-ruta-automatica.js';
+import { firmaFuentePlanRuta, geometriaDelPlanRuta, planDesdeRutaAutomatica,
+	type PlanRutaAutomaticaV1 } from '../src/modelo/plan-ruta-automatica.js';
 import { firmaEntornoRutaAutomatica } from '../src/modelo/dependencias-ruta.js';
 import {
 	ajustesDeMazo, alturaDeMazo, anclajeFijoDeMazo, carrilDeMazo, construirMazoPuerta, desvioDeCarril,
@@ -2079,18 +2080,37 @@ function rutaManualResuelta(
  * una consulta de dibujo no puede modificar un proyecto ni volver persistente un plan.
  * La validación de dependencias y la transición UI quedan fuera de esta operación base.
  */
-export function asignarPlanesAutomaticos(proyecto: Proyecto): number {
+export interface PlanAutomaticoPreparado { conductorId: string; plan: PlanRutaAutomaticaV1 }
+
+/** Prepara sin tocar el documento: una falla no crea Undo ni medio conjunto de planes. */
+export function prepararAsignacionPlanesAutomaticos(
+	proyecto: Proyecto, objetivos?: ReadonlySet<string>,
+): PlanAutomaticoPreparado[] {
 	const rutas = new Map(rutasDeCables(proyecto).map((r) => [r.conductorId, r]));
-	const nuevos = proyecto.conductores.filter((c) => !c.estadoRutaFisica && !c.rutaFisica
+	const nuevos = proyecto.conductores.filter((c) => (!objetivos || objetivos.has(c.id))
+		&& !c.estadoRutaFisica && !c.rutaFisica
 		&& !c.trazado && !c.planRutaAutomatica && rutas.has(c.id));
-	const planes = nuevos.map((c) => {
+	return nuevos.map((c) => {
 		const ruta = rutas.get(c.id)!;
-		return { c, plan: planDesdeRutaAutomatica(ruta,
-			firmaEntornoRutaAutomatica(proyecto, ruta.puntos, ruta.radio), firmaFuentePlanRuta(c)) };
+		return { conductorId: c.id, plan: planDesdeRutaAutomatica(ruta,
+			firmaEntornoRutaAutomatica(proyecto, ruta.puntos, ruta.radio),
+			firmaFuentePlanRuta(c)) };
 	});
-	for (const { c, plan } of planes) c.planRutaAutomatica = plan;
-	if (planes.length) { proyecto.version = 4; invalidarCacheRuteo(); }
-	return planes.length;
+}
+
+export function asignarPlanesAutomaticos(
+	proyecto: Proyecto, preparados = prepararAsignacionPlanesAutomaticos(proyecto),
+): number {
+	const porId = new Map(proyecto.conductores.map((c) => [c.id, c]));
+	for (const { conductorId } of preparados) {
+		const c = porId.get(conductorId);
+		if (!c || c.estadoRutaFisica || c.rutaFisica || c.trazado || c.planRutaAutomatica) {
+			throw new Error(`La propuesta de planes quedó obsoleta para ${conductorId}.`);
+		}
+	}
+	for (const { conductorId, plan } of preparados) porId.get(conductorId)!.planRutaAutomatica = plan;
+	if (preparados.length) { proyecto.version = 4; invalidarCacheRuteo(); }
+	return preparados.length;
 }
 
 /**
@@ -2186,7 +2206,8 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 	const orden = proyecto.conductores
 		.filter((c) => c.estadoRutaFisica !== 'pendiente')
 		.map((c) => ({ c }))
-		.sort((p, q) => radioDeCable(q.c.seccion) - radioDeCable(p.c.seccion)
+		.sort((p, q) => Number(!!q.c.planRutaAutomatica) - Number(!!p.c.planRutaAutomatica)
+			|| radioDeCable(q.c.seccion) - radioDeCable(p.c.seccion)
 			|| p.c.id.localeCompare(q.c.id));
 
 	for (const { c: conductor } of orden) {

@@ -40,7 +40,8 @@ import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.
 import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
-	adoptarRutasCalculadas, diagnosticoCables, diagnosticoRutaManual, firmaRuteo, largoDibujadoMm, liberar,
+	adoptarRutasCalculadas, asignarPlanesAutomaticos, prepararAsignacionPlanesAutomaticos,
+	diagnosticoCables, diagnosticoRutaManual, firmaRuteo, largoDibujadoMm, liberar,
 	longitudesParaRevisionMm, rutasDeCables, salidasDeCable, trazosDeCables, HOLGURA_CABLE,
 	solidosDelTablero,
 	construirUnCable, contadores, radioCodo, radioDeCable, reconciliarCablesDibujados,
@@ -99,6 +100,7 @@ import {
 } from './geometria-cables.js';
 import { longitudCoincidente3D } from './colisiones-cables.js';
 import { admiteRutaEnPlaca, desplazarTramoInteriorM6, MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
+import { marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
 import { GestorDocumentos, EstadoGuardadoDocumento } from './gestor-documentos.js';
 import { presentarEstadoDocumento, type FaseGuardado } from './estado-documento.js';
@@ -419,6 +421,8 @@ let revision: RevisionTablero;
 let coloreaVoltaje = false; // "Colorear por voltaje" en el panel Vista
 
 function recalcular(): void {
+	const rutasEnRevision = marcarPlanesObsoletosPendientes(proyecto);
+	if (rutasEnRevision.length) avisar(`${rutasEnRevision.length} ruta(s) afectadas por un cambio de aparato, borne o canaleta quedaron pendientes de revisión; no se redistribuyeron automáticamente.`, 'info');
 	// Legacy conserva la estimación 2D anterior. En M6 la ruta XYZ es referencia geométrica,
 	// no longitud eléctrica adoptada: el DRC usa la declarada o informa indeterminación.
 	// PDF y pantalla comparten exactamente esta política; no miden la malla/LOD.
@@ -1555,6 +1559,42 @@ function detenerTrabajoRuteo(): void {
 	trabajoRuteo = undefined;
 	document.body.classList.remove('ruteando');
 	$('ruteo-estado').hidden = true;
+}
+
+/** Congela el reparto visible antes de modificar la topología física de conductores. */
+function capturarConPlanesAutomaticos(): boolean {
+	if (!sePuedeEditar()) return false;
+	let preparados: ReturnType<typeof prepararAsignacionPlanesAutomaticos>;
+	try { preparados = prepararAsignacionPlanesAutomaticos(proyecto); }
+	catch (error) {
+		avisar(`No se pudo preparar el reparto local: ${String(error)}. No se editó el cable.`, 'error');
+		return false;
+	}
+	if (!capturar()) return false;
+	asignarPlanesAutomaticos(proyecto, preparados);
+	// La congelación misma ya es una mutación persistente. El editor guardará de nuevo
+	// después de aplicar la edición pedida; si se cancela el gesto se restaura esta foto.
+	if (preparados.length) marcarSucio();
+	return true;
+}
+
+function capturarEdicionRutaCable(id: string): boolean {
+	return proyecto.conductores.some((c) => c.id === id) && capturarConPlanesAutomaticos();
+}
+
+/** Una edición que vuelve a dejar el cable en automático acepta solo su nuevo reparto. */
+function fijarPlanAutomaticoDe(id: string): void {
+	try {
+		const preparado = prepararAsignacionPlanesAutomaticos(proyecto, new Set([id]))[0];
+		if (!preparado) return;
+		asignarPlanesAutomaticos(proyecto, [preparado]);
+		marcarSucio();
+	} catch (error) {
+		const c = proyecto.conductores.find((actual) => actual.id === id);
+		if (c) c.estadoRutaFisica = 'pendiente';
+		avisar(`El recorrido automático de ${id} no se pudo asignar; quedó pendiente de revisión: ${String(error)}`, 'error');
+		recalcular();
+	}
 }
 
 /** El documento ya cambió, pero la geometría se calcula sin bloquear el siguiente frame. */
@@ -4030,7 +4070,7 @@ function pintarFichaDeLoElegido(): void {
 		btnConectar.onclick = () => {
 			const destino = selDestino.value;
 			if (!destino) return;
-			if (!capturar()) return;
+			if (!capturarConPlanesAutomaticos()) return;
 			proyecto.conductores.push({
 				id: idUnico('c'),
 				de: { dispositivoId: d.id, borneId: (panel.querySelector('#cable-borne-origen') as HTMLSelectElement).value },
@@ -4441,7 +4481,7 @@ function pintarPanelCable(id: string): void {
 				: manual ? `A mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : 'Directo (en L, automático)'}</dd>
 			<dt>${pendiente ? 'Clase prevista' : 'Clase'}</dt><dd>${escaparHtml(NOMBRE_CLASE[claseDeConductor(proyecto, c)])}${c.clase ? '' : ' <span class="pista">(deducida)</span>'}</dd>
 		</dl>
-		${pendiente ? '<p class="sub">La conexión existe en el circuito, pero su tendido físico aún no está diseñado. Metraje y material de corte: no determinados.</p>' : ''}
+		${pendiente ? `<p class="sub">La conexión existe en el circuito, pero su tendido físico requiere revisión. ${c.planRutaAutomatica ? 'El plan anterior se conserva en el archivo, pero ya no se dibuja ni se mide como ruta vigente.' : 'No hay plan físico asignado.'}</p>` : ''}
 		<div class="form-cable" style="margin-top:10px">
 			<select id="cbl-seccion"><option value="" ${c.seccion === undefined ? 'selected' : ''}>Sección por definir</option>${SECCIONES.map((s) => `<option value="${s}" ${s === c.seccion ? 'selected' : ''}>${s} mm²</option>`).join('')}</select>
 			<select id="cbl-color"><option value="" ${c.color === undefined ? 'selected' : ''}>Color por definir</option>${COLORES.map((col) => `<option ${col === c.color ? 'selected' : ''}>${col}</option>`).join('')}</select>
@@ -4456,16 +4496,18 @@ function pintarPanelCable(id: string): void {
 			<div class="cbl-nodos">${c.rutaFisica.nodos.map((n, i) => `<div class="fila-estructura"><span class="id">${escaparHtml(n.id)}</span>${(['x', 'y', 'z'] as const).map((eje) => `<label>${eje.toUpperCase()} <input type="number" step="0.1" min="-5000" max="5000" data-ruta-nodo="${i}" data-eje="${eje}" value="${n[eje]}"></label>`).join('')}<button class="boton" type="button" data-ruta-quitar="${i}" aria-label="Quitar nodo ${escaparHtml(n.id)}">Quitar</button></div>`).join('')}</div>
 			${c.rutaFisica.nodos.length >= 2 ? `<fieldset id="cbl-tramo-m6"><legend>Desplazar tramo entre nodos interiores</legend><label>Tramo <select id="cbl-tramo-indice">${c.rutaFisica.nodos.slice(0, -1).map((n, i) => `<option value="${i}">${escaparHtml(n.id)} → ${escaparHtml(c.rutaFisica!.nodos[i + 1].id)}</option>`).join('')}</select></label>${(['x', 'y', 'z'] as const).map((eje) => `<label>Δ${eje.toUpperCase()} mm <input id="cbl-tramo-${eje}" type="number" step="0.1" value="0"></label>`).join('')}<button class="boton" id="cbl-mover-tramo-m6" type="button">Desplazar tramo</button><p class="sub">Mueve ambos nodos del tramo; los bornes permanecen anclados. Los enlaces vecinos se recalculan y requieren revisión de interferencias.</p></fieldset>` : ''}` : ''}
 		<div class="botonera">
+			${pendiente && c.planRutaAutomatica ? '<button class="boton" id="cbl-replan">Proponer nuevo recorrido</button>' : ''}
 			${adoptable ? '<button class="boton" id="cbl-adoptar-m6">Adoptar XYZ como ruta fija</button>' : ''}
 			${manual ? '<button class="boton" id="cbl-auto">Trazado automático</button>' : ''}
 			<button class="boton peligro" id="cbl-quitar">Quitar cable</button>
 		</div>
 	`;
 	(panel.querySelector('#cbl-seccion') as HTMLSelectElement).onchange = (e) => {
-		if (!capturar()) return;
+		if (!capturarEdicionRutaCable(id)) return;
 		const v = (e.target as HTMLSelectElement).value;
+		if (!c.estadoRutaFisica) delete c.planRutaAutomatica;
 		c.seccion = v ? Number(v) : undefined;
-		recalcular(); reconstruirCables(); panelSim.recalcular(); pintarPaneles();
+		recalcular(); fijarPlanAutomaticoDe(id); reconstruirCables(); panelSim.recalcular(); pintarPaneles();
 	};
 	(panel.querySelector('#cbl-color') as HTMLSelectElement).onchange = (e) => {
 		if (!capturar()) return;
@@ -4474,12 +4516,13 @@ function pintarPanelCable(id: string): void {
 		marcarSucio();   // cambiar el color no recalcula nada, pero SÍ hay que guardarlo
 	};
 	(panel.querySelector('#cbl-clase') as HTMLSelectElement).onchange = (e) => {
-		if (!capturar()) return;
+		if (!capturarEdicionRutaCable(id)) return;
 		const v = (e.target as HTMLSelectElement).value;
+		if (!c.estadoRutaFisica) delete c.planRutaAutomatica;
 		// Vacío NO es una clase: es «vuelve a deducirla». Guardar un valor cuando el usuario pide
 		// automático sería congelar hoy una respuesta que mañana cambia al mover el aparato.
 		if (v) c.clase = v as ClaseConductor; else delete c.clase;
-		recalcular(); reconstruirCables(); pintarPaneles();
+		recalcular(); fijarPlanAutomaticoDe(id); reconstruirCables(); pintarPaneles();
 	};
 	(panel.querySelector('#cbl-diagnostico-m6') as HTMLButtonElement | null)?.addEventListener('click', () => {
 		const resultado = panel.querySelector<HTMLElement>('#cbl-resultado-m6');
@@ -4487,6 +4530,35 @@ function pintarPanelCable(id: string): void {
 		const avisos = avisosDiagnosticoRutaM6(id);
 		resultado.textContent = avisos.length ? `Peor aviso por categoría: ${avisos.join(' · ')}. La ruta se conservó; revisar fabricabilidad.`
 			: 'Sin interferencias detectadas por este diagnóstico. Radios y fabricabilidad aún no verificados.';
+	});
+	(panel.querySelector('#cbl-replan') as HTMLButtonElement | null)?.addEventListener('click', async () => {
+		const sesion = proyecto;
+		const base = JSON.stringify(proyecto);
+		const propuesta = structuredClone(proyecto);
+		const cable = propuesta.conductores.find((actual) => actual.id === id);
+		if (!cable?.planRutaAutomatica || cable.estadoRutaFisica !== 'pendiente') return;
+		delete cable.estadoRutaFisica;
+		delete cable.planRutaAutomatica;
+		const otrosPendientes = marcarPlanesObsoletosPendientes(propuesta);
+		try {
+			const ruta = rutasDeCables(propuesta).find((r) => r.conductorId === id);
+			if (!ruta) { avisar('No existe un recorrido automático para esos extremos; se conservó el plan anterior.', 'error'); return; }
+			const preparado = prepararAsignacionPlanesAutomaticos(propuesta, new Set([id]))[0];
+			if (!preparado) { avisar('La propuesta ya no corresponde a ese cable; no se cambió.', 'error'); return; }
+			cable.planRutaAutomatica = preparado.plan;
+			propuesta.version = 4;
+			const diagnostico = diagnosticoCables(propuesta);
+			const choques = diagnostico.conflictos.filter((v) => v.a === id || v.b === id).length;
+			const invasiones = diagnostico.invasiones.filter((v) => v.a === id).length;
+			const referenciaMm = Math.round(largoDibujadoMm(propuesta, cable));
+			const aceptado = await confirmar(`Se propone un nuevo recorrido para ${id}: referencia visual ${referenciaMm} mm (no longitud de corte). Avisos: ${choques} cercanías y ${invasiones} invasiones. ${otrosPendientes.length ? `${otrosPendientes.length} ruta(s) vecinas también requieren revisión.` : 'Las rutas ajenas vigentes se conservarán.'} ¿Aplicar esta propuesta?`, { ok: 'Aplicar recorrido' });
+			if (!aceptado) return;
+			if (proyecto !== sesion || JSON.stringify(proyecto) !== base) {
+				avisar('El tablero cambió mientras se revisaba la propuesta; no se aplicó.', 'info'); return;
+			}
+			mutarProyecto(() => { proyecto.conductores = propuesta.conductores; proyecto.version = 4; });
+			avisar(`Recorrido de ${id} asignado. Revisa los avisos físicos antes de fabricar.`, 'info');
+		} catch (error) { avisar(`No se aplicó la propuesta de ruta: ${String(error)}`, 'error'); }
 	});
 	panel.querySelectorAll<HTMLInputElement>('[data-ruta-nodo][data-eje]').forEach((input) => {
 		input.onchange = () => {
@@ -4500,7 +4572,7 @@ function pintarPanelCable(id: string): void {
 				return;
 			}
 			if (nodo[eje] === valor) return;
-			if (!capturar()) { input.value = String(nodo[eje]); return; }
+			if (!capturarEdicionRutaCable(id)) { input.value = String(nodo[eje]); return; }
 			nodo[eje] = valor;
 			recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
 		};
@@ -4509,7 +4581,7 @@ function pintarPanelCable(id: string): void {
 		boton.onclick = () => {
 			const indice = Number(boton.dataset.rutaQuitar);
 			if (!c.rutaFisica || !Number.isInteger(indice) || !c.rutaFisica.nodos[indice]) return;
-			if (!capturar()) return;
+			if (!capturarEdicionRutaCable(id)) return;
 			c.rutaFisica.nodos.splice(indice, 1);
 			recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
 		};
@@ -4527,7 +4599,7 @@ function pintarPanelCable(id: string): void {
 		let rutaNueva;
 		try { rutaNueva = desplazarTramoInteriorM6(c.rutaFisica, indice, { x, y, z }); }
 		catch { avisar('El tramo quedaría fuera del dominio M6 (±5000 mm); no se movió.', 'error'); return; }
-		if (!capturar()) return;
+		if (!capturarEdicionRutaCable(id)) return;
 		c.rutaFisica = rutaNueva;
 		recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
 		avisar('Tramo manual desplazado. Revisa interferencias y radios antes de fabricar.', 'info');
@@ -4543,16 +4615,17 @@ function pintarPanelCable(id: string): void {
 		const nuevo = Math.round(largoDibujadoMm(propuesta, cablePropuesto));
 		const aceptado = await confirmar(`Se fijarán ${ruta.nodos.length} nodos XYZ exactos. La ruta visible puede cambiar: estimación legacy ${previo} mm; referencia espacial ${nuevo} mm. No se adopta automáticamente como longitud eléctrica ni se verifica como corte. ¿Continuar?`, { ok: 'Adoptar ruta XYZ' });
 		if (!aceptado || proyecto.conductores.find((x) => x.id === id) !== c) return;
-		if (!capturar()) return;
+		if (!capturarEdicionRutaCable(id)) return;
 		c.rutaFisica = ruta;
 		delete c.trazado;
 		recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
 	});
 	(panel.querySelector('#cbl-auto') as HTMLButtonElement | null)?.addEventListener('click', () => {
-		if (!capturar()) return;
+		if (!capturarEdicionRutaCable(id)) return;
 		delete c.trazado;
 		delete c.rutaFisica;
-		recalcular(); reconstruirCables(); construirHandles(); pintarSeleccion(); pintarPanelCable(id);
+		delete c.planRutaAutomatica;
+		recalcular(); fijarPlanAutomaticoDe(id); reconstruirCables(); construirHandles(); pintarSeleccion(); pintarPanelCable(id);
 	});
 	(panel.querySelector('#cbl-quitar') as HTMLButtonElement).onclick = () => quitarCable(id);
 }
@@ -5788,7 +5861,7 @@ function actualizarGomaCable(x: number, y: number): void {
 /** Quita un cable del proyecto (botón del panel o tecla Supr). Se deshace con Ctrl+Z. */
 function quitarCable(id: string): void {
 	if (!proyecto.conductores.some((x) => x.id === id)) return;
-	if (!capturar()) return;
+	if (!capturarConPlanesAutomaticos()) return;
 	proyecto.conductores = proyecto.conductores.filter((x) => x.id !== id);
 	aplicarSeleccion(undefined);
 	recalcular();
@@ -5809,7 +5882,7 @@ function completarCableado(destino: RefBorne): void {
 		|| (c.a.dispositivoId === origen.dispositivoId && c.a.borneId === origen.borneId
 			&& c.de.dispositivoId === destino.dispositivoId && c.de.borneId === destino.borneId));
 	if (yaExiste) { avisar('Esos dos bornes ya están conectados.', 'info'); cancelarCableado(); return; }
-	if (!capturar()) return;
+	if (!capturarConPlanesAutomaticos()) return;
 	const codos = codosCableado.slice(); // los codos marcados al tender el cable quedan fijados
 	proyecto.conductores.push({
 		id: idUnico('c'),
@@ -6018,13 +6091,21 @@ function cancelarArrastreCableM6(): boolean {
 	if (capturadoEsteArrastre) {
 		if (!antes) return false;
 		const foto = pila[pila.length - 1];
-		const original = foto ? (JSON.parse(foto) as Proyecto).conductores.find((c) => c.id === id) : undefined;
+		const originalProyecto = foto ? JSON.parse(foto) as Proyecto : undefined;
+		const original = originalProyecto?.conductores.find((c) => c.id === id);
 		const actual = proyecto.conductores.find((c) => c.id === id);
 		if (!original?.rutaFisica || !actual) return false;
 		actual.rutaFisica = original.rutaFisica;
+		for (const c of proyecto.conductores) {
+			const previo = originalProyecto!.conductores.find((x) => x.id === c.id);
+			if (previo?.planRutaAutomatica) c.planRutaAutomatica = previo.planRutaAutomatica;
+			else delete c.planRutaAutomatica;
+		}
+		proyecto.version = originalProyecto!.version;
 		pila.pop();
 		rehacerPila.splice(0, rehacerPila.length, ...antes.rehacer);
 		hayCambiosSinExportar = antes.sinExportar;
+		autoguardar();
 	}
 	antesArrastreCableM6 = undefined;
 	arrastrando = false;
@@ -6223,6 +6304,7 @@ function insertarWaypoint(c: Conductor, p: P3, avance: number): number {
 	// Los demás puntos del peinado también fijan su profundidad: a partir de ahora este cable lo
 	// manda el usuario entero, y el repartidor deja de elegirle capa (ver la regla `literal`).
 	fijarProfundidades(c);
+	delete c.planRutaAutomatica;
 	return idx;
 }
 
@@ -7244,7 +7326,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (Math.hypot(pc.x - pendienteCable.x, pc.y - pendienteCable.y) < 6) return; // aún es un clic
 		if (pendienteCable.indice >= 0) {
 			const respaldo = respaldoArrastreCableM6(pendienteCable.id);
-			if (!capturar()) return;
+			if (!capturarEdicionRutaCable(pendienteCable.id)) return;
 			antesArrastreCableM6 = respaldo;
 			arrastrandoCable = { id: pendienteCable.id, indice: pendienteCable.indice };
 			capturadoEsteArrastre = true;
@@ -7280,7 +7362,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (!capturadoEsteArrastre) {
 		const respaldo = sel.tipo === 'cable' && handleArrastrado && (handleArrastrado.indice ?? -1) >= 0
 			? respaldoArrastreCableM6(sel.id) : undefined;
-		if (!capturar()) return;
+		if (!(sel.tipo === 'cable' ? capturarEdicionRutaCable(sel.id) : capturar())) return;
 		antesArrastreCableM6 = respaldo;
 		capturadoEsteArrastre = true;
 	}
@@ -7586,8 +7668,9 @@ function crearUnionBajoElPuntero(ev: MouseEvent): boolean {
 		return false;
 	}
 	if (!(sel?.tipo === 'cable' && sel.id === golpe.id)) aplicarSeleccion({ tipo: 'cable', id: c.id });
-	if (!capturar()) return false;
+	if (!capturarEdicionRutaCable(c.id)) return false;
 	insertarWaypoint(c, golpe.punto, golpe.avance);
+	delete c.planRutaAutomatica;
 	programarReconstruccionDeCables();
 	pintarPaneles();
 	pintarSeleccion();
@@ -7603,7 +7686,7 @@ renderer.domElement.addEventListener('dblclick', (ev) => {
 	if (handle?.sel.tipo === 'cable' && handle.indice !== undefined && handle.indice >= 0) {
 		const c = proyecto.conductores.find((x) => x.id === handle.sel.id);
 		if (c && handle.indice < puntosDeCable(c).length) {
-			if (!capturar()) return;
+			if (!capturarEdicionRutaCable(c.id)) return;
 			if (c.rutaFisica) c.rutaFisica.nodos.splice(handle.indice, 1);
 			else if (c.trazado) {
 				c.trazado.splice(handle.indice, 1);
@@ -8696,7 +8779,7 @@ const panelEsq = instalarEsquema({
 			proyecto, montarEsquema(proyecto, revision.potenciales), de, a,
 		);
 		if (!propuesta.ok) { avisar(propuesta.motivo, 'info'); return undefined; }
-		if (!capturar()) return undefined;
+		if (!capturarConPlanesAutomaticos()) return undefined;
 		const conductor: Conductor = { id: idUnico('c'), ...propuesta.valor };
 		proyecto.conductores.push(conductor);
 		actualizarConservandoAparatos();

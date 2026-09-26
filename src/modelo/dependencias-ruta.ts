@@ -1,4 +1,6 @@
 import type { Proyecto } from './tipos.js';
+import { firmaFuentePlanRuta, geometriaDelPlanRuta } from './plan-ruta-automatica.js';
+import { cajaDeGabinete } from './proyecto.js';
 
 export interface PuntoRutaDependiente { x: number; y: number }
 type Caja = { x0: number; x1: number; y0: number; y1: number };
@@ -44,7 +46,30 @@ export function firmaEntornoRutaAutomatica(
 		: cerca({ x0: r.x - 17.5, x1: r.x + 17.5, y0: r.y, y1: r.y + r.largo }))
 		.map((r) => [r.id, r.x, r.y, r.largo, r.orientacion ?? 'h'])
 		.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+	// Declarar los mismos valores que antes eran implícitos no altera la caja física.
+	const caja = cajaDeGabinete(g);
+	const entradas = (g.entradas ?? []).map((e) => [e.id, e.cara, e.x])
+		.sort((a, b) => String(a[0]).localeCompare(String(b[0])));
 	return JSON.stringify([aparatos, canaletas, rieles, g.ancho, g.alto,
-		g.caja?.ancho, g.caja?.alto, g.caja?.profundidad, g.caja?.bisagras,
-		g.mazoPuerta?.desdeBisagra, g.entradas?.map((e) => [e.id, e.cara, e.x])]);
+		caja.ancho, caja.alto, caja.profundidad, g.caja?.bisagras ?? 'izquierda',
+		g.mazoPuerta?.desdeBisagra ?? 26, entradas]);
+}
+
+/** Detecta solo planes activos afectados; el plan viejo se preserva para revisión/Undo. */
+export function idsDePlanesObsoletos(proyecto: Proyecto): string[] {
+	return proyecto.conductores.filter((c) => {
+		const plan = c.planRutaAutomatica;
+		return !!plan && c.estadoRutaFisica !== 'pendiente'
+			&& (plan.fuente !== firmaFuentePlanRuta(c)
+				|| plan.entorno !== firmaEntornoRutaAutomatica(proyecto,
+					geometriaDelPlanRuta(plan).puntos, plan.radio));
+	}).map((c) => c.id).sort();
+}
+
+/** Nunca recalcula ni reemplaza el recorrido: marca la conexión física como pendiente. */
+export function marcarPlanesObsoletosPendientes(proyecto: Proyecto): string[] {
+	const ids = idsDePlanesObsoletos(proyecto);
+	const afectados = new Set(ids);
+	for (const c of proyecto.conductores) if (afectados.has(c.id)) c.estadoRutaFisica = 'pendiente';
+	return ids;
 }

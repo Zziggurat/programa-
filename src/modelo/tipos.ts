@@ -338,7 +338,7 @@ export interface Conductor {
 	estadoRutaFisica?: 'pendiente';
 	/** Ruta manual M6 versionada. Exclusiva de `trazado` legacy y del estado pendiente. */
 	rutaFisica?: import('./ruta-fisica.js').RutaFisicaV1;
-	/** Ruta automática asignada y congelada; distinta del trazado manual y del estado pendiente. */
+	/** Ruta asignada; con estado pendiente queda solo como referencia anterior y no se dibuja. */
 	planRutaAutomatica?: import('./plan-ruta-automatica.js').PlanRutaAutomaticaV1;
 	/** Sección en mm². */
 	seccion?: number;

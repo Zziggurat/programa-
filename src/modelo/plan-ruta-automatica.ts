@@ -71,8 +71,11 @@ export function leerPlanRutaAutomaticaV1(bruto: unknown): PlanRutaAutomaticaV1 {
 }
 
 /** Solo los datos del conductor que pueden alterar su asignación física. */
-export function firmaFuentePlanRuta(c: { id: string; de: unknown; a: unknown;
-	seccion?: number; clase?: string }): string {
+export function firmaFuentePlanRuta(c: { id: string; de: { dispositivoId: string; borneId: string };
+	a: { dispositivoId: string; borneId: string }; seccion?: number; clase?: string },
+): string {
+	// El abanico de un borne no es propietario del plan ya aceptado. Un conductor nuevo
+	// debe elegir sitio alrededor de los existentes, no forzarlos todos a revisión.
 	return JSON.stringify([c.id, c.de, c.a, c.seccion, c.clase]);
 }
 
