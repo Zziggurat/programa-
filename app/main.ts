@@ -4071,14 +4071,16 @@ function pintarFichaDeLoElegido(): void {
 			const destino = selDestino.value;
 			if (!destino) return;
 			if (!capturarConPlanesAutomaticos()) return;
-			proyecto.conductores.push({
+			const nuevo: Conductor = {
 				id: idUnico('c'),
 				de: { dispositivoId: d.id, borneId: (panel.querySelector('#cable-borne-origen') as HTMLSelectElement).value },
 				a: { dispositivoId: destino, borneId: selBorneDestino.value },
 				seccion: Number((panel.querySelector('#cable-seccion') as HTMLSelectElement).value),
 				color: (panel.querySelector('#cable-color') as HTMLSelectElement).value,
-			});
+			};
+			proyecto.conductores.push(nuevo);
 			recalcular();
+			fijarPlanAutomaticoDe(nuevo.id);
 			reconstruirCables();
 			pintarPaneles();
 			pintarSeleccion();
@@ -5884,16 +5886,18 @@ function completarCableado(destino: RefBorne): void {
 	if (yaExiste) { avisar('Esos dos bornes ya están conectados.', 'info'); cancelarCableado(); return; }
 	if (!capturarConPlanesAutomaticos()) return;
 	const codos = codosCableado.slice(); // los codos marcados al tender el cable quedan fijados
-	proyecto.conductores.push({
+	const nuevo: Conductor = {
 		id: idUnico('c'),
 		de: { dispositivoId: origen.dispositivoId, borneId: origen.borneId },
 		a: { dispositivoId: destino.dispositivoId, borneId: destino.borneId },
 		seccion: 1.5,
 		color: 'negro',
 		...(codos.length ? { trazado: codos } : {}),
-	});
+	};
+	proyecto.conductores.push(nuevo);
 	cancelarCableado();
 	recalcular();
+	if (!codos.length) fijarPlanAutomaticoDe(nuevo.id);
 	reconstruirCables();
 	reconstruirBornes();
 	pintarPaneles();
