@@ -135,8 +135,13 @@ export function revisarTablero(
 
 	// El largo bueno es el del cable dibujado. Solo cuando no lo hay —porque quien llama no dibuja,
 	// como una prueba o un script— se usa el del ruteo, que ya trae reserva y puntas.
-	const longitudesBase = opciones.longitudesMm
-		?? new Map(ruteo.rutas.map((r) => [r.conductorId, r.longitudMm]));
+	const longitudesBase = opciones.longitudesMm ?? new Map([
+		...ruteo.rutas.map((r): [string, number] => [r.conductorId, r.longitudMm]),
+		...proyecto.conductores.flatMap((c): [string, number][] => c.rutaFisica
+			&& c.fisica?.longitudManualM !== undefined
+			&& Number.isFinite(c.fisica.longitudManualM) && c.fisica.longitudManualM > 0
+			? [[c.id, c.fisica.longitudManualM * 1000]] : []),
+	]);
 	// Una longitud de contexto no puede convertir una conexión pendiente en cable medido.
 	// Se copia el mapa: el caller conserva su instantánea original para otros cálculos.
 	const pendientes = new Set(proyecto.conductores

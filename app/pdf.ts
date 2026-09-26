@@ -20,7 +20,7 @@ import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { revisarTablero } from '../src/motores/revision.js';
 import { fondoDe } from '../src/motores/ficha-tablero.js';
 import { factorTemperatura, TEMPERATURA_TABLA_C } from '../src/motores/electrico.js';
-import { longitudesDibujadasMm } from './escena3d.js';
+import { longitudesParaRevisionMm } from './escena3d.js';
 import { declarado, opcionesDe } from '../src/modelo/proyecto.js';
 import { CONTROLADORES } from './controladores.js';
 import { descargar } from './dialogos.js';
@@ -190,7 +190,7 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 	// se saltaba la sincronización, así que no avisaba de aparatos sin colocar ni que se pisan.
 	const revision = revisarTablero(proyecto, {
 		renumerarAparatos: false,
-		longitudesMm: longitudesDibujadasMm(proyecto),
+		longitudesMm: longitudesParaRevisionMm(proyecto),
 	});
 	const { potenciales, ruteo, hallazgos, referencias, ficha, termico } = revision;
 	const bom = revision.bom;

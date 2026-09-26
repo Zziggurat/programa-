@@ -60,7 +60,7 @@ export function generarListaConductores(
 			a: extremoTexto(proyecto, c.a),
 			seccion: c.seccion !== undefined ? `${c.seccion} mm²` : '',
 			color: c.color ?? '',
-			longitudMm: c.estadoRutaFisica === 'pendiente' ? undefined : longitudDe.get(c.id),
+			longitudMm: c.estadoRutaFisica === 'pendiente' || c.rutaFisica ? undefined : longitudDe.get(c.id),
 			pendienteRuta: c.estadoRutaFisica === 'pendiente' || undefined,
 		}))
 		.sort((a, b) => a.numero.localeCompare(b.numero, undefined, { numeric: true }));
@@ -162,13 +162,14 @@ ${filasXref.length ? tabla(['Maestro', 'Posición', 'Contacto', 'Tipo', 'Posici�
 	const formatoNumero = (v: number): string => new Intl.NumberFormat('es-CL', { maximumFractionDigits: 2 }).format(v);
 	const numeroMm = (v: number | undefined): string => v === undefined ? '—' : `${formatoNumero(v)} mm`;
 	const estadoRutaLegible = { PENDIENTE: 'Ruta física pendiente', SIN_RUTA: 'Sin ruta calculada',
-		SIN_DESGLOSE: 'Ruta sin desglose', RUTA_2D_ESTIMADA: 'Ruta 2D estimada' } as const;
+		SIN_DESGLOSE: 'Ruta sin desglose', RUTA_2D_ESTIMADA: 'Ruta 2D estimada',
+		RUTA_3D_REFERENCIA: 'Ruta M6 XYZ de referencia; corte no verificado' } as const;
 	const origenLegible = { CONFIGURADO: 'Configurado en el proyecto', POR_DEFECTO: 'Valor por defecto' } as const;
 	secciones.push(`<h2>5. Lista de conductores</h2>
 ${tabla(['Número', 'De', 'A', 'Sección', 'Color', 'Ruteo 2D + margen/puntas (mm)', 'Estado físico'],
 		conductores.map((f) => [f.numero, f.de, f.a, f.seccion, f.color,
 			f.longitudMm === undefined ? '' : formatoNumero(f.longitudMm),
-			f.pendienteRuta ? 'Ruta física pendiente' : f.longitudMm === undefined ? 'Sin longitud calculada' : 'Con ruta']))}`);
+			f.pendienteRuta ? 'Ruta física pendiente' : f.longitudMm === undefined ? 'Ruta sin corte calculado' : 'Con ruta']))}`);
 	const longitudes = proyectarLongitudesDocumentales(proyecto, d.ruteo);
 	secciones.push(`<h3>Desglose de longitudes por conductor</h3>
 <p>La longitud eléctrica declarada, el recorrido ortogonal 2D y la propuesta con reserva y puntas son magnitudes diferentes. La propuesta no mide profundidad Z, curvas ni corte real de taller. Un corte verificado no está disponible en esta revisión.</p>
