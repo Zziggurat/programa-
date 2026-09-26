@@ -137,6 +137,8 @@ try {
 	await pagina.mouse.move(tiradorSoltar.x, tiradorSoltar.y);
 	await pagina.mouse.down();
 	await pagina.mouse.move(tiradorSoltar.x + 42, tiradorSoltar.y + 12, { steps: 6 });
+	comprobar('el estado de arrastre anuncia la invasión del tramo antes de soltar',
+		/Aviso: el tramo atraviesa aparato obstaculo/.test(await pagina.locator('#ayuda').innerText()));
 	await pagina.mouse.up();
 	await pagina.waitForFunction(() => !document.body.classList.contains('ruteando'));
 	await pagina.waitForFunction(() => /Revisa ruta w1:.*Invade aparato obstaculo/s.test(
@@ -207,7 +209,29 @@ try {
 	comprobar('reapertura conserva ruta, nodos y largo declarado',
 		(await cable()).rutaFisica?.nodos[0].x === tramoMovido[0].x && (await cable()).rutaFisica.nodos.length === 3
 		&& (await cable()).fisica.longitudManualM === 2.5);
+	await pagina.locator('#hta-conectar').click();
+	await pagina.locator('#lista-cables li').first().click();
+	await pagina.locator('[data-ruta-nodo="0"][data-eje="x"]').fill('215');
+	await pagina.locator('[data-ruta-nodo="0"][data-eje="x"]').press('Tab');
+	await pagina.locator('[data-ruta-nodo="0"][data-eje="z"]').fill('70');
+	await pagina.locator('[data-ruta-nodo="0"][data-eje="z"]').press('Tab');
+	await pagina.waitForFunction(() => {
+		const n = window.qa.proyecto().conductores.find((c) => c.id === 'w1')?.rutaFisica?.nodos[0];
+		return n?.x === 215 && n?.z === 70;
+	});
+	const tiradorAlto = await pagina.evaluate(() => window.qa.puntoDeUnion('w1', 0));
+	await pagina.mouse.move(tiradorAlto.x, tiradorAlto.y);
+	await pagina.mouse.down();
+	await pagina.mouse.move(tiradorAlto.x + 14, tiradorAlto.y, { steps: 3 });
+	comprobar('M6 no confunde proyección 2D con invasión si el tramo pasa por encima en Z',
+		!/Aviso:.*aparato obstaculo/.test(await pagina.locator('#ayuda').innerText()));
+	await pagina.keyboard.press('Escape');
+	await pagina.mouse.up();
 	comprobar('ningún error JavaScript', erroresJS.length === 0);
+	if (process.env.QA_M6_PERF) {
+		const rendimiento = await pagina.evaluate(() => window.qa.simularArrastre('w1', 0, 30, 1, 0));
+		console.log(`M6 listener 30 movimientos: ${JSON.stringify(rendimiento)}`);
+	}
 	console.log(`QA ruta física M6: ${casos}/${casos}, ${((Date.now() - inicio) / 1000).toFixed(1)} s`);
 } catch (error) {
 	console.error(error);

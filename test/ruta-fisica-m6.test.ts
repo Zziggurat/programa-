@@ -8,6 +8,7 @@ import { admiteRutaEnPlaca, desplazarTramoInteriorM6, leerRutaFisicaV1, longitud
 import { construirUnCable, diagnosticoRutaManual, largoDibujadoMm, liberar, longitudesParaRevisionMm,
 	rutasDeCables, salidasDeCable } from '../app/escena3d.js';
 import { indiceDeInsercion, indiceDeInsercionM6, proyectarEnPolilinea } from '../app/edicion-cables.js';
+import { primerSolidoEnPunto, primerSolidoEnTramosDelNodo } from '../app/colisiones-cables.js';
 import { rutearConductores } from '../src/motores/ruteo.js';
 import { proyectarLongitudesDocumentales } from '../src/motores/longitudes-documentales.js';
 import { simularFisicaProyecto } from '../src/fisica/topologia-proyecto.js';
@@ -22,6 +23,21 @@ function legadoV9(): Proyecto {
 	c.color = 'azul';
 	return p;
 }
+
+test('CAB-10: preview local detecta un tramo invasor aunque el nodo esté fuera del aparato', () => {
+	const obstaculo = { id: 'aparato vecino', x0: 205, x1: 245, y0: 110, y1: 155, z0: 0, z1: 40 };
+	const ruta = [{ x: 80, y: 130, z: 35 }, { x: 145, y: 130, z: 35 }, { x: 260, y: 130, z: 35 }];
+	assert.equal(primerSolidoEnTramosDelNodo(ruta, 1, 2, [obstaculo])?.id, obstaculo.id);
+	assert.equal(primerSolidoEnTramosDelNodo(ruta, 1, 2, [obstaculo], [obstaculo.id]), undefined,
+		'el cuerpo del aparato conectado no debe aparecer como obstáculo vecino');
+	assert.equal(primerSolidoEnTramosDelNodo(ruta.map((p) => ({ ...p, z: 70 })), 1, 2, [obstaculo]), undefined,
+		'la proyección 2D no constituye una colisión a otra profundidad');
+	assert.equal(primerSolidoEnTramosDelNodo(ruta, 0, 2, [obstaculo]), undefined,
+		'el cálculo no debe barrer tramos ajenos al nodo movido');
+	assert.equal(primerSolidoEnPunto({ x: 215, y: 130, z: 70 }, 2, [obstaculo]), undefined,
+		'un nodo proyectado sobre el aparato pero por encima en Z no debe marcarse como invasión');
+	assert.equal(primerSolidoEnPunto({ x: 215, y: 130, z: 35 }, 2, [obstaculo])?.id, obstaculo.id);
+});
 
 test('CAB-29: fixture V9 conserva identidades, conexión, XYZ, color y largo declarado', () => {
 	const p = legadoV9();
