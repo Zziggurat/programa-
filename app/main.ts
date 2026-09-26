@@ -53,7 +53,7 @@ import { proyectoParaRuteo } from './proyecto-ruteo.js';
 import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, RedCanaletas } from './canaletas-red.js';
 import { actualizarMazoPuerta, ajustesDeMazo, trazasDeMazo } from './mazo-puerta.js';
 import {
-	Bloqueo, distanciaASegmento, Eje, indiceDeInsercion, normalDeArrastre, P3,
+	Bloqueo, distanciaASegmento, Eje, indiceDeInsercion, indiceDeInsercionM6, normalDeArrastre, P3,
 	proyectarEnPolilinea, respetarBloqueo,
 } from './edicion-cables.js';
 import { compararPrioridadCable } from './picking-cables.js';
@@ -5897,6 +5897,51 @@ let handleArrastrado: DatosHandle | undefined;
 let arrastrandoCable: { id: string; indice: number } | undefined; // conductor y punto de quiebre que se arrastra
 /** Cable agarrado a la espera de que el ratón se mueva para empezar a arrastrarlo de verdad. */
 let pendienteCable: { id: string; indice: number; x: number; y: number } | undefined;
+let antesArrastreCableM6: { id: string; rehacer: string[]; sinExportar: boolean } | undefined;
+
+function respaldoArrastreCableM6(id: string): typeof antesArrastreCableM6 {
+	const m6 = proyecto.conductores.some((c) => c.id === id && !!c.rutaFisica);
+	return m6 ? { id, rehacer: rehacerPila.slice(), sinExportar: hayCambiosSinExportar } : undefined;
+}
+
+/** Escape/pointercancel descartan el preview M6, incluida la foto Undo y el vaciado de Redo. */
+function cancelarArrastreCableM6(): boolean {
+	const antes = antesArrastreCableM6;
+	const id = antes?.id ?? pendienteCable?.id
+		?? (handleArrastrado?.sel.tipo === 'cable' ? handleArrastrado.sel.id : undefined);
+	if (!arrastrando || !id || !proyecto.conductores.some((c) => c.id === id && c.rutaFisica)) return false;
+	if (capturadoEsteArrastre) {
+		if (!antes) return false;
+		const foto = pila[pila.length - 1];
+		const original = foto ? (JSON.parse(foto) as Proyecto).conductores.find((c) => c.id === id) : undefined;
+		const actual = proyecto.conductores.find((c) => c.id === id);
+		if (!original?.rutaFisica || !actual) return false;
+		actual.rutaFisica = original.rutaFisica;
+		pila.pop();
+		rehacerPila.splice(0, rehacerPila.length, ...antes.rehacer);
+		hayCambiosSinExportar = antes.sinExportar;
+	}
+	antesArrastreCableM6 = undefined;
+	arrastrando = false;
+	capturadoEsteArrastre = false;
+	arrastrandoCable = undefined;
+	handleArrastrado = undefined;
+	pendienteCable = undefined;
+	clicPendiente = undefined;
+	origenPuntero = undefined;
+	arrastreInicio = undefined;
+	motivoInvalido = undefined;
+	pistaArrastre = undefined;
+	ejeArrastre = undefined;
+	quitarGuiaEje();
+	ayudaDeEstado(undefined);
+	permitirOrbita(true);
+	renderer.domElement.style.cursor = '';
+	reconstruirCables(); construirHandles(); pintarPaneles(); pintarSeleccion();
+	actualizarBotonesHistorial();
+	avisar('Arrastre de cable cancelado; ruta e historial intactos.', 'info');
+	return true;
+}
 let arrastreInicio: {
 	x: number; y: number; rielId?: string;
 	acompanantes: { id: string; x: number; y: number; rielId?: string }[];
@@ -6058,7 +6103,7 @@ function insertarWaypoint(c: Conductor, p: P3, avance: number): number {
 	if (c.rutaFisica) {
 		const ruta = rutaEnPantalla(c.id);
 		const wps = c.rutaFisica.nodos;
-		const idx = ruta ? indiceDeInsercion(ruta.puntos, wps, avance) : wps.length;
+		const idx = ruta?.indicesNodos ? indiceDeInsercionM6(ruta.indicesNodos, avance) : wps.length;
 		let n = 1;
 		while (wps.some((w) => w.id === `${c.id}:n${n}`)) n++;
 		wps.splice(idx, 0, { id: `${c.id}:n${n}`, x: p.x, y: p.y, z: p.z });
@@ -7043,9 +7088,11 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (pendienteCable) {
 		const pc = puntoCable(ev);
 		if (!pc) return;
-		if (Math.hypot(pc.x - pendienteCable.x, pc.y - pendienteCable.y) < 6) return; // aún es un clic
+	if (Math.hypot(pc.x - pendienteCable.x, pc.y - pendienteCable.y) < 6) return; // aún es un clic
 		if (pendienteCable.indice >= 0) {
+			const respaldo = respaldoArrastreCableM6(pendienteCable.id);
 			if (!capturar()) return;
+			antesArrastreCableM6 = respaldo;
 			arrastrandoCable = { id: pendienteCable.id, indice: pendienteCable.indice };
 			capturadoEsteArrastre = true;
 			motivoInvalido = undefined;
@@ -7077,7 +7124,13 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	if (!sel) return;
 	const p = puntoModelo(ev);
 	if (!p) return;
-	if (!capturadoEsteArrastre) { if (!capturar()) return; capturadoEsteArrastre = true; }
+	if (!capturadoEsteArrastre) {
+		const respaldo = sel.tipo === 'cable' && handleArrastrado && (handleArrastrado.indice ?? -1) >= 0
+			? respaldoArrastreCableM6(sel.id) : undefined;
+		if (!capturar()) return;
+		antesArrastreCableM6 = respaldo;
+		capturadoEsteArrastre = true;
+	}
 	// Antes de tocar nada: foto del riel y de sus aparatos, por si hay que devolverlos.
 	if (!estadoRielArrastre && sel.tipo === 'riel') estadoRielArrastre = capturarEstadoRiel(sel.id);
 	const g = proyecto.gabinete!;
@@ -7202,6 +7255,8 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 });
 
 renderer.domElement.addEventListener('pointerleave', () => mostrarTipBorne(undefined));
+renderer.domElement.addEventListener('pointercancel', () => { cancelarArrastreCableM6(); });
+window.addEventListener('blur', () => { cancelarArrastreCableM6(); });
 
 renderer.domElement.addEventListener('pointerup', (ev) => {
 	/*
@@ -7275,6 +7330,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		: undefined;
 	const cableSoltado = eraCable ?? eraHandleDeCable;
 	if (cableSoltado) {
+		antesArrastreCableM6 = undefined;
 		/*
 		 * EL PUNTO SE QUEDA DONDE SE HA SOLTADO. Si el sitio tiene un problema, se DICE.
 		 *
@@ -7498,6 +7554,7 @@ window.addEventListener('keydown', (ev) => {
 	 * eje, que es como se comporta en cualquier programa 3D y es lo que la mano espera.
 	 */
 	// Vale igual si se agarró por el tubo o por la esfera azul: para la mano es el mismo gesto.
+	if (ev.key === 'Escape' && cancelarArrastreCableM6()) { ev.preventDefault(); return; }
 	const unionEnMano = arrastrandoCable
 		? { id: arrastrandoCable.id, indice: arrastrandoCable.indice }
 		: (handleArrastrado && sel?.tipo === 'cable' && (handleArrastrado.indice ?? -1) >= 0
@@ -9829,7 +9886,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			const c = proyecto.conductores.find((x) => x.id === conductorId);
 			const w = c ? puntosDeCable(c)[indice] : undefined;
 			if (!w) return undefined;
-			const v = aPantalla(escenario.aEscena(w.x, w.y, Z_HANDLE_CABLE));
+			const v = aPantalla(escenario.aEscena(w.x, w.y, c?.rutaFisica ? w.z! : Z_HANDLE_CABLE));
 			return { x: Math.round(v.x), y: Math.round(v.y) };
 		},
 		/**

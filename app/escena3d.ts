@@ -1103,6 +1103,8 @@ export interface RutaCable {
 	conductorId: string;
 	/** La ruta M6 usa exactamente sus segmentos rectos; legacy conserva su suavizado previo. */
 	geometria?: 'POLILINEA';
+	/** Índice de cada nodo M6 en `puntos`; resuelve inserción aun si la ruta se autocruza. */
+	indicesNodos?: number[];
 	de: Anclaje;
 	a: Anclaje;
 	/** Nodos del recorrido en coordenadas de modelo, ya ortogonalizados. */
@@ -2154,15 +2156,20 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		if (conductor.rutaFisica) {
 			const nodos: Punto3[] = [p.de, p.salidaA, ...conductor.rutaFisica.nodos, p.salidaB, p.a]
 				.map((q) => ({ x: q.x, y: q.y, z: q.z }));
-			const puntos = nodos.filter((q, i) => i === 0 || Math.hypot(q.x - nodos[i - 1].x,
-				q.y - nodos[i - 1].y, q.z - nodos[i - 1].z) > 1e-9);
+			const puntos: Punto3[] = [];
+			const indicesNodos: number[] = [];
+			for (let i = 0; i < nodos.length; i++) {
+				const q = nodos[i], ultimo = puntos[puntos.length - 1];
+				if (!ultimo || Math.hypot(q.x - ultimo.x, q.y - ultimo.y, q.z - ultimo.z) > 1e-9) puntos.push(q);
+				if (i >= 2 && i < 2 + conductor.rutaFisica.nodos.length) indicesNodos.push(puntos.length - 1);
+			}
 			const trazo: Trazo = { id: conductor.id, radio, puntos,
 				bornes: [`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
 					`${conductor.a.dispositivoId}:${conductor.a.borneId}`], extremos: [p.de, p.a] };
 			rejilla.anadir(trazo);
 			rutasExplicitas.push({ conductorId: conductor.id, de: p.de, a: p.a,
 				nodos: nodos.map((q) => ({ x: q.x, y: q.y })), puntos, radio,
-				z: puntos[Math.floor(puntos.length / 2)]?.z ?? p.de.z, geometria: 'POLILINEA' });
+				z: puntos[Math.floor(puntos.length / 2)]?.z ?? p.de.z, geometria: 'POLILINEA', indicesNodos });
 			continue;
 		}
 		const codo = radioCodo(radio);
@@ -2703,7 +2710,8 @@ export function rutaProvisional(proyecto: Proyecto, conductorId: string): RutaCa
 	const puntos = conductor.rutaFisica ? nodos : tenderCable(nodos, codo);
 	return {
 		conductorId, de: p.de, a: p.a, radio, puntos,
-		...(conductor.rutaFisica ? { geometria: 'POLILINEA' as const } : {}),
+		...(conductor.rutaFisica ? { geometria: 'POLILINEA' as const,
+			indicesNodos: conductor.rutaFisica.nodos.map((_, i) => i + 2) } : {}),
 		nodos: nodos.map((q) => ({ x: q.x, y: q.y })),
 		z: puntos[Math.floor(puntos.length / 2)]?.z ?? zSuelta,
 	};

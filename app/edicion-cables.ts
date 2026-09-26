@@ -139,6 +139,17 @@ export function indiceDeInsercion(
 }
 
 /**
+ * En M6 los nodos ya tienen un orden de vértices en la ruta de referencia. Usarlo evita
+ * reproyectar su XYZ: un recorrido que vuelve al mismo punto tendría dos proyecciones iguales
+ * y la primera robaría la inserción sobre el tramo posterior.
+ */
+export function indiceDeInsercionM6(indicesNodos: readonly number[], avance: number): number {
+	let n = 0;
+	for (const indice of indicesNodos) if (indice <= avance) n++;
+	return n;
+}
+
+/**
  * Distancia de un punto a un segmento, en el plano. Se usa en PÍXELES, para que la tolerancia de
  * selección sea la misma esté el cable cerca o al fondo del tablero.
  */
