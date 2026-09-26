@@ -76,12 +76,24 @@ try {
 			.test(await pagina.locator('#modal-dialogo').innerText()));
 	const vista = await pagina.locator('#dialogo-msg .vista-propuesta-cable').evaluate((el) => ({
 		puntos: Number(el.dataset.puntos),
-		trazo: el.querySelector('svg path')?.getAttribute('d') ?? '',
+		trazo: el.querySelector('svg[data-vista="frontal"] path')?.getAttribute('d') ?? '',
+		lateral: el.querySelector('svg[data-vista="lateral"] path')?.getAttribute('d') ?? '',
 	}));
 	const trazo3d = await pagina.evaluate(() => window.qa.vistaPropuestaAlta());
 	comprobar('la propuesta muestra la misma ruta XYZ en el tablero y su proyección frontal',
-		vista.puntos >= 2 && vista.trazo.startsWith('M') && trazo3d.visible
+		vista.puntos >= 2 && vista.trazo.startsWith('M') && vista.lateral.startsWith('M') && trazo3d.visible
 			&& trazo3d.puntos === vista.puntos);
+	const selectorRutas = pagina.locator('#dialogo-msg select[data-ruta-opcion]');
+	comprobar('el alta ofrece alternativas del router físicamente distintas',
+		await selectorRutas.locator('option').count() >= 2);
+	await selectorRutas.selectOption('1');
+	const trazoAlternativo = await pagina.locator('#dialogo-msg svg[data-vista="frontal"] path').getAttribute('d');
+	const lateralAlternativo = await pagina.locator('#dialogo-msg svg[data-vista="lateral"] path').getAttribute('d');
+	const vistaAlternativa = await pagina.evaluate(() => window.qa.vistaPropuestaAlta());
+	comprobar('elegir otra ruta actualiza el trazo frontal y la vista 3D sin aplicar el cable',
+		vistaAlternativa.visible && vistaAlternativa.firma !== trazo3d.firma
+		&& (trazoAlternativo !== vista.trazo || lateralAlternativo !== vista.lateral)
+		&& await pagina.evaluate(() => window.qa.proyecto().conductores.length) === 28);
 	if (process.env.CAPTURA_PREVIEW_CAB23) {
 		await pagina.screenshot({ path: process.env.CAPTURA_PREVIEW_CAB23 });
 	}
@@ -97,6 +109,7 @@ try {
 	comprobar('cancelar libera el trazo provisional sin dejar un cable seleccionable',
 		!(await pagina.evaluate(() => window.qa.vistaPropuestaAlta().visible)));
 	await pagina.locator('#btn-conectar').click();
+	await pagina.locator('#dialogo-msg select[data-ruta-opcion]').selectOption('1');
 	await pagina.locator('#dialogo-ok').click();
 	comprobar('aceptar conserva visible el diagnóstico del plan',
 		/Recorrido de .* aceptado con \d+ aviso\(s\)/.test(await pagina.locator('#toast').textContent() ?? ''));
@@ -165,7 +178,8 @@ try {
 	const puntosRevision = await pagina.locator('#dialogo-msg .vista-propuesta-cable').evaluate((el) =>
 		Number(el.dataset.puntos));
 	comprobar('revisar un plan pendiente proyecta el mismo trayecto XYZ en diálogo y tablero',
-		puntosRevision >= 2 && await pagina.locator('#dialogo-msg svg path').count() === 1
+		puntosRevision >= 2 && await pagina.locator('#dialogo-msg svg[data-vista="frontal"] path').count() === 1
+		&& await pagina.locator('#dialogo-msg svg[data-vista="lateral"] path').count() === 1
 		&& (await pagina.evaluate(() => window.qa.vistaPropuestaAlta())).puntos === puntosRevision);
 	await pagina.locator('#dialogo-cancelar').click();
 	comprobar('cancelar la revisión conserva BASE y retira su preview sin autorizar el plan',

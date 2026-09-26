@@ -71,7 +71,8 @@ async function cablear(deId, deBorne, aId, aBorne) {
 		|| !document.getElementById('modal-dialogo')?.hidden, antes, { timeout: 10_000 });
 	assert.equal(await page.locator('#modal-dialogo').isVisible(), true);
 	assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
-	assert.equal(await page.locator('#dialogo-msg svg path').count(), 1);
+	assert.equal(await page.locator('#dialogo-msg svg[data-vista="frontal"] path').count(), 1);
+	assert.equal(await page.locator('#dialogo-msg svg[data-vista="lateral"] path').count(), 1);
 	await page.locator('#dialogo-ok').click();
 	await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad,
 		antes, { timeout: 10_000 });
@@ -115,7 +116,8 @@ async function cablearPorPanel(deId, deBorne, aId, aBorne) {
 		assert.equal(await page.locator('#modal-dialogo').isVisible(), true,
 			'un alta automática limpia también requiere revisar su ruta antes de aceptar');
 		assert.match(await page.locator('#dialogo-msg').textContent() ?? '', /Propuesta para .*Avisos:/s);
-		assert.equal(await page.locator('#dialogo-msg svg path').count(), 1);
+		assert.equal(await page.locator('#dialogo-msg svg[data-vista="frontal"] path').count(), 1);
+		assert.equal(await page.locator('#dialogo-msg svg[data-vista="lateral"] path').count(), 1);
 		assert.equal((await page.evaluate(() => window.qa.vistaPropuestaAlta())).visible, true);
 		await page.locator('#dialogo-ok').click();
 		await page.waitForFunction((cantidad) => window.qa.proyecto().conductores.length > cantidad,
