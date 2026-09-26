@@ -431,8 +431,17 @@ export function contactoEnTramosDelNodo(
 ): Conflicto | undefined {
 	if (!Number.isInteger(indiceNodo) || indiceNodo < 0 || indiceNodo >= trazo.puntos.length) return undefined;
 	const desde = Math.max(0, indiceNodo - 1);
-	const hasta = Math.min(trazo.puntos.length, indiceNodo + 2);
-	return rejilla.peorConflicto({ ...trazo, puntos: trazo.puntos.slice(desde, hasta) }, margen);
+	const hasta = Math.min(trazo.puntos.length - 1, indiceNodo + 1);
+	return contactoEnTramos(rejilla, trazo, desde, hasta, margen);
+}
+
+/** Solo el arco y sus enlaces vecinos, sin volver a construir ni consultar los demás cables. */
+export function contactoEnTramos(
+	rejilla: RejillaCables, trazo: Trazo, desde: number, hasta: number, margen: number,
+): Conflicto | undefined {
+	if (!Number.isInteger(desde) || !Number.isInteger(hasta)
+		|| desde < 0 || hasta >= trazo.puntos.length || hasta <= desde) return undefined;
+	return rejilla.peorConflicto({ ...trazo, puntos: trazo.puntos.slice(desde, hasta + 1) }, margen);
 }
 
 const EJES_CAJA = ['x', 'y', 'z'] as const;
@@ -475,9 +484,19 @@ export function primerSolidoEnTramosDelNodo(
 	puntos: readonly Punto3[], indice: number, radio: number, solidos: readonly Solido[], propios: readonly string[] = [],
 ): Solido | undefined {
 	if (!Number.isInteger(indice) || indice < 0 || indice >= puntos.length || !Number.isFinite(radio) || radio < 0) return undefined;
+	return primerSolidoEnTramos(puntos, Math.max(0, indice - 1), Math.min(indice + 1, puntos.length - 1),
+		radio, solidos, propios);
+}
+
+export function primerSolidoEnTramos(
+	puntos: readonly Punto3[], desde: number, hasta: number, radio: number,
+	solidos: readonly Solido[], propios: readonly string[] = [],
+): Solido | undefined {
+	if (!Number.isInteger(desde) || !Number.isInteger(hasta) || desde < 0 || hasta >= puntos.length
+		|| hasta <= desde || !Number.isFinite(radio) || radio < 0) return undefined;
 	for (const s of solidos) {
 		if (propios.includes(s.id)) continue;
-		for (let tramo = Math.max(0, indice - 1); tramo <= Math.min(indice, puntos.length - 2); tramo++) {
+		for (let tramo = desde; tramo < hasta; tramo++) {
 			if (tramoInvadeCaja(puntos[tramo], puntos[tramo + 1], s, radio)) return s;
 		}
 	}

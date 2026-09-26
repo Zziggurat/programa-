@@ -12,6 +12,7 @@ import { anclajeCampo, aparatosDeCampo, entradaDeCampo, xEntradaCampo,
 	yEntradasCampo } from '../src/modelo/entradas-campo.js';
 export { aparatosDeCampo, entradaDeCampo, yEntradasCampo } from '../src/modelo/entradas-campo.js';
 import { longitudPolilineaMm } from '../src/modelo/ruta-fisica.js';
+import { redondearRutaConRadio, type CodoDeRuta } from '../src/modelo/curvas-ruta.js';
 import { firmaFuentePlanRuta, geometriaDelPlanRuta, planDesdeRutaAutomatica,
 	type PlanRutaAutomaticaV1 } from '../src/modelo/plan-ruta-automatica.js';
 import { firmaEntornoRutaAutomatica, mismoEntornoRutaAutomatica } from '../src/modelo/dependencias-ruta.js';
@@ -1111,6 +1112,12 @@ export interface RutaCable {
 	geometria?: 'POLILINEA';
 	/** Índice de cada nodo M6 en `puntos`; resuelve inserción aun si la ruta se autocruza. */
 	indicesNodos?: number[];
+	/** Segmentos locales afectados por mover cada nodo manual, incluidos los arcos vecinos. */
+	rangosAfectadosNodos?: [number, number][];
+	/** Largo analítico de la referencia curva; no depende del LOD de la malla. */
+	longitudReferenciaMm?: number;
+	/** Codos en los que el radio declarado no cabe; nunca se reduce silenciosamente. */
+	codosSinRadio?: CodoDeRuta[];
 	de: Anclaje;
 	a: Anclaje;
 	/** Nodos del recorrido en coordenadas de modelo, ya ortogonalizados. */
@@ -1419,7 +1426,12 @@ export function largoDibujadoMm(
 	if (conductor.estadoRutaFisica === 'pendiente') return 0;
 	if (conductor.rutaFisica) {
 		const p = salidasDeCable(proyecto, conductor, abanico);
-		return p ? longitudPolilineaMm([p.de, p.salidaA, ...conductor.rutaFisica.nodos, p.salidaB, p.a]) : 0;
+		if (!p) return 0;
+		const nodos = [p.de, p.salidaA, ...conductor.rutaFisica.nodos, p.salidaB, p.a];
+		const indicesObjetivo = new Set(conductor.rutaFisica.nodos.map((_, i) => i + 2));
+		return conductor.rutaFisica.version === 2
+			? redondearRutaConRadio(nodos, conductor.rutaFisica.radioMm, 0.1, indicesObjetivo).longitudMm
+			: longitudPolilineaMm(nodos);
 	}
 	const p = salidasDeCable(proyecto, conductor, abanico);
 	if (!p) return 0;
@@ -2066,6 +2078,20 @@ function rutaManualResuelta(
 	const ruta = conductor.rutaFisica!;
 	const nodos: Punto3[] = [p.de, p.salidaA, ...ruta.nodos, p.salidaB, p.a]
 		.map((q) => ({ x: q.x, y: q.y, z: q.z }));
+	if (ruta.version === 2) {
+		const indicesObjetivo = new Set(ruta.nodos.map((_, i) => i + 2));
+		const resuelta = redondearRutaConRadio(nodos, ruta.radioMm, 0.1, indicesObjetivo);
+		const puntos = resuelta.puntos;
+		return { conductorId: conductor.id, de: p.de, a: p.a,
+			nodos: nodos.map((q) => ({ x: q.x, y: q.y })), puntos, radio,
+			z: puntos[Math.floor(puntos.length / 2)]?.z ?? p.de.z,
+			geometria: 'POLILINEA', indicesNodos: resuelta.indicesVertices.slice(2, 2 + ruta.nodos.length),
+			rangosAfectadosNodos: ruta.nodos.map((_, i) => [
+				resuelta.rangosVertices[i + 1][0], resuelta.rangosVertices[i + 3][1],
+			]),
+			longitudReferenciaMm: resuelta.longitudMm,
+			codosSinRadio: resuelta.codos.filter((c) => c.estado === 'SIN_ESPACIO' || c.estado === 'RETORNO') };
+	}
 	const puntos: Punto3[] = [];
 	const indicesNodos: number[] = [];
 	for (let i = 0; i < nodos.length; i++) {
@@ -2768,14 +2794,17 @@ export function diagnosticoRutaManual(proyecto: Proyecto, conductorId: string): 
 	contacto?: Conflicto;
 	solidos: Conflicto[];
 	canaletas: Conflicto[];
+	radios: CodoDeRuta[];
 } {
 	const trazos = trazosDeCables(proyecto);
 	const propio = trazos.find((t) => t.id === conductorId);
-	if (!propio) return { solidos: [], canaletas: [] };
+	if (!propio) return { solidos: [], canaletas: [], radios: [] };
+	const ruta = rutaProvisional(proyecto, conductorId);
 	const rejilla = new RejillaCables();
 	for (const trazo of trazos) if (trazo.id !== conductorId) rejilla.anadir(trazo);
 	const canaletas = proyecto.gabinete?.canaletas ?? [];
 	return {
+		radios: ruta?.codosSinRadio ?? [],
 		contacto: rejilla.peorConflicto(propio, HOLGURA_CABLE),
 		solidos: invasionesDe([propio], solidosDelTablero(proyecto)),
 		canaletas: invasionesDeCanaletas(new RedCanaletas(canaletas), canaletas, [propio])

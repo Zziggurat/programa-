@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Mesh, TubeGeometry, Vector3 } from 'three';
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import { cargarProyecto, VERSION_FORMATO } from '../src/modelo/cargar.js';
-import { admiteRutaEnPlaca, desplazarTramoInteriorM6, leerRutaFisicaV1, longitudPolilineaMm,
+import { admiteRutaEnPlaca, desplazarTramoInteriorM6, leerRutaFisicaV1, leerRutaFisicaV2, longitudPolilineaMm,
 	MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { construirUnCable, diagnosticoRutaManual, largoDibujadoMm, liberar, longitudesParaRevisionMm,
 	rutaProvisional, rutasDeCables, salidasDeCable } from '../app/escena3d.js';
@@ -299,6 +299,63 @@ test('CAB-30: ruta hostil o contradictoria no se degrada silenciosamente a legac
 	const p = legadoV9(); p.version = 3;
 	p.conductores[0].rutaFisica = rutaDesdeTrazadoLegacy('w1', p.conductores[0].trazado)!;
 	assert.throws(() => cargarProyecto(JSON.stringify(p)), /simultáneos/);
+});
+
+test('CAB-25: radio V2 persiste; preview, reparto, picking y metraje comparten referencia XYZ', () => {
+	const p = legadoV9(); p.version = 4;
+	const c = p.conductores[3]; p.conductores = [c]; delete c.trazado;
+	c.rutaFisica = leerRutaFisicaV2({ version: 2, modo: 'MANUAL', marco: 'PLACA',
+		geometria: 'ARCO_CIRCULAR', radioMm: 4,
+		nodos: [{ id: 'codo', x: 95, y: 115, z: 54 }] });
+	const vista = rutaProvisional(p, c.id)!;
+	const reparto = rutasDeCables(p)[0];
+	assert.equal(vista.codosSinRadio?.length, 0, 'el único codo manual debe admitir 4 mm');
+	assert.deepEqual(vista.puntos, reparto.puntos);
+	assert.deepEqual(vista.indicesNodos, reparto.indicesNodos);
+	assert.deepEqual(vista.rangosAfectadosNodos, reparto.rangosAfectadosNodos);
+	assert.ok(vista.rangosAfectadosNodos![0][1] - vista.rangosAfectadosNodos![0][0] > 2,
+		'el arrastre debe revisar el arco completo y ambos enlaces adyacentes');
+	assert.ok(vista.puntos.length > 5, 'se requieren muestras de un arco circular real');
+	const tubo = construirUnCable(reparto, 0x224466, (x, y, z) => new Vector3(x, y, z));
+	try {
+		const camino = (tubo.children[0] as Mesh<TubeGeometry>).geometry.parameters.path;
+		for (let i = 0; i <= 100; i++) {
+			const punto = camino.getPoint(i / 100);
+			const eje = proyectarEnPolilinea(reparto.puntos, punto);
+			assert.ok(eje && eje.distancia < 1e-6,
+				`la malla de la curva no debe separarse de la ruta seleccionable: ${eje?.distancia}`);
+		}
+	} finally { liberar(tubo); }
+	assert.equal(indiceDeInsercionM6(reparto.indicesNodos!, reparto.indicesNodos![0] + 0.5), 1);
+	assert.ok(Math.abs(largoDibujadoMm(p, c) - vista.longitudReferenciaMm!) < 1e-9);
+	assert.ok(longitudPolilineaMm(vista.puntos) <= vista.longitudReferenciaMm! + 1e-9,
+		'el metraje analítico no debe depender del número de triángulos o muestras');
+	const cargado = cargarProyecto(JSON.stringify(p)).proyecto;
+	assert.deepEqual(cargado.conductores[0].rutaFisica, c.rutaFisica);
+	assert.deepEqual(rutasDeCables(cargado)[0].puntos, vista.puntos);
+	assert.equal(largoDibujadoMm(cargado, cargado.conductores[0]), largoDibujadoMm(p, c));
+	assert.equal(cargado.conductores[0].rutaFisica?.version, 2);
+	const conVecino = structuredClone(p);
+	conVecino.conductores.push(legadoV9().conductores[4]);
+	const invertido = structuredClone(conVecino);
+	invertido.conductores.reverse();
+	const normal = rutasDeCables(conVecino).find((r) => r.conductorId === c.id)!;
+	const invertida = rutasDeCables(invertido).find((r) => r.conductorId === c.id)!;
+	assert.deepEqual(invertida.puntos, normal.puntos,
+		'la curva declarada no depende de la posición del conductor en el array');
+});
+
+test('CAB-25: el formato V2 rechaza radio hostil y conserva el modo al mover nodos', () => {
+	const base = { version: 2, modo: 'MANUAL', marco: 'PLACA', geometria: 'ARCO_CIRCULAR',
+		radioMm: 4, nodos: [{ id: 'n1', x: 20, y: 30, z: 40 }, { id: 'n2', x: 50, y: 60, z: 70 }] };
+	const ruta = leerRutaFisicaV2(base);
+	assert.deepEqual(desplazarTramoInteriorM6(ruta, 0, { x: 1, y: 2, z: 3 }), {
+		...ruta, nodos: [{ id: 'n1', x: 21, y: 32, z: 43 }, { id: 'n2', x: 51, y: 62, z: 73 }],
+	});
+	for (const radioMm of [0, -1, Infinity, NaN, 501, '4']) {
+		assert.throws(() => leerRutaFisicaV2({ ...base, radioMm }), /RUTA_M6_NO_SOPORTADA/);
+	}
+	assert.throws(() => leerRutaFisicaV2({ ...base, marca: 'oculta' }), /RUTA_M6_NO_SOPORTADA/);
 });
 
 test('CAB-04/30: el marco PLACA no acepta puerta, campo ni extremo sin colocación', () => {

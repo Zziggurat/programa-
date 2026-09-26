@@ -22,6 +22,17 @@ export interface RutaFisicaV1 {
 	nodos: PuntoRutaFisica[];
 }
 
+/** CAB-25: mismo marco y nodos, pero con radio circular explícito, no una spline cosmética. */
+export interface RutaFisicaV2 {
+	version: 2;
+	modo: 'MANUAL';
+	marco: 'PLACA';
+	geometria: 'ARCO_CIRCULAR';
+	radioMm: number;
+	nodos: PuntoRutaFisica[];
+}
+export type RutaFisica = RutaFisicaV1 | RutaFisicaV2;
+
 export interface PuntoFisico3D { x: number; y: number; z: number }
 export const MAX_NODOS_RUTA_M6 = 128;
 
@@ -61,6 +72,27 @@ export function leerRutaFisicaV1(bruto: unknown): RutaFisicaV1 {
 	return { version: 1, modo: 'MANUAL', marco: 'PLACA', geometria: 'POLILINEA', nodos };
 }
 
+export function leerRutaFisicaV2(bruto: unknown): RutaFisicaV2 {
+	if (typeof bruto !== 'object' || bruto === null || Array.isArray(bruto)) throw new Error('RUTA_M6_INVALIDA');
+	const r = bruto as Record<string, unknown>;
+	if (r.version !== 2 || r.modo !== 'MANUAL' || r.marco !== 'PLACA'
+		|| r.geometria !== 'ARCO_CIRCULAR' || typeof r.radioMm !== 'number'
+		|| !Number.isFinite(r.radioMm) || r.radioMm <= 0 || r.radioMm > 500
+		|| Object.keys(r).some((k) => !['version', 'modo', 'marco', 'geometria', 'radioMm', 'nodos'].includes(k))) {
+		throw new Error('RUTA_M6_NO_SOPORTADA');
+	}
+	const nodos = leerRutaFisicaV1({ version: 1, modo: 'MANUAL', marco: 'PLACA',
+		geometria: 'POLILINEA', nodos: r.nodos }).nodos;
+	return { version: 2, modo: 'MANUAL', marco: 'PLACA', geometria: 'ARCO_CIRCULAR',
+		radioMm: r.radioMm, nodos };
+}
+
+export function leerRutaFisica(bruto: unknown): RutaFisica {
+	if (typeof bruto !== 'object' || bruto === null || Array.isArray(bruto)) throw new Error('RUTA_M6_INVALIDA');
+	return (bruto as Record<string, unknown>).version === 1
+		? leerRutaFisicaV1(bruto) : leerRutaFisicaV2(bruto);
+}
+
 /** Solo el legacy XYZ explícito puede convertirse sin inventar la profundidad. */
 export function rutaDesdeTrazadoLegacy(
 	conductorId: string, trazado: readonly { x: number; y: number; z?: number }[] | undefined,
@@ -91,11 +123,11 @@ export function longitudPolilineaMm(puntos: readonly PuntoFisico3D[]): number {
  * pura para que una entrada inválida no deje medio tramo movido ni cree un Undo vacío.
  */
 export function desplazarTramoInteriorM6(
-	ruta: RutaFisicaV1, indice: number, delta: PuntoFisico3D,
-): RutaFisicaV1 {
+	ruta: RutaFisica, indice: number, delta: PuntoFisico3D,
+): RutaFisica {
 	if (!Number.isInteger(indice) || indice < 0 || indice + 1 >= ruta.nodos.length
 		|| ![delta.x, delta.y, delta.z].every(Number.isFinite)) throw new Error('TRAMO_M6_INVALIDO');
 	const nodos = ruta.nodos.map((n, i) => i === indice || i === indice + 1
 		? { ...n, x: n.x + delta.x, y: n.y + delta.y, z: n.z + delta.z } : { ...n });
-	return leerRutaFisicaV1({ ...ruta, nodos });
+	return leerRutaFisica({ ...ruta, nodos });
 }

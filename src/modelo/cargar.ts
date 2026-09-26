@@ -16,7 +16,7 @@ import {
 import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 import { leerComportamientoSimulacion, validarComportamiento } from './comportamiento.js';
 import { leerFisicaConductor, leerFisicaDispositivo } from './fisica.js';
-import { admiteRutaEnPlaca, leerRutaFisicaV1 } from './ruta-fisica.js';
+import { admiteRutaEnPlaca, leerRutaFisica } from './ruta-fisica.js';
 import { leerPlanRutaAutomaticaV1 } from './plan-ruta-automatica.js';
 import { idsDePlanesObsoletos } from './dependencias-ruta.js';
 import { leerConfiguracionIngenieria } from './ingenieria.js';
@@ -1233,7 +1233,7 @@ function leerConductores(
 		let rutaFisica: Conductor['rutaFisica'];
 		if (c.rutaFisica !== undefined) {
 			if (version < 3) throw new ArchivoInvalido(`Cable ${c.id}: ruta M6 en un archivo anterior a la versión 3.`);
-			try { rutaFisica = leerRutaFisicaV1(c.rutaFisica); }
+			try { rutaFisica = leerRutaFisica(c.rutaFisica); }
 			catch { throw new ArchivoInvalido(`Cable ${c.id}: ruta M6 desconocida o dañada; no se sustituyó por un ruteo automático.`); }
 		}
 		let planRutaAutomatica: Conductor['planRutaAutomatica'];
