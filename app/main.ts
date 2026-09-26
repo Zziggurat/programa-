@@ -51,7 +51,7 @@ import {
 } from './escena3d.js';
 import RuteoWorker from './ruteo-worker.ts?worker&inline';
 import { proyectoParaRuteo } from './proyecto-ruteo.js';
-import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, RedCanaletas } from './canaletas-red.js';
+import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, invasionesDeCanaletas, RedCanaletas } from './canaletas-red.js';
 import { primerSolidoEnPunto, primerSolidoEnTramosDelNodo } from './colisiones-cables.js';
 import { actualizarMazoPuerta, ajustesDeMazo, trazasDeMazo } from './mazo-puerta.js';
 import {
@@ -6310,6 +6310,12 @@ function previsualizarCable(conductorId: string, indiceNodo?: number): void {
 		const obstaculo = primerSolidoEnTramosDelNodo(ruta.puntos, indiceRuta, ruta.radio,
 			antesArrastreCableM6.solidos, antesArrastreCableM6.propios);
 		if (obstaculo) motivoInvalido = `el tramo atraviesa ${obstaculo.id}`;
+		else if (proyecto.gabinete?.canaletas.length) {
+			const puntos = ruta.puntos.slice(Math.max(0, indiceRuta - 1), Math.min(ruta.puntos.length, indiceRuta + 2));
+			const plastico = invasionesDeCanaletas(antesArrastreCableM6.red, proyecto.gabinete.canaletas,
+				[{ id: conductorId, radio: ruta.radio, puntos }])[0];
+			if (plastico) motivoInvalido = `el tramo atraviesa ${plastico.parte} de la canaleta ${plastico.canaleta}`;
+		}
 	}
 	// La vista previa se reemplaza en cada movimiento. No conservar clones de selección
 	// apuntando a mallas que `liberar` destruirá, ni acumular uno nuevo por píxel.
