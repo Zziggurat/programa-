@@ -7,7 +7,8 @@ import { leerRutaFisicaV1 } from '../src/modelo/ruta-fisica.js';
 import { geometriaDelPlanRuta, leerPlanRutaAutomaticaV1,
 	MAX_PUNTOS_PLAN_AUTO, planDesdeRutaAutomatica } from '../src/modelo/plan-ruta-automatica.js';
 import { firmaEntornoRutaAutomatica, marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
-import { longitudCoincidente3D } from '../app/colisiones-cables.js';
+import { conflictosDe, longitudCoincidente3D, longitudCoincidenteFueraDeBornes3D,
+	type Trazo } from '../app/colisiones-cables.js';
 
 test('CAB-24: el plan automatico conserva XYZ exacto sin depender de la malla', () => {
 	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
@@ -76,6 +77,50 @@ test('CAB-24: un cable nuevo de mayor sección comparte borne sin mover planes a
 	const reabierto = cargarProyecto(JSON.stringify(proyecto)).proyecto;
 	assert.deepEqual(rutasDeCables(reabierto).find((r) => r.conductorId === 'w29')?.puntos,
 		despues.get('w29'));
+});
+
+test('CAB-24: cinco conductores paralelos conservan planes y no comparten eje fuera del borne', (t) => {
+	const proyecto = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
+	assert.equal(asignarPlanesAutomaticos(proyecto), 28);
+	const w4 = proyecto.conductores.find((c) => c.id === 'w4')!;
+	let previas = new Map(rutasDeCables(proyecto).map((r) => [r.conductorId, r.puntos]));
+	const ids = [w4.id];
+	for (let i = 0; i < 4; i++) {
+		const id = `paralelo-${i + 1}`;
+		proyecto.conductores.push({ id, de: { ...w4.de }, a: { ...w4.a }, seccion: 2.5 });
+		assert.deepEqual(marcarPlanesObsoletosPendientes(proyecto), [], `alta ${id}`);
+		const preparados = prepararAsignacionPlanesAutomaticos(proyecto, new Set([id]));
+		assert.equal(asignarPlanesAutomaticos(proyecto, preparados), 1, id);
+		const rutasActuales = new Map(rutasDeCables(proyecto).map((r) => [r.conductorId, r]));
+		const actuales = new Map([...rutasActuales].map(([clave, ruta]) => [clave, ruta.puntos]));
+		for (const [anterior, puntos] of previas) assert.deepEqual(actuales.get(anterior), puntos,
+			`el alta ${id} no mueve ${anterior}`);
+		const trazo = (conductorId: string): Trazo => {
+			const c = proyecto.conductores.find((x) => x.id === conductorId)!;
+			const r = rutasActuales.get(conductorId)!;
+			return { id: conductorId, radio: r.radio, puntos: r.puntos,
+				bornes: [`${c.de.dispositivoId}:${c.de.borneId}`, `${c.a.dispositivoId}:${c.a.borneId}`],
+				extremos: [r.de, r.a] };
+		};
+		for (const otro of ids) assert.ok(longitudCoincidenteFueraDeBornes3D(trazo(id), trazo(otro)) < 0.5,
+			`${id} y ${otro} no pueden compartir eje fuera de sus zonas de borne`);
+		ids.push(id);
+		previas = actuales;
+	}
+	const rutasFinales = new Map(rutasDeCables(proyecto).map((r) => [r.conductorId, r]));
+	const trazos = ids.map((id): Trazo => {
+		const c = proyecto.conductores.find((x) => x.id === id)!;
+		const r = rutasFinales.get(id)!;
+		return { id, radio: r.radio, puntos: r.puntos,
+			bornes: [`${c.de.dispositivoId}:${c.de.borneId}`, `${c.a.dispositivoId}:${c.a.borneId}`],
+			extremos: [r.de, r.a] };
+	});
+	const contactos = conflictosDe(trazos);
+	t.diagnostic(`${contactos.length} contactos de aislaciones fuera de zona de borne; no equivalen a eje fusionado ni a ruta fabricable.`);
+	const reabierto = cargarProyecto(JSON.stringify(proyecto)).proyecto;
+	assert.deepEqual(new Map(rutasDeCables(reabierto).map((r) => [r.conductorId, r.puntos])), previas);
+	reabierto.conductores.reverse();
+	assert.deepEqual(new Map(rutasDeCables(reabierto).map((r) => [r.conductorId, r.puntos])), previas);
 });
 
 test('CAB-24: un plan con anclaje cambiado no se repara silenciosamente', () => {

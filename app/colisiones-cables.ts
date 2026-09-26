@@ -171,6 +171,17 @@ interface Barra {
 
 interface ZonaBorne { centro: Punto3; radio: number }
 
+/** La misma excepción física se usa al medir contacto y coincidencia de eje. */
+function zonasDeBorneCompartido(a: Trazo, b: Trazo): ZonaBorne[] {
+	if (!a.bornes || !b.bornes || !a.extremos || !b.extremos) return [];
+	const zonas: ZonaBorne[] = [];
+	for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+		if (a.bornes[i] === b.bornes[j]) zonas.push({ centro: a.extremos[i],
+			radio: Math.max(RADIO_BORNE, radioZonaSalidaBorne(a.radio), radioZonaSalidaBorne(b.radio)) });
+	}
+	return zonas;
+}
+
 /** Trozos de un segmento que quedan fuera de las zonas legítimas del borne compartido. */
 function fueraDeZonas(p0: Punto3, p1: Punto3, zonas: readonly ZonaBorne[]): [Punto3, Punto3][] {
 	const v = resta(p1, p0);
@@ -202,6 +213,25 @@ function fueraDeZonas(p0: Punto3, p1: Punto3, zonas: readonly ZonaBorne[]): [Pun
 }
 
 /**
+ * Coincidencia de eje solo fuera de la salida legítima de bornes compartidos.
+ * Es un diagnóstico de pares, no se usa en el ciclo de candidatos ni en pointermove.
+ * Un contacto de aislaciones sin eje coincidente se mide aparte con `conflictosDe`.
+ */
+export function longitudCoincidenteFueraDeBornes3D(
+	a: Trazo, b: Trazo, tolerancia = 0.5,
+): number {
+	const zonas = zonasDeBorneCompartido(a, b);
+	const trozos = (trazo: Trazo): [Punto3, Punto3][] => trazo.puntos.slice(1).flatMap((p, i) =>
+		fueraDeZonas(trazo.puntos[i], p, zonas));
+	const partesA = trozos(a), partesB = trozos(b);
+	let total = 0;
+	for (const [a0, a1] of partesA) for (const [b0, b1] of partesB) {
+		total += longitudCoincidente3D([a0, a1], [b0, b1], tolerancia);
+	}
+	return total;
+}
+
+/**
  * Un mínimo situado en el tornillo no perdona el resto de dos segmentos colineales largos.
  * Solo se exime el volumen de salida compartido; fuera de él vuelve a medirse la distancia 3D.
  */
@@ -210,11 +240,7 @@ function distanciaFueraDeBorneCompartido(
 	medida: { d: number; donde: Punto3 },
 ): { d: number; donde: Punto3 } | undefined {
 	if (!a.bornes || !b.bornes || !a.extremos || !b.extremos) return medida;
-	const zonas: ZonaBorne[] = [];
-	for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
-		if (a.bornes[i] === b.bornes[j]) zonas.push({ centro: a.extremos[i],
-			radio: Math.max(RADIO_BORNE, radioZonaSalidaBorne(a.radio), radioZonaSalidaBorne(b.radio)) });
-	}
+	const zonas = zonasDeBorneCompartido(a, b);
 	if (!zonas.some(({ centro, radio }) => Math.hypot(
 		medida.donde.x - centro.x, medida.donde.y - centro.y, medida.donde.z - centro.z) <= radio)) return medida;
 	let fuera: { d: number; donde: Punto3 } | undefined;

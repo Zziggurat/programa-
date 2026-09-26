@@ -26,7 +26,8 @@ import assert from 'node:assert/strict';
 
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import {
-	conflictosDe, distanciaSegmentos, invasionesDe, longitudCoincidente3D, radioZonaSalidaBorne,
+	conflictosDe, distanciaSegmentos, invasionesDe, longitudCoincidente3D,
+	longitudCoincidenteFueraDeBornes3D, radioZonaSalidaBorne,
 } from '../app/colisiones-cables.js';
 import { Punto3, tenderCable } from '../app/geometria-cables.js';
 import {
@@ -133,6 +134,18 @@ test('la fusión 3D distingue una línea compartida de un cruce puntual', () => 
 	assert.ok(Math.abs(longitudCoincidente3D(recta, misma) - 60) < 1e-6);
 	assert.equal(longitudCoincidente3D(recta, cruzada), 0);
 	assert.equal(longitudCoincidente3D(recta, otraCapa), 0);
+});
+
+test('la coincidencia descuenta solo la zona física de los bornes compartidos', () => {
+	const inicio = { x: 0, y: 0, z: 0 };
+	const fin = { x: 100, y: 0, z: 0 };
+	const a = { id: 'a', radio: 2, puntos: [inicio, fin],
+		bornes: ['inicio', 'fin'] as [string, string], extremos: [inicio, fin] as [Punto3, Punto3] };
+	const b = { ...a, id: 'b', bornes: ['inicio', 'otro'] as [string, string] };
+	const ambos = { ...a, id: 'c' };
+	assert.equal(longitudCoincidente3D(a.puntos, b.puntos), 100);
+	assert.ok(Math.abs(longitudCoincidenteFueraDeBornes3D(a, b) - 82) < 1e-6);
+	assert.ok(Math.abs(longitudCoincidenteFueraDeBornes3D(a, ambos) - 64) < 1e-6);
 });
 
 test('los cables de un mismo borne comparten el tornillo y se separan después', () => {
