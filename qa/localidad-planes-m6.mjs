@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 import { EJEMPLOS } from '../dist/ejemplo/biblioteca.js';
+import { longitudCoincidente3D } from '../dist/app/colisiones-cables.js';
 import { abrirNavegador, esperarEditorListo, servidorDeQA } from './lib/entorno.mjs';
 
 const inicio = Date.now();
@@ -59,6 +60,39 @@ try {
 	const reabierto = await rutas();
 	comprobar('reabrir conserva la localidad exacta de los vecinos',
 		Object.keys(antes).every((id) => id === 'w4' || firma(antes[id]) === firma(reabierto[id])));
+	await pagina.locator('#hta-seleccionar').click();
+	if (!await pagina.locator('#seccion-dispositivos').evaluate((e) => e.open))
+		await pagina.locator('#seccion-dispositivos summary').click();
+	await pagina.locator('#lista-dispositivos li').filter({ hasText: '-Q1' }).first().click();
+	await pagina.locator('#hta-conectar').click();
+	await pagina.locator('#cable-borne-origen').waitFor({ state: 'visible' });
+	await pagina.locator('#cable-borne-origen').selectOption('2');
+	await pagina.locator('#cable-destino').selectOption('km1');
+	await pagina.locator('#cable-borne-destino').selectOption('3/L2');
+	await pagina.locator('#cable-seccion').selectOption('6');
+	await pagina.locator('#btn-conectar').click();
+	await pagina.waitForFunction(() => window.qa.proyecto().conductores.length === 29);
+	const conNuevo = await pagina.evaluate(() => window.qa.proyecto());
+	const nuevo = conNuevo.conductores.find((c) => !fixture.conductores.some((original) => original.id === c.id));
+	assert.ok(nuevo, 'el formulario no creó un conductor identificable');
+	const puntosDelPlan = (plan) => Array.from({ length: plan.puntosXYZ.length / 3 }, (_, i) => ({
+		x: plan.puntosXYZ[i * 3], y: plan.puntosXYZ[i * 3 + 1], z: plan.puntosXYZ[i * 3 + 2],
+	}));
+	const planW4 = conNuevo.conductores.find((c) => c.id === 'w4').planRutaAutomatica;
+	const rutasConNuevo = await rutas();
+	comprobar('un cable nuevo de 6 mm² obtiene plan sin mover los 28 aceptados',
+		!!nuevo.planRutaAutomatica && Object.entries(reabierto).every(([id, ruta]) =>
+			firma(ruta) === firma(rutasConNuevo[id])));
+	comprobar('compartir borne no prolonga la misma línea 3D',
+		longitudCoincidente3D(puntosDelPlan(nuevo.planRutaAutomatica), puntosDelPlan(planW4)) <= 4);
+	await pagina.evaluate(() => window.qa.esperarPersistencia());
+	await pagina.reload({ waitUntil: 'domcontentloaded' });
+	await esperarEditorListo(pagina);
+	const rutasConNuevoReabierto = await rutas();
+	comprobar('el cable nuevo y sus 28 vecinos sobreviven la reapertura',
+		await pagina.evaluate((id) => !!window.qa.proyecto().conductores.find((c) => c.id === id)?.planRutaAutomatica,
+			nuevo.id) && Object.entries(reabierto).every(([id, ruta]) =>
+			firma(ruta) === firma(rutasConNuevoReabierto[id])));
 	const canaleta = await pagina.evaluate(() => window.qa.proyecto().gabinete.canaletas[0]);
 	assert.ok(canaleta, 'el ejemplo debe tener una canaleta');
 	const planesAntesDucto = await pagina.evaluate(() => Object.fromEntries(window.qa.proyecto().conductores
@@ -117,6 +151,32 @@ try {
 	comprobar('Redo vuelve a aceptar el recorrido revisado',
 		await pagina.evaluate((id) => window.qa.proyecto().conductores
 			.find((c) => c.id === id)?.estadoRutaFisica !== 'pendiente', idRevisado));
+	const q1Antes = await pagina.evaluate(() => window.qa.proyecto().gabinete.colocaciones
+		.find((c) => c.dispositivoId === 'q1')?.x);
+	const w4Antes = await pagina.evaluate(() => window.qa.proyecto().conductores
+		.find((c) => c.id === 'w4'));
+	assert.ok(Number.isFinite(q1Antes) && w4Antes?.planRutaAutomatica
+		&& w4Antes.estadoRutaFisica !== 'pendiente', 'q1 y w4 deben estar vigentes antes de mover el aparato');
+	await pagina.locator('#hta-seleccionar').click();
+	if (!await pagina.locator('#seccion-dispositivos').evaluate((e) => e.open))
+		await pagina.locator('#seccion-dispositivos summary').click();
+	await pagina.locator('#lista-dispositivos li').filter({ hasText: '-Q1' }).first().click();
+	await pagina.locator('#pos-aparato-x').fill(String(q1Antes + 5));
+	await pagina.locator('#pos-aparato-aplicar').click();
+	await pagina.waitForFunction((x) => window.qa.proyecto().gabinete.colocaciones
+		.find((c) => c.dispositivoId === 'q1')?.x === x, q1Antes + 5);
+	comprobar('mover el aparato invalida su plan conectado sin dibujarlo en el anclaje viejo',
+		await pagina.evaluate(() => {
+			const c = window.qa.proyecto().conductores.find((x) => x.id === 'w4');
+			return c?.estadoRutaFisica === 'pendiente' && window.qa.rutaDe('w4') === undefined;
+		}) && firma((await pagina.evaluate(() => window.qa.proyecto().conductores
+			.find((c) => c.id === 'w4'))).planRutaAutomatica) === firma(w4Antes.planRutaAutomatica));
+	await pagina.locator('#btn-deshacer').click();
+	comprobar('Undo del aparato restablece anclaje y plan sin reautorizar vecinos',
+		await pagina.evaluate((x) => window.qa.proyecto().gabinete.colocaciones
+			.find((c) => c.dispositivoId === 'q1')?.x === x
+			&& window.qa.proyecto().conductores.find((c) => c.id === 'w4')?.estadoRutaFisica !== 'pendiente'
+			&& !!window.qa.rutaDe('w4'), q1Antes));
 	comprobar('no hubo errores JavaScript', erroresJS.length === 0);
 	console.log(`QA localidad CAB-24: ${casos}/${casos}, ${((Date.now() - inicio) / 1000).toFixed(1)} s`);
 } catch (error) {
