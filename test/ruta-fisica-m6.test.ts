@@ -8,7 +8,8 @@ import { admiteRutaEnPlaca, desplazarTramoInteriorM6, leerRutaFisicaV1, longitud
 import { construirUnCable, diagnosticoRutaManual, largoDibujadoMm, liberar, longitudesParaRevisionMm,
 	rutasDeCables, salidasDeCable } from '../app/escena3d.js';
 import { indiceDeInsercion, indiceDeInsercionM6, proyectarEnPolilinea } from '../app/edicion-cables.js';
-import { primerSolidoEnPunto, primerSolidoEnTramosDelNodo } from '../app/colisiones-cables.js';
+import { contactoEnTramosDelNodo, primerSolidoEnPunto, primerSolidoEnTramosDelNodo,
+	RejillaCables, type Trazo } from '../app/colisiones-cables.js';
 import { dientesDe, invasionesDeCanaletas, ranurasDe, RedCanaletas } from '../app/canaletas-red.js';
 import { rutearConductores } from '../src/motores/ruteo.js';
 import { proyectarLongitudesDocumentales } from '../src/motores/longitudes-documentales.js';
@@ -52,6 +53,36 @@ test('CAB-11: preview local admite corredor y ranura, pero advierte diente atrav
 		'la entrada por una ranura no debe recibir aviso de pared');
 	const diente = dientesDe(c)[3];
 	assert.equal(invadir([{ x: diente, y: 65, z: 20 }, { x: diente, y: 100, z: 20 }])[0]?.parte, 'diente');
+});
+
+test('CAB-10/13: contacto de preview mide solo los tramos vecinos en 3D', () => {
+	const origen = { x: 0, y: 0, z: 20 };
+	const vecino: Trazo = { id: 'vecino', radio: 2,
+		puntos: [{ x: 20, y: 0, z: 20 }, { x: 80, y: 0, z: 20 }],
+		bornes: ['V:1', 'V:2'], extremos: [{ x: 20, y: 0, z: 20 }, { x: 80, y: 0, z: 20 }] };
+	const rejilla = new RejillaCables(); rejilla.anadir(vecino);
+	const actual: Trazo = { id: 'manual', radio: 2,
+		puntos: [origen, { x: 30, y: 0, z: 20 }, { x: 60, y: 0, z: 20 },
+			{ x: 90, y: 50, z: 20 }, { x: 120, y: 50, z: 20 }],
+		bornes: ['M:1', 'M:2'], extremos: [origen, { x: 120, y: 50, z: 20 }] };
+	assert.equal(contactoEnTramosDelNodo(rejilla, actual, 1, 1.2)?.b, 'vecino');
+	assert.equal(contactoEnTramosDelNodo(rejilla, actual, 4, 1.2), undefined,
+		'el contacto de un tramo remoto no debe contaminar el aviso del nodo movido');
+	const sobre = { ...actual, puntos: actual.puntos.map((p) => ({ ...p, z: p.z + 20 })) };
+	assert.equal(contactoEnTramosDelNodo(rejilla, sobre, 1, 1.2), undefined,
+		'una coincidencia frontal a distinta profundidad no es contacto físico');
+	const borne = new RejillaCables();
+	borne.anadir({ ...vecino, puntos: [origen, { x: 8, y: 0, z: 20 }],
+		bornes: ['COMUN:1', 'V:2'], extremos: [origen, { x: 8, y: 0, z: 20 }] });
+	assert.equal(contactoEnTramosDelNodo(borne, { ...actual,
+		puntos: [origen, { x: 8, y: 0, z: 20 }], bornes: ['COMUN:1', 'M:2'] }, 1, 1.2), undefined,
+		'el borne común puede compartir solo su zona física de salida');
+	const prolongado = new RejillaCables();
+	prolongado.anadir({ ...vecino, puntos: [origen, { x: 80, y: 0, z: 20 }],
+		bornes: ['COMUN:1', 'V:2'], extremos: [origen, { x: 80, y: 0, z: 20 }] });
+	assert.equal(contactoEnTramosDelNodo(prolongado, { ...actual,
+		puntos: [origen, { x: 80, y: 0, z: 20 }], bornes: ['COMUN:1', 'M:2'] }, 1, 1.2)?.b, 'vecino',
+		'compartir borne no perdona una coincidencia de eje fuera de la zona de salida');
 });
 
 test('CAB-29: fixture V9 conserva identidades, conexión, XYZ, color y largo declarado', () => {

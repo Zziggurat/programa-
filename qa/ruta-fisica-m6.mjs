@@ -48,6 +48,16 @@ fixtureDucto.conductores[0].rutaFisica = { version: 1, modo: 'MANUAL', marco: 'P
 	nodos: [{ id: 'w1:n1', x: 81, y: 65, z: 20 }, { id: 'w1:n2', x: 81, y: 100, z: 20 },
 		{ id: 'w1:n3', x: 150, y: 100, z: 20 }] };
 
+const fixtureContacto = structuredClone(fixtureDucto);
+fixtureContacto.nombre = 'QA proximidad M6';
+fixtureContacto.gabinete.canaletas = [];
+fixtureContacto.conductores.push(structuredClone(fixture.conductores[1]));
+fixtureContacto.conductores[0].rutaFisica.nodos = [
+	{ id: 'w1:n1', x: 130, y: 130, z: 35 }, { id: 'w1:n2', x: 260, y: 130, z: 35 },
+];
+fixtureContacto.conductores[1].rutaFisica = { version: 1, modo: 'MANUAL', marco: 'PLACA', geometria: 'POLILINEA',
+	nodos: [{ id: 'w2:n1', x: 130, y: 180, z: 35 }, { id: 'w2:n2', x: 260, y: 180, z: 35 }] };
+
 try {
 	const entorno = await servidorDeQA(); servidor = entorno.servidor;
 	navegador = await abrirNavegador(chromium);
@@ -286,6 +296,29 @@ try {
 	await ducto.keyboard.press('Escape');
 	await ducto.mouse.up();
 	comprobar('la prueba de canaleta no produjo errores JavaScript', erroresJS.length === 0);
+	await ducto.locator('#btn-archivo').click();
+	const abrirContacto = ducto.waitForEvent('filechooser');
+	await ducto.locator('#btn-abrir').click();
+	await (await abrirContacto).setFiles({ name: 'proximidad-m6.tablero.json', mimeType: 'application/json',
+		buffer: Buffer.from(JSON.stringify(fixtureContacto)) });
+	await ducto.waitForFunction(() => window.qa.proyecto().nombre === 'QA proximidad M6');
+	await ducto.locator('#hta-conectar').click();
+	await ducto.locator('#lista-cables li').first().click();
+	const contactoAntes = JSON.stringify(await ducto.evaluate(() => window.qa.proyecto().conductores[0].rutaFisica));
+	const puntosContacto = await ducto.evaluate(() => [window.qa.puntoDeUnion('w1', 0), window.qa.puntoDeUnion('w2', 0)]);
+	assert.ok(puntosContacto[0] && puntosContacto[1], 'ambos nodos deben estar en pantalla');
+	await ducto.mouse.move(puntosContacto[0].x, puntosContacto[0].y);
+	await ducto.mouse.down();
+	await ducto.mouse.move(puntosContacto[1].x, puntosContacto[1].y, { steps: 8 });
+	comprobar('la interfaz advierte proximidad 3D a otro conductor durante el gesto',
+		/Aviso: el tramo se acerca a w2/.test(await ducto.locator('#ayuda').innerText()));
+	await ducto.keyboard.press('Escape');
+	await ducto.mouse.up();
+	comprobar('cancelar la proximidad restaura la ruta sin mover al vecino',
+		JSON.stringify(await ducto.evaluate(() => window.qa.proyecto().conductores[0].rutaFisica)) === contactoAntes
+		&& JSON.stringify(await ducto.evaluate(() => window.qa.proyecto().conductores[1].rutaFisica))
+			=== JSON.stringify(fixtureContacto.conductores[1].rutaFisica));
+	comprobar('la prueba de proximidad no produjo errores JavaScript', erroresJS.length === 0);
 	console.log(`QA ruta física M6: ${casos}/${casos}, ${((Date.now() - inicio) / 1000).toFixed(1)} s`);
 } catch (error) {
 	console.error(error);
