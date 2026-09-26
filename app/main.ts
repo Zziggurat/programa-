@@ -99,7 +99,7 @@ import {
 	redondearEsquinas,
 } from './geometria-cables.js';
 import { longitudCoincidente3D } from './colisiones-cables.js';
-import { aplicarPropuestaAltaCable, proponerAltaCable, type PropuestaAltaCable } from './propuesta-alta-cable.js';
+import { aplicarPropuestaAltaCable, proponerAltaCable } from './propuesta-alta-cable.js';
 import { admiteRutaEnPlaca, desplazarTramoInteriorM6, MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
@@ -1590,9 +1590,8 @@ function capturarEdicionRutaCable(id: string): boolean {
 let altaAutomaticaEnCurso = false;
 
 /** La proyección y la línea 3D leen los mismos XYZ del plan; ninguna es fuente de geometría. */
-function vistaPreviaAltaCable(propuesta: PropuestaAltaCable): { detalle: HTMLElement; quitar: () => void } {
-	const plan = propuesta.documento.conductores.find((c) => c.id === propuesta.conductorId)?.planRutaAutomatica;
-	if (!plan) throw new Error('La propuesta no contiene un plan físico visible.');
+function vistaPreviaPlanCable(conductorId: string, plan: NonNullable<Conductor['planRutaAutomatica']>):
+	{ detalle: HTMLElement; quitar: () => void } {
 	const puntos: { x: number; y: number; z: number }[] = [];
 	for (let i = 0; i < plan.puntosXYZ.length; i += 3) {
 		puntos.push({ x: plan.puntosXYZ[i], y: plan.puntosXYZ[i + 1], z: plan.puntosXYZ[i + 2] });
@@ -1602,7 +1601,7 @@ function vistaPreviaAltaCable(propuesta: PropuestaAltaCable): { detalle: HTMLEle
 		new THREE.LineBasicMaterial({ color: 0x24d8ee, transparent: true, opacity: 0.95,
 			depthTest: false, depthWrite: false }),
 	);
-	trazo.name = 'vista-previa-alta-cable';
+	trazo.name = 'vista-previa-ruta-cable';
 	trazo.renderOrder = 999;
 	trazo.raycast = () => {}; // una propuesta no es un cable seleccionable
 	const raiz = escenario.raiz;
@@ -1630,7 +1629,7 @@ function vistaPreviaAltaCable(propuesta: PropuestaAltaCable): { detalle: HTMLEle
 	const svg = document.createElementNS(ns, 'svg');
 	svg.setAttribute('viewBox', `0 0 ${ancho} ${alto}`);
 	svg.setAttribute('role', 'img');
-	svg.setAttribute('aria-label', `Ruta propuesta para ${propuesta.conductorId}, de origen a destino`);
+	svg.setAttribute('aria-label', `Ruta propuesta para ${conductorId}, de origen a destino`);
 	const camino = document.createElementNS(ns, 'path');
 	camino.setAttribute('d', puntos.map((p, i) => {
 		const q = aSvg(p);
@@ -1661,12 +1660,14 @@ async function aceptarAltaAutomatica(nuevo: Conductor, alFinalizar?: () => void)
 	if (altaAutomaticaEnCurso || !sePuedeEditar()) return;
 	altaAutomaticaEnCurso = true;
 	const sesion = proyecto;
-	let vista: ReturnType<typeof vistaPreviaAltaCable> | undefined;
+	let vista: ReturnType<typeof vistaPreviaPlanCable> | undefined;
 	const dialogo = $('modal-dialogo');
 	try {
 		const propuesta = proponerAltaCable(proyecto, nuevo);
 		const conAvisos = propuesta.contactos > 0 || propuesta.invasiones > 0;
-		vista = vistaPreviaAltaCable(propuesta);
+		const plan = propuesta.documento.conductores.find((c) => c.id === propuesta.conductorId)?.planRutaAutomatica;
+		if (!plan) throw new Error('La propuesta no contiene un plan físico visible.');
+		vista = vistaPreviaPlanCable(propuesta.conductorId, plan);
 		dialogo.classList.add('propuesta-ruta');
 		const extremos = `${nuevo.de.dispositivoId}:${nuevo.de.borneId} → ${nuevo.a.dispositivoId}:${nuevo.a.borneId}`;
 		const planesVecinos = propuesta.planesExistentesFijados
@@ -4674,6 +4675,8 @@ function pintarPanelCable(id: string): void {
 		delete cable.estadoRutaFisica;
 		delete cable.planRutaAutomatica;
 		const otrosPendientes = marcarPlanesObsoletosPendientes(propuesta);
+		let vista: ReturnType<typeof vistaPreviaPlanCable> | undefined;
+		const dialogo = $('modal-dialogo');
 		try {
 			const ruta = rutasDeCables(propuesta).find((r) => r.conductorId === id);
 			if (!ruta) { avisar('No existe un recorrido automático para esos extremos; se conservó el plan anterior.', 'error'); return; }
@@ -4685,7 +4688,10 @@ function pintarPanelCable(id: string): void {
 			const choques = diagnostico.conflictos.filter((v) => v.a === id || v.b === id).length;
 			const invasiones = diagnostico.invasiones.filter((v) => v.a === id).length;
 			const referenciaMm = Math.round(largoDibujadoMm(propuesta, cable));
-			const aceptado = await confirmar(`Se propone un nuevo recorrido para ${id}: referencia visual ${referenciaMm} mm (no longitud de corte). Avisos: ${choques} cercanías y ${invasiones} invasiones. ${otrosPendientes.length ? `${otrosPendientes.length} ruta(s) vecinas también requieren revisión.` : 'Las rutas ajenas vigentes se conservarán.'} ¿Aplicar esta propuesta?`, { ok: 'Aplicar recorrido' });
+			vista = vistaPreviaPlanCable(id, preparado.plan);
+			dialogo.classList.add('propuesta-ruta');
+			const aceptado = await confirmar(`Se propone un nuevo recorrido para ${id}: referencia visual ${referenciaMm} mm (no longitud de corte). Avisos: ${choques} cercanías y ${invasiones} invasiones. ${otrosPendientes.length ? `${otrosPendientes.length} rutas vecinas también requieren revisión.` : 'Las rutas ajenas vigentes se conservarán.'} Radios, ocupación y fabricación no verificados. ¿Aplicar esta propuesta?`,
+				{ ok: 'Aplicar recorrido', detalle: vista.detalle });
 			if (!aceptado) return;
 			if (proyecto !== sesion || JSON.stringify(proyecto) !== base) {
 				avisar('El tablero cambió mientras se revisaba la propuesta; no se aplicó.', 'info'); return;
@@ -4693,6 +4699,10 @@ function pintarPanelCable(id: string): void {
 			mutarProyecto(() => { proyecto.conductores = propuesta.conductores; proyecto.version = 4; });
 			avisar(`Recorrido de ${id} asignado. Revisa los avisos físicos antes de fabricar.`, 'info');
 		} catch (error) { avisar(`No se aplicó la propuesta de ruta: ${String(error)}`, 'error'); }
+		finally {
+			vista?.quitar();
+			dialogo.classList.remove('propuesta-ruta');
+		}
 	});
 	panel.querySelectorAll<HTMLInputElement>('[data-ruta-nodo][data-eje]').forEach((input) => {
 		input.onchange = () => {
@@ -10109,7 +10119,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		}),
 		/** Observa que el trazo de propuesta existe solo mientras espera una decisión. */
 		vistaPropuestaAlta: () => {
-			const linea = escenario.raiz.getObjectByName('vista-previa-alta-cable') as THREE.Line | undefined;
+			const linea = escenario.raiz.getObjectByName('vista-previa-ruta-cable') as THREE.Line | undefined;
 			return { visible: !!linea, puntos: linea?.geometry.getAttribute('position').count ?? 0 };
 		},
 		/** Olvida las tareas largas apuntadas: para medir un tramo concreto y no la sesión entera. */

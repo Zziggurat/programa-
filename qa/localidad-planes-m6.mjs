@@ -158,9 +158,20 @@ try {
 	const indicePendiente = await pagina.evaluate((id) => window.qa.proyecto().conductores
 		.findIndex((c) => c.id === id), idRevisado);
 	await pagina.locator('#lista-cables li').nth(indicePendiente).click();
+	const baseRevision = await pagina.evaluate(() => JSON.stringify(window.qa.proyecto()));
 	await pagina.locator('#cbl-replan').click();
 	comprobar('la propuesta expone avisos y no confunde referencia visual con longitud de corte',
 		/referencia visual.*no longitud de corte.*Avisos/s.test(await pagina.locator('#modal-dialogo').innerText()));
+	const puntosRevision = await pagina.locator('#dialogo-msg .vista-propuesta-cable').evaluate((el) =>
+		Number(el.dataset.puntos));
+	comprobar('revisar un plan pendiente proyecta el mismo trayecto XYZ en diálogo y tablero',
+		puntosRevision >= 2 && await pagina.locator('#dialogo-msg svg path').count() === 1
+		&& (await pagina.evaluate(() => window.qa.vistaPropuestaAlta())).puntos === puntosRevision);
+	await pagina.locator('#dialogo-cancelar').click();
+	comprobar('cancelar la revisión conserva BASE y retira su preview sin autorizar el plan',
+		await pagina.evaluate(() => JSON.stringify(window.qa.proyecto())) === baseRevision
+		&& !(await pagina.evaluate(() => window.qa.vistaPropuestaAlta().visible)));
+	await pagina.locator('#cbl-replan').click();
 	await pagina.locator('#dialogo-ok').click();
 	await pagina.waitForFunction((id) => {
 		const c = window.qa.proyecto().conductores.find((x) => x.id === id);
@@ -174,6 +185,8 @@ try {
 		despuesRevision[idRevisado]?.length > 2
 		&& Object.entries(antesRevision).every(([id, anterior]) =>
 			id === idRevisado || firma(anterior) === firma(despuesRevision[id])));
+	comprobar('la revisión aceptada tampoco deja geometría provisional',
+		!(await pagina.evaluate(() => window.qa.vistaPropuestaAlta().visible)));
 	await pagina.locator('#btn-deshacer').click();
 	comprobar('Undo recupera el estado pendiente y su plan anterior',
 		await pagina.evaluate((id) => window.qa.proyecto().conductores
