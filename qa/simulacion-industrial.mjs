@@ -340,6 +340,11 @@ try {
 	comprobar('los tres polos principales y el auxiliar NA energizan sus conductores exactos',
 		esperadosTrasKM1.every((id) => idsVivosEnMarcha.has(id) && !idsVivosEnReposo.has(id)),
 		esperadosTrasKM1.map((id) => `${id}:${idsVivosEnMarcha.has(id) ? 'ON' : 'OFF'}`).join(', '));
+	// El circuito puede estabilizarse antes del siguiente frame de Three.js. La aserción sigue
+	// exigiendo el desplazamiento real de la malla, con un límite corto y explícito.
+	await page.waitForFunction((reposo) =>
+		(window.qa.piezas('km1')?.armadura?.[0]?.z ?? Infinity) < reposo - 0.2,
+		kmReposo?.armadura?.[0]?.z ?? -Infinity, { timeout: 4_000 }).catch(() => null);
 	const kmMetido = await qa('piezas', 'km1');
 	comprobar('el resultado del motor baja la armadura 3D del contactor',
 		(kmMetido?.armadura?.[0]?.z ?? Infinity) < (kmReposo?.armadura?.[0]?.z ?? -Infinity),
@@ -680,7 +685,7 @@ try {
 			try { return await window.qa.esperarPersistencia(); }
 			catch (error) {
 				const causas = [];
-				for (let actual = error, i = 0; actual && i < 5; actual = actual.cause, i++) {
+				for (let actual = error, i = 0; actual && i < 5; actual = actual.causa ?? actual.cause, i++) {
 					causas.push(actual.message ?? String(actual));
 				}
 				throw new Error(`El circuito VFD no se pudo guardar: ${causas.join(' -> ')}`);
