@@ -227,6 +227,9 @@ export function rutearConductores(proyecto: Proyecto): ResultadoRuteo {
 		// La conectividad existe en el esquema, pero no se ha decidido un recorrido físico.
 		// No proyectarla sobre canaletas ni contabilizar sección o longitud por proximidad.
 		if (conductor.estadoRutaFisica === 'pendiente') continue;
+		// Una ruta M6 literal no puede contarse como propuesta del router 2D legacy: tendría
+		// otro trayecto, otras canaletas y un corte ficticio. Su metraje se documenta aparte.
+		if (conductor.rutaFisica) continue;
 		// Los conductores hacia aparatos de campo salen del gabinete: su longitud no se
 		// puede calcular desde la placa de montaje, así que no se rutean.
 		if (esCampo.get(conductor.de.dispositivoId) || esCampo.get(conductor.a.dispositivoId)) {

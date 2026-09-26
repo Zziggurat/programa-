@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { Canaleta, Colocacion, Conductor, Dispositivo, EntradaCable, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
+import { longitudPolilineaMm } from '../src/modelo/ruta-fisica.js';
 import {
 	ajustesDeMazo, alturaDeMazo, anclajeFijoDeMazo, carrilDeMazo, construirMazoPuerta, desvioDeCarril,
 	enLaPuerta, Mazo,
@@ -1100,6 +1101,8 @@ export interface Anclaje { x: number; y: number; z: number }
 /** Recorrido de un cable ya resuelto: sus anclajes y la polilínea ortogonal que sigue. */
 export interface RutaCable {
 	conductorId: string;
+	/** La ruta M6 usa exactamente sus segmentos rectos; legacy conserva su suavizado previo. */
+	geometria?: 'POLILINEA';
 	de: Anclaje;
 	a: Anclaje;
 	/** Nodos del recorrido en coordenadas de modelo, ya ortogonalizados. */
@@ -1388,10 +1391,11 @@ export function salidasDeCable(
 }
 
 /**
- * Longitud ortogonal XY (mm) de un conductor tal como está DIBUJADO en la placa.
+ * Longitud de referencia (mm): ortogonal XY legacy, espacial XYZ para ruta explícita M6.
  *
- * Es una aproximación visual 2D, NO un metraje verificado de corte: omite Z, curvas,
- * holguras y puntas reales. La revisión legacy aún puede usarla en caída de tensión; cambiar
+ * En legacy es una aproximación visual 2D, NO un metraje verificado de corte: omite Z, curvas,
+ * holguras y puntas reales. M6 mide XYZ de nodos rectos y salidas resueltas, todavía SIN
+ * acreditación de fabricación. La revisión legacy aún puede usarla en caída de tensión; cambiar
  * esa política requiere una fuente física persistente compartida con M6. Vive aquí porque la geometría
  * del trazado es de la vista: depende de dónde quedó cada aparato, de por dónde abre el cable
  * para no fundirse con sus vecinos y de los puntos de quiebre que haya movido quien dibuja.
@@ -1405,6 +1409,10 @@ export function largoDibujadoMm(
 	abanico?: ReturnType<typeof abanicoDeSalida>,
 ): number {
 	if (conductor.estadoRutaFisica === 'pendiente') return 0;
+	if (conductor.rutaFisica) {
+		const p = salidasDeCable(proyecto, conductor, abanico);
+		return p ? longitudPolilineaMm([p.de, p.salidaA, ...conductor.rutaFisica.nodos, p.salidaB, p.a]) : 0;
+	}
 	const p = salidasDeCable(proyecto, conductor, abanico);
 	if (!p) return 0;
 	const orto = orthogonalize([p.salidaA, ...(conductor.trazado ?? []), p.salidaB]);
@@ -1416,15 +1424,32 @@ export function largoDibujadoMm(
 }
 
 /**
- * Lo mismo para todo el tablero, por id de conductor. Lo usan la pantalla y el PDF, y que lo usen
- * los DOS es el asunto: cada uno tenía su propia cuenta y salían caídas de tensión distintas para
- * el mismo tablero. El abanico se calcula UNA vez para todos, que es lo caro.
+ * Longitudes geométricas para todo el tablero. El abanico se calcula UNA vez para todos.
+ * No confundirlas con las longitudes adoptadas por DRC/ingeniería: ver la política siguiente.
  */
 export function longitudesDibujadasMm(proyecto: Proyecto): Map<string, number> {
 	const abanico = abanicoDeSalida(proyecto);
 	return new Map(proyecto.conductores
 		.filter((c) => c.estadoRutaFisica !== 'pendiente')
 		.map((c) => [c.id, largoDibujadoMm(proyecto, c, abanico)]));
+}
+
+/**
+ * La ruta M6 tiene largo espacial medible, pero aún no se adopta automáticamente para una
+ * afirmación eléctrica. Sin política explícita CAB-27, el DRC usa solo la longitud declarada;
+ * si no existe, deja la caída sin resolver. Legacy conserva exactamente su regla anterior.
+ */
+export function longitudesParaRevisionMm(proyecto: Proyecto): Map<string, number> {
+	const abanico = abanicoDeSalida(proyecto);
+	const visuales = new Map<string, number>();
+	for (const c of proyecto.conductores) {
+		if (c.estadoRutaFisica === 'pendiente') continue;
+		if (c.rutaFisica) {
+			const manual = c.fisica?.longitudManualM;
+			if (manual !== undefined && Number.isFinite(manual) && manual > 0) visuales.set(c.id, manual * 1000);
+		} else visuales.set(c.id, largoDibujadoMm(proyecto, c, abanico));
+	}
+	return visuales;
 }
 
 /** Radio del tubo de un conductor. Lo comparten el dibujo, el reparto y las pruebas. */
@@ -1484,7 +1509,7 @@ function firmaDelRuteo(proyecto: Proyecto): string {
 	const ordenar = <T>(lista: T[] | undefined, clave: (elemento: T) => string): T[] | undefined =>
 		lista?.slice().sort((a, b) => clave(a).localeCompare(clave(b)));
 	return JSON.stringify([
-		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado, c.estadoRutaFisica, c.clase]),
+		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado, c.rutaFisica, c.estadoRutaFisica, c.clase]),
 		// El anclaje depende de la disposición de bornes, pines de imagen y bloques reales.
 		// No incluir los bytes de la imagen: su presencia, no su contenido, cambia el ruteo.
 		proyecto.dispositivos.map((d) => [d.id, d.tipo, d.bornes.map((b) => [b.id, b.u, b.v]),
@@ -2089,6 +2114,7 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 	const puestos: Puesto[] = [];
 	const rejilla = new RejillaCables();
 	const ocupacion = new Ocupacion();
+	const rutasExplicitas: RutaCable[] = [];
 	/** Primero que no choque; luego, que vaya lo menos expuesto posible. */
 	const puntuar = (c: Candidato, holgura: number): number =>
 		Math.min(holgura, HOLGURA_CABLE) * 1000 - c.expuesto - c.ductos * 30;
@@ -2125,6 +2151,20 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		const p = salidasDeCable(proyecto, conductor, abanico);
 		if (!p) continue;
 		const radio = radioDeCable(conductor.seccion);
+		if (conductor.rutaFisica) {
+			const nodos: Punto3[] = [p.de, p.salidaA, ...conductor.rutaFisica.nodos, p.salidaB, p.a]
+				.map((q) => ({ x: q.x, y: q.y, z: q.z }));
+			const puntos = nodos.filter((q, i) => i === 0 || Math.hypot(q.x - nodos[i - 1].x,
+				q.y - nodos[i - 1].y, q.z - nodos[i - 1].z) > 1e-9);
+			const trazo: Trazo = { id: conductor.id, radio, puntos,
+				bornes: [`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
+					`${conductor.a.dispositivoId}:${conductor.a.borneId}`], extremos: [p.de, p.a] };
+			rejilla.anadir(trazo);
+			rutasExplicitas.push({ conductorId: conductor.id, de: p.de, a: p.a,
+				nodos: nodos.map((q) => ({ x: q.x, y: q.y })), puntos, radio,
+				z: puntos[Math.floor(puntos.length / 2)]?.z ?? p.de.z, geometria: 'POLILINEA' });
+			continue;
+		}
 		const codo = radioCodo(radio);
 		const MARGEN = radio + HOLGURA_CABLE + 8;
 		const mios = [
@@ -2445,11 +2485,11 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 	// La salida también es canónica: el orden de dibujo no debe reintroducir el orden del archivo
 	// como desempate de raycast cuando dos superficies quedan a la misma profundidad.
 	puestos.sort((p, q) => p.conductorId.localeCompare(q.conductorId));
-	return puestos.map((q) => ({
+	return [...rutasExplicitas, ...puestos.map((q) => ({
 		conductorId: q.conductorId, de: q.de, a: q.a,
 		nodos: q.nodos.map((n) => ({ x: n.x, y: n.y })), z: q.z,
 		puntos: q.trazo.puntos, radio: q.trazo.radio,
-	}));
+	}))].sort((a, b) => a.conductorId.localeCompare(b.conductorId));
 }
 
 /**
@@ -2560,6 +2600,19 @@ export function diagnosticoCables(proyecto: Proyecto, margen = HOLGURA_CABLE): {
 	};
 }
 
+function curvaVisibleCable(
+	puntos: THREE.Vector3[], geometria?: RutaCable['geometria'],
+): THREE.Curve<THREE.Vector3> {
+	if (geometria !== 'POLILINEA') return new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
+	const segmentos = new THREE.CurvePath<THREE.Vector3>();
+	for (let i = 1; i < puntos.length; i++) {
+		if (puntos[i].distanceToSquared(puntos[i - 1]) > 1e-12) {
+			segmentos.add(new THREE.LineCurve3(puntos[i - 1], puntos[i]));
+		}
+	}
+	return segmentos;
+}
+
 export function construirCables(
 	proyecto: Proyecto,
 	aEscena: Escenario['aEscena'],
@@ -2578,7 +2631,7 @@ export function construirCables(
 		// comprobó que este cable cabía ahí y los mismos que miden las pruebas. No hay dos.
 		const puntos = ruta.puntos.map((p) => aEscena(p.x, p.y, p.z));
 		// «centripetal» evita los lazos y cúspides que salían al pasar por vértices muy juntos.
-		const curva = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
+		const curva = curvaVisibleCable(puntos, ruta.geometria);
 		anadirTuboCable(
 			grupo, curva, Math.min(260, Math.max(64, puntos.length * 3)),
 			ruta.radio, colorDe(conductor), conductor.id,
@@ -2618,13 +2671,14 @@ export function rutaProvisional(proyecto: Proyecto, conductorId: string): RutaCa
 	const nodos: Punto3[] = [
 		{ x: p.de.x, y: p.de.y, z: p.de.z },
 		{ x: p.salidaA.x, y: p.salidaA.y, z: p.salidaA.z },
-		...(conductor.trazado ?? []).map((q) => ({ x: q.x, y: q.y, z: q.z ?? zSuelta })),
+		...(conductor.rutaFisica?.nodos ?? conductor.trazado ?? []).map((q) => ({ x: q.x, y: q.y, z: q.z ?? zSuelta })),
 		{ x: p.salidaB.x, y: p.salidaB.y, z: p.salidaB.z },
 		{ x: p.a.x, y: p.a.y, z: p.a.z },
 	];
-	const puntos = tenderCable(nodos, codo);
+	const puntos = conductor.rutaFisica ? nodos : tenderCable(nodos, codo);
 	return {
 		conductorId, de: p.de, a: p.a, radio, puntos,
+		...(conductor.rutaFisica ? { geometria: 'POLILINEA' as const } : {}),
 		nodos: nodos.map((q) => ({ x: q.x, y: q.y })),
 		z: puntos[Math.floor(puntos.length / 2)]?.z ?? zSuelta,
 	};
@@ -2641,7 +2695,7 @@ export function construirUnCable(
 	contadores.cablesConstruidos++;
 	try {
 		const puntos = ruta.puntos.map((q) => aEscena(q.x, q.y, q.z));
-		const curva = new THREE.CatmullRomCurve3(puntos, false, 'centripetal', 0.5);
+		const curva = curvaVisibleCable(puntos, ruta.geometria);
 		anadirTuboCable(grupo, curva, Math.min(260, Math.max(64, puntos.length * 3)), ruta.radio, color, ruta.conductorId);
 		return grupo;
 	} catch (error) {
@@ -2667,6 +2721,7 @@ const numeroFirma = (n: number): string => Object.is(n, -0) ? '-0' : String(n);
 function firmaCableDibujado(ruta: RutaCable, color: number, transformacion: string): string {
 	return JSON.stringify([
 		ruta.conductorId, numeroFirma(ruta.radio), color, transformacion,
+		ruta.geometria,
 		ruta.puntos.map((p) => [numeroFirma(p.x), numeroFirma(p.y), numeroFirma(p.z)]),
 	]);
 }

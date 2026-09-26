@@ -28,6 +28,7 @@ export function proyectoParaRuteo(proyecto: Proyecto): Proyecto {
 			a: c.a,
 			...(c.seccion === undefined ? {} : { seccion: c.seccion }),
 			...(c.trazado ? { trazado: c.trazado } : {}),
+			...(c.rutaFisica ? { rutaFisica: c.rutaFisica } : {}),
 			...(c.estadoRutaFisica ? { estadoRutaFisica: c.estadoRutaFisica } : {}),
 			...(c.clase ? { clase: c.clase } : {}),
 		})),

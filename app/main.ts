@@ -41,7 +41,7 @@ import {
 	anclajeBorne, cajaDe, colorDeCable, colorVoltaje, COLOR_CABLE, construirBornes, construirCanaleta,
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	adoptarRutasCalculadas, diagnosticoCables, firmaRuteo, largoDibujadoMm, liberar,
-	longitudesDibujadasMm, rutasDeCables, salidasDeCable,
+	longitudesParaRevisionMm, rutasDeCables, salidasDeCable,
 	construirUnCable, contadores, radioCodo, radioDeCable, reconciliarCablesDibujados,
 	reiniciarContadores, rutaProvisional,
 	RutaCable, rutasVigentes, rutaVigente,
@@ -95,6 +95,7 @@ import {
 	redondearEsquinas,
 } from './geometria-cables.js';
 import { longitudCoincidente3D } from './colisiones-cables.js';
+import { admiteRutaEnPlaca, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
 import { GestorDocumentos, EstadoGuardadoDocumento } from './gestor-documentos.js';
 import { presentarEstadoDocumento, type FaseGuardado } from './estado-documento.js';
@@ -414,10 +415,10 @@ let revision: RevisionTablero;
 let coloreaVoltaje = false; // "Colorear por voltaje" en el panel Vista
 
 function recalcular(): void {
-	// El DRC recibe las longitudes REALES del recorrido dibujado (no una estimación): con ellas
-	// puede calcular la caída de tensión de cada circuito. Se las pasa el PDF también, desde la
-	// misma función, para que el papel y la pantalla no digan cosas distintas.
-	revision = revisarTablero(proyecto, { longitudesMm: longitudesDibujadasMm(proyecto) });
+	// Legacy conserva la estimación 2D anterior. En M6 la ruta XYZ es referencia geométrica,
+	// no longitud eléctrica adoptada: el DRC usa la declarada o informa indeterminación.
+	// PDF y pantalla comparten exactamente esta política; no miden la malla/LOD.
+	revision = revisarTablero(proyecto, { longitudesMm: longitudesParaRevisionMm(proyecto) });
 	panelIngenieria?.invalidar();
 	autoguardar();
 }
@@ -3603,6 +3604,7 @@ function pintarListaCables(): void {
 		const li = document.createElement('li');
 		li.className = c.id === idSel ? 'seleccionado' : '';
 		const estado = c.estadoRutaFisica === 'pendiente' ? 'ruta física pendiente'
+			: c.rutaFisica ? `ruta M6 (${c.rutaFisica.nodos.length})`
 			: c.trazado?.length ? `a mano (${c.trazado.length})` : 'directo';
 		const colorCss = c.color ? hexColor(colorDeCable(c.color, 0x888888)) : '#888';
 		li.innerHTML = `<span class="via" style="background:${colorCss}"></span>
@@ -4369,7 +4371,10 @@ function pintarPanelCable(id: string): void {
 	const c = proyecto.conductores.find((x) => x.id === id);
 	if (!c) { panel.style.display = 'none'; return; }
 	const pendiente = c.estadoRutaFisica === 'pendiente';
-	const manual = !!c.trazado?.length;
+	const manual = !!c.trazado?.length || !!c.rutaFisica;
+	const adoptable = !c.rutaFisica && !pendiente
+		&& admiteRutaEnPlaca(c, proyecto.gabinete?.colocaciones ?? [], proyecto.dispositivos)
+		&& !!rutaDesdeTrazadoLegacy(c.id, c.trazado);
 
 	panel.style.display = 'block';
 	panel.innerHTML = `
@@ -4377,6 +4382,7 @@ function pintarPanelCable(id: string): void {
 		<div class="sub">${escaparHtml(`${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}`)}</div>
 		<dl>
 			<dt>Recorrido</dt><dd>${pendiente ? 'Ruta física pendiente · sin metraje ni canaleta asignada'
+				: c.rutaFisica ? `✋ ruta M6 XYZ (${c.rutaFisica.nodos.length} nodos · polilínea)`
 				: manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : '↳ directo (en L, automático)'}</dd>
 			<dt>${pendiente ? 'Clase prevista' : 'Clase'}</dt><dd>${escaparHtml(NOMBRE_CLASE[claseDeConductor(proyecto, c)])}${c.clase ? '' : ' <span class="pista">(deducida)</span>'}</dd>
 		</dl>
@@ -4390,7 +4396,10 @@ function pintarPanelCable(id: string): void {
 					`<option value="${k}" ${k === c.clase ? 'selected' : ''}>${escaparHtml(NOMBRE_CLASE[k])}</option>`).join('')}
 			</select>
 		</div>
+		${c.rutaFisica ? `<p class="sub">Ruta manual M6: los puntos XYZ son literales. La malla no separa ni recoloca esta ruta; las interferencias requieren revisión. Longitud de referencia espacial: ${Math.round(largoDibujadoMm(proyecto, c))} mm; no es longitud de corte verificada.</p>
+			<div class="cbl-nodos">${c.rutaFisica.nodos.map((n, i) => `<div class="fila-estructura"><span class="id">${escaparHtml(n.id)}</span>${(['x', 'y', 'z'] as const).map((eje) => `<label>${eje.toUpperCase()} <input type="number" step="0.1" min="-5000" max="5000" data-ruta-nodo="${i}" data-eje="${eje}" value="${n[eje]}"></label>`).join('')}</div>`).join('')}</div>` : ''}
 		<div class="botonera">
+			${adoptable ? '<button class="boton" id="cbl-adoptar-m6">Adoptar XYZ como ruta fija</button>' : ''}
 			${manual ? '<button class="boton" id="cbl-auto">Trazado automático</button>' : ''}
 			<button class="boton peligro" id="cbl-quitar">Quitar cable</button>
 		</div>
@@ -4415,10 +4424,44 @@ function pintarPanelCable(id: string): void {
 		if (v) c.clase = v as ClaseConductor; else delete c.clase;
 		recalcular(); reconstruirCables(); pintarPaneles();
 	};
+	panel.querySelectorAll<HTMLInputElement>('[data-ruta-nodo][data-eje]').forEach((input) => {
+		input.onchange = () => {
+			const indice = Number(input.dataset.rutaNodo);
+			const eje = input.dataset.eje as 'x' | 'y' | 'z';
+			const nodo = c.rutaFisica?.nodos[indice];
+			const valor = input.value.trim() === '' ? NaN : Number(input.value);
+			if (!nodo || !['x', 'y', 'z'].includes(eje) || !Number.isFinite(valor) || Math.abs(valor) > 5000) {
+				if (nodo) input.value = String(nodo[eje]);
+				avisar('Coordenada M6 inválida: se conservó el punto anterior.', 'error');
+				return;
+			}
+			if (nodo[eje] === valor) return;
+			if (!capturar()) { input.value = String(nodo[eje]); return; }
+			nodo[eje] = valor;
+			recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
+		};
+	});
+	(panel.querySelector('#cbl-adoptar-m6') as HTMLButtonElement | null)?.addEventListener('click', async () => {
+		const ruta = rutaDesdeTrazadoLegacy(c.id, c.trazado);
+		if (!ruta) return;
+		const previo = Math.round(largoDibujadoMm(proyecto, c));
+		const propuesta = structuredClone(proyecto);
+		const cablePropuesto = propuesta.conductores.find((x) => x.id === id)!;
+		delete cablePropuesto.trazado;
+		cablePropuesto.rutaFisica = ruta;
+		const nuevo = Math.round(largoDibujadoMm(propuesta, cablePropuesto));
+		const aceptado = await confirmar(`Se fijarán ${ruta.nodos.length} nodos XYZ exactos. La ruta visible puede cambiar: estimación legacy ${previo} mm; referencia espacial ${nuevo} mm. No se adopta automáticamente como longitud eléctrica ni se verifica como corte. ¿Continuar?`, { ok: 'Adoptar ruta XYZ' });
+		if (!aceptado || proyecto.conductores.find((x) => x.id === id) !== c) return;
+		if (!capturar()) return;
+		c.rutaFisica = ruta;
+		delete c.trazado;
+		recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
+	});
 	(panel.querySelector('#cbl-auto') as HTMLButtonElement | null)?.addEventListener('click', () => {
 		if (!capturar()) return;
 		delete c.trazado;
-		recalcular(); reconstruirCables(); construirHandles(); pintarSeleccion();
+		delete c.rutaFisica;
+		recalcular(); reconstruirCables(); construirHandles(); pintarSeleccion(); pintarPanelCable(id);
 	});
 	(panel.querySelector('#cbl-quitar') as HTMLButtonElement).onclick = () => quitarCable(id);
 }
@@ -5097,7 +5140,7 @@ function enfocarCamaraEnCable(id: string): void {
 	const a = anclajeBorne(proyecto, c.de.dispositivoId, c.de.borneId);
 	const b = anclajeBorne(proyecto, c.a.dispositivoId, c.a.borneId);
 	if (!a || !b) return;
-	const medio = c.trazado?.[0] ?? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+	const medio = puntosDeCable(c)[0] ?? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 	const destino = escenario.aEscena(medio.x, medio.y, 0);
 	controles.target.copy(destino);
 	controles.update();
@@ -5516,7 +5559,7 @@ function cableTapaAlBorne(ev: MouseEvent, distanciaBorne: number): boolean {
 	if (!c) return false;
 	// ¿Hay una unión de ese cable justo ahí? Se mide contra el punto DIBUJADO, igual que al
 	// agarrarla: una unión metida en canaleta está a treinta milímetros del plano del frente.
-	return (c.trazado ?? []).some((w, i) => {
+	return puntosDeCable(c).some((w, i) => {
 		const q = puntoDibujado(c, i) ?? { x: w.x, y: w.y, z: Z_FRENTE };
 		return Math.hypot(q.x - impacto.point.x, q.y - impacto.point.y, q.z - impacto.point.z) < 26;
 	});
@@ -5759,7 +5802,7 @@ function construirHandles(): void {
 		 * Antes se ponían todos a una profundidad fija; ver `puntoDibujado` para por qué eso los
 		 * separaba del cable en cuanto la cámara dejaba de estar de frente.
 		 */
-		const wps = c.trazado ?? [];
+		const wps = puntosDeCable(c);
 		if (wps.length === 0) {
 			// Sin puntos todavía: se ofrece uno EN MITAD DEL CABLE, no colgando al aire. Tirando de
 			// él se crea la primera unión justo ahí, que es donde el usuario la está viendo.
@@ -5953,8 +5996,12 @@ function rutaEnPantalla(conductorId: string): RutaCable | undefined {
  * inclinaba, la bolita se separaba del cable justo lo que dice la perspectiva. Ése era el bug de
  * «los puntos aparecen alejados del cable según el ángulo».
  */
+function puntosDeCable(c: Conductor): readonly { x: number; y: number; z?: number }[] {
+	return c.rutaFisica?.nodos ?? c.trazado ?? [];
+}
+
 function puntoDibujado(c: Conductor, idx: number): P3 | undefined {
-	const wp = c.trazado?.[idx];
+	const wp = puntosDeCable(c)[idx];
 	if (!wp) return undefined;
 	const ruta = rutaEnPantalla(c.id);
 	const en = ruta && proyectarEnPolilinea(ruta.puntos, wp);
@@ -5995,6 +6042,15 @@ function longitudCableMm(c: Conductor): number {
  * profundidad, así que la unión nace exactamente donde el usuario la ha visto nacer.
  */
 function insertarWaypoint(c: Conductor, p: P3, avance: number): number {
+	if (c.rutaFisica) {
+		const ruta = rutaEnPantalla(c.id);
+		const wps = c.rutaFisica.nodos;
+		const idx = ruta ? indiceDeInsercion(ruta.puntos, wps, avance) : wps.length;
+		let n = 1;
+		while (wps.some((w) => w.id === `${c.id}:n${n}`)) n++;
+		wps.splice(idx, 0, { id: `${c.id}:n${n}`, x: p.x, y: p.y, z: p.z });
+		return idx;
+	}
 	const wps = c.trazado ? c.trazado.slice() : [];
 	const ruta = rutaEnPantalla(c.id);
 	const idx = ruta ? indiceDeInsercion(ruta.puntos, wps, avance) : wps.length;
@@ -6084,8 +6140,8 @@ function contarTrazadosInvadidos(): number {
 	const huellas = huellasQueEsquivarLosCables();
 	let cuantos = 0;
 	for (const c of proyecto.conductores) {
-		if (!c.trazado?.length) continue;
-		for (const p of c.trazado) {
+		if (!puntosDeCable(c).length) continue;
+		for (const p of puntosDeCable(c)) {
 			const libre = fueraDeLaHuella({ x: p.x, y: p.y }, huellas);
 			if (Math.round(libre.x) !== p.x || Math.round(libre.y) !== p.y) cuantos++;
 		}
@@ -6276,7 +6332,7 @@ function arrastrarUnion(
 	// Alt suelta las ayudas: colocación literal, sin alinear con el vecino ni encajar en canaleta.
 	medirEtapa('2 mover punto', () => moverWaypoint(c, indice, pc.x, pc.y, zNueva, ejeArrastre, !ev.altKey));
 	medirEtapa('2b validez', () => {
-		const wp = c.trazado?.[indice];
+		const wp = puntosDeCable(c)[indice];
 		if (!wp) return;
 		const v = validezDelPunto(wp, radioDeCable(c.seccion));
 		motivoInvalido = v.ok ? undefined : v.motivo;
@@ -6340,6 +6396,19 @@ function mostrarPistaArrastre(): void {
 function moverWaypoint(
 	c: Conductor, idx: number, x: number, y: number, z?: number, bloqueo?: Bloqueo, asistir = true,
 ): void {
+	if (c.rutaFisica) {
+		const punto = c.rutaFisica.nodos[idx];
+		if (!punto) return;
+		const nuevo = respetarBloqueo({ x: Math.round(x), y: Math.round(y),
+			z: Math.round(z ?? punto.z) }, bloqueo);
+		if (![nuevo.x, nuevo.y, nuevo.z].every((v) => Number.isFinite(v) && Math.abs(v!) <= 5000)) {
+			motivoInvalido = 'Coordenada fuera del formato M6 (±5000 mm)';
+			return;
+		}
+		Object.assign(punto, nuevo);
+		pistaArrastre = { z: punto.z, modo: z === undefined ? 'placa' : 'profundidad', eje: bloqueo?.eje };
+		return;
+	}
 	const wps = c.trazado;
 	if (!wps || !wps[idx]) return;
 	// Tocar un cable lo hace tuyo: TODOS sus puntos fijan la profundidad que tienen dibujada, y a
@@ -6818,7 +6887,7 @@ renderer.domElement.addEventListener('pointerdown', (ev) => {
 			 * aterriza ahí, no en el plano del frente. Midiéndolo en planta, como antes,
 			 * agarrar una unión hundida era cuestión de suerte.
 			 */
-			const idx = c ? (c.trazado ?? []).findIndex((w, i) => {
+			const idx = c ? puntosDeCable(c).findIndex((w, i) => {
 				const q = puntoDibujado(c, i) ?? { x: w.x, y: w.y, z: Z_FRENTE };
 				return Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) < 26;
 			}) : -1;
@@ -6974,7 +7043,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 	// --- Mover el punto de quiebre que se agarró directo por el tubo ---
 	if (arrastrandoCable) {
 		const c = proyecto.conductores.find((x) => x.id === arrastrandoCable!.id);
-		const wp = c?.trazado?.[arrastrandoCable.indice];
+		const wp = c ? puntosDeCable(c)[arrastrandoCable.indice] : undefined;
 		if (c && wp) {
 			/*
 			 * De dónde sale la profundidad de partida: la del propio punto si ya la tiene, y si no
@@ -7018,7 +7087,7 @@ renderer.domElement.addEventListener('pointermove', (ev) => {
 				handleArrastrado.indice = i;
 				arrastrarUnion(ev, c, i, { ...ruta.puntos[medio] });
 			} else {
-				const wp = c.trazado?.[handleArrastrado.indice];
+				const wp = puntosDeCable(c)[handleArrastrado.indice];
 				if (wp) arrastrarUnion(ev, c, handleArrastrado.indice, { x: wp.x, y: wp.y, z: wp.z ?? Z_FRENTE });
 			}
 			return;
@@ -7306,10 +7375,13 @@ renderer.domElement.addEventListener('dblclick', (ev) => {
 	const handle = handleBajoElPuntero(ev);
 	if (handle?.sel.tipo === 'cable' && handle.indice !== undefined && handle.indice >= 0) {
 		const c = proyecto.conductores.find((x) => x.id === handle.sel.id);
-		if (c?.trazado && handle.indice < c.trazado.length) {
+		if (c && handle.indice < puntosDeCable(c).length) {
 			if (!capturar()) return;
-			c.trazado.splice(handle.indice, 1);
-			if (c.trazado.length === 0) delete c.trazado;
+			if (c.rutaFisica) c.rutaFisica.nodos.splice(handle.indice, 1);
+			else if (c.trazado) {
+				c.trazado.splice(handle.indice, 1);
+				if (c.trazado.length === 0) delete c.trazado;
+			}
 			programarReconstruccionDeCables();
 			pintarPaneles();
 			pintarSeleccion();
@@ -7423,7 +7495,7 @@ window.addEventListener('keydown', (ev) => {
 		if (tecla === 'x' || tecla === 'y' || tecla === 'z') {
 			ev.preventDefault();
 			const c = proyecto.conductores.find((k) => k.id === unionEnMano.id);
-			const wp = c?.trazado?.[unionEnMano.indice];
+			const wp = c ? puntosDeCable(c)[unionEnMano.indice] : undefined;
 			if (!wp) return;
 			if (ejeArrastre?.eje === tecla) {
 				ejeArrastre = undefined;
@@ -9742,7 +9814,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		 */
 		puntoDeUnion: (conductorId: string, indice = 0) => {
 			const c = proyecto.conductores.find((x) => x.id === conductorId);
-			const w = c?.trazado?.[indice];
+			const w = c ? puntosDeCable(c)[indice] : undefined;
 			if (!w) return undefined;
 			const v = aPantalla(escenario.aEscena(w.x, w.y, Z_HANDLE_CABLE));
 			return { x: Math.round(v.x), y: Math.round(v.y) };
@@ -10327,11 +10399,11 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			conductorId: string, indice: number, x: number, y: number, z?: number, asistir = true,
 		) => {
 			const c = proyecto.conductores.find((k) => k.id === conductorId);
-			if (!c?.trazado?.[indice]) return undefined;
+			if (!c || !puntosDeCable(c)[indice]) return undefined;
 			moverWaypoint(c, indice, x, y, z, undefined, asistir);
 			reconstruirCables();
 			construirHandles();
-			return { punto: c.trazado[indice], pista: pistaArrastre };
+			return { punto: puntosDeCable(c)[indice], pista: pistaArrastre };
 		},
 		/**
 		 * ¿ESTÁ CADA TIRADOR ENCIMA DE SU CABLE? Medido en píxeles, que es donde se ve.
@@ -10370,7 +10442,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 				 * tirador sale del recorrido, así que faltaría más—. Con él se ve la diferencia
 				 * entre las dos reglas MIRANDO LO MISMO desde la misma cámara.
 				 */
-				const wp = proyecto.conductores.find((k) => k.id === conductorId)?.trazado?.[h.indice ?? -1];
+				const cable = proyecto.conductores.find((k) => k.id === conductorId);
+				const wp = cable ? puntosDeCable(cable)[h.indice ?? -1] : undefined;
 				const viejo = wp
 					? aPixeles(wp.x - g.ancho / 2, g.alto / 2 - wp.y, Z_HANDLE_CABLE, r.width, r.height)
 					: undefined;
@@ -10388,7 +10461,8 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		/** Los puntos que el usuario ha fijado a mano, tal cual se guardan. */
 		trazadoDe: (conductorId: string) =>
-			proyecto.conductores.find((k) => k.id === conductorId)?.trazado?.map((q) => ({ ...q })),
+			proyecto.conductores.find((k) => k.id === conductorId)
+				? puntosDeCable(proyecto.conductores.find((k) => k.id === conductorId)!).map((q) => ({ ...q })) : undefined,
 		/** El recorrido 3D que de verdad se dibuja, con la profundidad ya resuelta. */
 		rutaDe: (conductorId: string) =>
 			rutasDeCables(proyecto).find((r) => r.conductorId === conductorId)?.puntos.map((q) => ({
@@ -10887,7 +10961,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		},
 		simularArrastre: (conductorId: string, indice: number, n = 30, dx = 2, dy = 1.5, eje?: 'x' | 'y' | 'z') => {
 			const c = proyecto.conductores.find((k) => k.id === conductorId);
-			const wp = c?.trazado?.[indice];
+			const wp = c ? puntosDeCable(c)[indice] : undefined;
 			if (!c || !wp) return undefined;
 			const g = proyecto.gabinete!;
 			const r = renderer.domElement.getBoundingClientRect();
