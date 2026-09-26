@@ -6,7 +6,7 @@ import { cargarProyecto, VERSION_FORMATO } from '../src/modelo/cargar.js';
 import { admiteRutaEnPlaca, desplazarTramoInteriorM6, leerRutaFisicaV1, longitudPolilineaMm,
 	MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { construirUnCable, diagnosticoRutaManual, largoDibujadoMm, liberar, longitudesParaRevisionMm,
-	rutasDeCables, salidasDeCable } from '../app/escena3d.js';
+	rutaProvisional, rutasDeCables, salidasDeCable } from '../app/escena3d.js';
 import { indiceDeInsercion, indiceDeInsercionM6, proyectarEnPolilinea } from '../app/edicion-cables.js';
 import { contactoEnTramosDelNodo, primerSolidoEnPunto, primerSolidoEnTramosDelNodo,
 	RejillaCables, type Trazo } from '../app/colisiones-cables.js';
@@ -141,6 +141,25 @@ test('CAB-02/09: ruta M6 es literal, estable al invertir arrays y no expulsa dos
 		'la coincidencia manual se informa, no se elimina ni se convierte en unión');
 	assert.equal(JSON.stringify(p.conductores), intacto,
 		'el diagnóstico jamás corrige ni desplaza la ruta manual');
+});
+
+test('CAB-03/06: preview y reparto comparten puntos e índices con nodos M6 coincidentes', () => {
+	const p = legadoV9();
+	const c = p.conductores[3]; p.conductores = [c]; delete c.trazado;
+	c.rutaFisica = leerRutaFisicaV1({ version: 1, modo: 'MANUAL', marco: 'PLACA',
+		geometria: 'POLILINEA', nodos: [
+			{ id: 'primero', x: 200, y: 180, z: 28 },
+			{ id: 'coincidente', x: 200, y: 180, z: 28 },
+			{ id: 'tercero', x: 250, y: 190, z: 28 },
+		] });
+	const final = rutasDeCables(p)[0];
+	assert.deepEqual(rutaProvisional(p, c.id), final,
+		'el preview debe medir y dibujar exactamente los puntos que confirmará el reparto');
+	assert.equal(final.indicesNodos?.[0], final.indicesNodos?.[1],
+		'dos nodos persistentes en el mismo XYZ comparten vértice visible sin inventar longitud');
+	c.rutaFisica.nodos[1].y = 185;
+	assert.deepEqual(rutaProvisional(p, c.id), rutasDeCables(p)[0],
+		'mover el nodo vuelve a asignar el índice real sin depender de la caché anterior');
 });
 
 test('CAB-26: la longitud M6 mide XYZ entre bornes y nodos, no la proyección XY', () => {
