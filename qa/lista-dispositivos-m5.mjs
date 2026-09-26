@@ -70,8 +70,60 @@ try {
 		(await pagina.evaluate(() => window.qa.seleccion()))?.id === 'q1');
 	comprobar('búsqueda, selección y foco no mutan el Proyecto',
 		await pagina.evaluate(() => JSON.stringify(window.qa.proyecto())) === antes);
+	await pagina.locator('#buscar-dispositivos').fill('linea motor');
+	const km = pagina.locator('#lista-dispositivos li').first();
+	const puntoKm = await pagina.evaluate(() => {
+		const p = window.qa.centroEnPantallaAparato('km1');
+		if (!p) return undefined;
+		for (const dy of [0, -6, 6, -12, 12, -20, 20])
+			for (const dx of [0, -6, 6, -12, 12, -20, 20])
+				if (window.qa.aparatoEnPixel(p.x + dx, p.y + dy) === 'km1')
+					return { x: p.x + dx, y: p.y + dy };
+		return undefined;
+	});
+	comprobar('KM1 tiene un píxel seleccionable antes de ocultarlo', !!puntoKm);
+	await km.locator('.accion-vista', { hasText: 'Ocultar' }).click();
+	comprobar('ocultar retira el cuerpo de la escena, pero conserva su fila y su identidad',
+		!(await pagina.evaluate(() => window.qa.vistaDeAparato('km1'))).visible
+		&& await pagina.locator('#lista-dispositivos li').count() === 1
+		&& await pagina.locator('#lista-dispositivos li.oculto').count() === 1);
+	comprobar('ocultar no deja seleccionado el aparato invisible',
+		(await pagina.evaluate(() => window.qa.seleccion()))?.id !== 'km1');
+	comprobar('el rayo sobre la misma malla oculta ya no selecciona KM1',
+		await pagina.evaluate(p => window.qa.aparatoEnPixel(p.x, p.y), puntoKm) !== 'km1');
+	await pagina.locator('#hta-conectar').click();
+	comprobar('al cambiar a Cablear, los bornes ocultos no reaparecen como agarres fantasma',
+		(await pagina.evaluate(() => window.qa.vistaDeAparato('km1'))).bornesVisibles === 0
+		&& (await pagina.evaluate(() => window.qa.vistaDeAparato('q1'))).bornesVisibles > 0);
+	await pagina.locator('#hta-seleccionar').click();
+	await pagina.locator('#lista-dispositivos li .des').first().click();
+	comprobar('la lista recupera selección y cuerpo de un aparato oculto',
+		(await pagina.evaluate(() => window.qa.seleccion()))?.id === 'km1'
+		&& (await pagina.evaluate(() => window.qa.vistaDeAparato('km1'))).visible);
+	await pagina.locator('#lista-dispositivos li .accion-vista', { hasText: 'Aislar' }).click();
+	comprobar('aislar conserva KM1 y aparta otros cuerpos sin borrarlos',
+		(await pagina.evaluate(() => window.qa.vistaDeAparato('km1'))).visible
+		&& !(await pagina.evaluate(() => window.qa.vistaDeAparato('q1'))).visible
+		&& await pagina.locator('#vista-montaje-restaurar').isVisible());
+	await pagina.locator('#vista-montaje-restaurar').click();
+	comprobar('restaurar vista devuelve los cuerpos aislados',
+		(await pagina.evaluate(() => window.qa.vistaDeAparato('q1'))).visible
+		&& await pagina.locator('#vista-montaje-restaurar').isHidden());
+	comprobar('ocultación y aislamiento no mutan Proyecto ni crean historial',
+		await pagina.evaluate(() => JSON.stringify(window.qa.proyecto())) === antes
+		&& (await pagina.evaluate(() => window.qa.historial())).deshacer === 0);
+	await pagina.locator('#lista-dispositivos li .accion-vista', { hasText: 'Ocultar' }).click();
+	await pagina.locator('#btn-aprender').click();
+	await pagina.locator('#btn-ejemplos').click();
+	await pagina.locator('.tarjeta-ejemplo', { hasText: 'Arranque estrella-triángulo' })
+		.first().getByRole('button', { name: /Abrir y estudiar/i }).click();
+	if (await pagina.locator('#modal-dialogo').isVisible()) await pagina.locator('#dialogo-ok').click();
+	await pagina.waitForFunction(() => window.qa.proyecto().nombre.startsWith('Arranque estrella-triángulo'));
+	comprobar('cambiar de tablero borra la ocultación temporal aunque reutilice KM1',
+		(await pagina.evaluate(() => window.qa.vistaDeAparato('km1'))).visible
+		&& await pagina.locator('#vista-montaje-restaurar').isHidden());
 	comprobar('ningún error JavaScript', erroresJS.length === 0);
-	console.log(`MON-04 lista de aparatos: ${casos}/${casos}, 0 JS`);
+	console.log(`MON-04 lista y visibilidad de aparatos: ${casos}/${casos}, 0 JS`);
 } catch (fallo) {
 	console.error(fallo);
 	process.exitCode = 1;
