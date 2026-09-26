@@ -10,6 +10,8 @@ import { crearProyecto } from '../src/modelo/proyecto.js';
 import { numerarDispositivos } from '../src/motores/numeracion.js';
 import { rutearConductores } from '../src/motores/ruteo.js';
 import { fondoDe, generarFichaTablero } from '../src/motores/ficha-tablero.js';
+import { EJEMPLOS } from '../ejemplo/biblioteca.js';
+import { asignarPlanesAutomaticos, prepararAsignacionPlanesAutomaticos } from '../app/escena3d.js';
 
 test('la ficha cuenta los aparatos que hay de verdad, agrupados por familia', () => {
 	const p = tableroEjemplo();
@@ -101,6 +103,20 @@ test('el cable se agrupa por sección con su longitud ruteada', () => {
 	// Ordenadas de menor a mayor sección, como se pide el cable.
 	const secciones = ficha.conductores.porSeccion.map((s) => s.seccion ?? 0);
 	assert.deepEqual(secciones, [...secciones].sort((a, b) => a - b));
+});
+
+test('CAB-26: la ficha no suma una ruta 2D ajena al plan XYZ persistido', () => {
+	const p = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
+	p.version = 4;
+	assert.equal(asignarPlanesAutomaticos(p, prepararAsignacionPlanesAutomaticos(p, new Set(['w4']))), 1);
+	const ruteo = rutearConductores(p);
+	const ajena = ruteo.rutas.find((r) => r.conductorId === 'w4')!.longitudMm;
+	const ficha = generarFichaTablero(p, ruteo).conductores;
+	assert.equal(ficha.longitudTotalMm,
+		ruteo.rutas.filter((r) => r.conductorId !== 'w4').reduce((s, r) => s + r.longitudMm, 0));
+	assert.ok(ajena > 0);
+	assert.equal(ficha.porSeccion.reduce((s, x) => s + x.cantidad, 0), p.conductores.length,
+		'el conductor con plan sigue en el recuento por sección, pero no en metros 2D');
 });
 
 test('un proyecto sin gabinete no inventa medidas', () => {

@@ -273,6 +273,7 @@ test('CAB-27 pendiente: medir una ruta no sustituye la longitud eléctrica decla
 		new Map([[c.id, largoDibujadoMm(p, c)]])).find((l) => l.conductorId === c.id)!;
 	assert.equal(fila.estadoRuta, 'RUTA_3D_REFERENCIA');
 	assert.equal(fila.longitudReferencia3DMm, largoDibujadoMm(p, c));
+	assert.equal(fila.origenReferencia3D, 'MANUAL_M6');
 	assert.equal(fila.longitudRutaMm, undefined);
 	assert.equal(fila.propuestaCorteMm, undefined);
 	const fuente = p.dispositivos.find((d) => d.id === c.de.dispositivoId)!;

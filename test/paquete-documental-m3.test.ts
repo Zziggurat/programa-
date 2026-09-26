@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { writeFileSync } from 'node:fs';
 import { crearProyecto } from '../src/modelo/proyecto.js';
 import { tableroEjemplo } from '../ejemplo/tablero-ejemplo.js';
+import { EJEMPLOS } from '../ejemplo/biblioteca.js';
+import { asignarPlanesAutomaticos, prepararAsignacionPlanesAutomaticos } from '../app/escena3d.js';
+import { longitudPlanRutaAutomaticaMm } from '../src/modelo/plan-ruta-automatica.js';
 
 Object.assign(globalThis, {
 	document: { documentElement: {}, querySelectorAll: () => [],
@@ -118,12 +122,17 @@ test('DOC-02 compone un único snapshot sin duplicar un aparato multivista ni un
 	assert.equal((conexiones.match(/w1/g) ?? []).length, 1, 'el enlace interhoja no duplica conductor');
 	assert.match(conexiones, /PENDIENTE/);
 	const longitudes = texto('listas/longitudes-conductores.csv');
+	const columnasLongitud = longitudes.split('\n')[0].split(';');
+	const columnaLongitud = (nombre: string): number => columnasLongitud.indexOf(nombre);
 	const filaPendiente = longitudes.split('\n').find((fila) => fila.startsWith('w1;'))?.split(';');
 	assert.ok(filaPendiente, 'la conexión eléctrica pendiente permanece listada');
 	assert.equal(filaPendiente[1], 'PENDIENTE');
-	assert.equal(filaPendiente[3], '', 'sin ruta 2D inventada');
-	assert.equal(filaPendiente[11], '', 'sin propuesta de corte');
-	assert.equal(filaPendiente[12], '', 'sin corte verificado');
+	assert.equal(filaPendiente[columnaLongitud('Ruta 2D estimada (mm)')], '', 'sin ruta 2D inventada');
+	assert.equal(filaPendiente[columnaLongitud('Referencia XYZ persistente (mm)')], '',
+		'sin referencia física inventada');
+	assert.equal(filaPendiente[columnaLongitud('Propuesta de corte estimada (mm)')], '',
+		'sin propuesta de corte');
+	assert.equal(filaPendiente[columnaLongitud('Corte verificado (mm)')], '', 'sin corte verificado');
 	assert.match(longitudes, /Propuesta de corte estimada \(mm\)/);
 	const marcadores = texto('listas/marcadores.csv');
 	assert.match(marcadores, /Borne ID;Ubicación borne;Identificador/);
@@ -137,4 +146,37 @@ test('DOC-02 compone un único snapshot sin duplicar un aparato multivista ni un
 	assert.match(texto('esquema/hoja-001.svg'), /doc-123/);
 	assert.match(Buffer.from(archivos.find((a) => a.ruta === 'esquema/esquema.pdf')!.contenido as Uint8Array)
 		.toString('latin1'), /Project ID doc-123/);
+});
+
+test('CAB-26: el paquete muestra la medida XYZ V4 y deja vacío el corte legacy ajeno', async () => {
+	const p = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
+	p.esEjemplo = false;
+	p.version = 4;
+	assert.equal(asignarPlanesAutomaticos(p, prepararAsignacionPlanesAutomaticos(p,
+		new Set(['w4']))), 1);
+	const plan = p.conductores.find((c) => c.id === 'w4')!.planRutaAutomatica!;
+	const antes = JSON.stringify(p);
+	const archivos = await crearArchivosPaqueteDocumental(p, procedencia);
+	if (process.env.QA_PDF_CAPTURE) {
+		const contenido = archivos.find((a) => a.ruta === 'dossier/dossier.pdf')?.contenido;
+		assert.ok(contenido instanceof Uint8Array);
+		writeFileSync(process.env.QA_PDF_CAPTURE, contenido);
+	}
+	assert.equal(JSON.stringify(p), antes, 'emitir documentos no reescribe el plan XYZ');
+	const csv = String(archivos.find((a) => a.ruta === 'listas/longitudes-conductores.csv')?.contenido ?? '');
+	const cabecera = csv.split('\n')[0].split(';');
+	const col = (nombre: string) => cabecera.indexOf(nombre);
+	const fila = csv.split('\n').find((linea) => linea.startsWith('w4;'))?.split(';');
+	assert.ok(fila);
+	assert.equal(fila[1], 'RUTA_3D_REFERENCIA');
+	assert.equal(Number(fila[col('Referencia XYZ persistente (mm)')]), longitudPlanRutaAutomaticaMm(plan));
+	assert.equal(fila[col('Origen referencia XYZ')], 'PLAN_AUTOMATICO_V4');
+	assert.equal(fila[col('Ruta 2D estimada (mm)')], '');
+	assert.equal(fila[col('Propuesta de corte estimada (mm)')], '');
+	const html = String(archivos.find((a) => a.ruta === 'dossier/dossier.html')?.contenido ?? '');
+	assert.match(html, /PLAN_AUTOMATICO_V4/);
+	assert.match(html, /Un plan XYZ no recibe una propuesta de corte 2D ajena/);
+	const conductores = String(archivos.find((a) => a.ruta === 'listas/conductores.csv')?.contenido ?? '');
+	assert.match(conductores.split('\n').find((linea) => linea.startsWith('w4;')) ?? '',
+		/PLAN_AUTO_XYZ_REFERENCIA/);
 });

@@ -303,6 +303,8 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 			headStyles: { fillColor: AZUL, fontSize: 9 },
 			bodyStyles: { fontSize: 8.5 },
 			alternateRowStyles: { fillColor: [244, 246, 248] },
+			// Una fila de estado no puede dejar solo "calculada" en la página siguiente.
+			rowPageBreak: 'avoid',
 			// El `top` es para las páginas que abra la PROPIA tabla: ahí la cabecera se repite y la
 			// tabla tiene que empezar por debajo de ella.
 			margin: { left: 12, right: 12, top: 38 },
@@ -634,7 +636,7 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 		['Medidas de la placa', ficha.placa ? `${mm(ficha.placa.ancho)} × ${mm(ficha.placa.alto)}, del propio tablero` : 'sin gabinete definido'],
 		['Propuesta 2D de cable', `${metros(ficha.conductores.longitudTotalMm)}, del ruteo ortogonal estimado con `
 			+ `${Math.round(opciones.reservaCable * 100)} % de reserva y dos puntas por conexión. `
-			+ 'No mide Z, curvas ni corte real; excluye conexiones sin ruta física.'],
+			+ 'No mide Z, curvas ni corte real; excluye conexiones sin ruta física y rutas XYZ persistidas.'],
 		['Verificación eléctrica', errores
 			? `${errores} error(es) y ${avisos} aviso(s) — ver el apartado de verificación`
 			: `sin errores${avisos ? `, ${avisos} aviso(s)` : ''}`],
@@ -891,7 +893,9 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 	} else {
 			tabla(['Nº', 'Desde', 'Hacia', 'Sección', 'Color', 'Propuesta 2D / estado'],
 				conductores.map((c) => [c.numero, c.de, c.a, c.seccion || '—', c.color || '—',
-					c.pendienteRuta ? 'Ruta física pendiente' : c.longitudMm ? metros(c.longitudMm) : 'Sin longitud calculada']),
+					c.pendienteRuta ? 'Ruta física pendiente' : c.rutaReferencia3D
+						? 'Ruta XYZ; corte no verificado'
+						: c.longitudMm ? metros(c.longitudMm) : 'Sin longitud calculada']),
 				{ 0: 14, 3: 20, 5: 30 });
 	}
 

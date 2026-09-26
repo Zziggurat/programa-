@@ -42,7 +42,7 @@ import {
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	adoptarRutasCalculadas, asignarPlanesAutomaticos, prepararAsignacionPlanesAutomaticos,
 	diagnosticoCables, diagnosticoRutaManual, firmaRuteo, largoDibujadoMm, liberar,
-	longitudesParaRevisionMm, rutasDeCables, salidasDeCable, trazosDeCables, HOLGURA_CABLE,
+	longitudesDibujadasMm, longitudesParaRevisionMm, rutasDeCables, salidasDeCable, trazosDeCables, HOLGURA_CABLE,
 	solidosDelTablero,
 	construirUnCable, contadores, radioCodo, radioDeCable, reconciliarCablesDibujados,
 	reiniciarContadores, rutaProvisional,
@@ -8444,7 +8444,8 @@ async function importarArchivoProyecto(archivo: File): Promise<void> {
 	if (firma !== JSON.stringify(proyectoParaPersistir(proyecto))) {
 		throw new Error('El proyecto cambió mientras se preparaba el dossier. Vuelve a exportarlo.');
 	}
-	descargar(`${proyecto.nombre} - dossier.html`, generarInformeHTML(revision, procedencia), 'text/html');
+	descargar(`${proyecto.nombre} - dossier.html`,
+		generarInformeHTML(revision, procedencia, longitudesDibujadasMm(proyecto)), 'text/html');
 })().catch((error) => avisar(`No se pudo exportar el dossier HTML: ${nombreDeError(error)}`, 'error')); };
 
 /**

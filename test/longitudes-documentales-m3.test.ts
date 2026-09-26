@@ -5,6 +5,10 @@ import { crearProyecto } from '../src/modelo/proyecto.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
 import { proyectarLongitudesDocumentales } from '../src/motores/longitudes-documentales.js';
 import { rutearConductores } from '../src/motores/ruteo.js';
+import { EJEMPLOS } from '../ejemplo/biblioteca.js';
+import { asignarPlanesAutomaticos, prepararAsignacionPlanesAutomaticos } from '../app/escena3d.js';
+import { longitudPlanRutaAutomaticaMm } from '../src/modelo/plan-ruta-automatica.js';
+import { generarListaConductores } from '../src/motores/documentacion.js';
 
 function tablero(): Proyecto {
 	const p = crearProyecto('Longitudes DOC-05', { reservaCable: 0.1, extraPorConexionMm: 100 });
@@ -119,4 +123,43 @@ test('DOC-05: un resultado ajeno sin desglose no se presenta como corte calculad
 	assert.equal(pendiente.propuestaCorteMm, undefined);
 	assert.equal(pendiente.longitudDeclaradaElectricaM, 9,
 		'declarar longitud eléctrica no materializa una ruta física pendiente');
+});
+
+test('CAB-26: un plan XYZ V4 nunca recibe la propuesta de corte 2D de otra ruta', () => {
+	const p = EJEMPLOS.find((e) => /arranque directo/i.test(e.titulo))!.crear();
+	p.version = 4;
+	const preparados = prepararAsignacionPlanesAutomaticos(p, new Set(['w4']));
+	assert.equal(asignarPlanesAutomaticos(p, preparados), 1);
+	const c = p.conductores.find((x) => x.id === 'w4')!;
+	const referencia = longitudPlanRutaAutomaticaMm(c.planRutaAutomatica!);
+	const ruteo = rutearConductores(p);
+	assert.ok(ruteo.rutas.some((r) => r.conductorId === c.id),
+		'la proyección debe rechazar expresamente la ruta legacy aunque el motor aún la produzca');
+	const fila = proyectarLongitudesDocumentales(p, ruteo).find((x) => x.conductorId === c.id)!;
+	assert.equal(fila.estadoRuta, 'RUTA_3D_REFERENCIA');
+	assert.equal(fila.origenReferencia3D, 'PLAN_AUTOMATICO_V4');
+	assert.equal(fila.longitudReferencia3DMm, referencia);
+	assert.equal(fila.longitudRutaMm, undefined);
+	assert.equal(fila.propuestaCorteMm, undefined);
+	assert.equal(fila.reservaMm, undefined);
+	const resumida = generarListaConductores(p, ruteo).find((x) => x.numero === (c.numero ?? c.id))!;
+	assert.equal(resumida.longitudMm, undefined);
+	assert.equal(resumida.rutaReferencia3D, true);
+	c.fisica = { longitudManualM: 3.2 };
+	assert.equal(proyectarLongitudesDocumentales(p, ruteo).find((x) => x.conductorId === c.id)!
+		.longitudDeclaradaElectricaM, 3.2, 'la longitud eléctrica declarada permanece separada');
+	const cargado = cargarProyecto(JSON.stringify(p)).proyecto;
+	const reabierto = proyectarLongitudesDocumentales(cargado, rutearConductores(cargado))
+		.find((x) => x.conductorId === c.id)!;
+	assert.equal(reabierto.longitudReferencia3DMm, referencia);
+	assert.equal(reabierto.propuestaCorteMm, undefined);
+	const invertido = structuredClone(cargado);
+	invertido.conductores.reverse(); invertido.gabinete!.colocaciones.reverse();
+	assert.deepEqual(proyectarLongitudesDocumentales(invertido, rutearConductores(invertido))
+		.find((x) => x.conductorId === c.id), reabierto);
+	c.estadoRutaFisica = 'pendiente';
+	const pendiente = proyectarLongitudesDocumentales(p, ruteo).find((x) => x.conductorId === c.id)!;
+	assert.equal(pendiente.estadoRuta, 'PENDIENTE');
+	assert.equal(pendiente.longitudReferencia3DMm, undefined);
+	assert.equal(pendiente.propuestaCorteMm, undefined);
 });

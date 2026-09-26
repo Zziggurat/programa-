@@ -127,7 +127,9 @@ export function generarFichaTablero(proyecto: Proyecto, ruteo?: ResultadoRuteo):
 		// El enlace existe eléctricamente, pero no hay cantidad de cable por sección que pedir.
 		// Incluso una ruta aportada por un caller externo no puede saltarse este discriminante.
 		if (c.estadoRutaFisica === 'pendiente') { pendientesRuta++; continue; }
-		const ruta = longitudDe.get(c.id);
+		// La ficha llama a esta suma «propuesta 2D». Un plan XYZ o una ruta manual
+		// persistidos no son el recorrido legacy que el router aún puede devolver.
+		const ruta = c.rutaFisica || c.planRutaAutomatica ? undefined : longitudDe.get(c.id);
 		longitudTotalMm += ruta ?? 0;
 		const clave = String(c.seccion ?? '');
 		const s = secciones.get(clave) ?? { seccion: c.seccion, cantidad: 0, longitudMm: 0, conRuta: 0 };

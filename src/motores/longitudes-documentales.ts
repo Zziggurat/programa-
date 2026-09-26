@@ -7,6 +7,7 @@
  */
 import type { Proyecto } from '../modelo/tipos.js';
 import { opcionesDe } from '../modelo/proyecto.js';
+import { longitudPlanRutaAutomaticaMm } from '../modelo/plan-ruta-automatica.js';
 import type { ResultadoRuteo } from './ruteo.js';
 
 export type OrigenOpcionLongitud = 'CONFIGURADO' | 'POR_DEFECTO';
@@ -20,8 +21,9 @@ export interface LongitudDocumentalConductor {
 	longitudDeclaradaElectricaM?: number;
 	/** Recorrido ortogonal 2D según el grafo de canaletas, antes de márgenes (mm). */
 	longitudRutaMm?: number;
-	/** Referencia XYZ M6; no es la longitud eléctrica ni una propuesta de corte. */
+	/** Referencia XYZ persistente manual o automática; no es longitud eléctrica ni corte. */
 	longitudReferencia3DMm?: number;
+	origenReferencia3D?: 'MANUAL_M6' | 'PLAN_AUTOMATICO_V4';
 	reservaPorcentaje: number;
 	origenReserva: OrigenOpcionLongitud;
 	reservaMm?: number;
@@ -47,17 +49,22 @@ export function proyectarLongitudesDocumentales(
 		? 'POR_DEFECTO' : 'CONFIGURADO';
 	return [...proyecto.conductores].sort((a, b) => a.id.localeCompare(b.id)).map((c) => {
 		const pendiente = c.estadoRutaFisica === 'pendiente';
-		const ruta = pendiente || c.rutaFisica ? undefined : rutas.get(c.id);
+		const ruta3D = !!c.rutaFisica || !!c.planRutaAutomatica;
+		// El router 2D legacy puede producir otra ruta para un plan XYZ V4. Nunca se presenta
+		// ese resultado ajeno como propuesta de corte del plan realmente guardado.
+		const ruta = pendiente || ruta3D ? undefined : rutas.get(c.id);
 		const manual = c.fisica?.longitudManualM;
-		const referencia3D = c.rutaFisica ? referencias3DMm?.get(c.id) : undefined;
+		const referencia3D = pendiente ? undefined : c.rutaFisica ? referencias3DMm?.get(c.id)
+			: c.planRutaAutomatica ? longitudPlanRutaAutomaticaMm(c.planRutaAutomatica) : undefined;
 		const desglosada = ruta && [ruta.longitudRutaMm, ruta.reservaMm, ruta.puntasMm, ruta.redondeoMm]
 			.every((valor) => typeof valor === 'number' && Number.isFinite(valor));
 		return {
 			conductorId: c.id,
-			estadoRuta: pendiente ? 'PENDIENTE' : c.rutaFisica ? 'RUTA_3D_REFERENCIA' : !ruta ? 'SIN_RUTA'
+			estadoRuta: pendiente ? 'PENDIENTE' : ruta3D ? 'RUTA_3D_REFERENCIA' : !ruta ? 'SIN_RUTA'
 				: desglosada ? 'RUTA_2D_ESTIMADA' : 'SIN_DESGLOSE',
 			...(referencia3D !== undefined && Number.isFinite(referencia3D) && referencia3D > 0
-				? { longitudReferencia3DMm: referencia3D } : {}),
+				? { longitudReferencia3DMm: referencia3D,
+					origenReferencia3D: c.rutaFisica ? 'MANUAL_M6' as const : 'PLAN_AUTOMATICO_V4' as const } : {}),
 			...(typeof manual !== 'number' || !Number.isFinite(manual) || manual <= 0
 				? {} : { longitudDeclaradaElectricaM: manual }),
 			reservaPorcentaje: opciones.reservaCable,

@@ -110,7 +110,8 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 		await pdf(esquemaComoBlob(revision.hojasEsquema, copia.nombre, copia.datos ?? {}, procedencia, pendientes)),
 		'application/pdf');
 	agregar('dossier/dossier.pdf', await pdf(dossierComoBlob(copia, procedencia)), 'application/pdf');
-	agregar('dossier/dossier.html', generarInformeHTML(revision, procedencia), 'text/html; charset=utf-8');
+	agregar('dossier/dossier.html',
+		generarInformeHTML(revision, procedencia, longitudesDibujadasMm(copia)), 'text/html; charset=utf-8');
 	agregar('ingenieria/informe.json', informeIngenieriaV7AJson(informe), 'application/json');
 	agregar('ingenieria/informe.html', informeIngenieriaV7AHtml(informe), 'text/html; charset=utf-8');
 	agregar('ingenieria/bom.csv', bomIngenieriaACsv(informe.bom, informe), 'text/csv; charset=utf-8');
@@ -124,7 +125,8 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 	const estadoRuta = (id: string): string => {
 		const c = conductorPorId.get(id);
 		return c?.estadoRutaFisica === 'pendiente' ? 'PENDIENTE'
-			: c?.rutaFisica ? 'RUTA_M6_XYZ_REFERENCIA' : 'LEGACY_O_DECLARADA';
+			: c?.rutaFisica ? 'RUTA_M6_XYZ_REFERENCIA'
+				: c?.planRutaAutomatica ? 'PLAN_AUTO_XYZ_REFERENCIA' : 'LEGACY_O_DECLARADA';
 	};
 	csv('listas/aparatos.csv', ['ID', 'Designación', 'Tipo', 'Descripción', 'Fabricante', 'Referencia', 'Posición'],
 		porId(copia.dispositivos).map((d) => [d.id, d.designacion ?? d.id, d.tipo,
@@ -139,18 +141,19 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 			c.longitudM, c.origenLongitud, c.circuitos.join(', '), estadoRuta(c.id)]),
 		'Longitud m corresponde a la política eléctrica de Ingeniería, no a un corte verificado ni a metros de manguera multiconductora.');
 	csv('listas/longitudes-conductores.csv', ['Conductor ID', 'Estado de ruta',
-		'Longitud eléctrica declarada (m)', 'Ruta 2D estimada (mm)', 'Referencia XYZ M6 (mm)',
+		'Longitud eléctrica declarada (m)', 'Ruta 2D estimada (mm)', 'Referencia XYZ persistente (mm)',
+		'Origen referencia XYZ',
 		'Reserva (%)', 'Origen reserva', 'Reserva (mm)', 'Extra por conexión (mm)',
 		'Origen puntas', 'Puntas total (mm)', 'Redondeo (mm)',
 		'Propuesta de corte estimada (mm)', 'Corte verificado (mm)'],
 		proyectarLongitudesDocumentales(copia, revision.ruteo, longitudesDibujadasMm(copia)).map((l) => [
 			l.conductorId, l.estadoRuta, l.longitudDeclaradaElectricaM, l.longitudRutaMm,
-			l.longitudReferencia3DMm,
+			l.longitudReferencia3DMm, l.origenReferencia3D,
 			l.reservaPorcentaje * 100, l.origenReserva, l.reservaMm, l.extraPorConexionMm,
 			l.origenPuntas, l.puntasMm, l.redondeoMm, l.propuestaCorteMm,
 			l.longitudCorteVerificadaMm,
 		]),
-		'Una propuesta de corte legacy usa recorrido 2D y márgenes. La referencia M6 mide XYZ pero no es longitud eléctrica adoptada ni corte verificado; no se le inventa una propuesta de corte.');
+		'Una propuesta de corte legacy usa recorrido 2D y márgenes. Un plan V4 o ruta manual M6 mide XYZ persistente, pero no es longitud eléctrica adoptada ni corte verificado; no se le inventa un corte desde otra ruta.');
 	csv('listas/borneros.csv', ['Bornero ID', 'Designación', 'Borne', 'Tipo', 'Conexiones', 'Circuitos'],
 		informe.terminales.map((t) => [t.borneroId, t.designacion, t.borneId, t.tipo,
 			t.conexiones.map((c) => `${c.conductorId}:${c.dispositivoId}:${c.borneId}`).join(' / '), t.circuitos.join(', ')]),

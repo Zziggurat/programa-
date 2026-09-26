@@ -46,6 +46,7 @@ export interface FilaConductor {
 	color: string;
 	longitudMm?: number;
 	pendienteRuta?: boolean;
+	rutaReferencia3D?: boolean;
 }
 
 export function generarListaConductores(
@@ -60,8 +61,11 @@ export function generarListaConductores(
 			a: extremoTexto(proyecto, c.a),
 			seccion: c.seccion !== undefined ? `${c.seccion} mm²` : '',
 			color: c.color ?? '',
-			longitudMm: c.estadoRutaFisica === 'pendiente' || c.rutaFisica ? undefined : longitudDe.get(c.id),
+			longitudMm: c.estadoRutaFisica === 'pendiente' || c.rutaFisica || c.planRutaAutomatica
+				? undefined : longitudDe.get(c.id),
 			pendienteRuta: c.estadoRutaFisica === 'pendiente' || undefined,
+			rutaReferencia3D: c.estadoRutaFisica !== 'pendiente'
+				&& (!!c.rutaFisica || !!c.planRutaAutomatica) || undefined,
 		}))
 		.sort((a, b) => a.numero.localeCompare(b.numero, undefined, { numeric: true }));
 }
@@ -122,7 +126,8 @@ function tabla(cabeceras: string[], filas: (string | number | undefined)[][]): s
 }
 
 /** Informe HTML autocontenido con toda la documentación del proyecto. */
-export function generarInformeHTML(d: Dossier, procedencia?: ProcedenciaDocumento): string {
+export function generarInformeHTML(d: Dossier, procedencia?: ProcedenciaDocumento,
+	referencias3DMm?: ReadonlyMap<string, number>): string {
 	const { proyecto } = d;
 	const identidad = resumenProcedenciaDocumento(procedencia);
 	const bom = generarBOM(proyecto);
@@ -163,20 +168,22 @@ ${filasXref.length ? tabla(['Maestro', 'Posición', 'Contacto', 'Tipo', 'Posici�
 	const numeroMm = (v: number | undefined): string => v === undefined ? '—' : `${formatoNumero(v)} mm`;
 	const estadoRutaLegible = { PENDIENTE: 'Ruta física pendiente', SIN_RUTA: 'Sin ruta calculada',
 		SIN_DESGLOSE: 'Ruta sin desglose', RUTA_2D_ESTIMADA: 'Ruta 2D estimada',
-		RUTA_3D_REFERENCIA: 'Ruta M6 XYZ de referencia; corte no verificado' } as const;
+		RUTA_3D_REFERENCIA: 'Ruta XYZ persistente de referencia; corte no verificado' } as const;
 	const origenLegible = { CONFIGURADO: 'Configurado en el proyecto', POR_DEFECTO: 'Valor por defecto' } as const;
 	secciones.push(`<h2>5. Lista de conductores</h2>
 ${tabla(['Número', 'De', 'A', 'Sección', 'Color', 'Ruteo 2D + margen/puntas (mm)', 'Estado físico'],
 		conductores.map((f) => [f.numero, f.de, f.a, f.seccion, f.color,
 			f.longitudMm === undefined ? '' : formatoNumero(f.longitudMm),
-			f.pendienteRuta ? 'Ruta física pendiente' : f.longitudMm === undefined ? 'Ruta sin corte calculado' : 'Con ruta']))}`);
-	const longitudes = proyectarLongitudesDocumentales(proyecto, d.ruteo);
+			f.pendienteRuta ? 'Ruta física pendiente' : f.rutaReferencia3D ? 'Ruta XYZ; corte no verificado'
+				: f.longitudMm === undefined ? 'Ruta sin corte calculado' : 'Con ruta']))}`);
+	const longitudes = proyectarLongitudesDocumentales(proyecto, d.ruteo, referencias3DMm);
 	secciones.push(`<h3>Desglose de longitudes por conductor</h3>
-<p>La longitud eléctrica declarada, el recorrido ortogonal 2D y la propuesta con reserva y puntas son magnitudes diferentes. La propuesta no mide profundidad Z, curvas ni corte real de taller. Un corte verificado no está disponible en esta revisión.</p>
-${tabla(['Conductor', 'Estado', 'Eléctrica declarada', 'Ruta 2D', 'Corte propuesto (estimado)'],
+<p>La longitud eléctrica declarada, el recorrido ortogonal 2D y la referencia XYZ persistente son magnitudes diferentes. Una propuesta legacy no mide profundidad Z, curvas ni corte real de taller. Un plan XYZ no recibe una propuesta de corte 2D ajena. Un corte verificado no está disponible en esta revisión.</p>
+${tabla(['Conductor', 'Estado', 'Eléctrica declarada', 'Ruta 2D', 'Referencia XYZ', 'Origen XYZ', 'Corte propuesto (estimado)'],
 	longitudes.map((l) => [l.conductorId, estadoRutaLegible[l.estadoRuta],
 		l.longitudDeclaradaElectricaM === undefined ? '—' : `${formatoNumero(l.longitudDeclaradaElectricaM)} m`,
-		numeroMm(l.longitudRutaMm), numeroMm(l.propuestaCorteMm)]))}
+		numeroMm(l.longitudRutaMm), numeroMm(l.longitudReferencia3DMm), l.origenReferencia3D ?? '—',
+		numeroMm(l.propuestaCorteMm)]))}
 <section class="tabla-reserva"><h3>Reserva, puntas y verificación de corte</h3>
 ${tabla(['Conductor', 'Reserva', 'Puntas', 'Redondeo', 'Corte verificado'],
 	longitudes.map((l) => [l.conductorId,
