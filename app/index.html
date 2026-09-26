@@ -1052,6 +1052,17 @@
 	.fila-estructura .id { width: 34px; color: var(--texto-suave); font-size: 12px; }
 	.fila-estructura button { background: none; border: none; color: var(--texto-suave); font-size: 14px; padding: 2px 5px; }
 	.fila-estructura button:hover { color: var(--error); }
+	/* M6: los IDs y sus tres coordenadas siguen accesibles en el inspector estrecho. */
+	.cbl-nodos .fila-estructura { flex-wrap: wrap; padding: 5px 0; border-bottom: 1px solid var(--borde); }
+	.cbl-nodos .id { flex-basis: 100%; width: auto; overflow-wrap: anywhere; }
+	.cbl-nodos label { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; }
+	.cbl-nodos input { width: 48px; min-width: 0; box-sizing: border-box; }
+	.cbl-nodos button { margin-left: auto; font-size: 12px; }
+	#cbl-tramo-m6 { min-width: 0; margin: 10px 0; padding: 8px; border: 1px solid var(--borde); border-radius: 8px; }
+	#cbl-tramo-m6 legend { font-size: 11px; color: var(--texto-suave); }
+	#cbl-tramo-m6 label { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin: 5px 0; font-size: 12px; }
+	#cbl-tramo-m6 select { min-width: 0; max-width: 70%; }
+	#cbl-tramo-m6 input { width: 78px; box-sizing: border-box; }
 	.botonera { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 	.botonera .boton { padding: 4px 9px; font-size: 12px; }
 	/*

@@ -23,6 +23,7 @@ export interface RutaFisicaV1 {
 }
 
 export interface PuntoFisico3D { x: number; y: number; z: number }
+export const MAX_NODOS_RUTA_M6 = 128;
 
 /** El marco PLACA V1 no puede representar un extremo móvil de puerta ni uno de campo. */
 export function admiteRutaEnPlaca(
@@ -40,7 +41,7 @@ export function leerRutaFisicaV1(bruto: unknown): RutaFisicaV1 {
 	if (typeof bruto !== 'object' || bruto === null || Array.isArray(bruto)) throw new Error('RUTA_M6_INVALIDA');
 	const r = bruto as Record<string, unknown>;
 	if (r.version !== 1 || r.modo !== 'MANUAL' || r.marco !== 'PLACA'
-		|| r.geometria !== 'POLILINEA' || !Array.isArray(r.nodos) || r.nodos.length > 128
+		|| r.geometria !== 'POLILINEA' || !Array.isArray(r.nodos) || r.nodos.length > MAX_NODOS_RUTA_M6
 		|| Object.keys(r).some((k) => !['version', 'modo', 'marco', 'geometria', 'nodos'].includes(k))) {
 		throw new Error('RUTA_M6_NO_SOPORTADA');
 	}
@@ -82,4 +83,19 @@ export function longitudPolilineaMm(puntos: readonly PuntoFisico3D[]): number {
 		longitud += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
 	}
 	return longitud;
+}
+
+/**
+ * Desplaza solamente un tramo limitado por DOS nodos interiores. Los anclajes de bornes no
+ * pertenecen a la ruta editable y jamás se trasladan con esta operación. La transformación es
+ * pura para que una entrada inválida no deje medio tramo movido ni cree un Undo vacío.
+ */
+export function desplazarTramoInteriorM6(
+	ruta: RutaFisicaV1, indice: number, delta: PuntoFisico3D,
+): RutaFisicaV1 {
+	if (!Number.isInteger(indice) || indice < 0 || indice + 1 >= ruta.nodos.length
+		|| ![delta.x, delta.y, delta.z].every(Number.isFinite)) throw new Error('TRAMO_M6_INVALIDO');
+	const nodos = ruta.nodos.map((n, i) => i === indice || i === indice + 1
+		? { ...n, x: n.x + delta.x, y: n.y + delta.y, z: n.z + delta.z } : { ...n });
+	return leerRutaFisicaV1({ ...ruta, nodos });
 }

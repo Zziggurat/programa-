@@ -95,7 +95,7 @@ import {
 	redondearEsquinas,
 } from './geometria-cables.js';
 import { longitudCoincidente3D } from './colisiones-cables.js';
-import { admiteRutaEnPlaca, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
+import { admiteRutaEnPlaca, desplazarTramoInteriorM6, MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
 import { GestorDocumentos, EstadoGuardadoDocumento } from './gestor-documentos.js';
 import { presentarEstadoDocumento, type FaseGuardado } from './estado-documento.js';
@@ -4382,8 +4382,8 @@ function pintarPanelCable(id: string): void {
 		<div class="sub">${escaparHtml(`${extremoTexto(proyecto, c.de)} → ${extremoTexto(proyecto, c.a)}`)}</div>
 		<dl>
 			<dt>Recorrido</dt><dd>${pendiente ? 'Ruta física pendiente · sin metraje ni canaleta asignada'
-				: c.rutaFisica ? `✋ ruta M6 XYZ (${c.rutaFisica.nodos.length} nodos · polilínea)`
-				: manual ? `✋ a mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : '↳ directo (en L, automático)'}</dd>
+				: c.rutaFisica ? `Ruta M6 XYZ (${c.rutaFisica.nodos.length} nodos · polilínea)`
+				: manual ? `A mano (${c.trazado!.length} ${c.trazado!.length === 1 ? 'punto' : 'puntos'})` : 'Directo (en L, automático)'}</dd>
 			<dt>${pendiente ? 'Clase prevista' : 'Clase'}</dt><dd>${escaparHtml(NOMBRE_CLASE[claseDeConductor(proyecto, c)])}${c.clase ? '' : ' <span class="pista">(deducida)</span>'}</dd>
 		</dl>
 		${pendiente ? '<p class="sub">La conexión existe en el circuito, pero su tendido físico aún no está diseñado. Metraje y material de corte: no determinados.</p>' : ''}
@@ -4398,7 +4398,8 @@ function pintarPanelCable(id: string): void {
 		</div>
 		${c.rutaFisica ? `<p class="sub">Ruta manual M6: los puntos XYZ son literales. La malla no separa ni recoloca esta ruta; las interferencias requieren revisión. Longitud de referencia espacial: ${Math.round(largoDibujadoMm(proyecto, c))} mm; no es longitud de corte verificada.</p>
 			<button class="boton" id="cbl-diagnostico-m6" type="button">Revisar interferencias</button><p class="sub" id="cbl-resultado-m6" role="status"></p>
-			<div class="cbl-nodos">${c.rutaFisica.nodos.map((n, i) => `<div class="fila-estructura"><span class="id">${escaparHtml(n.id)}</span>${(['x', 'y', 'z'] as const).map((eje) => `<label>${eje.toUpperCase()} <input type="number" step="0.1" min="-5000" max="5000" data-ruta-nodo="${i}" data-eje="${eje}" value="${n[eje]}"></label>`).join('')}</div>`).join('')}</div>` : ''}
+			<div class="cbl-nodos">${c.rutaFisica.nodos.map((n, i) => `<div class="fila-estructura"><span class="id">${escaparHtml(n.id)}</span>${(['x', 'y', 'z'] as const).map((eje) => `<label>${eje.toUpperCase()} <input type="number" step="0.1" min="-5000" max="5000" data-ruta-nodo="${i}" data-eje="${eje}" value="${n[eje]}"></label>`).join('')}<button class="boton" type="button" data-ruta-quitar="${i}" aria-label="Quitar nodo ${escaparHtml(n.id)}">Quitar</button></div>`).join('')}</div>
+			${c.rutaFisica.nodos.length >= 2 ? `<fieldset id="cbl-tramo-m6"><legend>Desplazar tramo entre nodos interiores</legend><label>Tramo <select id="cbl-tramo-indice">${c.rutaFisica.nodos.slice(0, -1).map((n, i) => `<option value="${i}">${escaparHtml(n.id)} → ${escaparHtml(c.rutaFisica!.nodos[i + 1].id)}</option>`).join('')}</select></label>${(['x', 'y', 'z'] as const).map((eje) => `<label>Δ${eje.toUpperCase()} mm <input id="cbl-tramo-${eje}" type="number" step="0.1" value="0"></label>`).join('')}<button class="boton" id="cbl-mover-tramo-m6" type="button">Desplazar tramo</button><p class="sub">Mueve ambos nodos del tramo; los bornes permanecen anclados. Los enlaces vecinos se recalculan y requieren revisión de interferencias.</p></fieldset>` : ''}` : ''}
 		<div class="botonera">
 			${adoptable ? '<button class="boton" id="cbl-adoptar-m6">Adoptar XYZ como ruta fija</button>' : ''}
 			${manual ? '<button class="boton" id="cbl-auto">Trazado automático</button>' : ''}
@@ -4453,6 +4454,33 @@ function pintarPanelCable(id: string): void {
 			nodo[eje] = valor;
 			recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
 		};
+	});
+	panel.querySelectorAll<HTMLButtonElement>('[data-ruta-quitar]').forEach((boton) => {
+		boton.onclick = () => {
+			const indice = Number(boton.dataset.rutaQuitar);
+			if (!c.rutaFisica || !Number.isInteger(indice) || !c.rutaFisica.nodos[indice]) return;
+			if (!capturar()) return;
+			c.rutaFisica.nodos.splice(indice, 1);
+			recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
+		};
+	});
+	(panel.querySelector('#cbl-mover-tramo-m6') as HTMLButtonElement | null)?.addEventListener('click', () => {
+		if (!c.rutaFisica) return;
+		const indice = Number((panel.querySelector('#cbl-tramo-indice') as HTMLSelectElement).value);
+		const entradas = (['x', 'y', 'z'] as const).map((eje) =>
+			(panel.querySelector(`#cbl-tramo-${eje}`) as HTMLInputElement).value.trim());
+		if (entradas.some((valor) => valor === '')) {
+			avisar('Desplazamiento M6 inválido: completa ΔX, ΔY y ΔZ.', 'error'); return;
+		}
+		const [x, y, z] = entradas.map(Number);
+		if (x === 0 && y === 0 && z === 0) return;
+		let rutaNueva;
+		try { rutaNueva = desplazarTramoInteriorM6(c.rutaFisica, indice, { x, y, z }); }
+		catch { avisar('El tramo quedaría fuera del dominio M6 (±5000 mm); no se movió.', 'error'); return; }
+		if (!capturar()) return;
+		c.rutaFisica = rutaNueva;
+		recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
+		avisar('Tramo manual desplazado. Revisa interferencias y radios antes de fabricar.', 'info');
 	});
 	(panel.querySelector('#cbl-adoptar-m6') as HTMLButtonElement | null)?.addEventListener('click', async () => {
 		const ruta = rutaDesdeTrazadoLegacy(c.id, c.trazado);
@@ -6103,6 +6131,7 @@ function insertarWaypoint(c: Conductor, p: P3, avance: number): number {
 	if (c.rutaFisica) {
 		const ruta = rutaEnPantalla(c.id);
 		const wps = c.rutaFisica.nodos;
+		if (wps.length >= MAX_NODOS_RUTA_M6) return -1;
 		const idx = ruta?.indicesNodos ? indiceDeInsercionM6(ruta.indicesNodos, avance) : wps.length;
 		let n = 1;
 		while (wps.some((w) => w.id === `${c.id}:n${n}`)) n++;
@@ -7427,6 +7456,10 @@ function crearUnionBajoElPuntero(ev: MouseEvent): boolean {
 	const golpe = cableSenalado(ev);
 	const c = golpe ? proyecto.conductores.find((x) => x.id === golpe.id) : undefined;
 	if (!c || !golpe) return false;
+	if (c.rutaFisica && c.rutaFisica.nodos.length >= MAX_NODOS_RUTA_M6) {
+		avisar(`La ruta M6 admite como máximo ${MAX_NODOS_RUTA_M6} nodos; no se añadió otro.`, 'error');
+		return false;
+	}
 	if (!(sel?.tipo === 'cable' && sel.id === golpe.id)) aplicarSeleccion({ tipo: 'cable', id: c.id });
 	if (!capturar()) return false;
 	insertarWaypoint(c, golpe.punto, golpe.avance);
@@ -10450,6 +10483,7 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		crearPuntoCable: (conductorId: string, x: number, y: number) => {
 			const c = proyecto.conductores.find((k) => k.id === conductorId);
 			if (!c) return -1;
+			if (c.rutaFisica && c.rutaFisica.nodos.length >= MAX_NODOS_RUTA_M6) return -1;
 			const ruta = rutaEnPantalla(conductorId);
 			const en = ruta && proyectarEnPolilinea(ruta.puntos, { x, y });
 			if (!en) return -1;
