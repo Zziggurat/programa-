@@ -2053,6 +2053,25 @@ function caminosPosibles(
 	return salida;
 }
 
+/** Una sola construcción de la ruta manual para preview y reparto definitivo. */
+function rutaManualResuelta(
+	conductor: Conductor, p: NonNullable<ReturnType<typeof salidasDeCable>>, radio: number,
+): RutaCable {
+	const ruta = conductor.rutaFisica!;
+	const nodos: Punto3[] = [p.de, p.salidaA, ...ruta.nodos, p.salidaB, p.a]
+		.map((q) => ({ x: q.x, y: q.y, z: q.z }));
+	const puntos: Punto3[] = [];
+	const indicesNodos: number[] = [];
+	for (let i = 0; i < nodos.length; i++) {
+		const q = nodos[i], ultimo = puntos[puntos.length - 1];
+		if (!ultimo || Math.hypot(q.x - ultimo.x, q.y - ultimo.y, q.z - ultimo.z) > 1e-9) puntos.push(q);
+		if (i >= 2 && i < 2 + ruta.nodos.length) indicesNodos.push(puntos.length - 1);
+	}
+	return { conductorId: conductor.id, de: p.de, a: p.a,
+		nodos: nodos.map((q) => ({ x: q.x, y: q.y })), puntos, radio,
+		z: puntos[Math.floor(puntos.length / 2)]?.z ?? p.de.z, geometria: 'POLILINEA', indicesNodos };
+}
+
 /**
  * EL REPARTO: a cada cable, el mejor camino que se pueda medir.
  *
@@ -2154,22 +2173,12 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		if (!p) continue;
 		const radio = radioDeCable(conductor.seccion);
 		if (conductor.rutaFisica) {
-			const nodos: Punto3[] = [p.de, p.salidaA, ...conductor.rutaFisica.nodos, p.salidaB, p.a]
-				.map((q) => ({ x: q.x, y: q.y, z: q.z }));
-			const puntos: Punto3[] = [];
-			const indicesNodos: number[] = [];
-			for (let i = 0; i < nodos.length; i++) {
-				const q = nodos[i], ultimo = puntos[puntos.length - 1];
-				if (!ultimo || Math.hypot(q.x - ultimo.x, q.y - ultimo.y, q.z - ultimo.z) > 1e-9) puntos.push(q);
-				if (i >= 2 && i < 2 + conductor.rutaFisica.nodos.length) indicesNodos.push(puntos.length - 1);
-			}
-			const trazo: Trazo = { id: conductor.id, radio, puntos,
+			const ruta = rutaManualResuelta(conductor, p, radio);
+			const trazo: Trazo = { id: conductor.id, radio, puntos: ruta.puntos,
 				bornes: [`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
 					`${conductor.a.dispositivoId}:${conductor.a.borneId}`], extremos: [p.de, p.a] };
 			rejilla.anadir(trazo);
-			rutasExplicitas.push({ conductorId: conductor.id, de: p.de, a: p.a,
-				nodos: nodos.map((q) => ({ x: q.x, y: q.y })), puntos, radio,
-				z: puntos[Math.floor(puntos.length / 2)]?.z ?? p.de.z, geometria: 'POLILINEA', indicesNodos });
+			rutasExplicitas.push(ruta);
 			continue;
 		}
 		const codo = radioCodo(radio);
@@ -2694,6 +2703,7 @@ export function rutaProvisional(proyecto: Proyecto, conductorId: string): RutaCa
 	const p = salidasDeCable(proyecto, conductor);
 	if (!p) return undefined;
 	const radio = radioDeCable(conductor.seccion);
+	if (conductor.rutaFisica) return rutaManualResuelta(conductor, p, radio);
 	const codo = radioCodo(radio);
 	// La z de referencia para los puntos que no la tienen: la que ya tenía el cable dibujado.
 	const previa = ultimoReparto?.rutas.find((r) => r.conductorId === conductorId);
@@ -2703,15 +2713,13 @@ export function rutaProvisional(proyecto: Proyecto, conductorId: string): RutaCa
 	const nodos: Punto3[] = [
 		{ x: p.de.x, y: p.de.y, z: p.de.z },
 		{ x: p.salidaA.x, y: p.salidaA.y, z: p.salidaA.z },
-		...(conductor.rutaFisica?.nodos ?? conductor.trazado ?? []).map((q) => ({ x: q.x, y: q.y, z: q.z ?? zSuelta })),
+		...(conductor.trazado ?? []).map((q) => ({ x: q.x, y: q.y, z: q.z ?? zSuelta })),
 		{ x: p.salidaB.x, y: p.salidaB.y, z: p.salidaB.z },
 		{ x: p.a.x, y: p.a.y, z: p.a.z },
 	];
-	const puntos = conductor.rutaFisica ? nodos : tenderCable(nodos, codo);
+	const puntos = tenderCable(nodos, codo);
 	return {
 		conductorId, de: p.de, a: p.a, radio, puntos,
-		...(conductor.rutaFisica ? { geometria: 'POLILINEA' as const,
-			indicesNodos: conductor.rutaFisica.nodos.map((_, i) => i + 2) } : {}),
 		nodos: nodos.map((q) => ({ x: q.x, y: q.y })),
 		z: puntos[Math.floor(puntos.length / 2)]?.z ?? zSuelta,
 	};
