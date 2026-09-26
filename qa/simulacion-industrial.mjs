@@ -41,6 +41,27 @@ const qa = (fn, ...args) => page.evaluate(([nombre, parametros]) => {
 	return window.qa[nombre](...parametros);
 }, [fn, args]);
 
+/** Velocidad observada de la malla, normalizada por el dt que usa el renderer.
+ * Dos esperas de 500 ms no son comparables cuando Chromium pierde frames y el editor acota dt a 100 ms. */
+async function medirGiroVisual(id, fotogramas = 32) {
+	return page.evaluate(async ({ dispositivoId, muestras }) => {
+		const datos = [];
+		for (let i = 0; i < muestras; i++) {
+			await new Promise((resolver) => requestAnimationFrame(resolver));
+			const giro = window.qa.piezas(dispositivoId)?.eje?.[0]?.giro;
+			if (!Number.isFinite(giro)) throw new Error(`no hay eje visible para ${dispositivoId}`);
+			datos.push({ t: performance.now(), giro });
+		}
+		let giroTotal = 0;
+		let dtEfectivo = 0;
+		for (let i = 1; i < datos.length; i++) {
+			giroTotal += Math.abs(datos[i].giro - datos[i - 1].giro);
+			dtEfectivo += Math.min((datos[i].t - datos[i - 1].t) / 1000, 0.1);
+		}
+		return { radianesPorSegundo: giroTotal / dtEfectivo, fotogramas: datos.length, dtEfectivo };
+	}, { dispositivoId: id, muestras: fotogramas });
+}
+
 async function clickId(id) {
 	await page.evaluate((identidad) => {
 		const boton = document.getElementById(identidad);
@@ -746,9 +767,10 @@ try {
 	await page.waitForFunction(() => /50\.0 Hz/.test(
 		document.querySelector('#sim-funcionando .variador[data-id="vfd"]')?.textContent ?? ''),
 		undefined, { timeout: 12_000 });
-	const giro50a = (await qa('piezas', 'm1'))?.eje?.[0]?.giro;
-	await page.waitForTimeout(500);
-	const giro50b = (await qa('piezas', 'm1'))?.eje?.[0]?.giro;
+	await page.waitForFunction(() => window.qa.simulacion().motores
+		.find((m) => m.dispositivoId === 'm1')?.velocidadActual >= 0.98,
+		undefined, { timeout: 12_000 });
+	const giro50 = await medirGiroVisual('m1');
 	const referencia50 = page.locator('#sim-referencias-vfd input[data-ref-vfd="vfd"]');
 	await referencia50.evaluate((input) => {
 		input.value = '50'; input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -756,15 +778,17 @@ try {
 	await page.waitForFunction(() => /25\.0 Hz/.test(
 		document.querySelector('#sim-funcionando .variador[data-id="vfd"]')?.textContent ?? ''),
 		undefined, { timeout: 12_000 });
-	const giro25a = (await qa('piezas', 'm1'))?.eje?.[0]?.giro;
-	await page.waitForTimeout(500);
-	const giro25b = (await qa('piezas', 'm1'))?.eje?.[0]?.giro;
-	const avance50 = Math.abs((giro50b ?? 0) - (giro50a ?? 0));
-	const avance25 = Math.abs((giro25b ?? 0) - (giro25a ?? 0));
+	await page.waitForFunction(() => {
+		const velocidad = window.qa.simulacion().motores.find((m) => m.dispositivoId === 'm1')?.velocidadActual;
+		return velocidad !== undefined && velocidad >= 0.48 && velocidad <= 0.52;
+	}, undefined, { timeout: 12_000 });
+	const giro25 = await medirGiroVisual('m1');
 	comprobar('el control visible produce 50 Hz y después 25 Hz',
 		/25\.0 Hz/.test(await page.locator('#sim-funcionando .variador[data-id="vfd"]').innerText()));
 	comprobar('la velocidad visual a 50 Hz supera claramente la de 25 Hz',
-		avance50 > avance25 * 1.5, `${avance50.toFixed(3)} → ${avance25.toFixed(3)} rad/0,5 s`);
+		giro50.radianesPorSegundo > giro25.radianesPorSegundo * 1.5,
+		`${giro50.radianesPorSegundo.toFixed(2)} → ${giro25.radianesPorSegundo.toFixed(2)} rad/s`
+			+ ` (${giro50.fotogramas}/${giro25.fotogramas} frames)`);
 	await elegirSelectVisible('#sim-fallos select[data-fallo="vfd"]', 'fallo-externo');
 	await page.locator('#sim-funcionando .variador.falla[data-id="vfd"]').waitFor();
 	const simVfdFault = await qa('simulacion');
