@@ -1583,17 +1583,34 @@ function capturarEdicionRutaCable(id: string): boolean {
 }
 
 /** Una edición que vuelve a dejar el cable en automático acepta solo su nuevo reparto. */
-function fijarPlanAutomaticoDe(id: string): void {
+function fijarPlanAutomaticoDe(id: string): 'asignado' | 'avisado' | 'pendiente' | 'sin-cambio' {
 	try {
 		const preparado = prepararAsignacionPlanesAutomaticos(proyecto, new Set([id]))[0];
-		if (!preparado) return;
+		if (!preparado) return 'sin-cambio';
 		asignarPlanesAutomaticos(proyecto, [preparado]);
 		marcarSucio();
+		// Un plan nuevo no es un certificado de tendido: los planes ajenos son reservas fijas
+		// y el mejor candidato disponible puede rozarlos. Se mide una vez al confirmar, no
+		// durante pointermove, y se informa sin mover ni reparar silenciosamente al vecino.
+		try {
+			const diagnostico = diagnosticoCables(proyecto);
+			const contactos = diagnostico.conflictos.filter((v) => v.a === id || v.b === id).length;
+			const invasiones = diagnostico.invasiones.filter((v) => v.a === id).length;
+			if (contactos || invasiones) {
+				avisar(`Recorrido de ${id} asignado con ${contactos} contacto(s) entre cables y ${invasiones} invasión(es) de sólido o canaleta. Revisa el tendido antes de fabricar.`, 'info');
+				return 'avisado';
+			}
+		} catch (error) {
+			avisar(`Recorrido de ${id} asignado, pero no pudo verificarse su geometría: ${String(error)}`, 'error');
+			return 'avisado';
+		}
+		return 'asignado';
 	} catch (error) {
 		const c = proyecto.conductores.find((actual) => actual.id === id);
 		if (c) c.estadoRutaFisica = 'pendiente';
 		avisar(`El recorrido automático de ${id} no se pudo asignar; quedó pendiente de revisión: ${String(error)}`, 'error');
 		recalcular();
+		return 'pendiente';
 	}
 }
 
@@ -5897,12 +5914,12 @@ function completarCableado(destino: RefBorne): void {
 	proyecto.conductores.push(nuevo);
 	cancelarCableado();
 	recalcular();
-	if (!codos.length) fijarPlanAutomaticoDe(nuevo.id);
+	const estadoPlan = !codos.length ? fijarPlanAutomaticoDe(nuevo.id) : 'sin-cambio';
 	reconstruirCables();
 	reconstruirBornes();
 	pintarPaneles();
 	pintarSeleccion();
-	avisar('Cable conectado', 'ok');
+	if (estadoPlan === 'asignado' || codos.length) avisar('Cable conectado', 'ok');
 }
 
 /* ------------------------ Tiradores (handles) ------------------------ */

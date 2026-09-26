@@ -71,6 +71,8 @@ try {
 	await pagina.locator('#cable-borne-destino').selectOption('3/L2');
 	await pagina.locator('#cable-seccion').selectOption('6');
 	await pagina.locator('#btn-conectar').click();
+	comprobar('el alta advierte contactos físicos del plan sin ocultarlos',
+		/Recorrido de .* asignado con \d+ contacto\(s\)/.test(await pagina.locator('#toast').textContent() ?? ''));
 	await pagina.waitForFunction(() => window.qa.proyecto().conductores.length === 29);
 	const conNuevo = await pagina.evaluate(() => window.qa.proyecto());
 	const nuevo = conNuevo.conductores.find((c) => !fixture.conductores.some((original) => original.id === c.id));
