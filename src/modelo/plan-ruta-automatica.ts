@@ -23,6 +23,17 @@ export interface PlanRutaAutomaticaV1 {
 }
 
 export interface PuntoPlan3D { x: number; y: number; z: number }
+
+/** Referencia espacial del plan aceptado; no incluye reservas, terminales ni corte. */
+export function longitudPlanRutaAutomaticaMm(plan: PlanRutaAutomaticaV1): number {
+	let total = 0;
+	for (let i = 3; i < plan.puntosXYZ.length; i += 3) {
+		total += Math.hypot(plan.puntosXYZ[i] - plan.puntosXYZ[i - 3],
+			plan.puntosXYZ[i + 1] - plan.puntosXYZ[i - 2],
+			plan.puntosXYZ[i + 2] - plan.puntosXYZ[i - 1]);
+	}
+	return total;
+}
 export interface RutaParaPlan {
 	de: PuntoPlan3D;
 	a: PuntoPlan3D;

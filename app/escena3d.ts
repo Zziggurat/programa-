@@ -2127,7 +2127,68 @@ export function asignarPlanesAutomaticos(
  * Es determinista: mismo contenido, mismo reparto. El orden de las listas serializadas no es una
  * propiedad física del tablero y, por tanto, no puede decidir quién ocupa primero un carril.
  */
-function repartirCables(proyecto: Proyecto): RutaCable[] {
+/** Compara trayectorias, no sus puntos de muestreo: otra discretización del mismo eje no es otra ruta. */
+function muestraPorLongitud(puntos: readonly Punto3[], fraccion: number): Punto3 {
+	const tramos = puntos.slice(1).map((p, i) => Math.hypot(
+		p.x - puntos[i].x, p.y - puntos[i].y, p.z - puntos[i].z));
+	const objetivo = tramos.reduce((a, b) => a + b, 0) * fraccion;
+	let avance = 0;
+	for (let i = 0; i < tramos.length; i++) {
+		if (avance + tramos[i] >= objetivo || i === tramos.length - 1) {
+			const t = tramos[i] ? Math.max(0, Math.min(1, (objetivo - avance) / tramos[i])) : 0;
+			return { x: puntos[i].x + (puntos[i + 1].x - puntos[i].x) * t,
+				y: puntos[i].y + (puntos[i + 1].y - puntos[i].y) * t,
+				z: puntos[i].z + (puntos[i + 1].z - puntos[i].z) * t };
+		}
+		avance += tramos[i];
+	}
+	return puntos[0];
+}
+
+function distintaDeRutas(puntos: readonly Punto3[], previas: readonly RutaCable[], radio: number): boolean {
+	return previas.every((ruta) => {
+		for (let decimo = 1; decimo < 10; decimo++) {
+			const a = muestraPorLongitud(puntos, decimo / 10);
+			const b = muestraPorLongitud(ruta.puntos, decimo / 10);
+			if (Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) >= Math.max(3, 2 * radio)) return true;
+		}
+		return false;
+	});
+}
+
+/** Pide otra elección del mismo motor; los planes existentes conservan sus carriles. */
+export function rutasAlternativasDeCable(proyecto: Proyecto, conductorId: string, limite = 2): RutaCable[] {
+	if (!Number.isInteger(limite) || limite < 1 || limite > 3) throw new Error('Se admiten entre una y tres propuestas.');
+	const conductor = proyecto.conductores.find((c) => c.id === conductorId);
+	if (!conductor || conductor.planRutaAutomatica || conductor.rutaFisica || conductor.trazado
+		|| conductor.estadoRutaFisica) throw new Error(`El cable ${conductorId} no admite propuestas automáticas nuevas.`);
+	const primera = rutasDeCables(proyecto).find((r) => r.conductorId === conductorId);
+	if (!primera) return [];
+	const salida = [primera];
+	while (salida.length < limite) {
+		const siguiente = repartirCables(proyecto, { conductorId, previas: salida })
+			.find((r) => r.conductorId === conductorId);
+		if (!siguiente || !distintaDeRutas(siguiente.puntos, salida, siguiente.radio)) break;
+		salida.push(siguiente);
+	}
+	return salida;
+}
+
+/** Planes alternativos válidos para el mismo documento; solo la opción elegida se persistirá. */
+export function prepararAlternativasPlanesAutomaticos(
+	proyecto: Proyecto, conductorId: string, limite = 3,
+): PlanAutomaticoPreparado[] {
+	const conductor = proyecto.conductores.find((c) => c.id === conductorId);
+	if (!conductor) throw new Error(`No existe el conductor ${conductorId}.`);
+	return rutasAlternativasDeCable(proyecto, conductorId, limite).map((ruta) => ({
+		conductorId, plan: planDesdeRutaAutomatica(ruta,
+			firmaEntornoRutaAutomatica(proyecto, ruta.puntos, ruta.radio),
+			firmaFuentePlanRuta(conductor)),
+	}));
+}
+
+function repartirCables(proyecto: Proyecto,
+	alternativa?: { conductorId: string; previas: readonly RutaCable[] }): RutaCable[] {
 	const corredores = corredoresLibresDe(proyecto);
 	const abanico = abanicoDeSalida(proyecto);
 	const red = new RedCanaletas(proyecto.gabinete?.canaletas ?? []);
@@ -2470,6 +2531,8 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 						: sueloDe(cand.ductos ? suyosDe(cand)
 							: ductosAMano.size ? ductosAMano : NINGUNO, cand.nodos),
 				);
+				if (alternativa?.conductorId === conductor.id
+					&& !distintaDeRutas(puntos, alternativa.previas, radio)) continue;
 				const trazo: Trazo = { id: conductor.id, radio, puntos, bornes, extremos: [p.de, p.a] };
 				const choque = rejilla.peorConflicto(trazo, HOLGURA_CABLE, rendirse(cand, mejorNota));
 				const nota = puntuar(cand, choque ? choque.holgura : Infinity);
@@ -2543,6 +2606,8 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 				cand.nodos, puesto.codo,
 				puesto.literal ? undefined : puesto.sueloDe(suyos, cand.nodos),
 			);
+			if (alternativa?.conductorId === puesto.conductorId
+				&& !distintaDeRutas(puntos, alternativa.previas, puesto.radio)) continue;
 			const trazo: Trazo = {
 				id: puesto.conductorId, radio: puesto.radio, puntos,
 				bornes: puesto.trazo.bornes, extremos: puesto.trazo.extremos,

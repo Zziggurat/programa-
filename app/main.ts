@@ -100,6 +100,7 @@ import {
 } from './geometria-cables.js';
 import { longitudCoincidente3D } from './colisiones-cables.js';
 import { aplicarPropuestaAltaCable, proponerAltaCable } from './propuesta-alta-cable.js';
+import { longitudPlanRutaAutomaticaMm } from '../src/modelo/plan-ruta-automatica.js';
 import { admiteRutaEnPlaca, desplazarTramoInteriorM6, MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
@@ -1628,6 +1629,7 @@ function vistaPreviaPlanCable(conductorId: string, plan: NonNullable<Conductor['
 	titulo.textContent = 'Proyección frontal de la ruta propuesta (X/Y). La línea celeste sobre el tablero muestra su trayectoria XYZ.';
 	const svg = document.createElementNS(ns, 'svg');
 	svg.setAttribute('viewBox', `0 0 ${ancho} ${alto}`);
+	svg.dataset.vista = 'frontal';
 	svg.setAttribute('role', 'img');
 	svg.setAttribute('aria-label', `Ruta propuesta para ${conductorId}, de origen a destino`);
 	const camino = document.createElementNS(ns, 'path');
@@ -1645,9 +1647,24 @@ function vistaPreviaPlanCable(conductorId: string, plan: NonNullable<Conductor['
 		marca.setAttribute('aria-label', nombre);
 		svg.append(marca);
 	}
+	const ejeLateral = maximo.x - minimo.x >= maximo.y - minimo.y ? 'x' : 'y';
+	const tituloLateral = document.createElement('p');
+	tituloLateral.textContent = `Perfil lateral ${ejeLateral.toUpperCase()}/Z del mismo recorrido.`;
+	const altoLateral = 84;
+	const escalaLateral = Math.min((ancho - margen * 2)
+		/ Math.max(1, maximo[ejeLateral] - minimo[ejeLateral]),
+		(altoLateral - margen * 2) / Math.max(1, maximo.z - minimo.z));
+	const svgLateral = document.createElementNS(ns, 'svg');
+	svgLateral.setAttribute('viewBox', `0 0 ${ancho} ${altoLateral}`);
+	svgLateral.dataset.vista = 'lateral';
+	svgLateral.setAttribute('role', 'img');
+	svgLateral.setAttribute('aria-label', `Perfil lateral ${ejeLateral.toUpperCase()}/Z de ${conductorId}`);
+	const caminoLateral = document.createElementNS(ns, 'path');
+	caminoLateral.setAttribute('d', puntos.map((p, i) => `${i ? 'L' : 'M'}${(margen + (p[ejeLateral] - minimo[ejeLateral]) * escalaLateral).toFixed(2)} ${(altoLateral - margen - (p.z - minimo.z) * escalaLateral).toFixed(2)}`).join(' '));
+	svgLateral.append(caminoLateral);
 	const profundidad = document.createElement('p');
 	profundidad.textContent = `Profundidad Z: ${minimo.z.toFixed(1)}–${maximo.z.toFixed(1)} mm. La superposición no certifica espacio disponible.`;
-	detalle.append(titulo, svg, profundidad);
+	detalle.append(titulo, svg, tituloLateral, svgLateral, profundidad);
 	return { detalle, quitar: () => {
 		raiz.remove(trazo);
 		trazo.geometry.dispose();
@@ -1664,35 +1681,75 @@ async function aceptarAltaAutomatica(nuevo: Conductor, alFinalizar?: () => void)
 	const dialogo = $('modal-dialogo');
 	try {
 		const propuesta = proponerAltaCable(proyecto, nuevo);
-		const conAvisos = propuesta.contactos > 0 || propuesta.invasiones > 0;
-		const plan = propuesta.documento.conductores.find((c) => c.id === propuesta.conductorId)?.planRutaAutomatica;
-		if (!plan) throw new Error('La propuesta no contiene un plan físico visible.');
-		vista = vistaPreviaPlanCable(propuesta.conductorId, plan);
+		let indice = 0;
+		const detalle = document.createElement('div');
+		detalle.className = 'opciones-propuesta-cable';
+		const resumen = document.createElement('p');
+		const contenedorVista = document.createElement('div');
+		const actualizarOpcion = (): void => {
+			const opcion = propuesta.opciones[indice];
+			vista?.quitar();
+			vista = vistaPreviaPlanCable(propuesta.conductorId, opcion.plan);
+			resumen.textContent = `Opción ${indice + 1}: ${opcion.puntos} puntos y ${Math.round(opcion.longitudReferenciaMm)} mm de referencia espacial, no longitud de corte. `
+				+ `Avisos: ${opcion.contactos} cercanías o contactos entre cables y ${opcion.invasiones} invasiones de sólido o canaleta. `
+				+ 'Capacidad del borne, ocupación exacta y fabricabilidad no verificadas.';
+			contenedorVista.replaceChildren(vista.detalle);
+			($('dialogo-ok') as HTMLButtonElement).textContent = opcion.contactos || opcion.invasiones
+				? 'Aceptar ruta con avisos' : 'Aceptar ruta';
+		};
+		if (propuesta.opciones.length > 1) {
+			const etiqueta = document.createElement('label');
+			etiqueta.textContent = 'Alternativa de recorrido ';
+			const selector = document.createElement('select');
+			selector.dataset.rutaOpcion = 'true';
+			for (const [i, opcion] of propuesta.opciones.entries()) {
+				const item = document.createElement('option');
+				item.value = String(i);
+				item.textContent = `Ruta ${i + 1} · Z ${Math.round(opcion.zMinMm)}–${Math.round(opcion.zMaxMm)} mm · ${Math.round(opcion.longitudReferenciaMm)} mm`;
+				selector.append(item);
+			}
+			selector.onchange = () => { indice = Number(selector.value); actualizarOpcion(); };
+			etiqueta.append(selector);
+			detalle.append(etiqueta);
+		}
+		detalle.append(resumen, contenedorVista);
+		if (propuesta.idsPlanesExistentesFijados.length) {
+			const cambios = document.createElement('details');
+			cambios.className = 'cambios-propuesta-cable';
+			const tituloCambios = document.createElement('summary');
+			tituloCambios.textContent = `Recorridos existentes que se fijarán (${propuesta.idsPlanesExistentesFijados.length})`;
+			const ids = document.createElement('p');
+			ids.textContent = propuesta.idsPlanesExistentesFijados.join(', ');
+			cambios.append(tituloCambios, ids);
+			detalle.append(cambios);
+		}
+		actualizarOpcion();
 		dialogo.classList.add('propuesta-ruta');
 		const extremos = `${nuevo.de.dispositivoId}:${nuevo.de.borneId} → ${nuevo.a.dispositivoId}:${nuevo.a.borneId}`;
 		const planesVecinos = propuesta.planesExistentesFijados
 			? `Se fijarán ${propuesta.planesExistentesFijados} recorridos existentes sin cambiar su trayectoria. `
 			: 'No se modificarán otros recorridos. ';
 		const aceptada = await confirmar(
-			`Propuesta para ${extremos} (cable ${nuevo.id}): ${propuesta.puntos} puntos y ${Math.round(propuesta.longitudReferenciaMm)} mm de referencia espacial, no longitud de corte. `
-			+ `Avisos: ${propuesta.contactos} cercanías o contactos entre cables y ${propuesta.invasiones} invasiones de sólido o canaleta. `
-			+ planesVecinos
-			+ 'Capacidad del borne, ocupación exacta y fabricabilidad no verificadas. Cancelar conserva el tablero. ¿Aceptar esta ruta?',
-			{ ok: conAvisos ? 'Aceptar ruta con avisos' : 'Aceptar ruta', detalle: vista.detalle },
+			`Propuesta para ${extremos} (cable ${nuevo.id}). ${planesVecinos}Cancelar conserva el tablero. `
+			+ (propuesta.opciones.length > 1 ? 'Compare las rutas antes de aceptar.' : 'Revise la ruta antes de aceptar.'),
+			{ ok: propuesta.opciones[0].contactos || propuesta.opciones[0].invasiones
+				? 'Aceptar ruta con avisos' : 'Aceptar ruta', detalle },
 		);
 		if (!aceptada) return;
 		if (proyecto !== sesion) {
 			avisar('El tablero cambió mientras se revisaba el recorrido; no se creó el cable.', 'info');
 			return;
 		}
-		const documento = aplicarPropuestaAltaCable(proyecto, propuesta);
+		const documento = aplicarPropuestaAltaCable(proyecto, propuesta, indice);
 		const aplicada = mutarProyecto(() => {
 			proyecto.conductores = documento.conductores;
 			proyecto.version = documento.version;
 		}, false, actualizarConservandoAparatos);
 		if (!aplicada) return;
+		const elegida = propuesta.opciones[indice];
+		const conAvisos = elegida.contactos > 0 || elegida.invasiones > 0;
 		avisar(conAvisos
-			? `Recorrido de ${nuevo.id} aceptado con ${propuesta.contactos} aviso(s) entre cables y ${propuesta.invasiones} invasión(es). Revisa antes de fabricar.`
+			? `Recorrido de ${nuevo.id} aceptado con ${elegida.contactos} aviso(s) entre cables y ${elegida.invasiones} invasión(es). Revisa antes de fabricar.`
 			: 'Cable conectado', conAvisos ? 'info' : 'ok');
 	} catch (error) {
 		avisar(`No se creó el cable: ${String(error)}`, 'error');
@@ -4687,7 +4744,7 @@ function pintarPanelCable(id: string): void {
 			const diagnostico = diagnosticoCables(propuesta);
 			const choques = diagnostico.conflictos.filter((v) => v.a === id || v.b === id).length;
 			const invasiones = diagnostico.invasiones.filter((v) => v.a === id).length;
-			const referenciaMm = Math.round(largoDibujadoMm(propuesta, cable));
+			const referenciaMm = Math.round(longitudPlanRutaAutomaticaMm(preparado.plan));
 			vista = vistaPreviaPlanCable(id, preparado.plan);
 			dialogo.classList.add('propuesta-ruta');
 			const aceptado = await confirmar(`Se propone un nuevo recorrido para ${id}: referencia visual ${referenciaMm} mm (no longitud de corte). Avisos: ${choques} cercanías y ${invasiones} invasiones. ${otrosPendientes.length ? `${otrosPendientes.length} rutas vecinas también requieren revisión.` : 'Las rutas ajenas vigentes se conservarán.'} Radios, ocupación y fabricación no verificados. ¿Aplicar esta propuesta?`,
@@ -10120,7 +10177,9 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 		/** Observa que el trazo de propuesta existe solo mientras espera una decisión. */
 		vistaPropuestaAlta: () => {
 			const linea = escenario.raiz.getObjectByName('vista-previa-ruta-cable') as THREE.Line | undefined;
-			return { visible: !!linea, puntos: linea?.geometry.getAttribute('position').count ?? 0 };
+			const posiciones = linea?.geometry.getAttribute('position');
+			return { visible: !!linea, puntos: posiciones?.count ?? 0,
+				firma: posiciones ? Array.from(posiciones.array).join(',') : '' };
 		},
 		/** Olvida las tareas largas apuntadas: para medir un tramo concreto y no la sesión entera. */
 		olvidarTareasLargas: () => { tareasLargas.length = 0; },

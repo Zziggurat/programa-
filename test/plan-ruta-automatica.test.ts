@@ -5,7 +5,7 @@ import { anclajeBorne, asignarPlanesAutomaticos, prepararAsignacionPlanesAutomat
 	rutasDeCables } from '../app/escena3d.js';
 import { cargarProyecto } from '../src/modelo/cargar.js';
 import { leerRutaFisicaV1 } from '../src/modelo/ruta-fisica.js';
-import { geometriaDelPlanRuta, leerPlanRutaAutomaticaV1,
+import { geometriaDelPlanRuta, leerPlanRutaAutomaticaV1, longitudPlanRutaAutomaticaMm,
 	MAX_PUNTOS_PLAN_AUTO, planDesdeRutaAutomatica } from '../src/modelo/plan-ruta-automatica.js';
 import { firmaEntornoRutaAutomatica, idsDePlanesObsoletos,
 	marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
@@ -22,6 +22,15 @@ test('CAB-24: el plan automatico conserva XYZ exacto sin depender de la malla', 
 	assert.ok(JSON.stringify(plan).length < JSON.stringify({ de: ruta.de, a: ruta.a,
 		nodos: ruta.nodos, puntos: ruta.puntos }).length,
 		'las series planas evitan repetir nombres de ejes por muestra');
+});
+
+test('CAB-23: la referencia de un plan mide sus XYZ y no la aproximación frontal', () => {
+	const plan = planDesdeRutaAutomatica({ radio: 2,
+		de: { x: 0, y: 0, z: 0 }, a: { x: 3, y: 4, z: 12 },
+		nodos: [{ x: 0, y: 0 }, { x: 3, y: 4 }],
+		puntos: [{ x: 0, y: 0, z: 0 }, { x: 3, y: 4, z: 0 }, { x: 3, y: 4, z: 12 }],
+	}, 'entorno de prueba', 'fuente de prueba');
+	assert.equal(longitudPlanRutaAutomaticaMm(plan), 17);
 });
 
 test('CAB-24: una polilinea manual no se guarda como asignacion automatica', () => {
