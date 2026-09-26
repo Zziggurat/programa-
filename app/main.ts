@@ -1554,7 +1554,7 @@ function detenerTrabajoRuteo(): void {
 }
 
 /** El documento ya cambió, pero la geometría se calcula sin bloquear el siguiente frame. */
-function programarReconstruccionDeCables(): void {
+function programarReconstruccionDeCables(diagnosticoM6?: string): void {
 	detenerTrabajoRuteo();
 	let worker: Worker;
 	try { worker = new RuteoWorker(); }
@@ -1592,6 +1592,10 @@ function programarReconstruccionDeCables(): void {
 		}
 		reconstruirCables();
 		construirHandles();
+		if (diagnosticoM6 && proyecto.conductores.some((c) => c.id === diagnosticoM6 && c.rutaFisica)) {
+			const avisos = avisosDiagnosticoRutaM6(diagnosticoM6);
+			if (avisos.length) avisar(`Revisa ruta ${diagnosticoM6}: ${avisos.join(' · ')}. Se conservó el recorrido manual.`, 'error');
+		}
 	};
 	worker.onerror = (evento) => {
 		if (trabajoRuteo?.token !== token) return;
@@ -4365,6 +4369,16 @@ function pintarPanelEstructura(s: Seleccion): void {
 	(panel.querySelector('#e-eliminar') as HTMLButtonElement).onclick = () => eliminarEstructura(s);
 }
 
+/** Misma lectura para inspección a demanda y para confirmar un arrastre, nunca para expulsar. */
+function avisosDiagnosticoRutaM6(id: string): string[] {
+	const d = diagnosticoRutaManual(proyecto, id);
+	return [
+		...(d.contacto ? [`Cercanía a ${d.contacto.b}: holgura ${d.contacto.holgura.toFixed(1)} mm`] : []),
+		...d.solidos.map((v) => `Invade ${v.b}: ${(-v.holgura).toFixed(1)} mm`),
+		...d.canaletas.map((v) => `Invade ${v.b}: ${(-v.holgura).toFixed(1)} mm`),
+	];
+}
+
 /** Panel de un cable seleccionado (modo Trabajo): editar sección/color, ordenar o quitar. */
 function pintarPanelCable(id: string): void {
 	const panel = $('panel-der');
@@ -4429,12 +4443,7 @@ function pintarPanelCable(id: string): void {
 	(panel.querySelector('#cbl-diagnostico-m6') as HTMLButtonElement | null)?.addEventListener('click', () => {
 		const resultado = panel.querySelector<HTMLElement>('#cbl-resultado-m6');
 		if (!resultado || !proyecto.conductores.some((actual) => actual.id === id && actual.rutaFisica)) return;
-		const d = diagnosticoRutaManual(proyecto, id);
-		const avisos = [
-			...(d.contacto ? [`Cercanía a ${d.contacto.b}: holgura ${d.contacto.holgura.toFixed(1)} mm`] : []),
-			...d.solidos.map((v) => `Invade ${v.b}: ${(-v.holgura).toFixed(1)} mm`),
-			...d.canaletas.map((v) => `Invade ${v.b}: ${(-v.holgura).toFixed(1)} mm`),
-		];
+		const avisos = avisosDiagnosticoRutaM6(id);
 		resultado.textContent = avisos.length ? `Peor aviso por categoría: ${avisos.join(' · ')}. La ruta se conservó; revisar fabricabilidad.`
 			: 'Sin interferencias detectadas por este diagnóstico. Radios y fabricabilidad aún no verificados.';
 	});
@@ -7383,7 +7392,8 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		 * su comprobación contra los demás conductores, contra los aparatos y contra las canaletas.
 		 * Una vez, no trescientas.
 		 */
-		programarReconstruccionDeCables();
+		programarReconstruccionDeCables(proyecto.conductores.some((c) => c.id === cableSoltado.id && c.rutaFisica)
+			? cableSoltado.id : undefined);
 		pintarPaneles();
 		pintarSeleccion();
 		marcarSucio();
