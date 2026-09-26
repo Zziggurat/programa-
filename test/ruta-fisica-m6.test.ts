@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { Mesh, TubeGeometry, Vector3 } from 'three';
 import { EJEMPLOS } from '../ejemplo/biblioteca.js';
 import { cargarProyecto, VERSION_FORMATO } from '../src/modelo/cargar.js';
-import { admiteRutaEnPlaca, leerRutaFisicaV1, longitudPolilineaMm, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
+import { admiteRutaEnPlaca, desplazarTramoInteriorM6, leerRutaFisicaV1, longitudPolilineaMm,
+	MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { construirUnCable, diagnosticoRutaManual, largoDibujadoMm, liberar, longitudesParaRevisionMm,
 	rutasDeCables, salidasDeCable } from '../app/escena3d.js';
 import { indiceDeInsercion, indiceDeInsercionM6, proyectarEnPolilinea } from '../app/edicion-cables.js';
@@ -134,6 +135,41 @@ test('CAB-06/07: insertar sobre un segmento posterior que vuelve al mismo XYZ re
 	assert.equal(indiceDeInsercionM6(ruta.indicesNodos!, avancePosterior), 2);
 	assert.notEqual(indiceDeInsercion(ruta.puntos, c.rutaFisica.nodos, avancePosterior), 2,
 		'la proyección espacial ambigua de los nodos no sirve para el orden M6');
+});
+
+test('CAB-07/13: trasladar un tramo interior conserva bornes e IDs y rechaza cambios parciales', () => {
+	const p = legadoV9(); p.version = 3;
+	const c = p.conductores[3]; p.conductores = [c]; delete c.trazado;
+	const original = leerRutaFisicaV1({ version: 1, modo: 'MANUAL', marco: 'PLACA',
+		geometria: 'POLILINEA', nodos: [
+			{ id: 'n1', x: 145, y: 115, z: 35 }, { id: 'n2', x: 260, y: 115, z: 35 },
+			{ id: 'n3', x: 275, y: 140, z: 35 },
+		] });
+	c.rutaFisica = original;
+	const extremos = rutasDeCables(p)[0];
+	const movida = desplazarTramoInteriorM6(original, 0, { x: 5, y: -2, z: 8 });
+	assert.deepEqual(movida.nodos.map((n) => n.id), original.nodos.map((n) => n.id));
+	assert.deepEqual(movida.nodos.slice(0, 2).map((n) => [n.x, n.y, n.z]),
+		[[150, 113, 43], [265, 113, 43]]);
+	assert.deepEqual(movida.nodos[2], original.nodos[2]);
+	assert.equal(original.nodos[0].x, 145, 'la propuesta no debe mutar el proyecto antes de confirmar');
+	c.rutaFisica = movida;
+	const nuevosExtremos = rutasDeCables(p)[0];
+	assert.deepEqual([nuevosExtremos.de, nuevosExtremos.a], [extremos.de, extremos.a]);
+	for (const [indice, delta] of [[-1, { x: 1, y: 0, z: 0 }],
+		[2, { x: 1, y: 0, z: 0 }], [0, { x: Infinity, y: 0, z: 0 }],
+		[0, { x: 5000, y: 0, z: 0 }]] as const) {
+		assert.throws(() => desplazarTramoInteriorM6(movida, indice, delta));
+		assert.deepEqual(c.rutaFisica, movida, 'una entrada inválida no deja medio tramo cambiado');
+	}
+});
+
+test('CAB-30: el límite de nodos M6 es el mismo en lectura y en edición', () => {
+	const base = { version: 1, modo: 'MANUAL', marco: 'PLACA', geometria: 'POLILINEA' };
+	const nodos = Array.from({ length: MAX_NODOS_RUTA_M6 + 1 }, (_, i) =>
+		({ id: `n${i}`, x: i, y: 0, z: 35 }));
+	assert.equal(leerRutaFisicaV1({ ...base, nodos: nodos.slice(0, -1) }).nodos.length, MAX_NODOS_RUTA_M6);
+	assert.throws(() => leerRutaFisicaV1({ ...base, nodos }), /RUTA_M6_NO_SOPORTADA/);
 });
 
 test('CAB-27 pendiente: medir una ruta no sustituye la longitud eléctrica declarada ni inventa otra', () => {

@@ -148,11 +148,48 @@ try {
 	await pagina.locator('#btn-rehacer').click();
 	comprobar('Redo repone el nodo en la misma posición',
 		JSON.stringify((await cable()).rutaFisica.nodos) === JSON.stringify(trasInsertar));
+	const historialAntesDeTramo = await pagina.evaluate(() => window.qa.historial());
+	await pagina.locator('#cbl-tramo-x').fill('');
+	await pagina.locator('#cbl-mover-tramo-m6').click();
+	comprobar('desplazamiento vacío no mueve nodos ni crea Undo',
+		JSON.stringify((await cable()).rutaFisica.nodos) === JSON.stringify(trasInsertar)
+		&& JSON.stringify(await pagina.evaluate(() => window.qa.historial())) === JSON.stringify(historialAntesDeTramo));
+	await pagina.locator('#cbl-tramo-x').fill('5');
+	await pagina.locator('#cbl-tramo-y').fill('-2');
+	await pagina.locator('#cbl-tramo-z').fill('8');
+	await pagina.locator('#cbl-mover-tramo-m6').click();
+	const tramoMovido = (await cable()).rutaFisica.nodos;
+	comprobar('inspector desplaza dos nodos interiores sin mover el tercero ni renombrarlos',
+		tramoMovido[0].x === trasInsertar[0].x + 5 && tramoMovido[0].y === trasInsertar[0].y - 2
+		&& tramoMovido[0].z === trasInsertar[0].z + 8
+		&& tramoMovido[1].x === trasInsertar[1].x + 5 && tramoMovido[1].z === trasInsertar[1].z + 8
+		&& JSON.stringify(tramoMovido[2]) === JSON.stringify(trasInsertar[2])
+		&& tramoMovido.every((n, i) => n.id === trasInsertar[i].id));
+	await pagina.locator('#btn-deshacer').click();
+	comprobar('desplazar tramo es una sola operación Undo',
+		JSON.stringify((await cable()).rutaFisica.nodos) === JSON.stringify(trasInsertar));
+	await pagina.locator('#btn-rehacer').click();
+	comprobar('Redo repone el tramo completo',
+		JSON.stringify((await cable()).rutaFisica.nodos) === JSON.stringify(tramoMovido));
+	await pagina.setViewportSize({ width: 1024, height: 768 });
+	comprobar('nodos y editor de tramo no desbordan el inspector estrecho',
+		await pagina.evaluate(() => ['.cbl-nodos', '#cbl-tramo-m6'].every((selector) => {
+			const e = document.querySelector(selector);
+			return !!e && e.scrollWidth <= e.clientWidth + 1;
+		})));
+	if (process.env.QA_M6_CAPTURE) await pagina.locator('#panel-der').screenshot({ path: process.env.QA_M6_CAPTURE });
+	await pagina.setViewportSize({ width: 1450, height: 900 });
+	await pagina.locator('[data-ruta-quitar="2"]').click();
+	comprobar('inspector permite quitar un nodo por ID sin acertar su píxel',
+		(await cable()).rutaFisica.nodos.length === 2);
+	await pagina.locator('#btn-deshacer').click();
+	comprobar('Undo recupera el nodo eliminado con su ID y XYZ',
+		JSON.stringify((await cable()).rutaFisica.nodos) === JSON.stringify(tramoMovido));
 	await pagina.evaluate(() => window.qa.esperarPersistencia());
 	await pagina.reload({ waitUntil: 'domcontentloaded' });
 	await esperarEditorListo(pagina);
 	comprobar('reapertura conserva ruta, nodos y largo declarado',
-		(await cable()).rutaFisica?.nodos[0].x === 145 && (await cable()).rutaFisica.nodos.length === 3
+		(await cable()).rutaFisica?.nodos[0].x === tramoMovido[0].x && (await cable()).rutaFisica.nodos.length === 3
 		&& (await cable()).fisica.longitudManualM === 2.5);
 	comprobar('ningún error JavaScript', erroresJS.length === 0);
 	console.log(`QA ruta física M6: ${casos}/${casos}, ${((Date.now() - inicio) / 1000).toFixed(1)} s`);
