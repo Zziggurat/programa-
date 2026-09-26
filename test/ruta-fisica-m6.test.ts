@@ -6,7 +6,7 @@ import { cargarProyecto, VERSION_FORMATO } from '../src/modelo/cargar.js';
 import { admiteRutaEnPlaca, leerRutaFisicaV1, longitudPolilineaMm, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { construirUnCable, diagnosticoRutaManual, largoDibujadoMm, liberar, longitudesParaRevisionMm,
 	rutasDeCables, salidasDeCable } from '../app/escena3d.js';
-import { proyectarEnPolilinea } from '../app/edicion-cables.js';
+import { indiceDeInsercion, indiceDeInsercionM6, proyectarEnPolilinea } from '../app/edicion-cables.js';
 import { rutearConductores } from '../src/motores/ruteo.js';
 import { proyectarLongitudesDocumentales } from '../src/motores/longitudes-documentales.js';
 import { simularFisicaProyecto } from '../src/fisica/topologia-proyecto.js';
@@ -116,6 +116,24 @@ test('CAB-03: el tubo M6 sigue la misma polilínea que medición y picking, sin 
 				`muestra ${i}: la malla se separó ${sobreRuta?.distancia} mm de la ruta medida`);
 		}
 	} finally { liberar(grupo); }
+});
+
+test('CAB-06/07: insertar sobre un segmento posterior que vuelve al mismo XYZ respeta el orden', () => {
+	const p = legadoV9(); p.version = 3;
+	const c = p.conductores[3]; p.conductores = [c]; delete c.trazado;
+	c.rutaFisica = leerRutaFisicaV1({ version: 1, modo: 'MANUAL', marco: 'PLACA',
+		geometria: 'POLILINEA', nodos: [
+			{ id: 'ida', x: 200, y: 180, z: 28 },
+			{ id: 'vuelta', x: 240, y: 180, z: 28 },
+			{ id: 'ida-otra-vez', x: 200, y: 180, z: 28 },
+			{ id: 'salida', x: 150, y: 180, z: 28 },
+		] });
+	const ruta = rutasDeCables(p)[0];
+	assert.equal(ruta.indicesNodos?.length, 4);
+	const avancePosterior = ruta.indicesNodos![1] + 0.5;
+	assert.equal(indiceDeInsercionM6(ruta.indicesNodos!, avancePosterior), 2);
+	assert.notEqual(indiceDeInsercion(ruta.puntos, c.rutaFisica.nodos, avancePosterior), 2,
+		'la proyección espacial ambigua de los nodos no sirve para el orden M6');
 });
 
 test('CAB-27 pendiente: medir una ruta no sustituye la longitud eléctrica declarada ni inventa otra', () => {
