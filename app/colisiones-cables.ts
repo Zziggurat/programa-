@@ -351,6 +351,55 @@ export interface Solido {
 	z0: number; z1: number;
 }
 
+const EJES_CAJA = ['x', 'y', 'z'] as const;
+
+/** Intersección paramétrica del eje de un tramo con la caja dilatada por el radio del cable. */
+function tramoInvadeCaja(a: Punto3, b: Punto3, s: Solido, radio: number): boolean {
+	let entrada = 0;
+	let salida = 1;
+	for (const eje of EJES_CAJA) {
+		const minimo = s[`${eje}0`] - radio;
+		const maximo = s[`${eje}1`] + radio;
+		const delta = b[eje] - a[eje];
+		if (Math.abs(delta) < 1e-9) {
+			if (a[eje] <= minimo || a[eje] >= maximo) return false;
+			continue;
+		}
+		const t0 = (minimo - a[eje]) / delta;
+		const t1 = (maximo - a[eje]) / delta;
+		entrada = Math.max(entrada, Math.min(t0, t1));
+		salida = Math.min(salida, Math.max(t0, t1));
+		if (entrada >= salida) return false;
+	}
+	return entrada < salida;
+}
+
+export function primerSolidoEnPunto(
+	p: Punto3, radio: number, solidos: readonly Solido[], propios: readonly string[] = [],
+): Solido | undefined {
+	for (const s of solidos) {
+		if (propios.includes(s.id)) continue;
+		if (p.x > s.x0 - radio && p.x < s.x1 + radio
+			&& p.y > s.y0 - radio && p.y < s.y1 + radio
+			&& p.z > s.z0 - radio && p.z < s.z1 + radio) return s;
+	}
+	return undefined;
+}
+
+/** Vista previa acotada a los dos segmentos vecinos del nodo; no examina todos los cables. */
+export function primerSolidoEnTramosDelNodo(
+	puntos: readonly Punto3[], indice: number, radio: number, solidos: readonly Solido[], propios: readonly string[] = [],
+): Solido | undefined {
+	if (!Number.isInteger(indice) || indice < 0 || indice >= puntos.length || !Number.isFinite(radio) || radio < 0) return undefined;
+	for (const s of solidos) {
+		if (propios.includes(s.id)) continue;
+		for (let tramo = Math.max(0, indice - 1); tramo <= Math.min(indice, puntos.length - 2); tramo++) {
+			if (tramoInvadeCaja(puntos[tramo], puntos[tramo + 1], s, radio)) return s;
+		}
+	}
+	return undefined;
+}
+
 /** Cuánto se mete un punto dentro de una caja (≤ 0 si está fuera). */
 function penetracion(p: Punto3, s: Solido, radio: number): number {
 	return Math.min(

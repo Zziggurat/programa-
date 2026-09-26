@@ -42,6 +42,7 @@ import {
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	adoptarRutasCalculadas, diagnosticoCables, diagnosticoRutaManual, firmaRuteo, largoDibujadoMm, liberar,
 	longitudesParaRevisionMm, rutasDeCables, salidasDeCable,
+	solidosDelTablero,
 	construirUnCable, contadores, radioCodo, radioDeCable, reconciliarCablesDibujados,
 	reiniciarContadores, rutaProvisional,
 	RutaCable, rutasVigentes, rutaVigente,
@@ -51,6 +52,7 @@ import {
 import RuteoWorker from './ruteo-worker.ts?worker&inline';
 import { proyectoParaRuteo } from './proyecto-ruteo.js';
 import { canaletasQueContienen, encajarEnCanaleta, invasionSolida, RedCanaletas } from './canaletas-red.js';
+import { primerSolidoEnPunto, primerSolidoEnTramosDelNodo } from './colisiones-cables.js';
 import { actualizarMazoPuerta, ajustesDeMazo, trazasDeMazo } from './mazo-puerta.js';
 import {
 	Bloqueo, distanciaASegmento, Eje, indiceDeInsercion, indiceDeInsercionM6, normalDeArrastre, P3,
@@ -5934,11 +5936,17 @@ let handleArrastrado: DatosHandle | undefined;
 let arrastrandoCable: { id: string; indice: number } | undefined; // conductor y punto de quiebre que se arrastra
 /** Cable agarrado a la espera de que el ratón se mueva para empezar a arrastrarlo de verdad. */
 let pendienteCable: { id: string; indice: number; x: number; y: number } | undefined;
-let antesArrastreCableM6: { id: string; rehacer: string[]; sinExportar: boolean } | undefined;
+let antesArrastreCableM6: {
+	id: string; rehacer: string[]; sinExportar: boolean;
+	solidos: ReturnType<typeof solidosDelTablero>; propios: string[]; red: RedCanaletas;
+} | undefined;
 
 function respaldoArrastreCableM6(id: string): typeof antesArrastreCableM6 {
-	const m6 = proyecto.conductores.some((c) => c.id === id && !!c.rutaFisica);
-	return m6 ? { id, rehacer: rehacerPila.slice(), sinExportar: hayCambiosSinExportar } : undefined;
+	const c = proyecto.conductores.find((actual) => actual.id === id && !!actual.rutaFisica);
+	return c ? { id, rehacer: rehacerPila.slice(), sinExportar: hayCambiosSinExportar,
+		solidos: solidosDelTablero(proyecto),
+		red: new RedCanaletas(proyecto.gabinete?.canaletas ?? []),
+		propios: [`aparato ${c.de.dispositivoId}`, `aparato ${c.a.dispositivoId}`] } : undefined;
 }
 
 /** Escape/pointercancel descartan el preview M6, incluida la foto Undo y el vaciado de Redo. */
@@ -6291,12 +6299,18 @@ function medirEtapa<T>(etapa: string, fn: () => T): T {
  */
 let rutaPrevia: RutaCable | undefined;
 
-function previsualizarCable(conductorId: string): void {
+function previsualizarCable(conductorId: string, indiceNodo?: number): void {
 	const ruta = rutaProvisional(proyecto, conductorId);
 	if (!ruta) return;
 	rutaPrevia = ruta;
 	const conductor = proyecto.conductores.find((c) => c.id === conductorId);
 	if (!conductor) return;
+	const indiceRuta = indiceNodo === undefined ? undefined : ruta.indicesNodos?.[indiceNodo];
+	if (!motivoInvalido && indiceRuta !== undefined && antesArrastreCableM6?.id === conductorId) {
+		const obstaculo = primerSolidoEnTramosDelNodo(ruta.puntos, indiceRuta, ruta.radio,
+			antesArrastreCableM6.solidos, antesArrastreCableM6.propios);
+		if (obstaculo) motivoInvalido = `el tramo atraviesa ${obstaculo.id}`;
+	}
 	// La vista previa se reemplaza en cada movimiento. No conservar clones de selección
 	// apuntando a mallas que `liberar` destruirá, ni acumular uno nuevo por píxel.
 	limpiarResaltadoDeCables(conductorId);
@@ -6377,14 +6391,28 @@ function quitarGuiaEje(): void {
  * Lo que sí es obstáculo es la cara de un aparato: en un tablero de verdad un hilo no cruza por
  * encima de un automático, lo rodea.
  */
-function validezDelPunto(p: { x: number; y: number; z?: number }, radio: number): { ok: boolean; motivo?: string } {
+function validezDelPunto(
+	p: { x: number; y: number; z?: number }, radio: number,
+	contextoM6?: NonNullable<typeof antesArrastreCableM6>,
+): { ok: boolean; motivo?: string } {
 	const g = proyecto.gabinete;
 	if (!g) return { ok: true };
 	const z = p.z ?? Z_FRENTE;
-	const red = new RedCanaletas(g.canaletas);
+	const red = contextoM6?.red ?? new RedCanaletas(g.canaletas);
 	const dentroDeDucto = canaletasQueContienen(red, [{ x: p.x, y: p.y, z }]);
 	const inv = invasionSolida(red, g.canaletas, { x: p.x, y: p.y, z }, radio);
 	if (inv) return { ok: false, motivo: `atraviesa ${inv.parte} de la canaleta ${inv.canaleta}` };
+	if (contextoM6) {
+		const area = areaDeCableado();
+		if (p.x < area.x0 || p.x > area.x1 || p.y < area.y0 || p.y > area.y1
+			|| z < 0 || (g.caja && z > g.caja.profundidad))
+			return { ok: false, motivo: 'fuera del área de cableado del gabinete' };
+		if (dentroDeDucto.size) return { ok: true };
+		const solido = primerSolidoEnPunto({ x: p.x, y: p.y, z }, radio,
+			contextoM6.solidos, contextoM6.propios);
+		if (solido) return { ok: false, motivo: `cruza ${solido.id}` };
+		return { ok: true };
+	}
 	// Dentro del hueco de una canaleta se está bien aunque haya un aparato cerca: son cosas
 	// distintas y el cable va por debajo de su cara.
 	if (dentroDeDucto.size) return { ok: true };
@@ -6430,10 +6458,10 @@ function arrastrarUnion(
 	medirEtapa('2b validez', () => {
 		const wp = puntosDeCable(c)[indice];
 		if (!wp) return;
-		const v = validezDelPunto(wp, radioDeCable(c.seccion));
+		const v = validezDelPunto(wp, radioDeCable(c.seccion), c.rutaFisica ? antesArrastreCableM6 : undefined);
 		motivoInvalido = v.ok ? undefined : v.motivo;
 	});
-	medirEtapa('3 previsualizar el cable', () => previsualizarCable(c.id));
+	medirEtapa('3 previsualizar el cable', () => previsualizarCable(c.id, indice));
 	medirEtapa('4 handles', () => construirHandles());
 	medirEtapa('5 pista', () => mostrarPistaArrastre());
 }
@@ -6461,7 +6489,7 @@ function mostrarPistaArrastre(): void {
 		? `SOLO EJE ${pistaArrastre.eje.toUpperCase()}`
 		: (pistaArrastre.modo === 'profundidad' ? 'moviendo en PROFUNDIDAD' : 'moviendo sobre la placa');
 	const suelta = pistaArrastre.eje ? ' · pulsa la misma tecla para soltar el eje' : ' · X/Y/Z bloquean un eje';
-	const aviso = motivoInvalido ? ` · ⚠ ${motivoInvalido}` : '';
+	const aviso = motivoInvalido ? ` · Aviso: ${motivoInvalido}` : '';
 	// Una ayuda que mueve el punto se DICE. Lo que no se puede es corregir en silencio.
 	const ayuda = pistaArrastre.alineado ? ' · alineado con el vecino (Alt lo desactiva)' : '';
 	ayudaDeEstado([`Z · ${pistaArrastre.z} mm`, `${como}${dentro}`, 'X/Y/Z · fijar eje', 'Alt · sin imantar',
@@ -7380,7 +7408,7 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 		 * sale en la revisión, para poder corregirlo sabiendo qué pasa.
 		 */
 		if (motivoInvalido) {
-			avisar(`Revisa ese punto: ${motivoInvalido}. Se queda donde lo has dejado.`, 'error');
+			avisar(`Revisa la ruta: ${motivoInvalido}. Se queda donde la has dejado.`, 'error');
 		}
 		motivoInvalido = undefined;
 		/*
