@@ -42,7 +42,8 @@ import {
 	construirCotas, construirDispositivo, construirEscenario, construirRiel, DatosCota, Escenario,
 	adoptarRutasCalculadas, asignarPlanesAutomaticos, prepararAsignacionPlanesAutomaticos,
 	diagnosticoCables, diagnosticoRutaManual, firmaRuteo, largoDibujadoMm, liberar,
-	longitudesDibujadasMm, longitudesParaRevisionMm, rutasDeCables, salidasDeCable, trazosDeCables, HOLGURA_CABLE,
+	longitudesDibujadasMm, longitudesParaRevisionMm, referenciasManualesAdoptadasMm,
+	rutasDeCables, salidasDeCable, trazosDeCables, HOLGURA_CABLE,
 	solidosDelTablero,
 	construirUnCable, contadores, radioCodo, radioDeCable, reconciliarCablesDibujados,
 	reiniciarContadores, rutaProvisional,
@@ -426,10 +427,10 @@ let coloreaVoltaje = false; // "Colorear por voltaje" en el panel Vista
 function recalcular(): void {
 	const rutasEnRevision = marcarPlanesObsoletosPendientes(proyecto);
 	if (rutasEnRevision.length) avisar(`${rutasEnRevision.length} ruta(s) afectadas por un cambio de aparato, borne o canaleta quedaron pendientes de revisión; no se redistribuyeron automáticamente.`, 'info');
-	// Legacy conserva la estimación 2D anterior. En M6 la ruta XYZ es referencia geométrica,
-	// no longitud eléctrica adoptada: el DRC usa la declarada o informa indeterminación.
-	// PDF y pantalla comparten exactamente esta política; no miden la malla/LOD.
-	revision = revisarTablero(proyecto, { longitudesMm: longitudesParaRevisionMm(proyecto) });
+	// La ausencia de política explícita conserva V9. Una selección CAB-27 adopta solo
+	// la fuente elegida; PDF, DRC e Ingeniería leen el mismo snapshot, no la malla/LOD.
+	revision = revisarTablero(proyecto, { longitudesMm: longitudesParaRevisionMm(proyecto),
+		referenciasManualesMm: referenciasManualesAdoptadasMm(proyecto) });
 	panelIngenieria?.invalidar();
 	autoguardar();
 }
@@ -4664,6 +4665,10 @@ function pintarPanelCable(id: string): void {
 	const adoptable = !c.rutaFisica && !pendiente
 		&& admiteRutaEnPlaca(c, proyecto.gabinete?.colocaciones ?? [], proyecto.dispositivos)
 		&& !!rutaDesdeTrazadoLegacy(c.id, c.trazado);
+	const referenciaXYZMm = pendiente ? undefined : c.planRutaAutomatica
+		? longitudPlanRutaAutomaticaMm(c.planRutaAutomatica)
+		: c.rutaFisica ? largoDibujadoMm(proyecto, c) : undefined;
+	const longitudRevisionMm = revision.longitudesElectricasMm.get(id);
 
 	panel.style.display = 'block';
 	panel.innerHTML = `
@@ -4685,6 +4690,20 @@ function pintarPanelCable(id: string): void {
 					`<option value="${k}" ${k === c.clase ? 'selected' : ''}>${escaparHtml(NOMBRE_CLASE[k])}</option>`).join('')}
 			</select>
 		</div>
+		<fieldset class="cbl-politica-longitud"><legend>Longitud para cálculo eléctrico</legend>
+			<label>Fuente <select id="cbl-longitud-politica">
+				<option value="" ${!c.fisica?.politicaLongitudElectrica ? 'selected' : ''}>Compatibilidad del proyecto (V9)</option>
+				<option value="DECLARADA" ${c.fisica?.politicaLongitudElectrica === 'DECLARADA' ? 'selected' : ''}>Longitud declarada</option>
+				<option value="RUTA_XYZ" ${c.fisica?.politicaLongitudElectrica === 'RUTA_XYZ' ? 'selected' : ''}>Referencia XYZ persistente</option>
+			</select></label>
+			<label>Longitud declarada (m) <input id="cbl-longitud-declarada" type="number" min="0.001" step="0.001"
+				value="${c.fisica?.longitudManualM ?? ''}" placeholder="Sin declarar"></label>
+			<p class="sub">${referenciaXYZMm && Number.isFinite(referenciaXYZMm)
+				? `Referencia XYZ: ${Math.round(referenciaXYZMm)} mm. ` : 'Sin referencia XYZ vigente. '}
+				La ruta XYZ solo entra al cálculo si la eliges; sigue siendo una estimación física, no corte verificado. Al faltar la fuente elegida, el cálculo queda indeterminado.</p>
+			<p class="sub" id="cbl-longitud-efectiva">DRC actual: ${longitudRevisionMm === undefined
+				? 'sin longitud evaluable' : `${Math.round(longitudRevisionMm)} mm`}. Origen: ${c.fisica?.politicaLongitudElectrica ?? 'compatibilidad V9'}.</p>
+		</fieldset>
 		${c.rutaFisica ? `<p class="sub">Ruta manual M6: los puntos XYZ son literales. La malla no separa ni recoloca esta ruta; las interferencias requieren revisión. Longitud de referencia espacial: ${Math.round(largoDibujadoMm(proyecto, c))} mm; no es longitud de corte verificada.</p>
 			<div class="cbl-geometria-m6"><label>Geometría de referencia <select id="cbl-geometria-m6"><option value="POLILINEA" ${c.rutaFisica.version === 1 ? 'selected' : ''}>Polilínea literal</option><option value="ARCO_CIRCULAR" ${c.rutaFisica.version === 2 ? 'selected' : ''}>Arcos circulares declarados</option></select></label>
 			<label>Radio circular declarado (mm) <input id="cbl-radio-m6" type="number" min="0.1" max="500" step="0.1" placeholder="Indicar radio" value="${c.rutaFisica.version === 2 ? c.rutaFisica.radioMm : ''}"></label></div>
@@ -4721,6 +4740,35 @@ function pintarPanelCable(id: string): void {
 		if (v) c.clase = v as ClaseConductor; else delete c.clase;
 		recalcular(); fijarPlanAutomaticoDe(id); reconstruirCables(); pintarPaneles();
 	};
+	(panel.querySelector('#cbl-longitud-politica') as HTMLSelectElement).onchange = (e) => {
+		const input = e.target as HTMLSelectElement;
+		const seleccion = input.value;
+		if (seleccion === (c.fisica?.politicaLongitudElectrica ?? '')) return;
+		if (seleccion === 'RUTA_XYZ' && (pendiente || !referenciaXYZMm || !Number.isFinite(referenciaXYZMm))) {
+			input.value = c.fisica?.politicaLongitudElectrica ?? '';
+			avisar('No hay una ruta XYZ vigente que pueda adoptarse para el cálculo.', 'error');
+			return;
+		}
+		if (!capturar()) { input.value = c.fisica?.politicaLongitudElectrica ?? ''; return; }
+		const nueva = { ...c.fisica,
+			politicaLongitudElectrica: seleccion ? seleccion as 'DECLARADA' | 'RUTA_XYZ' : undefined };
+		if (Object.values(nueva).some((v) => v !== undefined)) c.fisica = nueva; else delete c.fisica;
+		recalcular(); panelSim.recalcular(); pintarPanelCable(id); pintarPaneles();
+	};
+	(panel.querySelector('#cbl-longitud-declarada') as HTMLInputElement).onchange = (e) => {
+		const input = e.target as HTMLInputElement;
+		const valor = input.value.trim() === '' ? undefined : Number(input.value);
+		if (valor !== undefined && (!Number.isFinite(valor) || valor <= 0 || valor > 1_000_000)) {
+			input.value = String(c.fisica?.longitudManualM ?? '');
+			avisar('Indica una longitud positiva en metros; no se cambió el dato.', 'error');
+			return;
+		}
+		if (valor === c.fisica?.longitudManualM) return;
+		if (!capturar()) { input.value = String(c.fisica?.longitudManualM ?? ''); return; }
+		const nueva = { ...c.fisica, longitudManualM: valor };
+		if (Object.values(nueva).some((v) => v !== undefined)) c.fisica = nueva; else delete c.fisica;
+		recalcular(); panelSim.recalcular(); pintarPanelCable(id); pintarPaneles();
+	};
 	(panel.querySelector('#cbl-diagnostico-m6') as HTMLButtonElement | null)?.addEventListener('click', () => {
 		const resultado = panel.querySelector<HTMLElement>('#cbl-resultado-m6');
 		if (!resultado || !proyecto.conductores.some((actual) => actual.id === id && actual.rutaFisica)) return;
@@ -4750,7 +4798,7 @@ function pintarPanelCable(id: string): void {
 		if (JSON.stringify(nueva) === JSON.stringify(c.rutaFisica)) return;
 		if (!capturarEdicionRutaCable(id)) return;
 		c.rutaFisica = nueva;
-		recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
+		recalcular(); panelSim.recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
 		const faltan = rutaProvisional(proyecto, id)?.codosSinRadio?.length ?? 0;
 		if (faltan) avisar(`El radio declarado no cabe en ${faltan} codos. Corrige nodos o radio; no se redujo automáticamente.`, 'info');
 	};
@@ -4810,7 +4858,7 @@ function pintarPanelCable(id: string): void {
 			if (nodo[eje] === valor) return;
 			if (!capturarEdicionRutaCable(id)) { input.value = String(nodo[eje]); return; }
 			nodo[eje] = valor;
-			recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
+			recalcular(); panelSim.recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
 		};
 	});
 	panel.querySelectorAll<HTMLButtonElement>('[data-ruta-quitar]').forEach((boton) => {
@@ -4819,7 +4867,7 @@ function pintarPanelCable(id: string): void {
 			if (!c.rutaFisica || !Number.isInteger(indice) || !c.rutaFisica.nodos[indice]) return;
 			if (!capturarEdicionRutaCable(id)) return;
 			c.rutaFisica.nodos.splice(indice, 1);
-			recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
+			recalcular(); panelSim.recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
 		};
 	});
 	(panel.querySelector('#cbl-mover-tramo-m6') as HTMLButtonElement | null)?.addEventListener('click', () => {
@@ -4837,7 +4885,7 @@ function pintarPanelCable(id: string): void {
 		catch { avisar('El tramo quedaría fuera del dominio M6 (±5000 mm); no se movió.', 'error'); return; }
 		if (!capturarEdicionRutaCable(id)) return;
 		c.rutaFisica = rutaNueva;
-		recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
+		recalcular(); panelSim.recalcular(); reconstruirCables(); construirHandles(); pintarPanelCable(id); pintarPaneles();
 		avisar('Tramo manual desplazado. Revisa interferencias y radios antes de fabricar.', 'info');
 	});
 	(panel.querySelector('#cbl-adoptar-m6') as HTMLButtonElement | null)?.addEventListener('click', async () => {
@@ -7813,6 +7861,12 @@ renderer.domElement.addEventListener('pointerup', (ev) => {
 	const cableSoltado = eraCable ?? eraHandleDeCable;
 	if (cableSoltado) {
 		antesArrastreCableM6 = undefined;
+		if (proyecto.conductores.find((c) => c.id === cableSoltado.id)?.fisica?.politicaLongitudElectrica === 'RUTA_XYZ') {
+			// No se adopta ni publica un preview parcial. Solo el gesto confirmado modifica
+			// Ingeniería, DRC y el runtime energizado; todos usan el mismo documento final.
+			recalcular();
+			panelSim.recalcular();
+		}
 		/*
 		 * EL PUNTO SE QUEDA DONDE SE HA SOLTADO. Si el sitio tiene un problema, se DICE.
 		 *

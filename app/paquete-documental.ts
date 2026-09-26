@@ -10,7 +10,7 @@ import { prepararMarcadores } from '../src/motores/marcadores.js';
 import { proyectarLongitudesDocumentales } from '../src/motores/longitudes-documentales.js';
 import { proyectarReferenciasEsquemaM2 } from '../src/motores/referencias-esquema-m2.js';
 import { etiquetaClaseHojaEsquema, type HojaEsq } from '../src/motores/esquema.js';
-import { longitudesDibujadasMm, longitudesParaRevisionMm } from './escena3d.js';
+import { longitudesDibujadasMm, longitudesParaRevisionMm, referenciasManualesAdoptadasMm } from './escena3d.js';
 import { hojaASvg } from './esquema-svg.js';
 import { esquemaComoBlob } from './esquema-pdf.js';
 import { dossierComoBlob } from './pdf.js';
@@ -81,9 +81,10 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 	// Una revisión emitida no inventa designaciones distintas de las guardadas. La persona puede
 	// renumerar con vista previa antes de emitir; si falta una etiqueta, se muestra el ID estable.
 	const revision = revisarTablero(copia, { renumerarAparatos: false,
-		longitudesMm: longitudesParaRevisionMm(copia) });
+		longitudesMm: longitudesParaRevisionMm(copia),
+		referenciasManualesMm: referenciasManualesAdoptadasMm(copia) });
 	const analisis = ejecutarIngenieria({ proyecto: copia,
-		contextoFisico: contextoEstaticoIngenieria(copia) });
+		contextoFisico: contextoEstaticoIngenieria(copia, referenciasManualesAdoptadasMm(copia)) });
 	const informe = crearInformeIngenieriaV7({ proyecto: copia, analisis,
 		trazabilidad: { projectId: procedencia.estado === 'confirmado' ? procedencia.projectId
 			: procedencia.motivo === 'ejemplo' ? 'EJEMPLO_EFIMERO' : 'SIN_REPOSITORIO',
@@ -142,13 +143,15 @@ export async function crearArchivosPaqueteDocumental(proyecto: Proyecto,
 		'Longitud m corresponde a la política eléctrica de Ingeniería, no a un corte verificado ni a metros de manguera multiconductora.');
 	csv('listas/longitudes-conductores.csv', ['Conductor ID', 'Estado de ruta',
 		'Longitud eléctrica declarada (m)', 'Ruta 2D estimada (mm)', 'Referencia XYZ persistente (mm)',
-		'Origen referencia XYZ',
+		'Origen referencia XYZ', 'Política eléctrica', 'Longitud eléctrica adoptada (m)',
+		'Origen longitud eléctrica',
 		'Reserva (%)', 'Origen reserva', 'Reserva (mm)', 'Extra por conexión (mm)',
 		'Origen puntas', 'Puntas total (mm)', 'Redondeo (mm)',
 		'Propuesta de corte estimada (mm)', 'Corte verificado (mm)'],
 		proyectarLongitudesDocumentales(copia, revision.ruteo, longitudesDibujadasMm(copia)).map((l) => [
 			l.conductorId, l.estadoRuta, l.longitudDeclaradaElectricaM, l.longitudRutaMm,
 			l.longitudReferencia3DMm, l.origenReferencia3D,
+			l.politicaLongitudElectrica, l.longitudElectricaAdoptadaM, l.origenLongitudElectrica,
 			l.reservaPorcentaje * 100, l.origenReserva, l.reservaMm, l.extraPorConexionMm,
 			l.origenPuntas, l.puntasMm, l.redondeoMm, l.propuestaCorteMm,
 			l.longitudCorteVerificadaMm,

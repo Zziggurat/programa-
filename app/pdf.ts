@@ -20,7 +20,7 @@ import { esReferenciaVisualInerte } from '../src/modelo/apariencia.js';
 import { revisarTablero } from '../src/motores/revision.js';
 import { fondoDe } from '../src/motores/ficha-tablero.js';
 import { factorTemperatura, TEMPERATURA_TABLA_C } from '../src/motores/electrico.js';
-import { longitudesParaRevisionMm } from './escena3d.js';
+import { longitudesParaRevisionMm, referenciasManualesAdoptadasMm } from './escena3d.js';
 import { declarado, opcionesDe } from '../src/modelo/proyecto.js';
 import { CONTROLADORES } from './controladores.js';
 import { descargar } from './dialogos.js';
@@ -191,6 +191,7 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 	const revision = revisarTablero(proyecto, {
 		renumerarAparatos: false,
 		longitudesMm: longitudesParaRevisionMm(proyecto),
+		referenciasManualesMm: referenciasManualesAdoptadasMm(proyecto),
 	});
 	const { potenciales, ruteo, hallazgos, referencias, ficha, termico } = revision;
 	const bom = revision.bom;
@@ -894,7 +895,8 @@ export function construirDossier(proyectoOriginal: Proyecto, procedencia?: Proce
 			tabla(['Nº', 'Desde', 'Hacia', 'Sección', 'Color', 'Propuesta 2D / estado'],
 				conductores.map((c) => [c.numero, c.de, c.a, c.seccion || '—', c.color || '—',
 					c.pendienteRuta ? 'Ruta física pendiente' : c.rutaReferencia3D
-						? 'Ruta XYZ; corte no verificado'
+						? c.politicaLongitudElectrica === 'RUTA_XYZ'
+							? 'XYZ adoptada para cálculo; corte no verificado' : 'Ruta XYZ; corte no verificado'
 						: c.longitudMm ? metros(c.longitudMm) : 'Sin longitud calculada']),
 				{ 0: 14, 3: 20, 5: 30 });
 	}

@@ -17,6 +17,11 @@ export type EstadoRutaLongitud = 'PENDIENTE' | 'SIN_RUTA' | 'SIN_DESGLOSE'
 export interface LongitudDocumentalConductor {
 	conductorId: string;
 	estadoRuta: EstadoRutaLongitud;
+	/** La ausencia del selector conserva el cálculo V9 del proyecto. */
+	politicaLongitudElectrica: 'COMPATIBILIDAD_V9' | 'DECLARADA' | 'RUTA_XYZ';
+	/** Solo para una decisión explícita; no se infiere de la propuesta de corte. */
+	longitudElectricaAdoptadaM?: number;
+	origenLongitudElectrica?: 'CONFIGURADO' | 'ESTIMADO';
 	/** Longitud eléctrica persistente; no es una medida de corte. */
 	longitudDeclaradaElectricaM?: number;
 	/** Recorrido ortogonal 2D según el grafo de canaletas, antes de márgenes (mm). */
@@ -54,12 +59,22 @@ export function proyectarLongitudesDocumentales(
 		// ese resultado ajeno como propuesta de corte del plan realmente guardado.
 		const ruta = pendiente || ruta3D ? undefined : rutas.get(c.id);
 		const manual = c.fisica?.longitudManualM;
+		const politica = c.fisica?.politicaLongitudElectrica ?? 'COMPATIBILIDAD_V9';
 		const referencia3D = pendiente ? undefined : c.rutaFisica ? referencias3DMm?.get(c.id)
 			: c.planRutaAutomatica ? longitudPlanRutaAutomaticaMm(c.planRutaAutomatica) : undefined;
 		const desglosada = ruta && [ruta.longitudRutaMm, ruta.reservaMm, ruta.puntasMm, ruta.redondeoMm]
 			.every((valor) => typeof valor === 'number' && Number.isFinite(valor));
 		return {
 			conductorId: c.id,
+			politicaLongitudElectrica: politica,
+			...(!pendiente && politica === 'RUTA_XYZ' && referencia3D !== undefined
+				&& Number.isFinite(referencia3D) && referencia3D > 0
+				? { longitudElectricaAdoptadaM: referencia3D / 1000,
+					origenLongitudElectrica: 'ESTIMADO' as const } : {}),
+			...(!pendiente && politica === 'DECLARADA' && typeof manual === 'number'
+				&& Number.isFinite(manual) && manual > 0
+				? { longitudElectricaAdoptadaM: manual,
+					origenLongitudElectrica: 'CONFIGURADO' as const } : {}),
 			estadoRuta: pendiente ? 'PENDIENTE' : ruta3D ? 'RUTA_3D_REFERENCIA' : !ruta ? 'SIN_RUTA'
 				: desglosada ? 'RUTA_2D_ESTIMADA' : 'SIN_DESGLOSE',
 			...(referencia3D !== undefined && Number.isFinite(referencia3D) && referencia3D > 0

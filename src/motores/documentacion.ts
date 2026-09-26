@@ -47,6 +47,7 @@ export interface FilaConductor {
 	longitudMm?: number;
 	pendienteRuta?: boolean;
 	rutaReferencia3D?: boolean;
+	politicaLongitudElectrica?: 'DECLARADA' | 'RUTA_XYZ';
 }
 
 export function generarListaConductores(
@@ -66,6 +67,7 @@ export function generarListaConductores(
 			pendienteRuta: c.estadoRutaFisica === 'pendiente' || undefined,
 			rutaReferencia3D: c.estadoRutaFisica !== 'pendiente'
 				&& (!!c.rutaFisica || !!c.planRutaAutomatica) || undefined,
+			politicaLongitudElectrica: c.fisica?.politicaLongitudElectrica,
 		}))
 		.sort((a, b) => a.numero.localeCompare(b.numero, undefined, { numeric: true }));
 }
@@ -179,10 +181,12 @@ ${tabla(['Número', 'De', 'A', 'Sección', 'Color', 'Ruteo 2D + margen/puntas (m
 	const longitudes = proyectarLongitudesDocumentales(proyecto, d.ruteo, referencias3DMm);
 	secciones.push(`<h3>Desglose de longitudes por conductor</h3>
 <p>La longitud eléctrica declarada, el recorrido ortogonal 2D y la referencia XYZ persistente son magnitudes diferentes. Una propuesta legacy no mide profundidad Z, curvas ni corte real de taller. Un plan XYZ no recibe una propuesta de corte 2D ajena. Un corte verificado no está disponible en esta revisión.</p>
-${tabla(['Conductor', 'Estado', 'Eléctrica declarada', 'Ruta 2D', 'Referencia XYZ', 'Origen XYZ', 'Corte propuesto (estimado)'],
+${tabla(['Conductor', 'Estado', 'Eléctrica declarada', 'Ruta 2D', 'Referencia XYZ', 'Origen XYZ', 'Política eléctrica', 'Eléctrica adoptada', 'Corte propuesto (estimado)'],
 	longitudes.map((l) => [l.conductorId, estadoRutaLegible[l.estadoRuta],
 		l.longitudDeclaradaElectricaM === undefined ? '—' : `${formatoNumero(l.longitudDeclaradaElectricaM)} m`,
 		numeroMm(l.longitudRutaMm), numeroMm(l.longitudReferencia3DMm), l.origenReferencia3D ?? '—',
+		l.politicaLongitudElectrica,
+		l.longitudElectricaAdoptadaM === undefined ? '—' : `${formatoNumero(l.longitudElectricaAdoptadaM)} m (${l.origenLongitudElectrica})`,
 		numeroMm(l.propuestaCorteMm)]))}
 <section class="tabla-reserva"><h3>Reserva, puntas y verificación de corte</h3>
 ${tabla(['Conductor', 'Reserva', 'Puntas', 'Redondeo', 'Corte verificado'],

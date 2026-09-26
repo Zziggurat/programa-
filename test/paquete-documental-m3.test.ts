@@ -157,11 +157,6 @@ test('CAB-26: el paquete muestra la medida XYZ V4 y deja vacío el corte legacy 
 	const plan = p.conductores.find((c) => c.id === 'w4')!.planRutaAutomatica!;
 	const antes = JSON.stringify(p);
 	const archivos = await crearArchivosPaqueteDocumental(p, procedencia);
-	if (process.env.QA_PDF_CAPTURE) {
-		const contenido = archivos.find((a) => a.ruta === 'dossier/dossier.pdf')?.contenido;
-		assert.ok(contenido instanceof Uint8Array);
-		writeFileSync(process.env.QA_PDF_CAPTURE, contenido);
-	}
 	assert.equal(JSON.stringify(p), antes, 'emitir documentos no reescribe el plan XYZ');
 	const csv = String(archivos.find((a) => a.ruta === 'listas/longitudes-conductores.csv')?.contenido ?? '');
 	const cabecera = csv.split('\n')[0].split(';');
@@ -179,4 +174,23 @@ test('CAB-26: el paquete muestra la medida XYZ V4 y deja vacío el corte legacy 
 	const conductores = String(archivos.find((a) => a.ruta === 'listas/conductores.csv')?.contenido ?? '');
 	assert.match(conductores.split('\n').find((linea) => linea.startsWith('w4;')) ?? '',
 		/PLAN_AUTO_XYZ_REFERENCIA/);
+	const adoptado = structuredClone(p);
+	adoptado.conductores.find((c) => c.id === 'w4')!.fisica = {
+		longitudManualM: 3.2, politicaLongitudElectrica: 'RUTA_XYZ',
+	};
+	const archivosAdoptados = await crearArchivosPaqueteDocumental(adoptado, procedencia);
+	const csvAdoptado = String(archivosAdoptados.find((a) => a.ruta === 'listas/longitudes-conductores.csv')?.contenido ?? '');
+	const filaAdoptada = csvAdoptado.split('\n').find((linea) => linea.startsWith('w4;'))?.split(';');
+	assert.ok(filaAdoptada);
+	assert.equal(filaAdoptada[col('Política eléctrica')], 'RUTA_XYZ');
+	assert.equal(Number(filaAdoptada[col('Longitud eléctrica adoptada (m)')]),
+		longitudPlanRutaAutomaticaMm(plan) / 1000);
+	assert.equal(filaAdoptada[col('Origen longitud eléctrica')], 'ESTIMADO');
+	assert.equal(filaAdoptada[col('Propuesta de corte estimada (mm)')], '',
+		'adoptar la referencia como cálculo eléctrico no acredita un corte de taller');
+	if (process.env.QA_PDF_CAPTURE) {
+		const contenido = archivosAdoptados.find((a) => a.ruta === 'dossier/dossier.pdf')?.contenido;
+		assert.ok(contenido instanceof Uint8Array);
+		writeFileSync(process.env.QA_PDF_CAPTURE, contenido);
+	}
 });

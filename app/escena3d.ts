@@ -1454,10 +1454,20 @@ export function longitudesDibujadasMm(proyecto: Proyecto): Map<string, number> {
 		.map((c) => [c.id, largoDibujadoMm(proyecto, c, abanico)]));
 }
 
+/** Solo las rutas M6 que la persona adoptó para el cálculo eléctrico. Evita medir todo el
+ * tablero en cada scan de Energizar; los planes V4 se miden desde sus XYZ persistentes. */
+export function referenciasManualesAdoptadasMm(proyecto: Proyecto): Map<string, number> {
+	const adoptadas = proyecto.conductores.filter((c) => c.estadoRutaFisica !== 'pendiente'
+		&& !!c.rutaFisica && c.fisica?.politicaLongitudElectrica === 'RUTA_XYZ');
+	if (!adoptadas.length) return new Map();
+	const abanico = abanicoDeSalida(proyecto);
+	return new Map(adoptadas.map((c) => [c.id, largoDibujadoMm(proyecto, c, abanico)]));
+}
+
 /**
- * La ruta M6 tiene largo espacial medible, pero aún no se adopta automáticamente para una
- * afirmación eléctrica. Sin política explícita CAB-27, el DRC usa solo la longitud declarada;
- * si no existe, deja la caída sin resolver. Legacy conserva exactamente su regla anterior.
+ * La ruta M6 tiene largo espacial medible, pero no se adopta automáticamente para una
+ * afirmación eléctrica. La revisión recibe aparte la referencia cuando la persona selecciona
+ * RUTA_XYZ; sin esa selección, M6 usa solo la longitud declarada y legacy conserva V9.
  */
 export function longitudesParaRevisionMm(proyecto: Proyecto): Map<string, number> {
 	const abanico = abanicoDeSalida(proyecto);

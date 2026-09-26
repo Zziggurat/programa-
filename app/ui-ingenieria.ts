@@ -6,6 +6,7 @@
  */
 import { perfilCurvaProteccionDispositivo, type ContextoTopologiaFisica } from '../src/fisica/topologia-proyecto.js';
 import { contextoEstaticoIngenieria } from '../src/ingenieria/contexto-estatico.js';
+import { referenciasManualesAdoptadasMm } from './escena3d.js';
 import type { Proyecto } from '../src/modelo/tipos.js';
 import type { ProcedenciaDocumento } from '../src/modelo/procedencia-documental.js';
 import {
@@ -89,7 +90,7 @@ const numero = (v: number | undefined, unidad = ''): string => v === undefined |
 
 /** Condición de cálculo explícita; no representa el runtime ni se guarda en Proyecto. */
 export function contextoDisenoIngenieria(proyecto: Proyecto): ContextoTopologiaFisica {
-	return contextoEstaticoIngenieria(proyecto);
+	return contextoEstaticoIngenieria(proyecto, referenciasManualesAdoptadasMm(proyecto));
 }
 
 function buildId(): string {

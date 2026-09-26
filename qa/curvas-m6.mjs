@@ -58,11 +58,6 @@ try {
 	comprobar('modo circular declarado guarda 8 mm y modifica la trayectoria visible',
 		(await cable()).rutaFisica.radioMm === 8 && curva.length > recta.length
 		&& JSON.stringify(curva) !== JSON.stringify(recta));
-	if (process.env.QA_CURVAS_CAPTURE) {
-		await pagina.locator('#btn-centrar').click();
-		await pagina.waitForTimeout(400);
-		await pagina.screenshot({ path: process.env.QA_CURVAS_CAPTURE });
-	}
 	const nodoAntes = JSON.stringify((await cable()).rutaFisica.nodos[0]);
 	const tirador = await pagina.evaluate(() => window.qa.puntoDeUnion('w1', 0));
 	assert.ok(tirador && tirador.x > 0 && tirador.y > 0);
@@ -96,12 +91,42 @@ try {
 	comprobar('Redo recupera el radio declarado', (await cable()).rutaFisica.radioMm === 500);
 	await pagina.locator('#cbl-radio-m6').fill('8');
 	await pagina.locator('#cbl-radio-m6').press('Tab');
+	await pagina.locator('#cbl-longitud-declarada').fill('3.2');
+	await pagina.locator('#cbl-longitud-declarada').press('Tab');
+	await pagina.locator('#cbl-longitud-politica').selectOption('DECLARADA');
+	comprobar('la UI guarda la elección eléctrica declarada sin alterar la ruta',
+		(await cable()).fisica.longitudManualM === 3.2
+		&& (await cable()).fisica.politicaLongitudElectrica === 'DECLARADA'
+		&& (await cable()).rutaFisica.radioMm === 8);
+	await pagina.locator('#cbl-longitud-politica').selectOption('RUTA_XYZ');
+	comprobar('la UI adopta la referencia XYZ explícitamente y advierte que no es un corte',
+		(await cable()).fisica.politicaLongitudElectrica === 'RUTA_XYZ'
+		&& /no corte verificado/i.test(await pagina.locator('.cbl-politica-longitud').innerText()));
+	const electricaAntes = await pagina.locator('#cbl-longitud-efectiva').innerText();
+	const zAntes = (await cable()).rutaFisica.nodos[0].z;
+	await pagina.locator('[data-ruta-nodo="0"][data-eje="z"]').fill(String(zAntes + 30));
+	await pagina.locator('[data-ruta-nodo="0"][data-eje="z"]').press('Tab');
+	const electricaDespues = await pagina.locator('#cbl-longitud-efectiva').innerText();
+	comprobar('editar Z confirma otra longitud DRC adoptada, sin alterar los metros declarados',
+		electricaDespues !== electricaAntes && (await cable()).fisica.longitudManualM === 3.2);
+	await pagina.locator('#btn-deshacer').click();
+	comprobar('Undo restaura la longitud eléctrica y la ruta, no solo la malla',
+		(await pagina.locator('#cbl-longitud-efectiva').innerText()) === electricaAntes
+		&& (await cable()).rutaFisica.nodos[0].z === zAntes);
+	if (process.env.QA_CURVAS_CAPTURE) {
+		await pagina.locator('#btn-centrar').click();
+		await pagina.waitForTimeout(400);
+		await pagina.screenshot({ path: process.env.QA_CURVAS_CAPTURE });
+	}
 	await pagina.evaluate(() => window.qa.esperarPersistencia());
 	await pagina.reload({ waitUntil: 'domcontentloaded' });
 	await esperarEditorListo(pagina);
 	comprobar('reapertura conserva modo, radio y trayectoria',
 		(await cable()).rutaFisica.version === 2 && (await cable()).rutaFisica.radioMm === 8
 		&& JSON.stringify(await puntos()) === JSON.stringify(curva));
+	comprobar('reapertura conserva política eléctrica y metros declarados separados',
+		(await cable()).fisica.politicaLongitudElectrica === 'RUTA_XYZ'
+		&& (await cable()).fisica.longitudManualM === 3.2);
 	comprobar('sin errores JavaScript', erroresJS.length === 0);
 	console.log(`RESULTADO ${casos}/${casos} en ${((Date.now() - inicio) / 1000).toFixed(1)} s; errores JS ${erroresJS.length}`);
 } catch (error) {

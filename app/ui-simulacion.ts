@@ -25,7 +25,7 @@ import {
 } from '../src/motores/fallos-runtime.js';
 import { crearInformeAnalisisV6, informeAnalisisV6AHtml } from '../src/diagnostico/informe.js';
 import { emisionDeCable } from './animacion-sim.js';
-import { Escenario } from './escena3d.js';
+import { Escenario, referenciasManualesAdoptadasMm } from './escena3d.js';
 import { avisar, descargar, escaparHtml } from './dialogos.js';
 import { actualizarAnalisisFisica, actualizarInstrumentosFisica, htmlFisicaV5, type SeleccionInstrumentosFisica } from './panel-fisica.js';
 import { resolverProyectoTecnico } from '../src/datos-tecnicos/resolver.js';
@@ -388,7 +388,9 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		if (!energizado) return;
 		if (!relojSim) relojSim = { ahora: 0, memoria: memoriaVacia(), logica: memoriaLogicaVacia() };
 		const fisicaAnterior = ultimaSim?.fisica;
-		ultimaSim = simular(proyecto(), estadoSim, activosPrevios, relojSim);
+		const documento = proyecto();
+		ultimaSim = simular(documento, estadoSim, activosPrevios, relojSim,
+			referenciasManualesAdoptadasMm(documento));
 		conservarEvidenciaDisparo(fisicaAnterior, ultimaSim.fisica);
 		activosPrevios = ultimaSim.activos;
 		/* Pulsos consumidos por este scan; modo, pausa y fuerzas sí permanecen en la sesión. */
@@ -436,7 +438,9 @@ export function instalarSimulacion(ctx: ContextoSimulacion): PanelSimulacion {
 		if (!actualizado.cambio) return;
 		// Un disparo/reemplazo cambia la topología; se resuelve inmediatamente con el nuevo estado.
 		const fisicaAntesDelDisparo = ultimaSim.fisica;
-		ultimaSim = simular(proyecto(), estadoSim, activosPrevios, relojSim);
+		const documento = proyecto();
+		ultimaSim = simular(documento, estadoSim, activosPrevios, relojSim,
+			referenciasManualesAdoptadasMm(documento));
 		activosPrevios = ultimaSim.activos;
 		/* La red posterior debe mostrar corriente cero, pero el analisis prospectivo que provoco el
 		 * disparo sigue siendo evidencia del evento. Se conserva marcado como despejado durante el
