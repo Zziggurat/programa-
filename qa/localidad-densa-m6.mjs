@@ -60,6 +60,18 @@ try {
 	const esperaInicio = Date.now();
 	await pagina.evaluate(() => window.qa.esperarPersistencia());
 	const esperaMs = Date.now() - esperaInicio;
+	const snapshotsAntes = (await pagina.evaluate(() => window.qa.snapshots())).length;
+	const colorAnterior = await pagina.locator('#cbl-color').inputValue();
+	const colores = await pagina.locator('#cbl-color option').evaluateAll((opciones) => opciones.map((o) => o.value));
+	const colorNuevo = colores.find((color) => color && color !== colorAnterior);
+	assert.ok(colorNuevo, 'falta otro color para la segunda edición');
+	await pagina.locator('#cbl-color').selectOption(colorNuevo);
+	await pagina.evaluate(() => window.qa.esperarPersistencia());
+	const snapshotsDespues = (await pagina.evaluate(() => window.qa.snapshots())).length;
+	comprobar('dos ediciones próximas no crean un snapshot completo por cada guardado',
+		snapshotsDespues === snapshotsAntes);
+	const documentoId = await pagina.evaluate(() => window.qa.documentoActivo().id);
+	assert.ok(documentoId, 'falta identidad del documento persistido');
 	await pagina.reload({ waitUntil: 'domcontentloaded' });
 	await esperarEditorListo(pagina);
 	const reabierto = await rutas();
@@ -67,8 +79,11 @@ try {
 		Object.entries(antes).every(([id, ruta]) => id === 'w18' || firma(ruta) === firma(reabierto[id]))
 		&& await pagina.evaluate((n) => window.qa.proyecto().conductores
 			.filter((c) => c.planRutaAutomatica?.version === 1).length === n, rutasFisicas));
+	comprobar('la segunda edición persiste sin perder la identidad del documento',
+		await pagina.evaluate(([id, color, activo]) => window.qa.proyecto().conductores.find((c) => c.id === id)?.color === color
+			&& window.qa.documentoActivo().id === activo, ['w18', colorNuevo, documentoId]));
 	comprobar('sin errores JavaScript', erroresJS.length === 0);
-	console.log(`Medición ${total} conexiones: documento ${bytes} bytes; edición hasta ${rutasFisicas} planes ${asignacionMs} ms; espera de guardado ${esperaMs} ms`);
+	console.log(`Medición ${total} conexiones: documento ${bytes} bytes; edición hasta ${rutasFisicas} planes ${asignacionMs} ms; espera de guardado ${esperaMs} ms; snapshots ${snapshotsAntes}/${snapshotsDespues}`);
 	console.log(`QA localidad densa M6: ${casos}/${casos}, ${((Date.now() - inicio) / 1000).toFixed(1)} s`);
 } catch (error) {
 	console.error(error.stack ?? error);
