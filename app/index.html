@@ -1286,6 +1286,19 @@
 	.dialogo-botones { display: flex; gap: 8px; justify-content: flex-end; }
 	.dialogo-botones .boton { padding: 7px 16px; }
 	#modal-dialogo.peligro #dialogo-ok { background: #7a2b2b; border-color: #a84444; }
+	#modal-dialogo.propuesta-ruta { background: #0006; justify-content: flex-end; }
+	#modal-dialogo.propuesta-ruta .caja-dialogo { max-width: 470px; margin-right: min(2vw, 24px); }
+	.vista-propuesta-cable { margin-top: 12px; }
+	.vista-propuesta-cable p { margin: 0 0 8px; color: var(--texto-suave); font-size: 12px; }
+	.vista-propuesta-cable p:last-child { margin: 7px 0 0; }
+	.vista-propuesta-cable svg { display: block; width: 100%; height: 170px; background: var(--panel-2);
+		border: 1px solid var(--borde); border-radius: 8px; }
+	.vista-propuesta-cable path { fill: none; stroke: #22d0e7; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+	.vista-propuesta-cable circle { fill: #fff; stroke: #22d0e7; stroke-width: 2; }
+	@media (max-width: 700px) {
+		#modal-dialogo.propuesta-ruta { justify-content: center; align-items: flex-end; }
+		#modal-dialogo.propuesta-ruta .caja-dialogo { margin-right: 0; max-height: 75vh; overflow-y: auto; }
+	}
 
 	/* Toast (aviso flotante no bloqueante) */
 	/* Etiqueta flotante del borne bajo el ratón (para saber qué terminal se va a conectar) */

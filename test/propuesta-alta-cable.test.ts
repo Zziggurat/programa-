@@ -17,6 +17,8 @@ test('CAB-23: la propuesta de alta no modifica el tablero base y es reproducible
 	assert.equal(primera.documento.conductores.length, base.conductores.length + 1);
 	assert.ok(primera.documento.conductores.find((c) => c.id === nuevo.id)?.planRutaAutomatica);
 	assert.ok(primera.longitudReferenciaMm > 0 && primera.puntos >= 2);
+	assert.equal(primera.planesExistentesFijados, base.conductores.length,
+		'la propuesta declara cuántas rutas legacy quedarán fijadas junto con el alta');
 	assert.ok(base.conductores.every((c) => !c.planRutaAutomatica));
 	assert.ok(rutasDeCables(primera.documento).some((r) => r.conductorId === nuevo.id));
 });

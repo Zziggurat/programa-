@@ -92,11 +92,13 @@ export function escaparHtml(t: string): string {
 export let cerrarDialogo: ((valor: string | null) => void) | undefined;
 
 export function abrirDialogo(mensaje: string, opciones: {
-	input?: boolean; valorInicial?: string; ok?: string; peligro?: boolean;
+	input?: boolean; valorInicial?: string; ok?: string; peligro?: boolean; detalle?: HTMLElement;
 } = {}): Promise<string | null> {
 	const modal = $('modal-dialogo');
 	const input = $('dialogo-input') as HTMLInputElement;
-	$('dialogo-msg').textContent = mensaje;
+	const contenido = $('dialogo-msg');
+	contenido.replaceChildren(document.createTextNode(mensaje));
+	if (opciones.detalle) contenido.append(opciones.detalle);
 	input.hidden = !opciones.input;
 	input.value = opciones.valorInicial ?? '';
 	($('dialogo-ok') as HTMLButtonElement).textContent = opciones.ok ?? 'Aceptar';
@@ -154,7 +156,9 @@ export function abrirDialogo(mensaje: string, opciones: {
 }
 
 /** Confirmación con botones. Devuelve true si el usuario acepta. */
-export async function confirmar(mensaje: string, opciones: { ok?: string; peligro?: boolean } = {}): Promise<boolean> {
+export async function confirmar(mensaje: string, opciones: {
+	ok?: string; peligro?: boolean; detalle?: HTMLElement;
+} = {}): Promise<boolean> {
 	return (await abrirDialogo(mensaje, opciones)) !== null;
 }
 

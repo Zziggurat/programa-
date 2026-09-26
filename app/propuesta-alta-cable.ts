@@ -12,6 +12,8 @@ export interface PropuestaAltaCable {
 	puntos: number;
 	contactos: number;
 	invasiones: number;
+	/** Planes previos sin asignación que se fijarían al aceptar esta operación. */
+	planesExistentesFijados: number;
 }
 
 export function proponerAltaCable(base: Proyecto, nuevo: Conductor): PropuestaAltaCable {
@@ -19,6 +21,7 @@ export function proponerAltaCable(base: Proyecto, nuevo: Conductor): PropuestaAl
 		throw new Error(`Ya existe un conductor con el ID ${nuevo.id}.`);
 	}
 	const documento = structuredClone(base);
+	const planesAntes = new Set(base.conductores.filter((c) => c.planRutaAutomatica).map((c) => c.id));
 	// La foto de los recorridos actuales se prepara solo en el borrador. En el commit se
 	// incorporará junto con el alta como una única modificación deshacible.
 	asignarPlanesAutomaticos(documento, prepararAsignacionPlanesAutomaticos(documento));
@@ -36,5 +39,7 @@ export function proponerAltaCable(base: Proyecto, nuevo: Conductor): PropuestaAl
 		puntos: preparado[0].plan.puntosXYZ.length / 3,
 		contactos: diagnostico.conflictos.filter((v) => v.a === nuevo.id || v.b === nuevo.id).length,
 		invasiones: diagnostico.invasiones.filter((v) => v.a === nuevo.id).length,
+		planesExistentesFijados: documento.conductores.filter((c) => c.id !== nuevo.id
+			&& !!c.planRutaAutomatica && !planesAntes.has(c.id)).length,
 	};
 }

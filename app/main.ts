@@ -99,7 +99,7 @@ import {
 	redondearEsquinas,
 } from './geometria-cables.js';
 import { longitudCoincidente3D } from './colisiones-cables.js';
-import { proponerAltaCable } from './propuesta-alta-cable.js';
+import { proponerAltaCable, type PropuestaAltaCable } from './propuesta-alta-cable.js';
 import { admiteRutaEnPlaca, desplazarTramoInteriorM6, MAX_NODOS_RUTA_M6, rutaDesdeTrazadoLegacy } from '../src/modelo/ruta-fisica.js';
 import { marcarPlanesObsoletosPendientes } from '../src/modelo/dependencias-ruta.js';
 import { abrirRepositorioProyectosIndexedDB } from './repositorio-indexeddb.js';
@@ -1589,24 +1589,98 @@ function capturarEdicionRutaCable(id: string): boolean {
 
 let altaAutomaticaEnCurso = false;
 
-/** Prepara el alta sobre una copia y nunca escribe el cable antes de aceptar sus avisos. */
-async function aceptarAltaAutomatica(nuevo: Conductor, alAplicar?: () => void): Promise<void> {
+/** La proyección y la línea 3D leen los mismos XYZ del plan; ninguna es fuente de geometría. */
+function vistaPreviaAltaCable(propuesta: PropuestaAltaCable): { detalle: HTMLElement; quitar: () => void } {
+	const plan = propuesta.documento.conductores.find((c) => c.id === propuesta.conductorId)?.planRutaAutomatica;
+	if (!plan) throw new Error('La propuesta no contiene un plan físico visible.');
+	const puntos: { x: number; y: number; z: number }[] = [];
+	for (let i = 0; i < plan.puntosXYZ.length; i += 3) {
+		puntos.push({ x: plan.puntosXYZ[i], y: plan.puntosXYZ[i + 1], z: plan.puntosXYZ[i + 2] });
+	}
+	const trazo = new THREE.Line(
+		new THREE.BufferGeometry().setFromPoints(puntos.map((p) => escenario.aEscena(p.x, p.y, p.z))),
+		new THREE.LineBasicMaterial({ color: 0x24d8ee, transparent: true, opacity: 0.95,
+			depthTest: false, depthWrite: false }),
+	);
+	trazo.name = 'vista-previa-alta-cable';
+	trazo.renderOrder = 999;
+	trazo.raycast = () => {}; // una propuesta no es un cable seleccionable
+	const raiz = escenario.raiz;
+	raiz.add(trazo);
+
+	const minimo = { x: Infinity, y: Infinity, z: Infinity };
+	const maximo = { x: -Infinity, y: -Infinity, z: -Infinity };
+	for (const p of puntos) for (const eje of ['x', 'y', 'z'] as const) {
+		minimo[eje] = Math.min(minimo[eje], p[eje]);
+		maximo[eje] = Math.max(maximo[eje], p[eje]);
+	}
+	const ancho = 360, alto = 170, margen = 18;
+	const escala = Math.min((ancho - margen * 2) / Math.max(1, maximo.x - minimo.x),
+		(alto - margen * 2) / Math.max(1, maximo.y - minimo.y));
+	const aSvg = (p: { x: number; y: number }) => ({
+		x: margen + (p.x - minimo.x) * escala,
+		y: margen + (p.y - minimo.y) * escala,
+	});
+	const ns = 'http://www.w3.org/2000/svg';
+	const detalle = document.createElement('div');
+	detalle.className = 'vista-propuesta-cable';
+	detalle.dataset.puntos = String(puntos.length);
+	const titulo = document.createElement('p');
+	titulo.textContent = 'Proyección frontal de la ruta propuesta (X/Y). La línea celeste sobre el tablero muestra su trayectoria XYZ.';
+	const svg = document.createElementNS(ns, 'svg');
+	svg.setAttribute('viewBox', `0 0 ${ancho} ${alto}`);
+	svg.setAttribute('role', 'img');
+	svg.setAttribute('aria-label', `Ruta propuesta para ${propuesta.conductorId}, de origen a destino`);
+	const camino = document.createElementNS(ns, 'path');
+	camino.setAttribute('d', puntos.map((p, i) => {
+		const q = aSvg(p);
+		return `${i ? 'L' : 'M'}${q.x.toFixed(2)} ${q.y.toFixed(2)}`;
+	}).join(' '));
+	svg.append(camino);
+	for (const [indice, nombre] of [[0, 'Origen'], [puntos.length - 1, 'Destino']] as const) {
+		const p = aSvg(puntos[indice]);
+		const marca = document.createElementNS(ns, 'circle');
+		marca.setAttribute('cx', p.x.toFixed(2));
+		marca.setAttribute('cy', p.y.toFixed(2));
+		marca.setAttribute('r', '4');
+		marca.setAttribute('aria-label', nombre);
+		svg.append(marca);
+	}
+	const profundidad = document.createElement('p');
+	profundidad.textContent = `Profundidad Z: ${minimo.z.toFixed(1)}–${maximo.z.toFixed(1)} mm. La superposición no certifica espacio disponible.`;
+	detalle.append(titulo, svg, profundidad);
+	return { detalle, quitar: () => {
+		raiz.remove(trazo);
+		trazo.geometry.dispose();
+		(trazo.material as THREE.Material).dispose();
+	} };
+}
+
+/** Prepara el alta sobre una copia y nunca escribe el cable antes de aceptar la propuesta. */
+async function aceptarAltaAutomatica(nuevo: Conductor, alFinalizar?: () => void): Promise<void> {
 	if (altaAutomaticaEnCurso || !sePuedeEditar()) return;
 	altaAutomaticaEnCurso = true;
 	const sesion = proyecto;
 	const base = JSON.stringify(proyecto);
+	let vista: ReturnType<typeof vistaPreviaAltaCable> | undefined;
+	const dialogo = $('modal-dialogo');
 	try {
 		const propuesta = proponerAltaCable(proyecto, nuevo);
 		const conAvisos = propuesta.contactos > 0 || propuesta.invasiones > 0;
-		if (conAvisos) {
-			const aceptada = await confirmar(
-				`Propuesta para ${nuevo.id}: ${propuesta.puntos} puntos y ${Math.round(propuesta.longitudReferenciaMm)} mm de referencia espacial, no longitud de corte. `
-				+ `Avisos: ${propuesta.contactos} cercanías o contactos entre cables y ${propuesta.invasiones} invasiones de sólido o canaleta. `
-				+ 'Capacidad del borne, ocupación exacta y fabricabilidad no verificadas. Cancelar conserva el tablero y permite revisar el tendido. ¿Aceptar esta ruta con avisos?',
-				{ ok: 'Aceptar ruta con avisos' },
-			);
-			if (!aceptada) return;
-		}
+		vista = vistaPreviaAltaCable(propuesta);
+		dialogo.classList.add('propuesta-ruta');
+		const extremos = `${nuevo.de.dispositivoId}:${nuevo.de.borneId} → ${nuevo.a.dispositivoId}:${nuevo.a.borneId}`;
+		const planesVecinos = propuesta.planesExistentesFijados
+			? `Se fijarán ${propuesta.planesExistentesFijados} recorridos existentes sin cambiar su trayectoria. `
+			: 'No se modificarán otros recorridos. ';
+		const aceptada = await confirmar(
+			`Propuesta para ${extremos} (cable ${nuevo.id}): ${propuesta.puntos} puntos y ${Math.round(propuesta.longitudReferenciaMm)} mm de referencia espacial, no longitud de corte. `
+			+ `Avisos: ${propuesta.contactos} cercanías o contactos entre cables y ${propuesta.invasiones} invasiones de sólido o canaleta. `
+			+ planesVecinos
+			+ 'Capacidad del borne, ocupación exacta y fabricabilidad no verificadas. Cancelar conserva el tablero. ¿Aceptar esta ruta?',
+			{ ok: conAvisos ? 'Aceptar ruta con avisos' : 'Aceptar ruta', detalle: vista.detalle },
+		);
+		if (!aceptada) return;
 		if (proyecto !== sesion || JSON.stringify(proyecto) !== base) {
 			avisar('El tablero cambió mientras se revisaba el recorrido; no se creó el cable.', 'info');
 			return;
@@ -1616,13 +1690,15 @@ async function aceptarAltaAutomatica(nuevo: Conductor, alAplicar?: () => void): 
 			proyecto.version = propuesta.documento.version;
 		}, false, actualizarConservandoAparatos);
 		if (!aplicada) return;
-		alAplicar?.();
 		avisar(conAvisos
 			? `Recorrido de ${nuevo.id} aceptado con ${propuesta.contactos} aviso(s) entre cables y ${propuesta.invasiones} invasión(es). Revisa antes de fabricar.`
 			: 'Cable conectado', conAvisos ? 'info' : 'ok');
 	} catch (error) {
 		avisar(`No se creó el cable: ${String(error)}`, 'error');
 	} finally {
+		vista?.quitar();
+		dialogo.classList.remove('propuesta-ruta');
+		alFinalizar?.();
 		altaAutomaticaEnCurso = false;
 	}
 }
@@ -10031,6 +10107,11 @@ if (__QA__ && new URLSearchParams(location.search).has('qa')) {
 			tareasLargas: tareasLargas.slice(),
 			ahora: Math.round(performance.now()),
 		}),
+		/** Observa que el trazo de propuesta existe solo mientras espera una decisión. */
+		vistaPropuestaAlta: () => {
+			const linea = escenario.raiz.getObjectByName('vista-previa-alta-cable') as THREE.Line | undefined;
+			return { visible: !!linea, puntos: linea?.geometry.getAttribute('position').count ?? 0 };
+		},
 		/** Olvida las tareas largas apuntadas: para medir un tramo concreto y no la sesión entera. */
 		olvidarTareasLargas: () => { tareasLargas.length = 0; },
 		/** Bornes clicables con su posición en pantalla. */
