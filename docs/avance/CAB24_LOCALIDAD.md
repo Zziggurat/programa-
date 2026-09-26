@@ -1,6 +1,6 @@
 # CAB-24: localidad durable del cableado
 
-Estado: diagnóstico reproducible; **contrato todavía incumplido**. Este documento no acepta M6 ni la versión 1.0.
+Estado: núcleo de planes V4 implementado; **contrato de interfaz todavía incumplido**. Este documento no acepta M6 ni la versión 1.0.
 
 ## Reproducción mínima
 
@@ -20,4 +20,10 @@ La prueba no demuestra que las ocho rutas queden mal físicamente. Demuestra un 
 4. Guardar, reabrir, duplicar, exportar/importar, Undo/Redo y Worker deben conservar el mismo resultado. Una respuesta vieja del Worker no puede adoptar un plan para otra versión del documento. El render y el picking consumen la misma ruta efectiva.
 5. La regresión focal debe pasar a verde sin permitir fusiones, pérdida de picking frontal o roturas de canaleta. Se necesita además prueba de cambio de aparato/ducto, conflicto informado, inversión de arrays, archivo legacy y manipulación de datos de plan inválidos.
 
-No conviene persistir sin más todos los puntos muestreados de `RutaCable`: los ejemplos grandes generan miles de puntos y el autosave multiproyecto escribiría esa carga repetidamente. Tampoco basta persistir solo XY: se perderían profundidad y carril. La representación compacta y su validación se decidirán con una comparación de bytes y una prueba de roundtrip exacto antes de migrar el formato.
+Persistir objetos `{x,y,z}` para cada muestra repetiría miles de claves JSON en los ejemplos grandes. La V4 usa series numéricas planas sin cuantización para conservar XYZ exacto y reducir ese coste. Sigue pendiente medir el tamaño de snapshots y autosave multiproyecto sobre tableros densos antes de activar la asignación por defecto en la interfaz.
+
+## Incremento de núcleo disponible
+
+El formato V4 incorpora `planRutaAutomatica` en un conductor. Guarda los `Number` exactos de los puntos XYZ y nodos XY como series planas, radio, anclajes, identidad de fuente y firma del entorno local. El lector limita tamaño y coordenadas, rechaza dos escritores (plan y trazado manual), y rechaza un plan cuyo conductor o entorno ya cambió; no invoca el router para reparar una importación. La ruta persistida, cuando está vigente, se usa directamente en render/picking. `asignarPlanesAutomaticos` captura de manera explícita el reparto ya visible; no se llama al dibujar ni al abrir un proyecto antiguo. Los cinco ejemplos se capturaron y reabrieron sin variar su geometría; editar `w4` con los demás planes asignados deja sus rutas intactas incluso tras cargar e invertir arrays.
+
+Esto es solo el núcleo. Falta la operación transaccional desde la UI, invalidar y marcar como pendientes las rutas afectadas tras mover aparato/canaleta, reservar carriles ya fijados para cables nuevos, presentar planes/alternativas y medir el coste de autosave. La sonda de usuario `qa/diagnostico-localidad.mjs --assert-locality` debe permanecer roja mientras el flujo normal no utilice los planes. No confundir la prueba del API con cierre de CAB-24.

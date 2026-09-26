@@ -17,6 +17,8 @@ import { BloqueDossier, SECCIONES_DOSSIER, TrozoTexto } from './dossier.js';
 import { leerComportamientoSimulacion, validarComportamiento } from './comportamiento.js';
 import { leerFisicaConductor, leerFisicaDispositivo } from './fisica.js';
 import { admiteRutaEnPlaca, leerRutaFisicaV1 } from './ruta-fisica.js';
+import { firmaFuentePlanRuta, geometriaDelPlanRuta, leerPlanRutaAutomaticaV1 } from './plan-ruta-automatica.js';
+import { firmaEntornoRutaAutomatica } from './dependencias-ruta.js';
 import { leerConfiguracionIngenieria } from './ingenieria.js';
 import { validarConfiguracionTecnica } from '../datos-tecnicos/schema.js';
 import { leerMontajeDeclarado } from '../componentes/montaje.js';
@@ -26,7 +28,7 @@ import { leerSimboloEsquemaPersonal } from './simbolo-personal.js';
 import type { ConfiguracionProgramaPLC, EtiquetaPLC } from './programa-plc.js';
 
 /** Versión de formato que escribe este programa. */
-export const VERSION_FORMATO = 3;
+export const VERSION_FORMATO = 4;
 
 export interface ResultadoCarga {
 	proyecto: Proyecto;
@@ -360,6 +362,15 @@ export function cargarProyecto(json: string): ResultadoCarga {
 		dossier: leerAjustesDossier(bruto.dossier),
 		ingenieria: leerConfiguracionIngenieria(bruto.ingenieria),
 	};
+	for (const c of proyecto.conductores) {
+		const plan = c.planRutaAutomatica;
+		if (!plan) continue;
+		if (plan.fuente !== firmaFuentePlanRuta(c)
+			|| plan.entorno !== firmaEntornoRutaAutomatica(proyecto,
+				geometriaDelPlanRuta(plan).puntos, plan.radio)) {
+			throw new ArchivoInvalido(`Cable ${c.id}: el plan automático no corresponde al conductor o a su entorno; se conservó el archivo original.`);
+		}
+	}
 	if (bruto.datosTecnicos !== undefined) {
 		validarConfiguracionTecnica(bruto.datosTecnicos);
 		proyecto.datosTecnicos = structuredClone(bruto.datosTecnicos);
@@ -1209,15 +1220,22 @@ function leerConductores(
 			anotar(`conductores[${c.id}].estadoRutaFisica`, 'estado de ruta física desconocido; se omitió la conexión');
 			continue;
 		}
+		if (c.estadoRutaFisica === 'pendiente' && c.planRutaAutomatica !== undefined) {
+			throw new ArchivoInvalido(`Cable ${c.id}: plan automático y estado pendiente simultáneos; se conservó el archivo original.`);
+		}
 		// La ruta pendiente es incompatible con un peinado o una longitud ya declarados. Se
 		// omite el registro entero para no perder silenciosamente ni la conexión ni la medición.
 		if (c.estadoRutaFisica === 'pendiente' && (c.trazado !== undefined
-			|| c.rutaFisica !== undefined || (esObjeto(c.fisica) && c.fisica.longitudManualM !== undefined))) {
+			|| c.rutaFisica !== undefined || c.planRutaAutomatica !== undefined
+			|| (esObjeto(c.fisica) && c.fisica.longitudManualM !== undefined))) {
 			anotar(`conductores[${c.id}]`, 'ruta física pendiente incompatible con trazado o longitud manual; se omitió la conexión');
 			continue;
 		}
 		if (c.rutaFisica !== undefined && c.trazado !== undefined) {
 			throw new ArchivoInvalido(`Cable ${c.id}: ruta M6 y trazado legacy simultáneos; elige una fuente sin perder la otra.`);
+		}
+		if (c.planRutaAutomatica !== undefined && (c.rutaFisica !== undefined || c.trazado !== undefined)) {
+			throw new ArchivoInvalido(`Cable ${c.id}: plan automático y ruta manual simultáneos; no se eligió un escritor por ti.`);
 		}
 		let rutaFisica: Conductor['rutaFisica'];
 		if (c.rutaFisica !== undefined) {
@@ -1225,11 +1243,18 @@ function leerConductores(
 			try { rutaFisica = leerRutaFisicaV1(c.rutaFisica); }
 			catch { throw new ArchivoInvalido(`Cable ${c.id}: ruta M6 desconocida o dañada; no se sustituyó por un ruteo automático.`); }
 		}
+		let planRutaAutomatica: Conductor['planRutaAutomatica'];
+		if (c.planRutaAutomatica !== undefined) {
+			if (version < 4) throw new ArchivoInvalido(`Cable ${c.id}: plan automático en un archivo anterior a la versión 4.`);
+			try { planRutaAutomatica = leerPlanRutaAutomaticaV1(c.planRutaAutomatica); }
+			catch { throw new ArchivoInvalido(`Cable ${c.id}: plan automático desconocido o dañado; no se reparó por ruteo silencioso.`); }
+		}
 		vistos.add(c.id as string);
 		salida.push({
 			...(c as unknown as Conductor),
 			...(c.estadoRutaFisica === 'pendiente' ? { estadoRutaFisica: 'pendiente' as const } : {}),
 			...(rutaFisica ? { rutaFisica } : {}),
+			...(planRutaAutomatica ? { planRutaAutomatica } : {}),
 			// Una sección que no es un número deja al DRC sin poder comparar nada: mejor «sin
 			// declarar», que el programa sabe avisarlo, que un 0 inventado o un NaN silencioso.
 			seccion: enRango(c.seccion, 0, 1000),

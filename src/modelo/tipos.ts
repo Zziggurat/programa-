@@ -338,6 +338,8 @@ export interface Conductor {
 	estadoRutaFisica?: 'pendiente';
 	/** Ruta manual M6 versionada. Exclusiva de `trazado` legacy y del estado pendiente. */
 	rutaFisica?: import('./ruta-fisica.js').RutaFisicaV1;
+	/** Ruta automática asignada y congelada; distinta del trazado manual y del estado pendiente. */
+	planRutaAutomatica?: import('./plan-ruta-automatica.js').PlanRutaAutomaticaV1;
 	/** Sección en mm². */
 	seccion?: number;
 	/** Material, longitud o reactancia declarados para la capa fisica V5. */
@@ -660,8 +662,8 @@ export interface Proyecto {
 	 */
 	esEjemplo?: boolean;
 	formato: 'tablero-studio';
-	/** V1 legacy se acepta al leer; V2 separa ruta pendiente y V3 añade ruta XYZ explícita. */
-	version: 1 | 2 | 3;
+	/** V1 legacy; V2 pendiente; V3 XYZ manual; V4 plan automático asignado. */
+	version: 1 | 2 | 3 | 4;
 	nombre: string;
 	/** Cliente, obra, proyectista y revisión (cajetín del plano y portada del dossier). */
 	datos?: DatosProyecto;

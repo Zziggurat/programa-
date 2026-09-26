@@ -9,6 +9,8 @@ import * as THREE from 'three';
 import { Canaleta, Colocacion, Conductor, Dispositivo, EntradaCable, Gabinete, Proyecto } from '../src/modelo/tipos.js';
 import { cajaDeGabinete } from '../src/modelo/proyecto.js';
 import { longitudPolilineaMm } from '../src/modelo/ruta-fisica.js';
+import { firmaFuentePlanRuta, geometriaDelPlanRuta, planDesdeRutaAutomatica } from '../src/modelo/plan-ruta-automatica.js';
+import { firmaEntornoRutaAutomatica } from '../src/modelo/dependencias-ruta.js';
 import {
 	ajustesDeMazo, alturaDeMazo, anclajeFijoDeMazo, carrilDeMazo, construirMazoPuerta, desvioDeCarril,
 	enLaPuerta, Mazo,
@@ -1511,7 +1513,7 @@ function firmaDelRuteo(proyecto: Proyecto): string {
 	const ordenar = <T>(lista: T[] | undefined, clave: (elemento: T) => string): T[] | undefined =>
 		lista?.slice().sort((a, b) => clave(a).localeCompare(clave(b)));
 	return JSON.stringify([
-		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado, c.rutaFisica, c.estadoRutaFisica, c.clase]),
+		ordenar(proyecto.conductores, (c) => c.id)?.map((c) => [c.id, c.de, c.a, c.seccion, c.trazado, c.rutaFisica, c.planRutaAutomatica, c.estadoRutaFisica, c.clase]),
 		// El anclaje depende de la disposición de bornes, pines de imagen y bloques reales.
 		// No incluir los bytes de la imagen: su presencia, no su contenido, cambia el ruteo.
 		proyecto.dispositivos.map((d) => [d.id, d.tipo, d.bornes.map((b) => [b.id, b.u, b.v]),
@@ -2073,6 +2075,25 @@ function rutaManualResuelta(
 }
 
 /**
+ * Captura explícita del reparto visible en el documento. No se llama desde el render:
+ * una consulta de dibujo no puede modificar un proyecto ni volver persistente un plan.
+ * La validación de dependencias y la transición UI quedan fuera de esta operación base.
+ */
+export function asignarPlanesAutomaticos(proyecto: Proyecto): number {
+	const rutas = new Map(rutasDeCables(proyecto).map((r) => [r.conductorId, r]));
+	const nuevos = proyecto.conductores.filter((c) => !c.estadoRutaFisica && !c.rutaFisica
+		&& !c.trazado && !c.planRutaAutomatica && rutas.has(c.id));
+	const planes = nuevos.map((c) => {
+		const ruta = rutas.get(c.id)!;
+		return { c, plan: planDesdeRutaAutomatica(ruta,
+			firmaEntornoRutaAutomatica(proyecto, ruta.puntos, ruta.radio), firmaFuentePlanRuta(c)) };
+	});
+	for (const { c, plan } of planes) c.planRutaAutomatica = plan;
+	if (planes.length) { proyecto.version = 4; invalidarCacheRuteo(); }
+	return planes.length;
+}
+
+/**
  * EL REPARTO: a cada cable, el mejor camino que se pueda medir.
  *
  * De cada candidato se construye el recorrido 3D COMPLETO que se va a dibujar y se mide su
@@ -2174,6 +2195,25 @@ function repartirCables(proyecto: Proyecto): RutaCable[] {
 		const radio = radioDeCable(conductor.seccion);
 		if (conductor.rutaFisica) {
 			const ruta = rutaManualResuelta(conductor, p, radio);
+			const trazo: Trazo = { id: conductor.id, radio, puntos: ruta.puntos,
+				bornes: [`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
+					`${conductor.a.dispositivoId}:${conductor.a.borneId}`], extremos: [p.de, p.a] };
+			rejilla.anadir(trazo);
+			rutasExplicitas.push(ruta);
+			continue;
+		}
+		if (conductor.planRutaAutomatica) {
+			const guardada = geometriaDelPlanRuta(conductor.planRutaAutomatica);
+			const mismoExtremo = (a: Anclaje, b: Anclaje): boolean =>
+				a.x === b.x && a.y === b.y && a.z === b.z;
+			if (!mismoExtremo(p.de, guardada.de) || !mismoExtremo(p.a, guardada.a)
+				|| radio !== conductor.planRutaAutomatica.radio
+				|| conductor.planRutaAutomatica.fuente !== firmaFuentePlanRuta(conductor)
+				|| conductor.planRutaAutomatica.entorno !== firmaEntornoRutaAutomatica(proyecto, guardada.puntos, radio)) {
+				throw new Error(`Plan automático de ${conductor.id} desactualizado: cambió un anclaje o su entorno; requiere revisión.`);
+			}
+			const ruta: RutaCable = { conductorId: conductor.id, ...guardada, radio,
+				z: guardada.puntos[Math.floor(guardada.puntos.length / 2)].z };
 			const trazo: Trazo = { id: conductor.id, radio, puntos: ruta.puntos,
 				bornes: [`${conductor.de.dispositivoId}:${conductor.de.borneId}`,
 					`${conductor.a.dispositivoId}:${conductor.a.borneId}`], extremos: [p.de, p.a] };
